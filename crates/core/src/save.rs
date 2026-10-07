@@ -1,4 +1,4 @@
-use crate::{OpenError, Vault, kdbx};
+use crate::{Vault, kdbx};
 
 /// Why a Vault could not be saved.
 #[derive(Debug, thiserror::Error)]
@@ -13,11 +13,6 @@ impl Vault {
     /// opened from is kept, including what keefast doesn't model. Runs key derivation, so keep
     /// it off the UI thread.
     pub fn save(&self) -> Result<Vec<u8>, SaveError> {
-        kdbx::write(&self.file, &self.key).map_err(|error| match error {
-            OpenError::WrongKey => unreachable!("writing never checks the key"),
-            OpenError::Corrupt(reason) | OpenError::Unsupported(reason) => {
-                SaveError::Settings(reason)
-            }
-        })
+        kdbx::write(&self.file, &self.key)
     }
 }

@@ -43,6 +43,12 @@ impl Secret {
     }
 }
 
+impl From<Zeroizing<Vec<u8>>> for Secret {
+    fn from(bytes: Zeroizing<Vec<u8>>) -> Self {
+        Self(bytes)
+    }
+}
+
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret([hidden])")
@@ -274,8 +280,11 @@ fn write_element(
         .children
         .iter()
         .any(|node| matches!(node, Node::Text(_) | Node::Protected(_)));
+    let has_elements = element.elements().next().is_some();
     let child_indent = match indent {
-        Some(depth) if !has_text => Some(depth + 1),
+        // Indentation is only dropped again between elements, so text and comment-only
+        // content stays on one line.
+        Some(depth) if has_elements && !has_text => Some(depth + 1),
         _ => None,
     };
     for node in &element.children {
@@ -374,7 +383,8 @@ mod tests {
 
     #[test]
     fn cdata_and_comments_survive() {
-        let root = round_trip("<a><!-- note --><b><![CDATA[<raw> & stuff]]></b></a>");
+        let root =
+            round_trip("<a><!-- note --><b><![CDATA[<raw> & stuff]]></b><c><!--only--></c></a>");
 
         assert_eq!(root.children[0], Node::Comment(" note ".into()));
         assert_eq!(root.child("b").unwrap().text(), "<raw> & stuff");

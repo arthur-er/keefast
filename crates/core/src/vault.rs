@@ -6,7 +6,7 @@ use secrecy::SecretString;
 use uuid::Uuid;
 
 use crate::OpenError;
-use crate::kdbx::{KdbxFile, Key};
+use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
 
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
@@ -15,7 +15,7 @@ use crate::xml::Element;
 /// in it, including data keefast doesn't model (ADR 0002).
 pub struct Vault {
     root: Group,
-    pub(crate) file: KdbxFile,
+    pub(crate) file: VaultFile,
     /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
     pub(crate) key: Key,
 }
@@ -44,7 +44,7 @@ pub struct Entry {
 }
 
 impl Vault {
-    pub(crate) fn from_file(file: KdbxFile, key: Key) -> Result<Self, OpenError> {
+    pub(crate) fn from_file(file: VaultFile, key: Key) -> Result<Self, OpenError> {
         let group = file
             .document
             .child("Root")

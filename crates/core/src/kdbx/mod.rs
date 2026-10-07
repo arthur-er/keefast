@@ -15,8 +15,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::OpenError;
 use crate::xml::{self, Element, Node, Secret};
+use crate::{OpenError, SaveError};
 use crypto::{InnerStream, OuterCipher};
 use header::{Field, VariantDictionary, Version, field, inner_field};
 
@@ -24,7 +24,7 @@ pub(crate) use crypto::Key;
 
 /// The contents of a Vault file.
 #[derive(Debug, Clone)]
-pub(crate) struct KdbxFile {
+pub(crate) struct VaultFile {
     pub(crate) settings: Settings,
     /// The attachment pool that `<Binary><Value Ref="N"/>` refers to, by index.
     pub(crate) binaries: Vec<Binary>,
@@ -55,7 +55,7 @@ pub(crate) struct Binary {
 }
 
 /// Decrypts a Vault file. `composite` is the hash of the composite key.
-pub(crate) fn read(data: &[u8], composite: &[u8; 32]) -> Result<KdbxFile, OpenError> {
+pub(crate) fn read(data: &[u8], composite: &[u8; 32]) -> Result<VaultFile, OpenError> {
     match header::version(data)? {
         Version::Kdbx3 { .. } => read_kdbx3(data, composite),
         Version::Kdbx4 { minor } => read_kdbx4(data, composite, minor),
@@ -82,7 +82,7 @@ fn le_u64(bytes: &[u8], name: &str) -> Result<u64, OpenError> {
     ))
 }
 
-fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<KdbxFile, OpenError> {
+fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<VaultFile, OpenError> {
     let (fields, header_end) = header::read_fields(data, 12, true)?;
     let header_bytes = &data[..header_end];
     let header_hash = data
@@ -124,13 +124,13 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<KdbxFile,
     let kdf = kdf.ok_or_else(|| missing("KDF parameters"))?;
 
     let transformed = crypto::transform_key(&kdf, composite)?;
-    let hmac_key = Zeroizing::new(crypto::sha512(&[&master_seed, &transformed[..], &[1]]));
+    let hmac_key = crypto::hmac_key(&master_seed, &transformed);
     if header_hmac != crypto::header_hmac(header_bytes, &hmac_key) {
         return Err(OpenError::WrongKey);
     }
 
     let encrypted = crypto::read_hmac_blocks(&data[header_end + 64..], &hmac_key)?;
-    let key = Zeroizing::new(crypto::sha256(&[&master_seed, &transformed[..]]));
+    let key = crypto::cipher_key(&master_seed, &transformed);
     let mut payload = cipher.decrypt_raw(&key, &iv, &encrypted)?;
     if cipher.is_block_cipher() {
         payload = crypto::pkcs7_unpad(payload)?;
@@ -152,12 +152,15 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<KdbxFile,
             }
             inner_field::RANDOM_STREAM_KEY => stream_key = Some(Zeroizing::new(value)),
             inner_field::BINARY => {
-                let (flags, data) = value
-                    .split_first()
-                    .ok_or_else(|| missing("attachment flags"))?;
+                let mut data = value;
+                if data.is_empty() {
+                    return Err(missing("attachment flags"));
+                }
+                // Shifts in place, so the attachment is never copied unwiped.
+                let flags = data.remove(0);
                 binaries.push(Binary {
                     protected: flags & 1 != 0,
-                    data: Secret::new(data.to_vec()),
+                    data: Secret::new(data),
                 });
             }
             _ => other_inner_fields.push((id, value)),
@@ -168,7 +171,7 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<KdbxFile,
     let mut stream = InnerStream::new(stream_id, &stream_key)?;
     let document = parse_document(&payload[inner_end..], &mut stream)?;
 
-    Ok(KdbxFile {
+    Ok(VaultFile {
         settings: Settings {
             minor_version: minor,
             cipher,
@@ -184,7 +187,7 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<KdbxFile,
     })
 }
 
-fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<KdbxFile, OpenError> {
+fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<VaultFile, OpenError> {
     let (fields, header_end) = header::read_fields(data, 12, false)?;
 
     let mut cipher_uuid = None;
@@ -229,7 +232,7 @@ fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<KdbxFile, OpenError> 
     );
 
     let transformed = crypto::transform_key(&kdf, composite)?;
-    let key = Zeroizing::new(crypto::sha256(&[&master_seed, &transformed[..]]));
+    let key = crypto::cipher_key(&master_seed, &transformed);
     let mut payload = cipher.decrypt_raw(&key, &iv, &data[header_end..])?;
     // The first bytes of the payload repeat a header field: the only key check KDBX 3.1 has.
     if payload.get(..start_bytes.len()) != Some(start_bytes.as_slice()) {
@@ -248,9 +251,21 @@ fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<KdbxFile, OpenError> 
     let stream_key = stream_key.ok_or_else(|| missing("inner random stream key"))?;
     let mut stream = InnerStream::new(stream_id, &stream_key)?;
     let mut document = parse_document(&payload, &mut stream)?;
+    // KDBX 3.1 authenticates its header only through this hash in the XML, when present.
+    if let Some(hash) = document
+        .child("Meta")
+        .and_then(|meta| meta.child("HeaderHash"))
+    {
+        let expected = crypto::sha256(&[&data[..header_end]]);
+        if BASE64.decode(hash.text().trim()).ok().as_deref() != Some(&expected[..]) {
+            return Err(OpenError::Corrupt(
+                "the header fails its integrity check".into(),
+            ));
+        }
+    }
     let binaries = upgrade::upgrade(&mut document)?;
 
-    Ok(KdbxFile {
+    Ok(VaultFile {
         settings: Settings {
             minor_version: 0,
             cipher,
@@ -314,13 +329,14 @@ fn unprotect(element: &mut Element, stream: &mut InnerStream) -> Result<(), Open
 }
 
 /// Encrypts a Vault file as KDBX 4 with fresh seeds, keeping every other setting.
-pub(crate) fn write(file: &KdbxFile, composite: &[u8; 32]) -> Result<Vec<u8>, OpenError> {
+pub(crate) fn write(file: &VaultFile, composite: &[u8; 32]) -> Result<Vec<u8>, SaveError> {
     let settings = &file.settings;
     let master_seed: [u8; 32] = crypto::random();
     let iv = &crypto::random::<16>()[..settings.cipher.iv_len()];
     let mut kdf = settings.kdf.clone();
     kdf.set_bytes("S", &crypto::random::<32>());
-    let transformed = crypto::transform_key(&kdf, composite)?;
+    let transformed = crypto::transform_key(&kdf, composite)
+        .map_err(|error| SaveError::Settings(error.to_string()))?;
 
     let mut out = Vec::new();
     header::write_version(&mut out, settings.minor_version);
@@ -341,7 +357,7 @@ pub(crate) fn write(file: &KdbxFile, composite: &[u8; 32]) -> Result<Vec<u8>, Op
     }
     header::write_field(&mut out, field::END, b"\r\n\r\n");
 
-    let hmac_key = Zeroizing::new(crypto::sha512(&[&master_seed, &transformed[..], &[1]]));
+    let hmac_key = crypto::hmac_key(&master_seed, &transformed);
     let header_hash = crypto::sha256(&[&out]);
     let header_hmac = crypto::header_hmac(&out, &hmac_key);
     out.extend_from_slice(&header_hash);
@@ -370,7 +386,8 @@ pub(crate) fn write(file: &KdbxFile, composite: &[u8; 32]) -> Result<Vec<u8>, Op
     }
     header::write_field(&mut payload, inner_field::END, &[]);
 
-    let mut stream = InnerStream::new(crypto::INNER_STREAM_CHACHA20, &stream_key[..])?;
+    let mut stream = InnerStream::new(crypto::INNER_STREAM_CHACHA20, &stream_key[..])
+        .expect("ChaCha20 is a supported inner random stream");
     let xml = Zeroizing::new(xml::write(&file.document, &mut |plain| {
         let mut bytes = plain.to_vec();
         stream.apply(&mut bytes);
@@ -385,7 +402,7 @@ pub(crate) fn write(file: &KdbxFile, composite: &[u8; 32]) -> Result<Vec<u8>, Op
             .expect("writing to memory cannot fail");
         payload = Zeroizing::new(encoder.finish().expect("writing to memory cannot fail"));
     }
-    let key = Zeroizing::new(crypto::sha256(&[&master_seed, &transformed[..]]));
+    let key = crypto::cipher_key(&master_seed, &transformed);
     let encrypted = settings.cipher.encrypt(&key, iv, &payload);
     out.extend_from_slice(&crypto::write_hmac_blocks(&encrypted, &hmac_key));
     Ok(out)

@@ -102,3 +102,16 @@ fn a_truncated_vault_file_is_reported_as_corrupt() {
 
     assert!(matches!(result, Err(OpenError::Corrupt(_))));
 }
+
+#[test]
+fn a_kdbx3_1_vault_file_with_an_altered_header_is_reported_as_corrupt() {
+    // Insert a comment field: decryption is unaffected, but the header no longer matches the
+    // hash KDBX 3.1 keeps of it.
+    let mut altered = KEEPASSXC_KDBX3[..12].to_vec();
+    altered.extend_from_slice(&[1, 4, 0, b'n', b'o', b't', b'e']);
+    altered.extend_from_slice(&KEEPASSXC_KDBX3[12..]);
+
+    let result = Vault::open(&altered, &CompositeKey::password(PASSWORD));
+
+    assert!(matches!(result, Err(OpenError::Corrupt(_))));
+}

@@ -137,9 +137,9 @@ impl OuterCipher {
     }
 }
 
-fn pkcs7_pad(data: &[u8]) -> Vec<u8> {
+fn pkcs7_pad(data: &[u8]) -> Zeroizing<Vec<u8>> {
     let pad = 16 - data.len() % 16;
-    let mut padded = Vec::with_capacity(data.len() + pad);
+    let mut padded = Zeroizing::new(Vec::with_capacity(data.len() + pad));
     padded.extend_from_slice(data);
     padded.resize(data.len() + pad, pad as u8);
     padded
@@ -160,6 +160,16 @@ pub(crate) fn pkcs7_unpad(mut data: Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<
     let len = data.len() - pad;
     data.truncate(len);
     Ok(data)
+}
+
+/// The key that encrypts the payload, from the master seed and the transformed key.
+pub(crate) fn cipher_key(master_seed: &[u8], transformed: &Key) -> Key {
+    Zeroizing::new(sha256(&[master_seed, &transformed[..]]))
+}
+
+/// The key behind KDBX 4's header and block HMACs.
+pub(crate) fn hmac_key(master_seed: &[u8], transformed: &Key) -> Zeroizing<[u8; 64]> {
+    Zeroizing::new(sha512(&[master_seed, &transformed[..], &[1]]))
 }
 
 /// Turns the composite key into the key that, with the master seed, encrypts the payload.
@@ -352,6 +362,33 @@ impl InnerStream {
             Self::None => {}
             Self::Salsa20(cipher) => cipher.apply_keystream(data),
             Self::ChaCha20(cipher) => cipher.apply_keystream(data),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_outer_cipher_decrypts_what_it_encrypts() {
+        let key = [7; 32];
+        let plaintext = b"seventeen bytes!!";
+        for cipher in [
+            OuterCipher::Aes256,
+            OuterCipher::ChaCha20,
+            OuterCipher::Twofish,
+        ] {
+            let iv = &[9; 16][..cipher.iv_len()];
+
+            let encrypted = cipher.encrypt(&key, iv, plaintext);
+            let mut decrypted = cipher.decrypt_raw(&key, iv, &encrypted).unwrap();
+            if cipher.is_block_cipher() {
+                decrypted = pkcs7_unpad(decrypted).unwrap();
+            }
+
+            assert_ne!(&encrypted[..plaintext.len()], plaintext, "{cipher:?}");
+            assert_eq!(&decrypted[..], plaintext, "{cipher:?}");
         }
     }
 }

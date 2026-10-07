@@ -6,6 +6,7 @@ use std::io::Read;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use zeroize::Zeroizing;
 
 use super::Binary;
 use crate::OpenError;
@@ -52,7 +53,8 @@ pub(crate) fn upgrade(document: &mut Element) -> Result<Vec<Binary>, OpenError> 
         }
     }
     if let Some(root) = document.child_mut("Root") {
-        renumber_references(root, &renumbered);
+        let mut next_dangling = pool.len();
+        renumber_references(root, &mut renumbered, &mut next_dangling);
     }
     convert_timestamps(document);
     Ok(pool)
@@ -60,40 +62,50 @@ pub(crate) fn upgrade(document: &mut Element) -> Result<Vec<Binary>, OpenError> 
 
 fn binary_data(binary: &Element) -> Result<Secret, OpenError> {
     let corrupt = |reason: String| OpenError::Corrupt(format!("attachment: {reason}"));
-    if let Some(Node::Protected(secret)) = binary.children.first() {
-        return Ok(secret.clone());
-    }
-    let data = BASE64
-        .decode(binary.text().trim())
-        .map_err(|error| corrupt(error.to_string()))?;
+    let data = match binary.children.first() {
+        Some(Node::Protected(secret)) => Zeroizing::new(secret.bytes().to_vec()),
+        _ => Zeroizing::new(
+            BASE64
+                .decode(binary.text().trim())
+                .map_err(|error| corrupt(error.to_string()))?,
+        ),
+    };
     let compressed = binary
         .attribute("Compressed")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
     if !compressed {
-        return Ok(Secret::new(data));
+        return Ok(data.into());
     }
-    let mut plain = Vec::new();
+    let mut plain = Zeroizing::new(Vec::new());
     flate2::read::GzDecoder::new(data.as_slice())
         .read_to_end(&mut plain)
         .map_err(|error| corrupt(error.to_string()))?;
-    Ok(Secret::new(plain))
+    Ok(plain.into())
 }
 
-/// Entries refer to attachments with `<Binary><Value Ref="ID"/></Binary>`.
-fn renumber_references(element: &mut Element, renumbered: &HashMap<String, String>) {
+/// Entries refer to attachments with `<Binary><Value Ref="ID"/></Binary>`. A reference to an
+/// attachment the file doesn't have is numbered past the pool, so it stays dangling rather than
+/// landing on another attachment.
+fn renumber_references(
+    element: &mut Element,
+    renumbered: &mut HashMap<String, String>,
+    next_dangling: &mut usize,
+) {
     for child in element.elements_mut() {
         if child.name == "Binary" {
             if let Some(value) = child.child_mut("Value") {
                 for (key, reference) in &mut value.attributes {
-                    if key == "Ref"
-                        && let Some(index) = renumbered.get(reference.as_str())
-                    {
+                    if key == "Ref" {
+                        let index = renumbered.entry(reference.clone()).or_insert_with(|| {
+                            *next_dangling += 1;
+                            (*next_dangling - 1).to_string()
+                        });
                         reference.clone_from(index);
                     }
                 }
             }
         } else {
-            renumber_references(child, renumbered);
+            renumber_references(child, renumbered, next_dangling);
         }
     }
 }
@@ -209,6 +221,7 @@ mod tests {
             </Binaries></Meta><Root><Group><Entry>
                 <Binary><Key>a</Key><Value Ref="3"/></Binary>
                 <History><Entry><Binary><Key>b</Key><Value Ref="7"/></Binary></Entry></History>
+                <Binary><Key>gone</Key><Value Ref="0"/></Binary>
             </Entry></Group></Root></KeePassFile>"#
         ))
         .unwrap();
@@ -234,6 +247,8 @@ mod tests {
         assert_eq!(reference(entry), "1");
         let historical = entry.child("History").unwrap().child("Entry").unwrap();
         assert_eq!(reference(historical), "0");
+        let dangling = entry.children_named("Binary").nth(1).unwrap();
+        assert_eq!(dangling.child("Value").unwrap().attribute("Ref"), Some("2"));
     }
 
     #[test]
