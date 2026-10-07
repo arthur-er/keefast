@@ -2,6 +2,7 @@ use keefast_core::{CompositeKey, OpenError, Vault};
 use secrecy::ExposeSecret;
 
 const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../fixtures/keepassxc-kdbx4.kdbx");
+const KEEPASSXC_KDBX3: &[u8] = include_bytes!("../../../fixtures/keepassxc-kdbx3.kdbx");
 const PASSWORD: &str = "fixture-password";
 
 fn open_fixture() -> Vault {
@@ -18,6 +19,14 @@ fn opens_a_keepassxc_kdbx4_vault_file_with_its_master_password() {
 
     let root_titles: Vec<&str> = root.entries().iter().map(|e| e.title()).collect();
     assert_eq!(root_titles, ["Root Entry"]);
+}
+
+#[test]
+fn opens_a_keepassxc_kdbx3_1_vault_file() {
+    let vault = Vault::open(KEEPASSXC_KDBX3, &CompositeKey::password(PASSWORD)).unwrap();
+
+    let titles: Vec<&str> = vault.root().all_entries().map(|e| e.title()).collect();
+    assert_eq!(titles, ["Root Entry", "GitHub", "Prod DB", "Email"]);
 }
 
 #[test]

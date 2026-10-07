@@ -41,7 +41,7 @@ impl UnlockView {
         Self {
             workspace,
             path,
-            password: Zeroizing::default(),
+            password: empty_password(),
             password_focus: cx.focus_handle(),
             error: None,
             unlocking: None,
@@ -95,7 +95,7 @@ impl UnlockView {
                 this.unlocking = None;
                 match result {
                     Ok(unlocked) => {
-                        this.password = Zeroizing::default();
+                        this.password = empty_password();
                         let vault = this
                             .workspace
                             .update(cx, |workspace, _| workspace.add_unlocked(unlocked));
@@ -120,6 +120,7 @@ impl UnlockView {
             }
             "v" if modifiers.secondary() => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let text = Zeroizing::new(text);
                     self.password.push_str(text.trim_end_matches(['\r', '\n']));
                 }
             }
@@ -132,6 +133,11 @@ impl UnlockView {
         cx.stop_propagation();
         cx.notify();
     }
+}
+
+/// Reserves room up front so typing doesn't reallocate and leave copies of the password behind.
+fn empty_password() -> Zeroizing<String> {
+    Zeroizing::new(String::with_capacity(256))
 }
 
 fn describe(error: &OpenVaultError) -> &'static str {
@@ -156,7 +162,9 @@ impl Render for UnlockView {
         let password_text: SharedString = if self.password.is_empty() {
             strings::UNLOCK_PASSWORD_PLACEHOLDER.into()
         } else {
-            "•".repeat(self.password.chars().count()).into()
+            strings::PASSWORD_MASK_CHAR
+                .repeat(self.password.chars().count())
+                .into()
         };
 
         let button = |id: &'static str, label: &'static str| {

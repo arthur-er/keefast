@@ -13,7 +13,8 @@ trap 'rm -rf "$work"' EXIT
 
 draft=$work/draft.kdbx
 
-printf '%s\n%s\n' "$pw" "$pw" | keepassxc-cli db-create -q -p "$draft"
+# Without KDBX 4-only features KeePassXC writes KDBX 3.1, which becomes the 3.1 fixture.
+printf '%s\n%s\n' "$pw" "$pw" | keepassxc-cli db-create -q -p -t 100 "$draft"
 
 for group in Work Work/Servers Personal; do
   printf '%s\n' "$pw" | keepassxc-cli mkdir -q "$draft" "$group"
@@ -30,6 +31,8 @@ add "Work/GitHub" octocat https://github.com/login gh-secret "Work account"
 add "Work/Servers/Prod DB" postgres https://db.example.com pg-secret "Production database"
 add "Personal/Email" me@example.org https://mail.example.org mail-secret "Personal mailbox"
 
+cp "$draft" keepassxc-kdbx3.kdbx
+
 # KeePassXC only writes KDBX 4 when the Vault needs it, so give one Entry custom data
 # and round-trip through XML. A short decryption time keeps tests fast.
 printf '%s\n' "$pw" | keepassxc-cli export -q -f xml "$draft" > "$work/draft.xml"
@@ -38,4 +41,4 @@ sed -i '0,/<Entry>/s//<Entry><CustomData><Item><Key>keefast-fixture<\/Key><Value
 
 rm -f keepassxc-kdbx4.kdbx
 printf '%s\n%s\n' "$pw" "$pw" | keepassxc-cli import -q -p -t 100 "$work/draft.xml" keepassxc-kdbx4.kdbx
-chmod 644 keepassxc-kdbx4.kdbx
+chmod 644 keepassxc-kdbx3.kdbx keepassxc-kdbx4.kdbx

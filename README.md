@@ -10,7 +10,7 @@ Created in [T3 Code](https://t3.codes).
 
 The Cargo workspace lives in `crates/`:
 
-- `core`: domain model and KDBX handling. No I/O, no GPUI.
+- `core`: domain model and KDBX handling. No I/O, no GPUI, no async runtime.
 - `workspace`: the headless app model, with Storage providers injected. No GPUI.
 - `app`: the GPUI views (the `keefast` binary).
 

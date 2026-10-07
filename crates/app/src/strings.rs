@@ -26,3 +26,4 @@ pub const DETAIL_URL: &str = "URL";
 pub const DETAIL_NOTES: &str = "Notes";
 pub const UNTITLED: &str = "(untitled)";
 pub const HIDDEN_PASSWORD: &str = "••••••••";
+pub const PASSWORD_MASK_CHAR: &str = "•";

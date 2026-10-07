@@ -31,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libfontconfig-dev libfreetype-dev libvulkan-dev \
-            libwayland-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
 
       # GPUI compiles its HLSL shaders with fxc.exe from the Windows SDK.
       - name: Locate fxc.exe
@@ -40,6 +40,7 @@ jobs:
         run: |
           $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
             Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
           "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
 
       - name: Format

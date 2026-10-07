@@ -95,8 +95,7 @@ impl VaultBrowser {
         let entries = workspace.visible_entries(self.selected_vault, self.selected_group);
         let header = match self.selected_group {
             Some(group) => workspace
-                .vault(self.selected_vault)
-                .and_then(|open| open.vault().group(group))
+                .group(self.selected_vault, group)
                 .map(|group| group.name().to_owned()),
             None => Some(strings::SIDEBAR_ALL_ENTRIES.to_owned()),
         }
@@ -164,11 +163,9 @@ impl VaultBrowser {
 
     fn render_detail(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
-        let entry = self.selected_entry.and_then(|id| {
-            workspace
-                .vault(self.selected_vault)
-                .and_then(|open| open.vault().entry(id))
-        });
+        let entry = self
+            .selected_entry
+            .and_then(|id| workspace.entry(self.selected_vault, id));
         let pane = div()
             .id("entry-detail")
             .flex_1()

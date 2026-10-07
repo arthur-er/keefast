@@ -5,7 +5,7 @@ mod storage;
 
 use std::sync::Arc;
 
-use keefast_core::{CompositeKey, Entry, GroupId, OpenError, Vault};
+use keefast_core::{CompositeKey, Entry, EntryId, Group, GroupId, OpenError, Vault};
 
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
 
@@ -122,14 +122,22 @@ impl Workspace {
         self.vaults.iter().find(|vault| vault.id == id)
     }
 
+    pub fn group(&self, vault: VaultId, group: GroupId) -> Option<&Group> {
+        self.vault(vault)?.vault.group(group)
+    }
+
+    pub fn entry(&self, vault: VaultId, entry: EntryId) -> Option<&Entry> {
+        self.vault(vault)?.vault.entry(entry)
+    }
+
     /// The Entry list for a Vault: every Entry in the selected Group (the whole Vault when
     /// `None`) and its subgroups, sorted by title.
     pub fn visible_entries(&self, id: VaultId, group: Option<GroupId>) -> Vec<&Entry> {
-        let Some(open) = self.vault(id) else {
-            return Vec::new();
+        let group = match group {
+            Some(group) => self.group(id, group),
+            None => self.vault(id).map(|open| open.vault.root()),
         };
-        let root = open.vault.root();
-        let Some(group) = group.map_or(Some(root), |group| open.vault.group(group)) else {
+        let Some(group) = group else {
             return Vec::new();
         };
         let mut entries: Vec<&Entry> = group.all_entries().collect();
