@@ -1,4 +1,8 @@
 use secrecy::{ExposeSecret, SecretString};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
+
+use crate::kdbx::Key;
 
 /// The secrets that unlock a Vault file. Only a master password for now; key files come later.
 #[derive(Clone)]
@@ -13,7 +17,10 @@ impl CompositeKey {
         }
     }
 
-    pub(crate) fn to_database_key(&self) -> keepass::DatabaseKey {
-        keepass::DatabaseKey::new().with_password(self.password.expose_secret())
+    /// KeePass's composite key: SHA-256 over the SHA-256 of each component.
+    pub(crate) fn hash(&self) -> Key {
+        let password: Zeroizing<[u8; 32]> =
+            Zeroizing::new(Sha256::digest(self.password.expose_secret().as_bytes()).into());
+        Zeroizing::new(Sha256::digest(&password[..]).into())
     }
 }

@@ -32,8 +32,7 @@
             fontconfig
             freetype
           ];
-        in
-        {
+
           default = pkgs.mkShell {
             packages = with pkgs; [
               cargo
@@ -52,6 +51,23 @@
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+          };
+        in
+        {
+          inherit default;
+
+          # The KeePass clients that write the round-trip corpus (scripts/make-fixtures.sh) and
+          # check keefast's saves against it (scripts/check-interop.sh).
+          corpus = pkgs.mkShell {
+            inputsFrom = [ default ];
+            packages = with pkgs; [
+              keepassxc
+              mono
+              nodejs
+              (python3.withPackages (python: [ python.pykeepass ]))
+            ];
+
+            KEEPASSLIB = "${pkgs.keepass}/lib/dotnet/keepass";
           };
         }
       );

@@ -1,13 +1,23 @@
 use std::fmt;
 
-use keepass::db::{GroupRef, fields};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::SecretString;
 use uuid::Uuid;
 
+use crate::OpenError;
+use crate::kdbx::{KdbxFile, Key};
+use crate::xml::Element;
+
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
-#[derive(Debug)]
+///
+/// The Vault keeps the whole Vault file it was opened from, so saving it writes back everything
+/// in it, including data keefast doesn't model (ADR 0002).
 pub struct Vault {
     root: Group,
+    pub(crate) file: KdbxFile,
+    /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
+    pub(crate) key: Key,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,10 +44,17 @@ pub struct Entry {
 }
 
 impl Vault {
-    pub(crate) fn from_database(database: &keepass::Database) -> Self {
-        Self {
-            root: Group::from_ref(&database.root()),
-        }
+    pub(crate) fn from_file(file: KdbxFile, key: Key) -> Result<Self, OpenError> {
+        let group = file
+            .document
+            .child("Root")
+            .and_then(|root| root.child("Group"))
+            .ok_or_else(|| OpenError::Corrupt("the Vault has no root Group".into()))?;
+        Ok(Self {
+            root: Group::from_element(group)?,
+            file,
+            key,
+        })
     }
 
     pub fn root(&self) -> &Group {
@@ -53,30 +70,45 @@ impl Vault {
     }
 }
 
+/// Two Vaults are equal when they hold the same content: the same document, protected values
+/// and attachments, whatever keys and seeds they are encrypted with.
+impl PartialEq for Vault {
+    fn eq(&self, other: &Self) -> bool {
+        self.file.document == other.file.document && self.file.binaries == other.file.binaries
+    }
+}
+
+impl fmt::Debug for Vault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Vault")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+fn uuid(element: &Element) -> Result<Uuid, OpenError> {
+    let text = element.child("UUID").map(Element::text).unwrap_or_default();
+    BASE64
+        .decode(text.trim())
+        .ok()
+        .and_then(|bytes| Uuid::from_slice(&bytes).ok())
+        .ok_or_else(|| OpenError::Corrupt(format!("invalid UUID {text:?}")))
+}
+
 impl Group {
-    fn from_ref(group: &GroupRef<'_>) -> Self {
-        Self {
-            id: GroupId(group.id().uuid()),
-            name: group.name.clone(),
+    fn from_element(group: &Element) -> Result<Self, OpenError> {
+        Ok(Self {
+            id: GroupId(uuid(group)?),
+            name: group.child("Name").map(Element::text).unwrap_or_default(),
             groups: group
-                .groups()
-                .map(|child| Group::from_ref(&child))
-                .collect(),
+                .children_named("Group")
+                .map(Group::from_element)
+                .collect::<Result<_, _>>()?,
             entries: group
-                .entries()
-                .map(|entry| {
-                    let field = |name| entry.get(name).unwrap_or_default().to_owned();
-                    Entry {
-                        id: EntryId(entry.id().uuid()),
-                        title: field(fields::TITLE),
-                        username: field(fields::USERNAME),
-                        password: SecretString::from(field(fields::PASSWORD)),
-                        url: field(fields::URL),
-                        notes: field(fields::NOTES),
-                    }
-                })
-                .collect(),
-        }
+                .children_named("Entry")
+                .map(Entry::from_element)
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     pub fn id(&self) -> GroupId {
@@ -113,6 +145,25 @@ impl Group {
 }
 
 impl Entry {
+    fn from_element(entry: &Element) -> Result<Self, OpenError> {
+        let field = |name: &str| {
+            entry
+                .children_named("String")
+                .find(|string| string.child("Key").is_some_and(|key| key.text() == name))
+                .and_then(|string| string.child("Value"))
+                .map(Element::text)
+                .unwrap_or_default()
+        };
+        Ok(Self {
+            id: EntryId(uuid(entry)?),
+            title: field("Title"),
+            username: field("UserName"),
+            password: SecretString::from(field("Password")),
+            url: field("URL"),
+            notes: field("Notes"),
+        })
+    }
+
     pub fn id(&self) -> EntryId {
         self.id
     }
