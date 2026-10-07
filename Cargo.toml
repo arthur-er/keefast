@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/workspace", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/arthur-er/keefast"
+
+[workspace.dependencies]
+keefast-core = { path = "crates/core" }
+keefast-workspace = { path = "crates/workspace" }
+keepass = "0.15"
+secrecy = "0.10"
+thiserror = "2"
+uuid = "1"
+gpui = "0.2.2"
+
+# Key derivation (AES-KDF, Argon2) is unbearably slow unoptimised, even in tests and debug builds.
+[profile.dev.package]
+aes = { opt-level = 3 }
+rust-argon2 = { opt-level = 3 }
+blake2b_simd = { opt-level = 3 }
+sha2 = { opt-level = 3 }
+chacha20 = { opt-level = 3 }

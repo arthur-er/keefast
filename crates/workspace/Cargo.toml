@@ -1,0 +1,12 @@
+[package]
+name = "keefast-workspace"
+description = "keefast headless app model. No GPUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+keefast-core.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
