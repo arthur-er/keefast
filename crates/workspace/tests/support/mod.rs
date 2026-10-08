@@ -83,6 +83,11 @@ impl FakeStorage {
         }
     }
 
+    /// Another device deletes the Vault file.
+    pub fn delete_elsewhere(&self, location: &VaultLocation) {
+        self.files.lock().unwrap().remove(location);
+    }
+
     /// Has another device replace the Vault file just before keefast's next write to it.
     pub fn change_before_next_write(&self, location: &VaultLocation, bytes: &[u8]) {
         self.races

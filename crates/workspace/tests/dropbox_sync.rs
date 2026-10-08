@@ -497,3 +497,78 @@ fn the_cache_on_disk_holds_the_encrypted_vault_file_and_its_revision() {
     assert!(!text.contains("Personal"), "the path isn't in it");
     assert!(!text.contains(PASSWORD));
 }
+
+#[test]
+fn a_vault_file_gone_from_dropbox_shows_a_sync_error() {
+    let h = harness();
+    let (mut laptop, vault) = h.open();
+
+    h.dropbox.delete_elsewhere(&in_dropbox());
+    laptop.sync_when_due();
+
+    assert_eq!(laptop.status(vault), Some(SyncStatus::Error));
+    assert_eq!(laptop.workspace.save_status(), SaveStatus::Saved);
+}
+
+#[test]
+fn a_check_from_before_a_lock_does_not_land_on_the_vault_unlocked_again() {
+    let h = harness();
+    let (mut laptop, vault) = h.open();
+    laptop.clock.advance(Workspace::SYNC_INTERVAL);
+    let before_lock = laptop.workspace.begin_syncs().pop().unwrap();
+    laptop
+        .workspace
+        .lock_vault(vault, &mut FakeClipboard::default());
+    laptop
+        .workspace
+        .open_vault(&in_dropbox(), &secrets())
+        .unwrap();
+    laptop.add_group(vault, "After unlocking");
+    let save = laptop.workspace.begin_save(vault).unwrap();
+
+    let _ = laptop.workspace.finish_save(before_lock.run());
+
+    assert_eq!(
+        laptop.status(vault),
+        Some(SyncStatus::Syncing),
+        "the new save still runs"
+    );
+    assert!(laptop.workspace.vault(vault).unwrap().is_saving());
+    laptop.workspace.finish_save(save.run()).unwrap();
+    assert!(has_group(&h.in_dropbox_now(), "After unlocking"));
+}
+
+#[test]
+fn an_unreadable_cache_file_is_set_aside_not_overwritten() {
+    use keefast_workspace::VaultCache;
+    let dir = tempfile::tempdir().unwrap();
+    let cache_dir = dir.path().join("vault-cache");
+    let cache = keefast_workspace::FileVaultCache::new(&cache_dir);
+    let file = keefast_workspace::CachedFile {
+        bytes: KEEPASSXC_KDBX4.to_vec(),
+        revision: None,
+        uploaded: false,
+    };
+    cache.store(&in_dropbox(), &file).unwrap();
+    let path = std::fs::read_dir(&cache_dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(&path, b"damaged").unwrap();
+
+    assert_eq!(cache.load(&in_dropbox()), None);
+    cache.store(&in_dropbox(), &file).unwrap();
+
+    let names: Vec<String> = std::fs::read_dir(&cache_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    let aside = names
+        .iter()
+        .find(|name| name.ends_with(".unreadable"))
+        .unwrap();
+    assert_eq!(std::fs::read(cache_dir.join(aside)).unwrap(), b"damaged");
+}

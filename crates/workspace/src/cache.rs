@@ -1,4 +1,4 @@
-//! The encrypted local cache of remote Vault files: the Vault file's bytes and the revision
+//! The encrypted local cache of online Vault files, such as those in Dropbox: the Vault file's bytes and the revision
 //! they were last synced with, so a Dropbox Vault opens without a network, and saves made
 //! offline are kept until they can be uploaded. The bytes are the Vault file itself, encrypted
 //! with the Vault's key; nothing decrypted is ever cached (ADR 0004).
@@ -13,18 +13,18 @@ use sha2::{Digest, Sha256};
 use crate::atomic_file;
 use crate::storage::{Revision, VaultLocation};
 
-/// A remote Vault file as this machine last had it.
+/// An online Vault file as this machine last had it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedFile {
     pub bytes: Vec<u8>,
     /// The revision `bytes` were downloaded at, or, if not uploaded, were based on.
     pub revision: Option<Revision>,
-    /// Whether the remote Vault file has everything `bytes` has. A save made offline isn't
+    /// Whether the online Vault file has everything `bytes` has. A save made offline isn't
     /// uploaded until keefast is back online.
     pub uploaded: bool,
 }
 
-/// Keeps remote Vault files on this machine. Injected into the Workspace.
+/// Keeps online Vault files on this machine. Injected into the Workspace.
 pub trait VaultCache: Send + Sync {
     /// The cached Vault file at `location`, if one is cached and readable.
     fn load(&self, location: &VaultLocation) -> Option<CachedFile>;
@@ -38,12 +38,13 @@ pub struct FileVaultCache {
     dir: PathBuf,
 }
 
-/// The first line of every cache file, followed by its metadata as one line of JSON, then the
+/// The first line of every cache file, followed by its header as one line of JSON, then the
 /// Vault file's bytes.
 const MAGIC: &[u8] = b"keefast vault cache 1\n";
 
+/// What a cache file says of the Vault file it holds.
 #[derive(Serialize, Deserialize)]
-struct Metadata {
+struct Header {
     revision: Option<String>,
     uploaded: bool,
 }
@@ -74,21 +75,21 @@ impl FileVaultCache {
 }
 
 impl VaultCache for FileVaultCache {
+    /// A cache file that can't be read is moved aside, to `<name>.unreadable`, rather than left
+    /// to be replaced: it may hold a save not uploaded yet.
     fn load(&self, location: &VaultLocation) -> Option<CachedFile> {
-        let contents = fs::read(self.path(location)).ok()?;
-        let rest = contents.strip_prefix(MAGIC)?;
-        let end = rest.iter().position(|&byte| byte == b'\n')?;
-        let metadata: Metadata = serde_json::from_slice(&rest[..end]).ok()?;
-        Some(CachedFile {
-            bytes: rest[end + 1..].to_vec(),
-            revision: metadata.revision.map(Revision::new),
-            uploaded: metadata.uploaded,
-        })
+        let path = self.path(location);
+        let contents = fs::read(&path).ok()?;
+        let parsed = parse(&contents);
+        if parsed.is_none() {
+            let _ = fs::rename(&path, path.with_extension("unreadable"));
+        }
+        parsed
     }
 
     fn store(&self, location: &VaultLocation, file: &CachedFile) -> io::Result<()> {
         create_private_dir(&self.dir)?;
-        let metadata = serde_json::to_vec(&Metadata {
+        let header = serde_json::to_vec(&Header {
             revision: file
                 .revision
                 .as_ref()
@@ -96,13 +97,25 @@ impl VaultCache for FileVaultCache {
             uploaded: file.uploaded,
         })
         .map_err(io::Error::other)?;
-        let mut contents = Vec::with_capacity(MAGIC.len() + metadata.len() + 1 + file.bytes.len());
+        let mut contents = Vec::with_capacity(MAGIC.len() + header.len() + 1 + file.bytes.len());
         contents.extend_from_slice(MAGIC);
-        contents.extend_from_slice(&metadata);
+        contents.extend_from_slice(&header);
         contents.push(b'\n');
         contents.extend_from_slice(&file.bytes);
         atomic_file::replace(&self.path(location), &contents)
     }
+}
+
+/// A cache file's contents, if they are one.
+fn parse(contents: &[u8]) -> Option<CachedFile> {
+    let rest = contents.strip_prefix(MAGIC)?;
+    let end = rest.iter().position(|&byte| byte == b'\n')?;
+    let header: Header = serde_json::from_slice(&rest[..end]).ok()?;
+    Some(CachedFile {
+        bytes: rest[end + 1..].to_vec(),
+        revision: header.revision.map(Revision::new),
+        uploaded: header.uploaded,
+    })
 }
 
 /// Creates the cache directory, readable by the user only where the OS lets keefast say so.

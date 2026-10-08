@@ -401,6 +401,7 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "vault_browser::CopyTotp" => "Copy TOTP Code",
         "vault_browser::CopyCustomField" => "Copy Custom Field",
         "vault_browser::LockAll" => "Lock All Vaults",
+        "vault_browser::SyncNow" => "Sync Dropbox Vaults Now",
         "vault_browser::FocusSearch" => "Search Entries",
         "vault_browser::SortByTitle" => "Sort Entries by Title",
         "vault_browser::SortByUsername" => "Sort Entries by Username",

@@ -11,7 +11,7 @@ const SETTLE: Duration = Duration::from_millis(500);
 
 /// Checks Dropbox Vaults for changes made elsewhere whenever one is due, Merging them in and
 /// uploading saves made offline, for as long as the app runs.
-pub fn sync_remote_vaults(workspace: &Entity<Workspace>, cx: &mut App) {
+pub fn sync_online_vaults(workspace: &Entity<Workspace>, cx: &mut App) {
     let workspace = workspace.clone();
     cx.spawn(async move |cx| {
         // With no check due, look again soon: a Vault may be opened or unlocked meanwhile,

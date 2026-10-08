@@ -390,6 +390,10 @@ mod tests {
             "Copy Custom Field"
         );
         assert_eq!(command_name("vault_browser::LockAll"), "Lock All Vaults");
+        assert_eq!(
+            command_name("vault_browser::SyncNow"),
+            "Sync Dropbox Vaults Now"
+        );
         assert_eq!(command_name("vault_browser::FocusSearch"), "Search Entries");
         assert_eq!(
             command_name("vault_browser::SortByModified"),

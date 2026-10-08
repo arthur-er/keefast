@@ -108,7 +108,7 @@ impl KeefastWindow {
             .detach();
         saving::watch_vault_files(&workspace, cx);
         favicons::watch(&workspace, cx);
-        saving::sync_remote_vaults(&workspace, cx);
+        saving::sync_online_vaults(&workspace, cx);
         locking::watch(&workspace, cx);
         // Any key typed in keefast counts as activity, wherever it goes.
         let typing = workspace.clone();

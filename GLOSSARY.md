@@ -46,6 +46,14 @@ _Avoid_: Backend, remote, cloud
 Reconciling a Vault with a newer version of its Vault file that was changed elsewhere, so that no changes from either side are lost.
 _Avoid_: Sync (sync is the overall process; merge is the reconciliation step)
 
+**Local cache**:
+The copy of a Dropbox Vault file kept on this machine, still encrypted, with the revision it was last synced at. It lets the Vault open offline, and holds saves made offline until they are uploaded.
+_Avoid_: Offline copy, mirror
+
+**Sync status**:
+Where a Dropbox Vault stands with its Vault file in Dropbox: synced, syncing, offline or error.
+_Avoid_: Connection state
+
 ### Browser integration
 
 **Companion extension**:

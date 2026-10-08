@@ -149,7 +149,8 @@ Vault file, which keefast finds and Merges in within 30 seconds.
 - **Background checks**: Dropbox doesn't notify desktop apps of changes, so keefast checks each
   open Dropbox Vault every 30 seconds. A check asks only for the revision, and downloads and
   Merges the Vault file only when it changed. While Dropbox can't be reached, checks back off
-  (up to every 5 minutes). "Sync Now" in the command palette checks at once. Locked Vaults are
+  (up to every 5 minutes), so an offline save can take that long to upload once the network is
+  back; "Sync Dropbox Vaults Now" in the command palette checks at once. Locked Vaults are
   never checked.
 - **Offline**: every Dropbox Vault file keefast opens is cached in
   `<local data dir>/keefast/vault-cache/` (`~/.local/share` on Linux, `%LOCALAPPDATA%` on
@@ -158,7 +159,7 @@ Vault file, which keefast finds and Merges in within 30 seconds.
   saves go to the cache. They're uploaded, with a Merge, as soon as Dropbox is reachable
   again, even after a restart or a lock.
 - **Sync status**: the sidebar shows each Dropbox Vault as *Synced*, *Syncing…*, *Offline* or
-  *Sync error*.
+  *Sync error* (for instance, its Vault file was deleted from Dropbox).
 
 The cache is keyed by Dropbox path, not by account. Connecting a different Dropbox account
 that has a Vault file at the same path reuses its cache entry. A save made offline would then

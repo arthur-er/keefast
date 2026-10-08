@@ -38,9 +38,9 @@ impl VaultLocation {
         }
     }
 
-    /// Whether the Vault file lives in a remote service, reached over the network: such Vault
-    /// files are cached on this machine, and checked for changes now and then.
-    pub fn is_remote(&self) -> bool {
+    /// Whether the Vault file is with an online Storage provider, reached over the network:
+    /// such Vault files are cached on this machine, and checked for changes now and then.
+    pub fn is_online(&self) -> bool {
         matches!(self, VaultLocation::Dropbox(_))
     }
 
