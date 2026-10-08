@@ -1,4 +1,5 @@
-// What the popup asks the service worker, and its answers.
+// What the popup asks the service worker, and its answers; and what pages tell it.
+import type { SubmittedLogin } from "./capture";
 import type { EntrySummary } from "./companion";
 import type { FailureReason, Status } from "./keefast";
 
@@ -16,4 +17,12 @@ export interface Answers {
   /** None when the extension can't fill the page. */
   entries: EntrySummary[] | null;
   fill: boolean;
+}
+
+/** What the script in a page the user filled tells the service worker. */
+export interface PageMessage {
+  type: "submitted";
+  login: SubmittedLogin;
+  /** Where the login's form submitted to, when it was in a form. */
+  submitUrl?: string;
 }

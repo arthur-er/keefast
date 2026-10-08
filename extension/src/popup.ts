@@ -98,7 +98,9 @@ async function listEntries(): Promise<void> {
   const entries = await ask({ type: "entries", tab });
   if (!entries.ok) return failed(entries.reason);
   if (entries.value === null) return message("keefast can't fill this page.");
-  if (entries.value.length === 0) return message("No Entries for this site.");
+  if (entries.value.length === 0) {
+    return message("No Entries for this site.", "Sign in or sign up, and keefast offers to save it.");
+  }
   const list = element("ul");
   list.append(...entries.value.map((entry) => entryItem(tab, entry)));
   show(list);

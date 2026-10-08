@@ -39,6 +39,18 @@ export interface Entry {
   password: string;
 }
 
+/** A login the user submitted, for keefast to save. */
+export interface CapturedLogin {
+  /** The page it was submitted on. */
+  url: string;
+  /** Where its form submitted to. */
+  submitUrl?: string;
+  username: string;
+  password: string;
+  /** The Entry it updates, when the extension knows which. */
+  uuid?: string;
+}
+
 /** Whether the extension can fill sign-in forms, and what stands in the way. */
 export type Status = "not-running" | "locked" | "unpaired" | "paired";
 
@@ -150,6 +162,45 @@ export class KeefastClient {
       return Array.isArray(reply.entries) ? reply.entries.map(toEntry) : [];
     } catch (error) {
       if (error instanceof KeefastError && error.code === NO_LOGINS_FOUND) return [];
+      throw error;
+    }
+  }
+
+  /**
+   * Sends a login the user submitted to keefast, which asks the user where it goes, so this
+   * waits for them. Says whether they saved it. keefast takes logins only from an extension
+   * that proved a Pairing on this connection, so this proves one first.
+   */
+  async saveLogin({ url, submitUrl, username, password, uuid }: CapturedLogin): Promise<boolean> {
+    let pairing: Pairing | undefined;
+    for (const candidate of await this.store.load()) {
+      if (await this.isPaired(candidate)) {
+        pairing = candidate;
+        break;
+      }
+    }
+    if (!pairing) {
+      throw new KeefastError("failed", "The extension isn't paired with an open Vault");
+    }
+    try {
+      await this.sendEncrypted(
+        "set-login",
+        {
+          url,
+          submitUrl: submitUrl ?? url,
+          id: pairing.id,
+          login: username,
+          password,
+          uuid: uuid ?? "",
+          // keefast lets the user choose the Group.
+          group: "",
+          groupUuid: "",
+        },
+        { waitsForUser: true },
+      );
+      return true;
+    } catch (error) {
+      if (error instanceof KeefastError && error.reason === "denied") return false;
       throw error;
     }
   }

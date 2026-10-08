@@ -21,6 +21,10 @@ export class FakeKeefast {
   garbled = false;
   /** Holds `get-logins` replies until released, as the Access decision prompt does. */
   holdLogins = false;
+  /** Whether the user saves the logins `set-login` sends, rather than turning them down. */
+  savesLogins = true;
+  /** The logins the user saved. */
+  saved: Message[] = [];
   connections = 0;
   received: Message[] = [];
   private held: (() => void)[] = [];
@@ -29,6 +33,8 @@ export class FakeKeefast {
     this.connections += 1;
     const keys = nacl.box.keyPair();
     let clientKey: Uint8Array | undefined;
+    /** The Pairings this connection proved with `test-associate`, as keefast requires. */
+    const proven = new Set<string>();
     const messageListeners: ((message: object) => void)[] = [];
     const disconnectListeners: (() => void)[] = [];
     let open = true;
@@ -112,6 +118,7 @@ export class FakeKeefast {
         }
         case "test-associate": {
           const paired = this.pairings.get(message.id as string) === message.key;
+          if (paired) proven.add(message.id as string);
           reply(
             paired ? encrypted(request, { hash: "vault-hash", id: message.id }) : error(request, 8),
           );
@@ -140,6 +147,17 @@ export class FakeKeefast {
             );
           if (this.holdLogins) this.held.push(answer);
           else answer();
+          return;
+        }
+        case "set-login": {
+          if (proven.size === 0) {
+            reply(error(request, 8));
+          } else if (!this.savesLogins) {
+            reply(error(request, 6));
+          } else {
+            this.saved.push(message);
+            reply(encrypted(request, { count: null, entries: null, error: "success" }));
+          }
           return;
         }
         default:

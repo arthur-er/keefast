@@ -1,9 +1,10 @@
-// The service worker: it holds the connection to keefast, and answers the popup and the
-// shortcut. Nothing runs in pages until the user asks to fill one.
+// The service worker: it holds the connection to keefast, answers the popup and the shortcut,
+// and offers keefast the logins submitted in pages. Nothing runs in pages until the user asks
+// to fill one.
 import { Companion, type Tabs } from "./companion";
 import { HOST_NAME, KeefastClient, KeefastError, type NativePort, type Pairing } from "./keefast";
 import type { Credentials } from "./forms";
-import type { Answer, Answers, Request } from "./messages";
+import type { Answer, Answers, PageMessage, Request } from "./messages";
 
 function connectNative(): NativePort {
   const port = chrome.runtime.connectNative(HOST_NAME);
@@ -81,10 +82,39 @@ async function answer(request: Request): Promise<Answers[Request["type"]]> {
   }
 }
 
-chrome.runtime.onMessage.addListener((request: Request, sender, respond) => {
-  // Only the extension's own pages: content scripts don't send messages.
-  if (sender.id !== chrome.runtime.id || sender.tab) return false;
-  answer(request).then(
+/** Offers keefast a login submitted in a page the user filled. */
+function submitted(message: PageMessage, sender: chrome.runtime.MessageSender): void {
+  const tab = sender.tab?.id;
+  // Only the page the extension was injected into: the tab's top frame.
+  if (tab === undefined || sender.frameId !== 0 || !sender.url || !isSubmitted(message)) return;
+  const url = new URL(sender.url);
+  if (url.protocol !== "https:" && url.protocol !== "http:") return;
+  // The browser says which site the login was submitted on, not the page.
+  const page = { url: sender.url, origin: url.origin, submitUrl: message.submitUrl };
+  // When keefast is locked or not running, the login can't be saved: there's no one to ask.
+  companion.submitted(tab, page, message.login).catch(() => {});
+}
+
+function isSubmitted(message: PageMessage): boolean {
+  const { login, submitUrl } = message;
+  return (
+    message.type === "submitted" &&
+    typeof login === "object" &&
+    login !== null &&
+    typeof login.username === "string" &&
+    typeof login.password === "string" &&
+    (login.current === undefined || typeof login.current === "string") &&
+    (submitUrl === undefined || typeof submitUrl === "string")
+  );
+}
+
+chrome.runtime.onMessage.addListener((request: Request | PageMessage, sender, respond) => {
+  if (sender.id !== chrome.runtime.id) return false;
+  if (sender.tab) {
+    submitted(request as PageMessage, sender);
+    return false;
+  }
+  answer(request as Request).then(
     (value) => respond({ ok: true, value } satisfies Answer<unknown>),
     (error: unknown) =>
       respond({

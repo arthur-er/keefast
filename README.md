@@ -70,6 +70,11 @@ popup lists the site's Entries: click one to fill it, or press Alt+Shift+K to fi
 Nothing is filled until you ask. The extension never asks for a master password: when keefast
 is locked or not running, it says so, and you unlock keefast itself.
 
+Once you've opened the popup on a page, the extension also notices the logins you submit there:
+a sign-in it doesn't have, a sign-up, or a password change. keefast asks you whether to save
+it, and where; a changed password updates its Entry. A sign-in with an Entry as filled sends
+nothing. Pages you haven't opened the popup on are never read.
+
 To try the protocol without a browser, run keefast with browser integration on and:
 
 ```sh

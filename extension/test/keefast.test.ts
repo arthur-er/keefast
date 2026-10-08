@@ -143,6 +143,61 @@ describe("entries", () => {
   });
 });
 
+describe("saveLogin", () => {
+  const login = {
+    url: "https://example.com/login",
+    submitUrl: "https://example.com/session",
+    username: "alice",
+    password: "n3w-s3cret",
+  };
+
+  beforeEach(async () => {
+    await client.pair();
+  });
+
+  it("sends the login for the user to save in keefast", async () => {
+    expect(await client.saveLogin({ ...login, uuid: "0011" })).toBe(true);
+
+    expect(keefast.saved).toEqual([
+      expect.objectContaining({
+        id: "Chromium",
+        url: "https://example.com/login",
+        submitUrl: "https://example.com/session",
+        login: "alice",
+        password: "n3w-s3cret",
+        uuid: "0011",
+      }),
+    ]);
+  });
+
+  it("proves its Pairing first, as keefast requires", async () => {
+    await client.saveLogin(login);
+
+    const actions = keefast.received.map((m) => m.action);
+    expect(actions.lastIndexOf("test-associate")).toBeLessThan(actions.indexOf("set-login"));
+  });
+
+  it("says so when the user turns the login down", async () => {
+    keefast.savesLogins = false;
+
+    expect(await client.saveLogin(login)).toBe(false);
+    expect(keefast.saved).toEqual([]);
+  });
+
+  it("sends nothing while unpaired", async () => {
+    store.pairings = [];
+
+    await expect(client.saveLogin(login)).rejects.toBeInstanceOf(KeefastError);
+    expect(keefast.received.map((m) => m.action)).not.toContain("set-login");
+  });
+
+  it("fails as locked when keefast is locked", async () => {
+    keefast.locked = true;
+
+    await expect(client.saveLogin(login)).rejects.toMatchObject({ reason: "locked" });
+  });
+});
+
 describe("connection", () => {
   it("exchanges keys once per connection", async () => {
     await client.status();

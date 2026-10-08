@@ -18,7 +18,7 @@ export interface LoginFields {
   submitUrl?: string;
 }
 
-const TEXT_TYPES = new Set(["text", "email", "tel"]);
+export const TEXT_TYPES = new Set(["text", "email", "tel"]);
 const USERNAME_HINT = /user|login|e-?mail|identifier|account/i;
 
 /** The page's login fields, or none if it has no login form the user could see. */
@@ -80,17 +80,22 @@ function withSubmitUrl(fields: LoginFields): LoginFields {
   return form ? { ...fields, submitUrl: form.action } : fields;
 }
 
-function autocomplete(input: HTMLInputElement): string {
+export function autocomplete(input: HTMLInputElement): string {
   return input.autocomplete.toLowerCase();
 }
 
-function precedes(a: Node, b: Node): boolean {
+export function precedes(a: Node, b: Node): boolean {
   return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
 /** Whether the user could see and type into the field: a page may hide fields to harvest. */
 function fillable(input: HTMLInputElement): boolean {
-  if (input.disabled || input.readOnly || input.hidden) {
+  return !input.disabled && !input.readOnly && shown(input);
+}
+
+/** Whether the user could see the field. */
+export function shown(input: HTMLInputElement): boolean {
+  if (input.hidden) {
     return false;
   }
   const view = input.ownerDocument.defaultView;
