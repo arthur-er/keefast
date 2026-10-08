@@ -96,6 +96,68 @@ fn a_created_entry_survives_a_save_with_every_field() {
     assert_eq!(titles(group_named(&vault, "Work")), ["GitHub", "Bank"]);
 }
 
+/// Whether XML 1.0 allows the character in a document at all (its `Char` production).
+fn is_xml_char(ch: char) -> bool {
+    matches!(ch, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
+#[test]
+fn characters_xml_does_not_allow_are_not_saved_so_other_clients_can_read_the_file() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    let work = group_named(&vault, "Work").id();
+    // What pasting a terminal's output into a note leaves behind, and a stray form feed.
+    let pasted = EntryFields {
+        title: "Bank\u{c}".into(),
+        username: "ali\u{1b}ce".into(),
+        url: "https://example.com/\u{0}".into(),
+        notes: "\u{1b}[31mred\u{1b}[0m\nsecond\u{b} line\r\n\u{FFFE}".into(),
+        ..fields("Bank", "s3cret")
+    };
+
+    let id = vault.create_entry(work, &pasted, now()).unwrap();
+    let group = vault.create_group(work, "Team\u{7}", now()).unwrap();
+    vault.rename_group(group, "Team\u{8} A", later()).unwrap();
+
+    // The decrypted XML, as KeePassXC's and KeePass2's strict readers will see it.
+    let xml = independent_xml(&vault);
+    let bad: Vec<char> = xml.chars().filter(|&ch| !is_xml_char(ch)).collect();
+    assert!(
+        bad.is_empty(),
+        "the XML holds characters XML 1.0 forbids: {bad:?}"
+    );
+
+    // What is left of the text is what was typed, otherwise unchanged.
+    let vault = reopen(&vault);
+    let entry = vault.entry(id).unwrap();
+    assert_eq!(entry.title(), "Bank");
+    assert_eq!(entry.username(), "alice");
+    assert_eq!(entry.url(), "https://example.com/");
+    assert_eq!(entry.notes(), "[31mred[0m\nsecond line\r\n");
+    assert_eq!(entry.password().expose_secret(), "s3cret");
+    assert!(group_names(group_named(&vault, "Work")).contains(&"Team A"));
+}
+
+#[test]
+fn text_with_only_allowed_characters_is_saved_as_it_was() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    let root = vault.root().id();
+    let text = EntryFields {
+        title: "Café ✓ 😀".into(),
+        notes: "tab\there\nnewline\r\nand <markup> & \"quotes\" \u{10FFFF}".into(),
+        ..fields("Bank", "s3cret")
+    };
+
+    let id = vault.create_entry(root, &text, now()).unwrap();
+
+    let entry = reopen(&vault);
+    let entry = entry.entry(id).unwrap();
+    assert_eq!(entry.title(), "Café ✓ 😀");
+    assert_eq!(
+        entry.notes(),
+        "tab\there\nnewline\r\nand <markup> & \"quotes\" \u{10FFFF}"
+    );
+}
+
 #[test]
 fn a_new_entry_password_is_stored_protected() {
     let mut vault = open(KEEPASSXC_KDBX4);
