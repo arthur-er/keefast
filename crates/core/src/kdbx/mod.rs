@@ -20,7 +20,7 @@ use crate::{OpenError, SaveError};
 use crypto::{InnerStream, OuterCipher};
 use header::{Field, VariantDictionary, Version, field, inner_field};
 
-pub(crate) use crypto::Key;
+pub(crate) use crypto::{Key, random};
 
 /// The contents of a Vault file.
 #[derive(Debug, Clone)]

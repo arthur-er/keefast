@@ -5,14 +5,16 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::SecretString;
 use uuid::Uuid;
 
-use crate::OpenError;
 use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
+use crate::{OpenError, Timestamp};
 
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
 ///
 /// The Vault keeps the whole Vault file it was opened from, so saving it writes back everything
-/// in it, including data keefast doesn't model (ADR 0002).
+/// in it, including data keefast doesn't model (ADR 0002). Edits change that document, and the
+/// Groups and Entries are read back from it.
+#[derive(Clone)]
 pub struct Vault {
     root: Group,
     pub(crate) file: VaultFile,
@@ -21,19 +23,21 @@ pub struct Vault {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GroupId(Uuid);
+pub struct GroupId(pub(crate) Uuid);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EntryId(Uuid);
+pub struct EntryId(pub(crate) Uuid);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Group {
     id: GroupId,
     name: String,
+    last_modified: Option<Timestamp>,
     groups: Vec<Group>,
     entries: Vec<Entry>,
 }
 
+#[derive(Clone)]
 pub struct Entry {
     id: EntryId,
     title: String,
@@ -41,6 +45,9 @@ pub struct Entry {
     password: SecretString,
     url: String,
     notes: String,
+    last_modified: Option<Timestamp>,
+    /// Earlier versions, oldest first.
+    history: Vec<Entry>,
 }
 
 impl Vault {
@@ -55,6 +62,17 @@ impl Vault {
             file,
             key,
         })
+    }
+
+    /// Reads the Groups and Entries back from the document after an edit.
+    pub(crate) fn refresh(&mut self) {
+        let group = self
+            .file
+            .document
+            .child("Root")
+            .and_then(|root| root.child("Group"))
+            .expect("edits keep the root Group");
+        self.root = Group::from_element(group).expect("edits keep every UUID valid");
     }
 
     pub fn root(&self) -> &Group {
@@ -88,11 +106,24 @@ impl fmt::Debug for Vault {
 
 fn uuid(element: &Element) -> Result<Uuid, OpenError> {
     let text = element.child("UUID").map(Element::text).unwrap_or_default();
+    decode_uuid(&text).ok_or_else(|| OpenError::Corrupt(format!("invalid UUID {text:?}")))
+}
+
+pub(crate) fn decode_uuid(text: &str) -> Option<Uuid> {
     BASE64
         .decode(text.trim())
         .ok()
         .and_then(|bytes| Uuid::from_slice(&bytes).ok())
-        .ok_or_else(|| OpenError::Corrupt(format!("invalid UUID {text:?}")))
+}
+
+pub(crate) fn encode_uuid(uuid: Uuid) -> String {
+    BASE64.encode(uuid.as_bytes())
+}
+
+/// When an Entry or Group was last modified, from its `Times`.
+fn last_modified(element: &Element) -> Option<Timestamp> {
+    let time = element.child("Times")?.child("LastModificationTime")?;
+    Timestamp::decode(&time.text())
 }
 
 impl Group {
@@ -100,6 +131,7 @@ impl Group {
         Ok(Self {
             id: GroupId(uuid(group)?),
             name: group.child("Name").map(Element::text).unwrap_or_default(),
+            last_modified: last_modified(group),
             groups: group
                 .children_named("Group")
                 .map(Group::from_element)
@@ -113,6 +145,10 @@ impl Group {
 
     pub fn id(&self) -> GroupId {
         self.id
+    }
+
+    pub fn last_modified(&self) -> Option<Timestamp> {
+        self.last_modified
     }
 
     pub fn name(&self) -> &str {
@@ -161,6 +197,17 @@ impl Entry {
             password: SecretString::from(field("Password")),
             url: field("URL"),
             notes: field("Notes"),
+            last_modified: last_modified(entry),
+            history: entry
+                .child("History")
+                .map(|history| {
+                    history
+                        .children_named("Entry")
+                        .map(Entry::from_element)
+                        .collect::<Result<_, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
 
@@ -187,6 +234,15 @@ impl Entry {
     pub fn notes(&self) -> &str {
         &self.notes
     }
+
+    pub fn last_modified(&self) -> Option<Timestamp> {
+        self.last_modified
+    }
+
+    /// The Entry's earlier versions, oldest first.
+    pub fn history(&self) -> &[Entry] {
+        &self.history
+    }
 }
 
 impl fmt::Debug for Entry {
@@ -197,6 +253,7 @@ impl fmt::Debug for Entry {
             .field("username", &self.username)
             .field("password", &"[hidden]")
             .field("url", &self.url)
+            .field("history", &self.history)
             .finish_non_exhaustive()
     }
 }

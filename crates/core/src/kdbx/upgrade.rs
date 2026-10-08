@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 use super::Binary;
 use crate::OpenError;
+use crate::time::Timestamp;
 use crate::xml::{Element, Node, Secret};
 
 /// The timestamps KeePass defines, as (parent, element) pairs. KDBX 3.1 writes them as ISO 8601
@@ -115,7 +116,7 @@ fn convert_timestamps(element: &mut Element) {
     for child in element.elements_mut() {
         if TIMESTAMPS.contains(&(parent.as_str(), child.name.as_str())) {
             if let Some(seconds) = parse_iso8601(child.text().trim()) {
-                child.set_text(BASE64.encode(seconds.to_le_bytes()));
+                child.set_text(Timestamp::from_year_one_seconds(seconds).encode());
             }
         } else {
             convert_timestamps(child);

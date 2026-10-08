@@ -1,9 +1,12 @@
 //! keefast's desktop app: GPUI views that render Workspace state and send it commands.
 
+mod entry_editor;
 mod strings;
+mod text_field;
 mod theme;
 mod unlock;
 mod vault_browser;
+mod widgets;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,11 +47,13 @@ impl KeefastWindow {
         &mut self,
         _: &Entity<UnlockView>,
         &Unlocked(vault): &Unlocked,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace.clone();
-        self.screen = Screen::Browse(cx.new(|cx| VaultBrowser::new(workspace, vault, cx)));
+        let browser = cx.new(|cx| VaultBrowser::new(workspace, vault, cx));
+        window.focus(&browser.focus_handle(cx));
+        self.screen = Screen::Browse(browser);
         cx.notify();
     }
 }

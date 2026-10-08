@@ -27,3 +27,35 @@ pub const DETAIL_NOTES: &str = "Notes";
 pub const UNTITLED: &str = "(untitled)";
 pub const HIDDEN_PASSWORD: &str = "••••••••";
 pub const PASSWORD_MASK_CHAR: &str = "•";
+
+pub const CARET: &str = "▏";
+pub const CANCEL: &str = "Cancel";
+pub const EDITOR_TITLE: &str = "Title";
+pub const SAVE_ENTRY: &str = "Done";
+pub const REVEAL_PASSWORD: &str = "Show";
+pub const HIDE_PASSWORD: &str = "Hide";
+
+pub const NEW_ENTRY: &str = "+ Entry";
+pub const NEW_GROUP: &str = "+ Group";
+pub const NEW_GROUP_NAME: &str = "New Group";
+pub const GROUP_NAME_PLACEHOLDER: &str = "Group name";
+pub const EDIT: &str = "Edit";
+pub const RENAME: &str = "Rename";
+pub const MOVE: &str = "Move…";
+pub const DELETE: &str = "Delete";
+pub const MOVE_TO: &str = "Move to:";
+
+pub const SAVE_VAULTS: &str = "Save";
+pub const AUTOSAVE: &str = "Autosave";
+pub const STATUS_SAVED: &str = "All changes saved";
+pub const STATUS_UNSAVED: &str = "Unsaved changes";
+pub const STATUS_SAVING: &str = "Saving…";
+pub const STATUS_SAVE_FAILED: &str = "Save failed";
+
+pub const CONFIRM_DELETE_ENTRY: &str = "Delete this Entry for good?";
+pub const CONFIRM_DELETE_GROUP: &str = "Delete this Group and everything in it for good?";
+pub const CONFIRM_DELETE_DETAIL: &str = "This cannot be undone.";
+
+pub const ERROR_MOVE_INTO_ITSELF: &str = "A Group cannot be moved into itself or its subgroups.";
+pub const ERROR_ROOT_GROUP: &str = "The top Group of a Vault cannot be moved or deleted.";
+pub const ERROR_NOT_FOUND: &str = "That item no longer exists.";

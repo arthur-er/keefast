@@ -10,3 +10,6 @@ repository.workspace = true
 keefast-core.workspace = true
 secrecy.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

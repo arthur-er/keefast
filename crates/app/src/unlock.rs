@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, PathPromptOptions, SharedString,
-    Task, Window, div, prelude::*, px,
+    Context, Entity, EventEmitter, FocusHandle, Focusable, PathPromptOptions, SharedString, Task,
+    Window, div, prelude::*, px,
 };
 use keefast_core::{CompositeKey, OpenError};
 use keefast_workspace::{OpenVaultError, StorageError, VaultId, VaultLocation, Workspace};
-use zeroize::Zeroizing;
 
 use crate::strings;
+use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::widgets::button;
 
 /// Emitted once a Vault has been decrypted and added to the Workspace.
 pub struct Unlocked(pub VaultId);
@@ -18,8 +19,7 @@ pub struct Unlocked(pub VaultId);
 pub struct UnlockView {
     workspace: gpui::Entity<Workspace>,
     path: Option<PathBuf>,
-    password: Zeroizing<String>,
-    password_focus: FocusHandle,
+    password: Entity<TextField>,
     error: Option<SharedString>,
     unlocking: Option<Task<()>>,
 }
@@ -27,8 +27,8 @@ pub struct UnlockView {
 impl EventEmitter<Unlocked> for UnlockView {}
 
 impl Focusable for UnlockView {
-    fn focus_handle(&self, _: &gpui::App) -> FocusHandle {
-        self.password_focus.clone()
+    fn focus_handle(&self, cx: &gpui::App) -> FocusHandle {
+        self.password.focus_handle(cx)
     }
 }
 
@@ -38,11 +38,17 @@ impl UnlockView {
         path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let password =
+            cx.new(|cx| TextField::new(strings::UNLOCK_PASSWORD_PLACEHOLDER, cx).masked());
+        cx.subscribe(&password, |this, _, event, cx| match event {
+            TextFieldEvent::Submit => this.unlock(cx),
+            TextFieldEvent::Cancel => {}
+        })
+        .detach();
         Self {
             workspace,
             path,
-            password: empty_password(),
-            password_focus: cx.focus_handle(),
+            password,
             error: None,
             unlocking: None,
         }
@@ -80,7 +86,7 @@ impl UnlockView {
         if self.unlocking.is_some() {
             return;
         }
-        let key = CompositeKey::password(self.password.as_str());
+        let key = CompositeKey::password(self.password.read(cx).text());
         let pending = self
             .workspace
             .read(cx)
@@ -95,7 +101,7 @@ impl UnlockView {
                 this.unlocking = None;
                 match result {
                     Ok(unlocked) => {
-                        this.password = empty_password();
+                        this.password.update(cx, |field, cx| field.set_text("", cx));
                         let vault = this
                             .workspace
                             .update(cx, |workspace, _| workspace.add_unlocked(unlocked));
@@ -109,35 +115,6 @@ impl UnlockView {
         }));
         cx.notify();
     }
-
-    fn on_password_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        let modifiers = keystroke.modifiers;
-        match keystroke.key.as_str() {
-            "enter" => self.unlock(cx),
-            "backspace" => {
-                self.password.pop();
-            }
-            "v" if modifiers.secondary() => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    let text = Zeroizing::new(text);
-                    self.password.push_str(text.trim_end_matches(['\r', '\n']));
-                }
-            }
-            _ if modifiers.control || modifiers.alt || modifiers.platform => return,
-            _ => match &keystroke.key_char {
-                Some(typed) => self.password.push_str(typed),
-                None => return,
-            },
-        }
-        cx.stop_propagation();
-        cx.notify();
-    }
-}
-
-/// Reserves room up front so typing doesn't reallocate and leave copies of the password behind.
-fn empty_password() -> Zeroizing<String> {
-    Zeroizing::new(String::with_capacity(256))
 }
 
 fn describe(error: &OpenVaultError) -> &'static str {
@@ -153,32 +130,11 @@ fn describe(error: &OpenVaultError) -> &'static str {
 impl Render for UnlockView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
-        let focused = self.password_focus.is_focused(window);
         let can_unlock = self.path.is_some() && self.unlocking.is_none();
         let file_label: SharedString = match &self.path {
             Some(path) => path.display().to_string().into(),
             None => strings::UNLOCK_NO_FILE.into(),
         };
-        let password_text: SharedString = if self.password.is_empty() {
-            strings::UNLOCK_PASSWORD_PLACEHOLDER.into()
-        } else {
-            strings::PASSWORD_MASK_CHAR
-                .repeat(self.password.chars().count())
-                .into()
-        };
-
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .px_3()
-                .py_1p5()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .cursor_pointer()
-                .child(label)
-        };
-
         div()
             .size_full()
             .flex()
@@ -212,7 +168,7 @@ impl Render for UnlockView {
                                     .child(file_label),
                             )
                             .child(
-                                button("choose-file", strings::UNLOCK_CHOOSE_FILE)
+                                button("choose-file", strings::UNLOCK_CHOOSE_FILE, theme)
                                     .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx))),
                             ),
                     )
@@ -222,22 +178,7 @@ impl Render for UnlockView {
                             .text_color(theme.muted)
                             .child(strings::UNLOCK_PASSWORD_LABEL),
                     )
-                    .child(
-                        div()
-                            .id("password")
-                            .track_focus(&self.password_focus)
-                            .on_key_down(cx.listener(Self::on_password_key))
-                            .px_2()
-                            .py_1p5()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(if focused { theme.accent } else { theme.border })
-                            .bg(theme.background)
-                            .when(self.password.is_empty(), |this| {
-                                this.text_color(theme.muted)
-                            })
-                            .child(password_text),
-                    )
+                    .child(self.password.clone())
                     .when_some(self.error.clone(), |this, error| {
                         this.child(div().text_sm().text_color(theme.error).child(error))
                     })
@@ -250,6 +191,7 @@ impl Render for UnlockView {
                                 } else {
                                     strings::UNLOCK_BUTTON
                                 },
+                                theme,
                             )
                             .bg(theme.accent)
                             .text_color(theme.accent_text)

@@ -27,4 +27,4 @@ zeroize.workspace = true
 
 [dev-dependencies]
 # An independent KDBX implementation, used to check what keefast writes.
-keepass.workspace = true
+keepass = { workspace = true, features = ["save_kdbx4"] }

@@ -4,14 +4,18 @@
 //! about where those bytes came from or go to. KDBX reading and writing is keefast's own (see
 //! ADR 0002), so that a save keeps everything in the Vault file.
 
+mod edit;
 mod kdbx;
 mod key;
 mod open;
 mod save;
+mod time;
 mod vault;
 mod xml;
 
+pub use edit::{EditError, EntryFields};
 pub use key::CompositeKey;
 pub use open::OpenError;
 pub use save::SaveError;
+pub use time::Timestamp;
 pub use vault::{Entry, EntryId, Group, GroupId, Vault};

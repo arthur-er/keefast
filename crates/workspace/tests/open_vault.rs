@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+mod support;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,35 +7,7 @@ use keefast_core::{CompositeKey, OpenError};
 use keefast_workspace::{
     LocalStorage, OpenVaultError, StorageError, StorageProvider, VaultLocation, Workspace,
 };
-
-const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../fixtures/keepassxc-kdbx4.kdbx");
-const PASSWORD: &str = "fixture-password";
-
-/// An in-memory Storage provider holding Vault files by location.
-#[derive(Default)]
-struct FakeStorage {
-    files: HashMap<VaultLocation, Vec<u8>>,
-}
-
-impl FakeStorage {
-    fn with_file(mut self, location: &VaultLocation, bytes: &[u8]) -> Self {
-        self.files.insert(location.clone(), bytes.to_vec());
-        self
-    }
-}
-
-impl StorageProvider for FakeStorage {
-    fn read(&self, location: &VaultLocation) -> Result<Vec<u8>, StorageError> {
-        self.files
-            .get(location)
-            .cloned()
-            .ok_or_else(|| StorageError::NotFound(location.clone()))
-    }
-}
-
-fn personal_vault() -> VaultLocation {
-    VaultLocation::Local(PathBuf::from("/vaults/personal.kdbx"))
-}
+use support::{FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
 
 fn workspace_with_fixture() -> Workspace {
     let storage = FakeStorage::default().with_file(&personal_vault(), KEEPASSXC_KDBX4);
