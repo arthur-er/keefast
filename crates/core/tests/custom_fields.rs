@@ -227,6 +227,68 @@ fn editing_other_fields_keeps_a_protected_custom_field_protected() {
 }
 
 #[test]
+fn editing_other_fields_keeps_keewebs_protected_totp_field_protected() {
+    let mut vault = open(KEEWEB_KDBX4);
+    let github = entry_titled(&vault, "GitHub");
+    let id = github.id();
+    let otp = github
+        .custom_fields()
+        .iter()
+        .find(|field| field.name == "otp")
+        .map(|field| field.value.expose_secret().to_owned())
+        .unwrap();
+    let mut fields = EntryFields::from(github);
+    fields.notes = "edited".into();
+
+    vault.update_entry(id, &fields, now()).unwrap();
+
+    let database = independent(&vault);
+    let github = database
+        .iter_all_entries()
+        .find(|entry| entry.get_title() == Some("GitHub"))
+        .unwrap();
+    assert!(github.fields["otp"].is_protected());
+    assert_eq!(github.get("otp"), Some(otp.as_str()));
+}
+
+#[test]
+fn custom_fields_are_kept_in_the_order_given_so_a_renamed_field_keeps_its_place() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    let id = vault
+        .create_entry(
+            vault.root().id(),
+            &with_fields(vec![
+                field("First", "1", false),
+                field("Second", "2", true),
+                field("Third", "3", false),
+            ]),
+            now(),
+        )
+        .unwrap();
+
+    vault
+        .update_entry(
+            id,
+            &with_fields(vec![
+                field("Third", "3", false),
+                field("Renamed", "2", true),
+                field("First", "1", false),
+            ]),
+            later(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        described(reopen(&vault).entry(id).unwrap()),
+        owned(&[
+            ("Third", "3", false),
+            ("Renamed", "2", true),
+            ("First", "1", false)
+        ])
+    );
+}
+
+#[test]
 fn saving_unchanged_custom_fields_records_no_history() {
     let mut vault = open(KEEPASS2_KDBX4);
     let github = entry_titled(&vault, "GitHub");
@@ -258,6 +320,14 @@ fn a_custom_field_needs_a_name_of_its_own() {
         ),
         (
             vec![field("UserName", "x", false)],
+            EditError::FieldNameTaken,
+        ),
+        (
+            vec![field("Password ", "x", false)],
+            EditError::FieldNameTaken,
+        ),
+        (
+            vec![field("PIN", "1", false), field(" PIN", "2", false)],
             EditError::FieldNameTaken,
         ),
     ] {

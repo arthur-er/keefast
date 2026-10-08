@@ -211,7 +211,7 @@ impl EntryEditor {
                 .custom_fields
                 .iter()
                 .map(|row| CustomField {
-                    name: text(&row.name),
+                    name: row.name.read(cx).text().trim().to_owned(),
                     value: SecretString::from(text(&row.value)),
                     protected: row.protected,
                 })

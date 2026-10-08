@@ -102,14 +102,16 @@ impl EntryFields {
         ]
     }
 
-    /// Every custom field needs a name, and no two fields of an Entry can share one.
+    /// Every custom field needs a name, and no two fields of an Entry can share one, even
+    /// told apart only by spaces around it, which KeePassXC trims away.
     fn check(&self) -> Result<(), EditError> {
         for (index, field) in self.custom_fields.iter().enumerate() {
-            if field.name.trim().is_empty() {
+            let name = field.name.trim();
+            if name.is_empty() {
                 return Err(EditError::FieldNameEmpty);
             }
             let earlier = &self.custom_fields[..index];
-            if is_standard_field(&field.name) || earlier.iter().any(|f| f.name == field.name) {
+            if is_standard_field(name) || earlier.iter().any(|f| f.name.trim() == name) {
                 return Err(EditError::FieldNameTaken);
             }
         }
@@ -608,23 +610,41 @@ fn set_string(entry: &mut Element, key: &str, value: &str, protect: bool) {
     set_field(entry, key, value, protect);
 }
 
-/// Makes an Entry element's custom fields `fields`: those it has keep their place, new ones go
-/// after its other fields, and those not in `fields` are removed.
+/// Makes an Entry element's custom fields `fields`, in that order, where its first custom
+/// field was (or after its other fields). Those it has keep their element, with anything in it
+/// keefast doesn't model, and those not in `fields` are removed.
 fn set_custom_fields(entry: &mut Element, fields: &[CustomField]) {
-    entry.children.retain(|node| match node {
-        Node::Element(string) if string.name == "String" => {
-            let key = string.child("Key").map(Element::text).unwrap_or_default();
-            is_standard_field(&key) || fields.iter().any(|field| field.name == key)
+    let key = |string: &Element| string.child("Key").map(Element::text).unwrap_or_default();
+    let mut existing = Vec::new();
+    let mut at = None;
+    for node in std::mem::take(&mut entry.children) {
+        match node {
+            Node::Element(string)
+                if string.name == "String" && !is_standard_field(&key(&string)) =>
+            {
+                at.get_or_insert(entry.children.len());
+                existing.push(string);
+            }
+            node => entry.children.push(node),
         }
-        _ => true,
-    });
+    }
+    let mut at = at.unwrap_or_else(|| insertion_index(entry, STRING_AFTER));
     for field in fields {
-        set_field(
-            entry,
-            &field.name,
-            field.value.expose_secret(),
-            field.protected,
-        );
+        let mut string = match existing.iter().position(|string| key(string) == field.name) {
+            Some(index) => existing.remove(index),
+            None => new_string(&field.name, "", false),
+        };
+        let value = child_or_insert(&mut string, "Value", &["Key"]);
+        set_value(value, field.value.expose_secret(), field.protected);
+        entry.children.insert(at, Node::Element(string));
+        at += 1;
+    }
+    // A second field with a kept name, which no client writes, stays as it was.
+    for string in existing {
+        if fields.iter().any(|field| field.name == key(&string)) {
+            entry.children.insert(at, Node::Element(string));
+            at += 1;
+        }
     }
 }
 
@@ -632,11 +652,7 @@ fn set_custom_fields(entry: &mut Element, fields: &[CustomField]) {
 fn set_field(entry: &mut Element, key: &str, value: &str, protect: bool) {
     match string_mut(entry, key) {
         Some(value_element) => set_value(value_element, value, protect),
-        None => insert_after_last(
-            entry,
-            new_string(key, value, protect),
-            &["String", "Times", "Tags", "UUID"],
-        ),
+        None => insert_after_last(entry, new_string(key, value, protect), STRING_AFTER),
     }
 }
 
@@ -649,6 +665,9 @@ pub(crate) fn string_value(entry: &Element, key: &str) -> Option<Zeroizing<Strin
         .map(|value| Zeroizing::new(value.text()))
         .filter(|value| !value.trim().is_empty())
 }
+
+/// What a new `<String>` goes after in an Entry, the first of these it has.
+const STRING_AFTER: &[&str] = &["String", "Times", "Tags", "UUID"];
 
 /// The `Value` element of an Entry element's field called `key`, if it has that field.
 fn string_mut<'a>(entry: &'a mut Element, key: &str) -> Option<&'a mut Element> {
@@ -689,7 +708,14 @@ pub(crate) fn child_or_insert<'a>(
 /// Inserts `child` after the last child element named in `after`, trying the names in order,
 /// or at the end.
 fn insert_after_last(parent: &mut Element, child: Element, after: &[&str]) {
-    let index = after
+    let index = insertion_index(parent, after);
+    parent.children.insert(index, Node::Element(child));
+}
+
+/// The index just after the last child element named in `after`, trying the names in order,
+/// or the end.
+fn insertion_index(parent: &Element, after: &[&str]) -> usize {
+    after
         .iter()
         .find_map(|name| {
             parent
@@ -697,8 +723,7 @@ fn insert_after_last(parent: &mut Element, child: Element, after: &[&str]) {
                 .iter()
                 .rposition(|node| matches!(node, Node::Element(e) if e.name == *name))
         })
-        .map_or(parent.children.len(), |index| index + 1);
-    parent.children.insert(index, Node::Element(child));
+        .map_or(parent.children.len(), |index| index + 1)
 }
 
 /// KeePass lists a Group's Entries before its subgroups.

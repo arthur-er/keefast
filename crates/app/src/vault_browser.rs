@@ -10,6 +10,7 @@ use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace,
 };
 use secrecy::ExposeSecret;
+use zeroize::Zeroizing;
 
 use crate::actions::{
     self, CopyPassword, CopyTotp, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
@@ -24,6 +25,9 @@ use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
 use crate::widgets::{button, tool_button};
+
+/// How long a copied custom field stays on the clipboard.
+const CLIPBOARD_CLEAR_AFTER: Duration = Duration::from_secs(30);
 
 /// Emitted when the user asks to open another Vault.
 pub struct OpenAnotherVault;
@@ -53,6 +57,8 @@ pub struct VaultBrowser {
     revealed_fields: Vec<usize>,
     /// The custom field of the selected Entry last copied, by index.
     copied_field: Option<usize>,
+    /// Clears the last copied custom field from the clipboard when it is due.
+    clipboard_clear: Option<Task<()>>,
 }
 
 /// What the detail pane shows besides the selected Entry.
@@ -139,6 +145,7 @@ impl VaultBrowser {
             custom_field_focus: Vec::new(),
             revealed_fields: Vec::new(),
             copied_field: None,
+            clipboard_clear: None,
         };
         browser.select(EntryScope::Vault(vault), cx);
         browser
@@ -389,12 +396,18 @@ impl VaultBrowser {
             .selected_entry
             .and_then(|(vault, id)| workspace.entry(vault, id))
             .and_then(|entry| entry.custom_fields().get(index))
-            .map(|field| field.value.expose_secret().to_owned());
-        if let Some(value) = value {
-            cx.write_to_clipboard(ClipboardItem::new_string(value));
-            self.copied_field = Some(index);
-            cx.notify();
-        }
+            .map(|field| Zeroizing::new(field.value.expose_secret().to_owned()));
+        let Some(value) = value else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
+        self.copied_field = Some(index);
+        // Replacing the task cancels the previous copy's clear, which this copy supersedes.
+        self.clipboard_clear = Some(cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(CLIPBOARD_CLEAR_AFTER).await;
+            cx.update(|cx| clear_clipboard_if_holding(&value, cx)).ok();
+        }));
+        cx.notify();
     }
 
     fn toggle_field_reveal(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1417,6 +1430,18 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::InRecycleBin) => strings::ERROR_IN_RECYCLE_BIN,
         EditVaultError::Edit(EditError::FieldNameEmpty) => strings::ERROR_FIELD_NAME_EMPTY,
         EditVaultError::Edit(EditError::FieldNameTaken) => strings::ERROR_FIELD_NAME_TAKEN,
+    }
+}
+
+/// Clears the clipboard, but only if it still holds `copied`: the user may have copied
+/// something else since.
+fn clear_clipboard_if_holding(copied: &str, cx: &mut App) {
+    let current = cx.read_from_clipboard().and_then(|item| item.text());
+    if current
+        .map(Zeroizing::new)
+        .is_some_and(|text| *text == copied)
+    {
+        cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
     }
 }
 
