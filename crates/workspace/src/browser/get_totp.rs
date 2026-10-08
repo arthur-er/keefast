@@ -10,8 +10,8 @@ const UUID_HEX_LEN: usize = 32;
 
 impl BrowserSession {
     /// Answers with the current TOTP code of the Entry the request names. The request names
-    /// no site, so the code is given only for an Entry this extension was handed for a site,
-    /// and only while that site is still offered the Entry. Any other Entry gets an empty
+    /// no site, so the code is given only for an Entry this extension was last given for a
+    /// site, and only while that site is still offered the Entry. Any other Entry gets an empty
     /// code, as KeePassXC answers for an Entry without TOTP.
     pub(super) fn get_totp(
         &mut self,
@@ -27,7 +27,7 @@ impl BrowserSession {
             return Err(ProtocolError::NoValidUuidProvided);
         }
         let code = self
-            .handed
+            .allowed
             .iter()
             .filter(|((_, entry), _)| entry.to_hex().eq_ignore_ascii_case(uuid))
             .find(|(id, query)| {

@@ -27,7 +27,7 @@ const EXAMPLE: &str = "https://example.com/login";
 
 /// RFC 6238's SHA-1 test secret, Base32-encoded.
 const SECRET: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-/// One of RFC 6238's test times, whose 8 digit SHA-1 code is 07081804.
+/// One of RFC 6238's test times, whose SHA-1 code is 07081804, so 081804 in 6 digits.
 const RFC_TIME: u64 = 1_111_111_109;
 const RFC_CODE: &str = "081804";
 
@@ -100,7 +100,7 @@ impl Browser {
     }
 
     /// Asks for the logins of `url` and answers the Access prompt, if any, with `answer`.
-    /// Returns the Entries handed to the extension.
+    /// Returns the Entries given to the extension.
     fn get_logins(&mut self, url: &str, answer: AccessAnswer) -> Vec<Value> {
         let sent = self
             .extension
@@ -120,7 +120,7 @@ impl Browser {
     }
 
     fn get_totp(&mut self, uuid: &str) -> Value {
-        let sent = get_totp(&self.extension, uuid);
+        let sent = get_totp_request(&self.extension, uuid);
         let reply = self
             .workspace
             .handle_browser_request(FIRST, &sent.json)
@@ -129,14 +129,12 @@ impl Browser {
     }
 
     fn generate_password(&mut self) -> Value {
-        let sent = generate_password(&self.extension);
+        let sent = generate_password_request(&self.extension);
         let reply = self
             .workspace
             .handle_browser_request(FIRST, &sent.json)
             .expect("answered at once");
-        let message = self.extension.open(&sent, &reply);
-        assert_eq!(parse(&reply)["requestID"], "gen-1");
-        message
+        self.extension.open(&sent, &reply)
     }
 }
 
@@ -151,12 +149,13 @@ fn connect(workspace: &mut Workspace, connection: ConnectionId) -> FakeExtension
 }
 
 /// A `get-totp` request as the stock extension sends it.
-fn get_totp(extension: &FakeExtension, uuid: &str) -> Sent {
+fn get_totp_request(extension: &FakeExtension, uuid: &str) -> Sent {
     extension.encrypted("get-totp", json!({ "action": "get-totp", "uuid": uuid }))
 }
 
-/// A `generate-password` request as the stock extension sends it.
-fn generate_password(extension: &FakeExtension) -> Sent {
+/// A `generate-password` request as the stock extension sends it: its encrypted message
+/// repeats the request's fields, and its `requestID` is echoed outside it too.
+fn generate_password_request(extension: &FakeExtension) -> Sent {
     let mut sent = extension.encrypted(
         "generate-password",
         json!({
@@ -181,9 +180,9 @@ fn allowed_entries_with_totp_carry_their_current_code() {
 
     let example = entries.iter().find(|entry| entry["name"] == "Example");
     assert_eq!(example.unwrap()["totp"], RFC_CODE);
-    let others = entries.iter().filter(|entry| entry["name"] != "Example");
+    let mut others = entries.iter().filter(|entry| entry["name"] != "Example");
     assert!(others.clone().count() > 0);
-    assert!(others.into_iter().all(|entry| entry.get("totp").is_none()));
+    assert!(others.all(|entry| entry.get("totp").is_none()));
 }
 
 #[test]
@@ -250,6 +249,39 @@ fn get_totp_gives_no_code_for_an_entry_the_site_was_denied() {
 }
 
 #[test]
+fn get_totp_gives_no_code_once_the_site_is_denied_an_entry_allowed_before() {
+    let mut browser = Browser::paired();
+    let example = browser.with_totp("Example");
+    browser.get_logins(EXAMPLE, ALLOW);
+
+    browser.get_logins(EXAMPLE, DENY);
+    let message = browser.get_totp(&example.to_hex());
+
+    assert_eq!(message["totp"], "");
+}
+
+#[test]
+fn get_totp_gives_no_code_after_the_extension_changes_keys() {
+    let mut browser = Browser::paired();
+    let example = browser.with_totp("Example");
+    browser.get_logins(EXAMPLE, ALLOW);
+
+    let mut extension = FakeExtension::new();
+    let keys = browser
+        .workspace
+        .handle_browser_request(FIRST, &extension.change_public_keys().json)
+        .unwrap();
+    extension.accept_keys(&parse(&keys));
+    let sent = get_totp_request(&extension, &example.to_hex());
+    let reply = browser
+        .workspace
+        .handle_browser_request(FIRST, &sent.json)
+        .unwrap();
+
+    assert_eq!(extension.open(&sent, &reply)["totp"], "");
+}
+
+#[test]
 fn get_totp_gives_no_code_for_an_entry_hidden_from_the_browser() {
     let mut browser = Browser::paired();
     let hidden = browser.with_totp("Hidden");
@@ -292,7 +324,7 @@ fn get_totp_gives_no_code_to_another_extension_than_the_one_allowed() {
     browser.get_logins(EXAMPLE, ALLOW);
     let stranger = connect(&mut browser.workspace, SECOND);
 
-    let sent = get_totp(&stranger, &example.to_hex());
+    let sent = get_totp_request(&stranger, &example.to_hex());
     let reply = browser
         .workspace
         .handle_browser_request(SECOND, &sent.json)
@@ -316,7 +348,7 @@ fn get_totp_gives_no_code_for_an_entry_without_totp() {
 fn get_totp_without_a_valid_uuid_is_an_error() {
     let mut browser = Browser::paired();
     for uuid in ["", "not-a-uuid", "0123456789abcdef0123456789abcdeg"] {
-        let sent = get_totp(&browser.extension, uuid);
+        let sent = get_totp_request(&browser.extension, uuid);
         let reply = browser
             .workspace
             .handle_browser_request(FIRST, &sent.json)
@@ -381,7 +413,7 @@ fn generate_password_with_settings_that_cannot_generate_is_refused() {
         passphrase: PassphraseRecipe::default(),
     });
 
-    let sent = generate_password(&browser.extension);
+    let sent = generate_password_request(&browser.extension);
     let reply = browser
         .workspace
         .handle_browser_request(FIRST, &sent.json)
@@ -389,4 +421,18 @@ fn generate_password_with_settings_that_cannot_generate_is_refused() {
 
     assert_eq!(parse(&reply)["errorCode"], "6");
     assert_eq!(parse(&reply)["requestID"], "gen-1");
+}
+
+#[test]
+fn generate_password_echoes_the_request_id() {
+    let mut browser = Browser::paired();
+    let sent = generate_password_request(&browser.extension);
+
+    let reply = browser
+        .workspace
+        .handle_browser_request(FIRST, &sent.json)
+        .unwrap();
+
+    assert_eq!(parse(&reply)["requestID"], "gen-1");
+    assert!(browser.extension.open(&sent, &reply)["password"].is_string());
 }

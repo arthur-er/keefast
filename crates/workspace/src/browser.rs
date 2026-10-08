@@ -225,8 +225,9 @@ pub struct BrowserSession {
     connected_ids: Vec<String>,
     /// The Pairings the extension proved it holds, as name and key.
     proven: Vec<(String, String)>,
-    /// The Entries handed to the extension, each with the site it was allowed for.
-    handed: HashMap<(VaultId, EntryId), SiteQuery>,
+    /// The Entries the extension was last given for a site, each with that site. A site
+    /// turning an Entry down takes it back.
+    allowed: HashMap<(VaultId, EntryId), SiteQuery>,
 }
 
 struct SessionKeys {
@@ -343,6 +344,8 @@ impl BrowserSession {
             crypto: SalsaBox::new(&PublicKey::from(public_key), &secret),
             client_key: client_key.to_owned(),
         });
+        // New keys start a new conversation: nothing given before carries over.
+        self.allowed.clear();
         let mut reply = success(increment(nonce));
         reply.insert("action".into(), "change-public-keys".into());
         reply.insert("publicKey".into(), host_key.into());
@@ -555,16 +558,18 @@ impl BrowserSession {
             return self.error(request, ProtocolError::DatabaseNotOpened);
         }
         let now = workspace.now();
-        let allowed: Vec<Candidate> = candidates(workspace, query)
+        let (allowed, turned_down): (Vec<Candidate>, Vec<Candidate>) = candidates(workspace, query)
             .into_iter()
-            .filter(|candidate| {
+            .partition(|candidate| {
                 let (vault, entry) = candidate.id();
                 let decision = candidate.decision.or_else(|| decided(vault, entry));
                 decision == Some(AccessDecision::Allow)
-            })
-            .collect();
+            });
+        for candidate in &turned_down {
+            self.allowed.remove(&candidate.id());
+        }
         for candidate in &allowed {
-            self.handed.insert(candidate.id(), query.clone());
+            self.allowed.insert(candidate.id(), query.clone());
         }
         let entries: Vec<Value> = allowed
             .iter()
