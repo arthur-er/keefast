@@ -2,10 +2,13 @@
 //! No GPUI here; the app renders this state and sends it commands.
 
 mod atomic_file;
+mod browser;
+mod browser_hosts;
 mod clock;
 mod config;
 mod storage;
 
+use std::io;
 use std::sync::Arc;
 
 use keefast_core::{
@@ -13,6 +16,10 @@ use keefast_core::{
     Timestamp, Vault,
 };
 
+pub use browser::{BrowserReply, BrowserSession, KEEPASSXC_VERSION, PairingRequest, ProtocolError};
+pub use browser_hosts::{
+    ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,
+};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
@@ -189,6 +196,11 @@ pub struct Workspace {
     /// Where the config is kept between runs; `None` keeps it in memory only.
     config_store: Option<Arc<dyn ConfigStore>>,
     config_error: Option<ConfigError>,
+    /// The Vault the user is looking at, which the browser pairs with.
+    focused_vault: Option<VaultId>,
+    browser_hosts: Option<Arc<dyn BrowserHosts>>,
+    /// Where the native host was last registered, or why it couldn't be.
+    browser_hosts_status: Option<io::Result<Vec<Browser>>>,
 }
 
 impl Workspace {
@@ -208,6 +220,9 @@ impl Workspace {
             config: AppConfig::default(),
             config_store: None,
             config_error: None,
+            focused_vault: None,
+            browser_hosts: None,
+            browser_hosts_status: None,
         }
     }
 
@@ -223,6 +238,45 @@ impl Workspace {
             Err(error) => self.config_error = Some(error),
         }
         self
+    }
+
+    /// Registers the native host with browsers through `hosts` from now on. With browser
+    /// integration on, it is registered again now, so the registration follows the app when
+    /// it moves.
+    pub fn with_browser_hosts(mut self, hosts: Arc<dyn BrowserHosts>) -> Self {
+        self.browser_hosts = Some(hosts);
+        if self.config.browser_integration {
+            self.register_browser_hosts();
+        }
+        self
+    }
+
+    pub fn browser_integration(&self) -> bool {
+        self.config.browser_integration
+    }
+
+    /// Turns browser integration on or off: registers or unregisters the native host with the
+    /// browsers, and remembers the choice in the app config.
+    pub fn set_browser_integration(&mut self, enabled: bool) {
+        self.config.browser_integration = enabled;
+        self.save_config();
+        if enabled {
+            self.register_browser_hosts();
+        } else if let Some(hosts) = &self.browser_hosts {
+            self.browser_hosts_status = Some(hosts.uninstall().map(|()| Vec::new()));
+        }
+    }
+
+    /// The browsers the native host was last registered with, or why it couldn't be. `None`
+    /// until browser integration is turned on.
+    pub fn browser_hosts_status(&self) -> Option<&io::Result<Vec<Browser>>> {
+        self.browser_hosts_status.as_ref()
+    }
+
+    fn register_browser_hosts(&mut self) {
+        if let Some(hosts) = &self.browser_hosts {
+            self.browser_hosts_status = Some(hosts.install());
+        }
     }
 
     /// Why the app config could not be loaded or last saved, if it couldn't.

@@ -13,6 +13,8 @@ The Cargo workspace lives in `crates/`:
 - `core`: domain model and KDBX handling. No I/O, no GPUI, no async runtime.
 - `workspace`: the headless app model, with Storage providers injected. No GPUI.
 - `app`: the GPUI views (the `keefast` binary).
+- `native-host`: the native-messaging host Chromium starts for the browser extension
+  (`keefast-native-host`). It relays messages to the running app over a local socket.
 
 On NixOS (or anywhere with Nix), `nix develop` gives you the Rust toolchain and the system
 libraries GPUI needs. Elsewhere, install stable Rust; on Linux also install the libraries listed
@@ -30,4 +32,20 @@ regenerate the corpus and to check keefast's saves against them:
 ```sh
 nix develop .#corpus -c scripts/make-fixtures.sh
 nix develop .#corpus -c scripts/check-interop.sh
+```
+
+## Browser integration
+
+keefast speaks the KeePassXC-Browser protocol (ADR 0003), so the stock KeePassXC-Browser
+extension works with it. Turn on "Browser integration" in keefast: it registers
+`keefast-native-host`, installed next to the `keefast` binary, with Chrome, Chromium, Brave, Edge
+and Vivaldi. It registers under KeePassXC's host name, so it takes over from a KeePassXC
+registered for the same browsers; turning it off removes only keefast's registrations. Then
+click "Connect" in the extension and name the browser in keefast to pair it with the Vault you
+are looking at.
+
+To try the protocol without a browser, run keefast with browser integration on and:
+
+```sh
+cargo run -p keefast-native-host --example fake_extension -- target/debug/keefast-native-host
 ```

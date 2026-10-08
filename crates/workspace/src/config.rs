@@ -15,6 +15,8 @@ pub struct AppConfig {
     /// Vault files opened lately, most recent first.
     pub recent_vaults: Vec<VaultLocation>,
     pub autosave: bool,
+    /// Whether browser extensions may reach keefast through its native-messaging host.
+    pub browser_integration: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +88,7 @@ impl ConfigStore for FileConfigStore {
 #[serde(default)]
 struct ConfigFile {
     autosave: bool,
+    browser_integration: bool,
     recent_vaults: Vec<toml::Value>,
 }
 
@@ -108,6 +111,7 @@ impl From<ConfigFile> for AppConfig {
                 })
                 .collect(),
             autosave: file.autosave,
+            browser_integration: file.browser_integration,
         }
     }
 }
@@ -116,6 +120,7 @@ impl From<&AppConfig> for ConfigFile {
     fn from(config: &AppConfig) -> Self {
         Self {
             autosave: config.autosave,
+            browser_integration: config.browser_integration,
             // TOML only holds Unicode, so a path that isn't valid Unicode is not remembered.
             recent_vaults: config
                 .recent_vaults

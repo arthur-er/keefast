@@ -70,3 +70,21 @@ pub const CONFIRM_DELETE_DETAIL: &str = "This cannot be undone.";
 pub const ERROR_MOVE_INTO_ITSELF: &str = "A Group cannot be moved into itself or its subgroups.";
 pub const ERROR_ROOT_GROUP: &str = "The top Group of a Vault cannot be moved or deleted.";
 pub const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";
+
+pub const BROWSER_INTEGRATION: &str = "Browser integration";
+pub const BROWSER_HOSTS_FOR: &str = "Set up for ";
+pub const BROWSER_HOSTS_NONE: &str =
+    "No supported browser found (Chrome, Chromium, Brave, Edge, Vivaldi).";
+pub const BROWSER_HOSTS_FAILED: &str = "Browser integration could not be set up.";
+pub const BROWSER_ALREADY_SERVED: &str = "Another keefast is already serving the browser.";
+
+pub const PAIRING_TITLE: &str = "Pair a browser";
+pub const PAIRING_PROMPT_BEFORE: &str = "A browser extension asks to connect to the Vault “";
+pub const PAIRING_PROMPT_AFTER: &str =
+    "”. If this was you, name this browser so you can recognise it later.";
+pub const PAIRING_NAME_LABEL: &str = "Browser name";
+pub const PAIRING_NAME_PLACEHOLDER: &str = "e.g. Chrome on my laptop";
+pub const PAIRING_APPROVE: &str = "Pair";
+pub const PAIRING_DENY: &str = "Deny";
+pub const ERROR_PAIRING_NAME_EMPTY: &str = "Give this browser a name.";
+pub const ERROR_PAIRING_NAME_TAKEN: &str = "This Vault already has a browser with this name.";

@@ -44,6 +44,10 @@ pub enum EditError {
     RootGroup,
     #[error("a Group cannot be moved into itself or one of its subgroups")]
     IntoItself,
+    #[error("a Pairing needs a name")]
+    PairingNameEmpty,
+    #[error("the Vault already has a Pairing with this name")]
+    PairingNameTaken,
 }
 
 /// The standard Entry fields as KeePass names them, with the `MemoryProtection` setting that
@@ -477,11 +481,11 @@ fn is_true(text: &str) -> bool {
     text.trim().eq_ignore_ascii_case("true")
 }
 
-fn push(parent: &mut Element, child: Element) {
+pub(crate) fn push(parent: &mut Element, child: Element) {
     parent.children.push(Node::Element(child));
 }
 
-fn text_element(name: &str, text: impl Into<String>) -> Element {
+pub(crate) fn text_element(name: &str, text: impl Into<String>) -> Element {
     let mut element = Element::new(name);
     set_value(&mut element, &text.into(), false);
     element
@@ -539,7 +543,11 @@ fn set_time(element: &mut Element, name: &str, time: Timestamp) {
 
 /// The first child called `name`, inserted after the last of the `after` elements present
 /// (or at the end) if there is none.
-fn child_or_insert<'a>(parent: &'a mut Element, name: &str, after: &[&str]) -> &'a mut Element {
+pub(crate) fn child_or_insert<'a>(
+    parent: &'a mut Element,
+    name: &str,
+    after: &[&str],
+) -> &'a mut Element {
     if parent.child(name).is_none() {
         insert_after_last(parent, Element::new(name), after);
     }

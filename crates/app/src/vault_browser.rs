@@ -3,9 +3,11 @@ use gpui::{
     PromptLevel, SharedString, Window, div, prelude::*, px,
 };
 use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId};
-use keefast_workspace::{EditVaultError, EntryScope, PendingSave, SaveStatus, VaultId, Workspace};
+use keefast_workspace::{EditVaultError, EntryScope, SaveStatus, VaultId, Workspace};
 
+use crate::browser_integration::BrowserIntegration;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
+use crate::saving;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
@@ -18,6 +20,7 @@ pub struct OpenAnotherVault;
 /// commands to edit Entries and Groups and to save the Vaults.
 pub struct VaultBrowser {
     workspace: Entity<Workspace>,
+    integration: Entity<BrowserIntegration>,
     focus: FocusHandle,
     scope: EntryScope,
     selected_entry: Option<(VaultId, EntryId)>,
@@ -66,17 +69,26 @@ impl Focusable for VaultBrowser {
 }
 
 impl VaultBrowser {
-    pub fn new(workspace: Entity<Workspace>, vault: VaultId, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: Entity<Workspace>,
+        integration: Entity<BrowserIntegration>,
+        vault: VaultId,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        Self {
+        cx.observe(&integration, |_, _, cx| cx.notify()).detach();
+        let mut browser = Self {
             workspace,
+            integration,
             focus: cx.focus_handle(),
-            scope: EntryScope::Vault(vault),
+            scope: EntryScope::AllVaults,
             selected_entry: None,
             detail: Detail::Entry,
             renaming: None,
             error: None,
-        }
+        };
+        browser.select(EntryScope::Vault(vault), cx);
+        browser
     }
 
     /// Shows a Vault's Entries, as after opening it.
@@ -89,7 +101,14 @@ impl VaultBrowser {
         self.workspace.read(cx).group_for_new_items(self.scope)
     }
 
+    /// Shows `scope` in the Entry list. A browser pairs with the Vault shown.
     fn select(&mut self, scope: EntryScope, cx: &mut Context<Self>) {
+        let vault = match scope {
+            EntryScope::AllVaults => None,
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
+        };
+        self.workspace
+            .update(cx, |workspace, _| workspace.focus_vault(vault));
         self.scope = scope;
         self.selected_entry = None;
         self.detail = Detail::Entry;
@@ -290,17 +309,11 @@ impl VaultBrowser {
 
     /// Saves every Vault with unsaved changes.
     fn save_all(&mut self, cx: &mut Context<Self>) {
-        let saves = self
-            .workspace
-            .update(cx, |workspace, _| workspace.begin_saves());
-        self.run_saves(saves, cx);
+        saving::save_all(&self.workspace, cx);
     }
 
     fn start_autosaves(&mut self, cx: &mut Context<Self>) {
-        let saves = self
-            .workspace
-            .update(cx, |workspace, _| workspace.begin_autosaves());
-        self.run_saves(saves, cx);
+        saving::autosave(&self.workspace, cx);
     }
 
     fn toggle_autosave(&mut self, cx: &mut Context<Self>) {
@@ -311,25 +324,11 @@ impl VaultBrowser {
         self.start_autosaves(cx);
     }
 
-    /// Encrypts and writes off the UI thread; edits made meanwhile are autosaved afterwards.
-    fn run_saves(&mut self, saves: Vec<PendingSave>, cx: &mut Context<Self>) {
-        for save in saves {
-            let saving = cx.background_executor().spawn(async move { save.run() });
-            cx.spawn(async move |this, cx| {
-                let finished = saving.await;
-                this.update(cx, |this, cx| {
-                    // A failure shows in the save status; the Vault stays unsaved.
-                    let _ = this.workspace.update(cx, |workspace, cx| {
-                        cx.notify();
-                        workspace.finish_save(finished)
-                    });
-                    this.start_autosaves(cx);
-                })
-                .ok();
-            })
-            .detach();
-        }
-        cx.notify();
+    fn toggle_browser_integration(&mut self, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_browser_integration(!workspace.browser_integration());
+            cx.notify();
+        });
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -463,6 +462,13 @@ impl VaultBrowser {
         };
         let autosave = workspace.autosave();
         let config_error = workspace.config_error().is_some();
+        let browser_integration = workspace.browser_integration();
+        let serve_error = self.integration.read(cx).serve_error().is_some();
+        let browsers = match browser_integration {
+            false => None,
+            true if serve_error => Some((strings::BROWSER_ALREADY_SERVED.into(), true)),
+            true => browser_hosts_summary(workspace),
+        };
 
         div()
             .flex()
@@ -511,6 +517,29 @@ impl VaultBrowser {
                             .on_click(cx.listener(|this, _, _, cx| this.save_all(cx))),
                     ),
             )
+            .child(
+                div()
+                    .id("browser-integration")
+                    .flex()
+                    .gap_1()
+                    .text_sm()
+                    .cursor_pointer()
+                    .child(if browser_integration {
+                        strings::CHECKBOX_ON
+                    } else {
+                        strings::CHECKBOX_OFF
+                    })
+                    .child(strings::BROWSER_INTEGRATION)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_browser_integration(cx))),
+            )
+            .when_some(browsers, |this, (summary, failed)| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(if failed { theme.error } else { theme.muted })
+                        .child(summary),
+                )
+            })
     }
 
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -808,12 +837,27 @@ impl Render for VaultBrowser {
     }
 }
 
-fn describe(error: &EditVaultError) -> &'static str {
+/// Which browsers the native host is registered with, and whether registering failed.
+fn browser_hosts_summary(workspace: &Workspace) -> Option<(SharedString, bool)> {
+    let summary = match workspace.browser_hosts_status()? {
+        Err(_) => return Some((strings::BROWSER_HOSTS_FAILED.into(), true)),
+        Ok(browsers) if browsers.is_empty() => strings::BROWSER_HOSTS_NONE.to_owned(),
+        Ok(browsers) => {
+            let names: Vec<&str> = browsers.iter().map(|browser| browser.name()).collect();
+            format!("{}{}", strings::BROWSER_HOSTS_FOR, names.join(", "))
+        }
+    };
+    Some((summary.into(), false))
+}
+
+pub fn describe(error: &EditVaultError) -> &'static str {
     match error {
         EditVaultError::Edit(EditError::IntoItself) => strings::ERROR_MOVE_INTO_ITSELF,
         EditVaultError::Edit(EditError::RootGroup) => strings::ERROR_ROOT_GROUP,
         EditVaultError::Edit(EditError::EntryNotFound | EditError::GroupNotFound)
         | EditVaultError::VaultNotOpen => strings::ERROR_NOT_FOUND,
+        EditVaultError::Edit(EditError::PairingNameEmpty) => strings::ERROR_PAIRING_NAME_EMPTY,
+        EditVaultError::Edit(EditError::PairingNameTaken) => strings::ERROR_PAIRING_NAME_TAKEN,
     }
 }
 

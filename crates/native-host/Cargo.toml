@@ -1,0 +1,16 @@
+[package]
+name = "keefast-native-host"
+description = "The native-messaging host Chromium launches: relays KeePassXC-Browser messages between the browser and the running keefast app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dirs.workspace = true
+interprocess.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+crypto_box.workspace = true

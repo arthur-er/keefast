@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod extension;
+
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
@@ -9,7 +11,8 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keefast_workspace::{
-    AppConfig, Clock, ConfigError, ConfigStore, StorageError, StorageProvider, VaultLocation,
+    AppConfig, Browser, BrowserHosts, Clock, ConfigError, ConfigStore, StorageError,
+    StorageProvider, VaultLocation,
 };
 
 pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassxc-kdbx4.kdbx");
@@ -133,6 +136,43 @@ impl ConfigStore for FakeConfigStore {
     fn save(&self, config: &AppConfig) -> Result<(), ConfigError> {
         self.check()?;
         *self.config.lock().unwrap() = Some(config.clone());
+        Ok(())
+    }
+}
+
+/// Records native-host registrations instead of writing them.
+#[derive(Default)]
+pub struct FakeBrowserHosts {
+    pub installs: Mutex<usize>,
+    pub uninstalls: Mutex<usize>,
+    failing: Mutex<bool>,
+}
+
+impl FakeBrowserHosts {
+    pub fn installs(&self) -> usize {
+        *self.installs.lock().unwrap()
+    }
+
+    pub fn uninstalls(&self) -> usize {
+        *self.uninstalls.lock().unwrap()
+    }
+
+    pub fn fail(&self, fail: bool) {
+        *self.failing.lock().unwrap() = fail;
+    }
+}
+
+impl BrowserHosts for FakeBrowserHosts {
+    fn install(&self) -> io::Result<Vec<Browser>> {
+        if *self.failing.lock().unwrap() {
+            return Err(io::Error::other("permission denied"));
+        }
+        *self.installs.lock().unwrap() += 1;
+        Ok(vec![Browser::Chromium, Browser::Brave])
+    }
+
+    fn uninstall(&self) -> io::Result<()> {
+        *self.uninstalls.lock().unwrap() += 1;
         Ok(())
     }
 }

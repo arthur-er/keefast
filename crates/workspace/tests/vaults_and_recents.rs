@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use keefast_core::CompositeKey;
 use keefast_workspace::{
-    AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, LocalStorage, OpenVaultError,
-    VaultId, VaultLocation, Workspace,
+    AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, OpenVaultError, VaultId,
+    VaultLocation, Workspace,
 };
 use support::{
     FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault,
@@ -194,6 +194,7 @@ fn a_config_that_cannot_be_loaded_starts_empty_and_is_not_overwritten() {
     let config = Arc::new(FakeConfigStore::holding(AppConfig {
         recent_vaults: vec![work_vault()],
         autosave: true,
+        browser_integration: true,
     }));
     config.fail(true);
     let mut workspace = workspace_with(config.clone());
@@ -321,8 +322,8 @@ fn a_vault_file_reached_through_another_path_is_the_same_vault_file() {
     std::fs::write(&real, KEEPASSXC_KDBX4).unwrap();
     let link = dir.path().join("link.kdbx");
     std::os::unix::fs::symlink(&real, &link).unwrap();
-    let mut workspace =
-        Workspace::new(Arc::new(LocalStorage)).with_config(Arc::new(FakeConfigStore::default()));
+    let mut workspace = Workspace::new(Arc::new(keefast_workspace::LocalStorage))
+        .with_config(Arc::new(FakeConfigStore::default()));
 
     let first = open(&mut workspace, &VaultLocation::Local(real.clone()));
     let through_link = workspace.open_vault(&VaultLocation::Local(link), &key());
