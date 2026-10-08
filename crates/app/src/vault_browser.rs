@@ -301,6 +301,14 @@ impl VaultBrowser {
         if self.totp_copied.is_some_and(|(vault, _)| locked(vault)) {
             self.totp_copied = None;
         }
+        // An attachment's preview shows decrypted contents, so it goes with its Vault.
+        if self.attachment_preview.is_some()
+            && self
+                .selected_entry(cx)
+                .is_none_or(|(vault, _)| locked(vault))
+        {
+            self.attachment_preview = None;
+        }
         // Locking clears the clipboard early, which puts the notice about the copy out of date.
         if self.clipboard_clear.is_some() && workspace.clipboard_clears_in().is_none() {
             self.clipboard_clear = None;

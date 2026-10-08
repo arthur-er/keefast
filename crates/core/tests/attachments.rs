@@ -173,6 +173,44 @@ fn the_previous_attachments_stay_in_history() {
 }
 
 #[test]
+fn restoring_a_version_brings_back_its_attachments_and_keeps_the_replaced_ones() {
+    let mut vault = open(KEEPASS2_KDBX4);
+    set_attachments(
+        &mut vault,
+        "Email",
+        vec![Attachment::new("new.txt", b"new".to_vec())],
+    );
+    let id = id_of(&vault, "Email");
+    let original = vault
+        .entry(id)
+        .unwrap()
+        .history()
+        .iter()
+        .position(|version| files(version).len() == 2)
+        .expect("the version with the fixture's attachments");
+
+    vault.restore_entry_version(id, original, now()).unwrap();
+
+    let reopened = reopen(&vault);
+    let email = entry_titled(&reopened, "Email");
+    assert_eq!(
+        files(email),
+        [
+            file("protected.bin", PROTECTED_BIN),
+            file("recovery-codes.txt", CODES)
+        ]
+    );
+    let replaced = email.history().last().expect("the version it replaced");
+    assert_eq!(files(replaced), [file("new.txt", b"new")]);
+    // The Vault file still reads in another client, with every reference pointing right.
+    let database = independent(&reopened);
+    assert_eq!(
+        independently(&database, "Email", "recovery-codes.txt"),
+        Some(CODES.to_vec())
+    );
+}
+
+#[test]
 fn removing_a_shared_attachment_from_one_entry_keeps_it_for_the_other() {
     let mut vault = open(KEEPASS2_KDBX4);
     set_attachments(&mut vault, "GitHub", Vec::new());

@@ -18,7 +18,7 @@ use crate::vault_browser::describe;
 use crate::widgets::button;
 
 pub enum EntryEditorEvent {
-    Save(EntryFields),
+    Save(Box<EntryFields>),
     Cancel,
 }
 
@@ -387,7 +387,7 @@ impl EntryEditor {
             expires,
             attachments: self.attachments.clone(),
         };
-        cx.emit(EntryEditorEvent::Save(fields));
+        cx.emit(EntryEditorEvent::Save(Box::new(fields)));
     }
 
     fn toggle_reveal(&mut self, cx: &mut Context<Self>) {
