@@ -176,6 +176,23 @@ pub const USE_AS_BROWSER_GROUP: &str = "Save browser logins here";
 pub const ERROR_IN_RECYCLE_BIN: &str = "Logins can't be saved in the Recycle Bin.";
 pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
 
+/// The names of commands in the command palette, by action. The palette names an action not
+/// listed here after the action itself.
+pub fn command_name(action: &str) -> Option<&'static str> {
+    Some(match action {
+        "vault_browser::SelectNextEntry" => "Select Next Entry",
+        "vault_browser::SelectPreviousEntry" => "Select Previous Entry",
+        "vault_browser::SelectFirstEntry" => "Select First Entry",
+        "vault_browser::SelectLastEntry" => "Select Last Entry",
+        "vault_browser::OpenEntry" => "Edit Entry",
+        "vault_browser::CopyUsername" => "Copy Username",
+        "vault_browser::CopyPassword" => "Copy Password",
+        "vault_browser::CopyTotp" => "Copy TOTP Code",
+        "vault_browser::SaveAll" => "Save All Vaults",
+        "vault_browser::OpenVault" => "Open Another Vault…",
+        _ => return None,
+    })
+}
 pub const PALETTE_PLACEHOLDER: &str = "Type a command";
 pub const PALETTE_NO_MATCHES: &str = "No matching commands";
 pub const KEY_CTRL: &str = "Ctrl";

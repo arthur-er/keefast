@@ -144,6 +144,10 @@ impl KeefastWindow {
         }
         match self.dialog(cx) {
             Some((_, focus)) => {
+                // The request is answered first; the palette doesn't wait under it.
+                if let Some(palette) = self.palette.take() {
+                    palette.update(cx, |palette, cx| palette.close(cx));
+                }
                 window.focus(&focus);
                 // The user is in the browser when it asks, so keefast comes to the front.
                 window.activate_window();

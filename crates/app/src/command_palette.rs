@@ -1,7 +1,7 @@
 use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, KeybindingKeystroke, MouseButton, ScrollHandle, SharedString, StyledText,
-    Window, div, prelude::*, px,
+    HighlightStyle, KeyDownEvent, KeybindingKeystroke, MouseButton, ScrollHandle, SharedString,
+    StyledText, Window, div, prelude::*, px,
 };
 use keefast_core::fuzzy_match;
 
@@ -24,6 +24,8 @@ pub struct CommandPalette {
     matches: Vec<Match>,
     selected: usize,
     scroll: ScrollHandle,
+    /// The query the matches are for.
+    matched_query: Option<String>,
     dismissed: bool,
 }
 
@@ -96,6 +98,7 @@ impl CommandPalette {
             matches: Vec::new(),
             selected: 0,
             scroll: ScrollHandle::new(),
+            matched_query: None,
             dismissed: false,
         };
         palette.filter(cx);
@@ -110,7 +113,8 @@ impl CommandPalette {
         self.close(cx);
     }
 
-    fn close(&mut self, cx: &mut Context<Self>) {
+    /// Closes the palette and leaves the focus where it is, for when something else took it.
+    pub fn close(&mut self, cx: &mut Context<Self>) {
         if !self.dismissed {
             self.dismissed = true;
             cx.emit(Dismissed);
@@ -118,9 +122,13 @@ impl CommandPalette {
     }
 
     /// Ranks the commands against the query: the best match first, and every command, by name,
-    /// for an empty query.
+    /// for an empty query. Keys that don't change the query, such as Left, keep the pick.
     fn filter(&mut self, cx: &mut Context<Self>) {
         let query = self.query.read(cx).text();
+        if self.matched_query.as_deref() == Some(query) {
+            return;
+        }
+        self.matched_query = Some(query.to_owned());
         let mut ranked: Vec<(i32, Match)> = self
             .commands
             .iter()
@@ -256,6 +264,12 @@ impl Render for CommandPalette {
             .on_action(cx.listener(Self::select_previous))
             // Clicks on the palette don't reach what is behind it.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            // The query is its only field, so Tab doesn't take the focus out of the palette.
+            .capture_key_down(|event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "tab" {
+                    cx.stop_propagation();
+                }
+            })
             .w(px(480.))
             .flex()
             .flex_col()
@@ -293,11 +307,12 @@ impl Render for CommandPalette {
 /// The palette's own actions, which it doesn't list.
 const PALETTE_NAMESPACE: &str = "command_palette::";
 
-/// Words written in capitals in command names.
-const ACRONYMS: &[&str] = &["TOTP", "URL", "OTP"];
-
-/// A command's name, from its action's: `vault_browser::CopyUsername` is "Copy Username".
+/// A command's name: the one `strings` gives its action, or else one made from the action's,
+/// so that `vault_browser::CopyUsername` is "Copy Username".
 fn command_name(action_name: &str) -> String {
+    if let Some(name) = strings::command_name(action_name) {
+        return name.to_owned();
+    }
     let name = action_name.rsplit("::").next().unwrap_or(action_name);
     let mut words: Vec<String> = Vec::new();
     let mut previous: Option<char> = None;
@@ -316,19 +331,7 @@ fn command_name(action_name: &str) -> String {
         }
         previous = Some(ch);
     }
-    words
-        .into_iter()
-        .map(|word| {
-            match ACRONYMS
-                .iter()
-                .find(|acronym| acronym.eq_ignore_ascii_case(&word))
-            {
-                Some(acronym) => (*acronym).to_owned(),
-                None => word,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    words.join(" ")
 }
 
 /// How the keys of a binding are written: `Ctrl+Shift+P`, `Down`.
@@ -371,12 +374,17 @@ mod tests {
     #[test]
     fn names_commands_after_their_actions() {
         assert_eq!(
-            command_name("vault_browser::SelectNextEntry"),
+            command_name("test_view::SelectNextEntry"),
             "Select Next Entry"
         );
-        assert_eq!(command_name("vault_browser::OpenVault"), "Open Vault");
-        assert_eq!(command_name("vault_browser::CopyTotp"), "Copy TOTP");
+        assert_eq!(command_name("test_view::SaveAll"), "Save All");
         assert_eq!(command_name("Save"), "Save");
+    }
+
+    #[test]
+    fn names_from_strings_come_first() {
+        assert_eq!(command_name("vault_browser::CopyTotp"), "Copy TOTP Code");
+        assert_eq!(command_name("vault_browser::OpenEntry"), "Edit Entry");
     }
 
     #[test]
@@ -545,6 +553,20 @@ mod tests {
         cx.simulate_keystrokes("up");
         assert_eq!(selected(&view, cx), "Save All");
         cx.simulate_keystrokes("enter");
+        assert_eq!(view.read_with(cx, |view, _| view.ran.clone()), vec!["save"]);
+    }
+
+    #[gpui::test]
+    fn moving_the_caret_keeps_the_pick(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.simulate_keystrokes("ctrl-shift-p c o p y down left home");
+        assert_eq!(selected(&view, cx), "Copy Username");
+    }
+
+    #[gpui::test]
+    fn tab_stays_in_the_palette(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.simulate_keystrokes("ctrl-shift-p tab shift-tab s a v e enter");
         assert_eq!(view.read_with(cx, |view, _| view.ran.clone()), vec!["save"]);
     }
 
