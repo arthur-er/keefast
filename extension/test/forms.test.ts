@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findLoginFields, fillLogin } from "../src/forms";
+import {
+  fillLogin,
+  fillNewPassword,
+  fillTotp,
+  findLoginFields,
+  findNewPasswordFields,
+  findTotpFields,
+  pageFields,
+} from "../src/forms";
 
 function page(html: string): Document {
   document.body.innerHTML = html;
@@ -176,6 +184,12 @@ describe("findLoginFields", () => {
     expect(findLoginFields(document)?.submitUrl).toBe("https://login.example.org/session");
   });
 
+  it("doesn't take a 2FA field for a username", () => {
+    page(`<form><input type="text" name="account-otp" autocomplete="one-time-code"></form>`);
+
+    expect(findLoginFields(document)).toBeUndefined();
+  });
+
   it("has no submit URL for fields outside a form", () => {
     page(`<input type="text"><input type="password">`);
 
@@ -222,5 +236,192 @@ describe("fillLogin", () => {
     page(`<form><input type="search"></form>`);
 
     expect(fillLogin(document, location.origin, alice)).toBe(false);
+  });
+});
+
+/** A 6-digit code's fields, one for each digit. */
+const digits = [0, 1, 2, 3, 4, 5]
+  .map((i) => `<input id="d${i}" type="text" maxlength="1">`)
+  .join("");
+
+describe("findTotpFields", () => {
+  it("finds the field marked autocomplete=one-time-code", () => {
+    page(`<form><input id="code" type="text" autocomplete="one-time-code"></form>`);
+
+    expect(findTotpFields(document)).toEqual([byId("code")]);
+  });
+
+  it.each([
+    `<input id="code" type="text" name="totp">`,
+    `<input id="code" type="tel" name="otp_code">`,
+    `<input id="code" type="number" name="twoFactorCode">`,
+    `<input id="code" type="text" placeholder="Authenticator code">`,
+    `<input id="code" type="text" aria-label="6-digit verification code">`,
+    `<input id="code" type="text" name="mfa">`,
+    `<input id="code" type="text" name="code" maxlength="6">`,
+    `<input id="code" type="text" name="token" inputmode="numeric">`,
+  ])("finds a field named like a 2FA code: %s", (field) => {
+    page(`<form>${field}</form>`);
+
+    expect(findTotpFields(document)).toEqual([byId("code")]);
+  });
+
+  it.each([
+    `<input type="text" name="promo_code" maxlength="6">`,
+    `<input type="text" name="postal-code" maxlength="6">`,
+    `<input type="text" name="code">`,
+    `<input type="text" name="username">`,
+    `<input type="password" name="otp">`,
+    `<input type="text" name="otp" disabled>`,
+    `<input type="text" name="otp" style="display: none">`,
+  ])("doesn't take other fields for a 2FA code: %s", (field) => {
+    page(`<form>${field}</form>`);
+
+    expect(findTotpFields(document)).toEqual([]);
+  });
+
+  it("finds a code split into a field for each digit", () => {
+    page(`
+      <form>
+        <input id="search" type="text" maxlength="1">
+        <div>${digits}</div>
+      </form>`);
+
+    expect(findTotpFields(document)).toEqual([0, 1, 2, 3, 4, 5].map((i) => byId(`d${i}`)));
+  });
+
+  it("finds digit fields each in a box of its own", () => {
+    const boxed = Array(6).fill(`<span><input maxlength="1"></span>`);
+    page(`<form>${boxed.join("")}</form>`);
+
+    expect(findTotpFields(document)).toHaveLength(6);
+  });
+
+  it("prefers the marked field over digit fields", () => {
+    page(`
+      <form>
+        ${digits}
+        <input id="code" type="text" autocomplete="one-time-code">
+      </form>`);
+
+    expect(findTotpFields(document)).toEqual([byId("code")]);
+  });
+});
+
+describe("fillTotp", () => {
+  it("fills the code and tells the page it changed", () => {
+    page(`<form><input id="code" type="text" autocomplete="one-time-code"></form>`);
+    const events: string[] = [];
+    byId("code").addEventListener("input", () => events.push("input"));
+
+    expect(fillTotp(document, location.origin, "123456")).toBe(true);
+    expect(byId("code").value).toBe("123456");
+    expect(events).toEqual(["input"]);
+  });
+
+  it("fills a digit into each of the code's digit fields", () => {
+    page(`<form>${digits}</form>`);
+
+    expect(fillTotp(document, location.origin, "123456")).toBe(true);
+    expect([0, 1, 2, 3, 4, 5].map((i) => byId(`d${i}`).value).join("")).toBe("123456");
+  });
+
+  it("refuses to fill a page from another origin than the code was asked for", () => {
+    page(`<form><input id="code" type="text" autocomplete="one-time-code"></form>`);
+
+    expect(fillTotp(document, "https://bank.example", "123456")).toBe(false);
+    expect(byId("code").value).toBe("");
+  });
+
+  it("fills nothing on a page without a 2FA field", () => {
+    page(`<form><input type="text" name="username"></form>`);
+
+    expect(fillTotp(document, location.origin, "123456")).toBe(false);
+  });
+});
+
+describe("findNewPasswordFields", () => {
+  it("finds the fields marked autocomplete=new-password", () => {
+    page(`
+      <form>
+        <input id="current" type="password" autocomplete="current-password">
+        <input id="new" type="password" autocomplete="new-password">
+        <input id="again" type="password" autocomplete="new-password">
+      </form>`);
+
+    expect(findNewPasswordFields(document)).toEqual([byId("new"), byId("again")]);
+  });
+
+  it("finds a sign-up's password and its confirmation, unmarked", () => {
+    page(`
+      <form>
+        <input type="email">
+        <input id="pass" type="password"><input id="again" type="password">
+      </form>`);
+
+    expect(findNewPasswordFields(document)).toEqual([byId("pass"), byId("again")]);
+  });
+
+  it("finds the new password and its confirmation of a password change, unmarked", () => {
+    page(`
+      <form>
+        <input id="current" type="password">
+        <input id="new" type="password"><input id="again" type="password">
+      </form>`);
+
+    expect(findNewPasswordFields(document)).toEqual([byId("new"), byId("again")]);
+  });
+
+  it("finds a lone password field named as a new one", () => {
+    page(`<form><input type="email"><input id="pass" type="password" name="new_password"></form>`);
+
+    expect(findNewPasswordFields(document)).toEqual([byId("pass")]);
+  });
+
+  it("doesn't take a sign-in's password for a new one", () => {
+    page(`<form><input type="text"><input type="password" name="password"></form>`);
+
+    expect(findNewPasswordFields(document)).toEqual([]);
+  });
+});
+
+describe("fillNewPassword", () => {
+  it("fills the new password and its confirmation", () => {
+    page(`
+      <form>
+        <input id="current" type="password" autocomplete="current-password">
+        <input id="new" type="password" autocomplete="new-password">
+        <input id="again" type="password" autocomplete="new-password">
+      </form>`);
+
+    expect(fillNewPassword(document, location.origin, "G3n!")).toBe(true);
+    expect([byId("current"), byId("new"), byId("again")].map((f) => f.value)).toEqual([
+      "",
+      "G3n!",
+      "G3n!",
+    ]);
+  });
+
+  it("refuses to fill a page from another origin than the password was made for", () => {
+    page(`<form><input id="new" type="password" autocomplete="new-password"></form>`);
+
+    expect(fillNewPassword(document, "https://bank.example", "G3n!")).toBe(false);
+    expect(byId("new").value).toBe("");
+  });
+
+  it("fills nothing on a page without new password fields", () => {
+    page(`<form><input type="text"><input type="password"></form>`);
+
+    expect(fillNewPassword(document, location.origin, "G3n!")).toBe(false);
+  });
+});
+
+describe("pageFields", () => {
+  it("says what the page has to fill", () => {
+    page(`<form><input type="text" autocomplete="one-time-code"></form>`);
+    expect(pageFields(document)).toEqual({ login: false, totp: true, newPassword: false });
+
+    page(`<form><input type="email"><input type="password" autocomplete="new-password"></form>`);
+    expect(pageFields(document)).toEqual({ login: true, totp: false, newPassword: true });
   });
 });

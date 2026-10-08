@@ -1,10 +1,13 @@
-// Finding a page's login form and filling it. This runs in the page, injected only when the
-// user asks to fill (the popup or the shortcut): nothing is read or filled on page load.
+// Finding a page's login form, 2FA field and new password fields, and filling them. This runs
+// in the page, injected only when the user asks to fill (the popup or the shortcut): nothing is
+// read or filled on page load.
 
-/** What fills a login form: an Entry's username and password. */
+/** What fills a login form: an Entry's username and password, and its TOTP code. */
 export interface Credentials {
   username: string;
   password: string;
+  /** The current code of the Entry's TOTP, for a 2FA field. */
+  totp?: string;
 }
 
 /** The smallest a field can be, in pixels each way, for the user to see it. */
@@ -18,8 +21,41 @@ export interface LoginFields {
   submitUrl?: string;
 }
 
+/** What a page has for the extension to fill. */
+export interface PageFields {
+  login: boolean;
+  /** A field for a TOTP code, as a 2FA step of a sign-in has. */
+  totp: boolean;
+  /** Fields for a new password, as sign-up and password change forms have. */
+  newPassword: boolean;
+}
+
 export const TEXT_TYPES = new Set(["text", "email", "tel"]);
 const USERNAME_HINT = /user|login|e-?mail|identifier|account/i;
+
+const TOTP_TYPES = new Set(["text", "tel", "number"]);
+/** What only a 2FA code field is labelled. */
+const TOTP_HINT =
+  /totp|\botp|one.?time|2fa|two.?factor|mfa|authenticat|verification.?code|security.?code/i;
+/** What a 2FA code field may be labelled, among other fields as short and numeric. */
+const CODE_HINT = /code|token|\bpin\b/i;
+/** What other code fields are labelled. */
+const NOT_TOTP_HINT =
+  /promo|coupon|voucher|gift|discount|referral|invit|postal|post.?code|zip|country|area|captcha/i;
+/** How many digits a TOTP code has, at fewest and at most. */
+const TOTP_DIGITS = { min: 6, max: 8 };
+
+/** What a new password's field, or its confirmation's, is labelled. */
+const NEW_PASSWORD_HINT = /new|confirm|repeat|retype|again|sign.?up|regist|create/i;
+
+/** What the page has for the extension to fill. */
+export function pageFields(document: Document): PageFields {
+  return {
+    login: findLoginFields(document) !== undefined,
+    totp: findTotpFields(document).length > 0,
+    newPassword: findNewPasswordFields(document).length > 0,
+  };
+}
 
 /** The page's login fields, or none if it has no login form the user could see. */
 export function findLoginFields(document: Document): LoginFields | undefined {
@@ -29,7 +65,7 @@ export function findLoginFields(document: Document): LoginFields | undefined {
     passwords.find((input) => autocomplete(input) === "current-password") ??
     passwords.find((input) => autocomplete(input) !== "new-password") ??
     passwords[0];
-  const textInputs = inputs.filter((input) => TEXT_TYPES.has(input.type));
+  const textInputs = inputs.filter((input) => TEXT_TYPES.has(input.type) && !isTotpField(input));
 
   if (password) {
     // The username is in the password's form (or, outside forms, among the fields outside
@@ -73,6 +109,121 @@ export function fillLogin(
     setValue(fields.password, password);
   }
   return true;
+}
+
+/**
+ * The page's field for a TOTP code: one field, or a field for each of the code's digits. None
+ * when the page has none the user could see.
+ */
+export function findTotpFields(document: Document): HTMLInputElement[] {
+  const inputs = Array.from(document.querySelectorAll("input")).filter(
+    (input) => TOTP_TYPES.has(input.type) && fillable(input),
+  );
+  const field = inputs.find(isTotpField);
+  return field ? [field] : digitFields(inputs);
+}
+
+/**
+ * Fills a TOTP code into the page's 2FA field, if the page is still at `origin`, the origin
+ * the code's Entry was asked for. Says whether it filled it.
+ */
+export function fillTotp(document: Document, origin: string, code: string): boolean {
+  if (document.location.origin !== origin) return false;
+  const fields = findTotpFields(document);
+  if (fields.length === 0) return false;
+  if (fields.length === 1) {
+    setValue(fields[0]!, code);
+  } else {
+    if (fields.length !== code.length) return false;
+    fields.forEach((field, index) => setValue(field, code[index]!));
+  }
+  return true;
+}
+
+/**
+ * The page's fields for a new password and its confirmation: those marked as new passwords,
+ * or else a form's password typed twice, after the current one on a password change. A lone
+ * password field is a new password only when it is labelled one.
+ */
+export function findNewPasswordFields(document: Document): HTMLInputElement[] {
+  const passwords = Array.from(document.querySelectorAll("input")).filter(
+    (input) => input.type === "password" && fillable(input),
+  );
+  const marked = passwords.filter((input) => autocomplete(input) === "new-password");
+  if (marked.length > 0) return marked;
+  const forms = new Set(passwords.map((input) => input.form));
+  for (const form of forms) {
+    const fields = passwords.filter((input) => input.form === form);
+    const unmarked = fields.filter((input) => autocomplete(input) !== "current-password");
+    let fresh: HTMLInputElement[];
+    if (unmarked.length < fields.length || fields.length === 2) {
+      fresh = unmarked;
+    } else if (fields.length > 2) {
+      fresh = fields.slice(1);
+    } else {
+      fresh = fields.filter((input) => NEW_PASSWORD_HINT.test(labels(input)));
+    }
+    if (fresh.length > 0) return fresh;
+  }
+  return [];
+}
+
+/**
+ * Fills a generated password into the page's new password fields, if the page is still at
+ * `origin`, the origin it was made for. Says whether it filled them.
+ */
+export function fillNewPassword(document: Document, origin: string, password: string): boolean {
+  if (document.location.origin !== origin) return false;
+  const fields = findNewPasswordFields(document);
+  fields.forEach((field) => setValue(field, password));
+  return fields.length > 0;
+}
+
+/** Whether a field is for a 2FA code, by how it is marked or labelled. */
+function isTotpField(input: HTMLInputElement): boolean {
+  if (autocomplete(input) === "one-time-code") return true;
+  if (!TOTP_TYPES.has(input.type)) return false;
+  const label = labels(input);
+  if (NOT_TOTP_HINT.test(label)) return false;
+  if (TOTP_HINT.test(label)) return true;
+  const short = input.maxLength >= TOTP_DIGITS.min && input.maxLength <= TOTP_DIGITS.max;
+  return CODE_HINT.test(label) && (short || input.inputMode === "numeric");
+}
+
+/**
+ * The first run of single-character fields side by side, one for each digit of a TOTP code.
+ */
+function digitFields(inputs: HTMLInputElement[]): HTMLInputElement[] {
+  let run: HTMLInputElement[] = [];
+  for (const input of [...inputs, undefined]) {
+    if (input?.maxLength === 1 && (run.length === 0 || besideEachOther(run[0]!, input))) {
+      run.push(input);
+      continue;
+    }
+    if (run.length >= TOTP_DIGITS.min && run.length <= TOTP_DIGITS.max) return run;
+    run = input?.maxLength === 1 ? [input] : [];
+  }
+  return [];
+}
+
+/** Whether two fields are in the same box, alone in boxes of their own or not. */
+function besideEachOther(a: HTMLInputElement, b: HTMLInputElement): boolean {
+  const box = (input: HTMLInputElement) => {
+    const parent = input.parentElement;
+    return parent?.querySelectorAll("input").length === 1 ? parent.parentElement : parent;
+  };
+  return box(a) === box(b);
+}
+
+/** What a field is named and labelled, for telling what it is for. */
+function labels(input: HTMLInputElement): string {
+  return [
+    input.name,
+    input.id,
+    input.placeholder,
+    input.getAttribute("aria-label"),
+    ...Array.from(input.labels ?? [], (label) => label.textContent),
+  ].join(" ");
 }
 
 function withSubmitUrl(fields: LoginFields): LoginFields {

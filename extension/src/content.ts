@@ -1,14 +1,23 @@
 // Injected into the page only when the user asks to fill it, from the popup or the shortcut.
 // From then on, until the page goes, it also tells the extension the logins submitted there.
 import { type SubmittedLogin, submitsLogin, submittedLogin } from "./capture";
-import { type Credentials, fillLogin, findLoginFields } from "./forms";
-import type { Page } from "./companion";
+import {
+  type Credentials,
+  fillLogin,
+  fillNewPassword,
+  fillTotp,
+  findLoginFields,
+  pageFields,
+} from "./forms";
+import type { InspectedPage } from "./companion";
 import type { PageMessage } from "./messages";
 
 export interface PageApi {
   /** The page, or none if the extension doesn't fill pages like it. */
-  inspect(): Page | undefined;
+  inspect(): InspectedPage | undefined;
+  /** Fills the login form, and the 2FA field with the TOTP code; says whether it filled any. */
   fill(origin: string, credentials: Credentials): boolean;
+  fillNewPassword(origin: string, password: string): boolean;
 }
 
 declare global {
@@ -87,9 +96,15 @@ globalThis.keefast = {
       url: location.href,
       origin: location.origin,
       submitUrl: findLoginFields(document)?.submitUrl,
+      fields: pageFields(document),
     };
   },
   fill(origin, credentials) {
-    return fillLogin(document, origin, credentials);
+    const login = fillLogin(document, origin, credentials);
+    const totp = credentials.totp !== undefined && fillTotp(document, origin, credentials.totp);
+    return login || totp;
+  },
+  fillNewPassword(origin, password) {
+    return fillNewPassword(document, origin, password);
   },
 };

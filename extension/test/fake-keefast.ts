@@ -6,13 +6,18 @@ import type { Entry, NativePort } from "../src/keefast";
 
 type Message = Record<string, unknown>;
 
+/** An Entry as keefast has it, with the current code of its TOTP if it has one. */
+export type FakeEntry = Omit<Entry, "hasTotp"> & { totp?: string };
+
 export class FakeKeefast {
   running = true;
   locked = false;
   /** Pairings as name and identification key. */
   pairings = new Map<string, string>();
   /** Entries by site host. */
-  entries = new Map<string, Entry[]>();
+  entries = new Map<string, FakeEntry[]>();
+  /** The password the generator makes, or undefined when its settings can't make one. */
+  generated: string | undefined = "G3nerated!";
   /** The name the user gives the next Pairing, or undefined to deny it. */
   pairingName: string | undefined = "Chromium";
   /** Breaks the nonce of replies, as an impostor would. */
@@ -35,6 +40,8 @@ export class FakeKeefast {
     let clientKey: Uint8Array | undefined;
     /** The Pairings this connection proved with `test-associate`, as keefast requires. */
     const proven = new Set<string>();
+    /** The Entries given for a site on this connection, whose TOTP keefast gives. */
+    const given = new Set<string>();
     const messageListeners: ((message: object) => void)[] = [];
     const disconnectListeners: (() => void)[] = [];
     let open = true;
@@ -129,22 +136,25 @@ export class FakeKeefast {
           const paired = keys.some(({ id, key }) => this.pairings.get(id) === key);
           const host = new URL(message.url as string).host;
           const entries = (paired && this.entries.get(host)) || [];
-          const answer = () =>
+          const answer = () => {
+            entries.forEach(({ uuid }) => given.add(uuid));
             reply(
               entries.length === 0
                 ? error(request, 15)
                 : encrypted(request, {
                     count: entries.length,
-                    entries: entries.map(({ uuid, name, username, password }) => ({
+                    entries: entries.map(({ uuid, name, username, password, totp }) => ({
                       login: username,
                       name,
                       password,
                       uuid,
+                      ...(totp === undefined ? {} : { totp }),
                     })),
                     hash: "vault-hash",
                     id: "",
                   }),
             );
+          };
           if (this.holdLogins) this.held.push(answer);
           else answer();
           return;
@@ -160,6 +170,20 @@ export class FakeKeefast {
           }
           return;
         }
+        case "get-totp": {
+          // The Entry as it is now: its code changes, and it may no longer be for the site.
+          const uuid = message.uuid as string;
+          const entry = [...this.entries.values()].flat().find((entry) => entry.uuid === uuid);
+          reply(encrypted(request, { totp: (given.has(uuid) && entry?.totp) || "" }));
+          return;
+        }
+        case "generate-password":
+          reply(
+            this.generated === undefined
+              ? error(request, 6)
+              : encrypted(request, { password: this.generated }),
+          );
+          return;
         default:
           reply(error(request, 12));
       }

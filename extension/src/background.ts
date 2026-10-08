@@ -51,12 +51,24 @@ const tabs: Tabs = {
       return undefined;
     }
   },
-  async fill(tab, origin, { username, password }) {
+  async fill(tab, origin, credentials) {
     try {
       const filled = await inPage(
         tab,
         (origin, credentials) => globalThis.keefast?.fill(origin, credentials) ?? false,
-        [origin, { username, password }] as [string, Credentials],
+        [origin, credentials] as [string, Credentials],
+      );
+      return filled === true;
+    } catch {
+      return false;
+    }
+  },
+  async fillNewPassword(tab, origin, password) {
+    try {
+      const filled = await inPage(
+        tab,
+        (origin, password) => globalThis.keefast?.fillNewPassword(origin, password) ?? false,
+        [origin, password],
       );
       return filled === true;
     } catch {
@@ -79,6 +91,10 @@ async function answer(request: Request): Promise<Answers[Request["type"]]> {
       return (await companion.entries(request.tab)) ?? null;
     case "fill":
       return companion.fill(request.tab, request.uuid);
+    case "generate":
+      return (await companion.generate(request.tab)) ?? null;
+    case "fill-generated":
+      return companion.fillGenerated(request.tab);
   }
 }
 

@@ -1,9 +1,11 @@
 // What the popup and the shortcut do: ask keefast for the page's Entries, and fill the one the
-// user picks. Passwords stay here, never in the popup, and only until filled. Then, what the
-// page does: offer keefast the logins the user submits there that it doesn't have yet.
+// user picks, with its TOTP code on a 2FA step; or fill a password keefast's generator made.
+// Passwords stay here, never in the popup, and only until filled. Then, what the page does:
+// offer keefast the logins the user submits there that it doesn't have yet.
 import nacl from "tweetnacl";
 import type { SubmittedLogin } from "./capture";
 import { encodeBase64 } from "./crypto";
+import type { Credentials, PageFields } from "./forms";
 import { KeefastError, type Entry, type KeefastClient } from "./keefast";
 
 /** A page the extension may fill, as its login form sees it. */
@@ -14,12 +16,23 @@ export interface Page {
   submitUrl?: string;
 }
 
+/** A page as the extension finds it when the user asks to fill it. */
+export interface InspectedPage extends Page {
+  /** What the page has to fill. */
+  fields: PageFields;
+}
+
 /** The browser's tabs, as far as filling them goes. */
 export interface Tabs {
   /** The page in a tab, or none if the extension can't fill it. */
-  inspect(tab: number): Promise<Page | undefined>;
-  /** Fills an Entry into the tab's login form, if the tab is still at `origin`. */
-  fill(tab: number, origin: string, entry: Entry): Promise<boolean>;
+  inspect(tab: number): Promise<InspectedPage | undefined>;
+  /**
+   * Fills an Entry into the tab's login form, and its TOTP code into a 2FA field, if the tab is
+   * still at `origin`.
+   */
+  fill(tab: number, origin: string, credentials: Credentials): Promise<boolean>;
+  /** Fills a new password into the tab's new password fields, if the tab is still at `origin`. */
+  fillNewPassword(tab: number, origin: string, password: string): Promise<boolean>;
 }
 
 /** An Entry as the popup lists it, without its password. */
@@ -27,6 +40,13 @@ export interface EntrySummary {
   uuid: string;
   name: string;
   username: string;
+  hasTotp: boolean;
+}
+
+/** The Entries that can fill a page, and what the page has to fill. */
+export interface PageEntries {
+  entries: EntrySummary[];
+  fields: PageFields;
 }
 
 /** How long the Entries keefast gave for a tab are kept for the user to pick one. */
@@ -41,6 +61,15 @@ const KNOW_ENTRIES_MS = 15 * 60_000;
 interface Listed {
   origin: string;
   entries: Entry[];
+  /** What the page had to fill when last looked at. */
+  fields: PageFields;
+  expiry: ReturnType<typeof setTimeout>;
+}
+
+/** A password keefast's generator made for the page at `origin`, until filled there. */
+interface Generated {
+  origin: string;
+  password: string;
   expiry: ReturnType<typeof setTimeout>;
 }
 
@@ -68,6 +97,7 @@ interface Known {
 export class Companion {
   private listed = new Map<number, Listed>();
   private known = new Map<number, Known>();
+  private generated = new Map<number, Generated>();
   /** Salts the hashes kept of passwords, so they can't be looked up. */
   private readonly salt = nacl.randomBytes(32);
 
@@ -77,25 +107,74 @@ export class Companion {
   ) {}
 
   /**
-   * The Entries for the page in `tab`, or none if the extension can't fill the page. Entries
-   * listed for the page's site a moment ago are listed again; otherwise keefast is asked, and
-   * it may ask the user first. Fails if keefast is locked or not running.
+   * The Entries that can fill the page in `tab`, or none if the extension can't fill the page.
+   * On a 2FA step, those are the Entries with TOTP. Entries listed for the page's site a moment
+   * ago are listed again; otherwise keefast is asked, and it may ask the user first. Fails if
+   * keefast is locked or not running.
    */
-  async entries(tab: number): Promise<EntrySummary[] | undefined> {
-    const entries = await this.entriesFor(tab);
-    return entries?.map(({ uuid, name, username }) => ({ uuid, name, username }));
+  async entries(tab: number): Promise<PageEntries | undefined> {
+    const listed = await this.listFor(tab);
+    if (!listed) return undefined;
+    return {
+      entries: fillers(listed).map(({ uuid, name, username, hasTotp }) => ({
+        uuid,
+        name,
+        username,
+        hasTotp,
+      })),
+      fields: listed.fields,
+    };
   }
 
-  /** Fills the listed Entry `uuid` into `tab`, and says whether it did. */
+  /**
+   * Fills the listed Entry `uuid` into `tab`, with its current TOTP code if the page has a 2FA
+   * field, and says whether it did.
+   */
   async fill(tab: number, uuid: string): Promise<boolean> {
     const listed = this.listed.get(tab);
     const entry = listed?.entries.find((entry) => entry.uuid === uuid);
     if (!listed || !entry) return false;
     this.forget(tab);
-    const filled = await this.tabs.fill(tab, listed.origin, entry);
+    const { origin, fields } = listed;
+    const credentials: Credentials = { username: entry.username, password: entry.password };
+    if (fields.totp && entry.hasTotp) {
+      // Asked now, not taken from the listing: the code changes every 30 seconds or so.
+      credentials.totp = await this.client.totp(entry.uuid);
+      // keefast gives it only while the Entry is the site's: listing it again may tell.
+      if (credentials.totp === undefined && !fields.login) return false;
+    }
+    const filled = await this.tabs.fill(tab, origin, credentials);
     const known = this.known.get(tab);
-    if (filled && known?.origin === listed.origin) known.filled = entry.uuid;
+    if (filled && known?.origin === origin) known.filled = entry.uuid;
     return filled;
+  }
+
+  /**
+   * A new password from keefast's generator, for the page in `tab`, or none if the extension
+   * can't fill the page. It is kept for a while for {@link fillGenerated} to fill.
+   */
+  async generate(tab: number): Promise<string | undefined> {
+    const page = await this.tabs.inspect(tab);
+    if (!page) return undefined;
+    const password = await this.client.generatePassword();
+    this.forgetGenerated(tab);
+    this.generated.set(tab, {
+      origin: page.origin,
+      password,
+      expiry: setTimeout(() => this.forgetGenerated(tab), KEEP_ENTRIES_MS),
+    });
+    return password;
+  }
+
+  /**
+   * Fills the password last generated for `tab` into its new password fields, if the tab is
+   * still at the site it was made for, and says whether it did.
+   */
+  async fillGenerated(tab: number): Promise<boolean> {
+    const generated = this.generated.get(tab);
+    if (!generated) return false;
+    this.forgetGenerated(tab);
+    return this.tabs.fillNewPassword(tab, generated.origin, generated.password);
   }
 
   /**
@@ -104,7 +183,8 @@ export class Companion {
    */
   async shortcut(tab: number): Promise<"filled" | "choose"> {
     try {
-      const entries = await this.entriesFor(tab);
+      const listed = await this.listFor(tab);
+      const entries = listed && fillers(listed);
       if (entries?.length === 1 && (await this.fill(tab, entries[0]!.uuid))) {
         return "filled";
       }
@@ -170,11 +250,16 @@ export class Companion {
     return current !== undefined && entries.length === 1 ? entries[0] : undefined;
   }
 
-  private async entriesFor(tab: number): Promise<Entry[] | undefined> {
+  /** The Entries listed for the page in `tab`, asking keefast unless they were a moment ago. */
+  private async listFor(tab: number): Promise<Listed | undefined> {
     const page = await this.tabs.inspect(tab);
     if (!page) return undefined;
-    const listed = this.listed.get(tab);
-    if (listed?.origin === page.origin) return listed.entries;
+    const previous = this.listed.get(tab);
+    if (previous?.origin === page.origin) {
+      // The site's next step, such as its 2FA step, may be at the same origin.
+      previous.fields = page.fields;
+      return previous;
+    }
     const entries = await this.client.entries(page.url, page.submitUrl);
     this.forget(tab);
     this.knownAt(tab, page.origin).entries = entries.map(({ uuid, username, password }) => ({
@@ -183,12 +268,14 @@ export class Companion {
       loginHash: this.fingerprint(username, password),
       passwordHash: this.fingerprint("", password),
     }));
-    this.listed.set(tab, {
+    const listed: Listed = {
       origin: page.origin,
       entries,
+      fields: page.fields,
       expiry: setTimeout(() => this.forget(tab), KEEP_ENTRIES_MS),
-    });
-    return entries;
+    };
+    this.listed.set(tab, listed);
+    return listed;
   }
 
   /**
@@ -219,4 +306,15 @@ export class Companion {
     if (listed) clearTimeout(listed.expiry);
     this.listed.delete(tab);
   }
+
+  private forgetGenerated(tab: number): void {
+    const generated = this.generated.get(tab);
+    if (generated) clearTimeout(generated.expiry);
+    this.generated.delete(tab);
+  }
+}
+
+/** The listed Entries that can fill the page: on a 2FA step alone, those with TOTP. */
+function fillers({ entries, fields }: Listed): Entry[] {
+  return fields.totp && !fields.login ? entries.filter((entry) => entry.hasTotp) : entries;
 }

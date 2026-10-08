@@ -96,7 +96,7 @@ describe("entries", () => {
   it("gets the Entries for the site from the paired Vaults", async () => {
     const logins = await client.entries("https://example.com/login", "https://example.com/session");
 
-    expect(logins).toEqual([alice]);
+    expect(logins).toEqual([{ ...alice, hasTotp: false }]);
     const request = keefast.received.find((m) => m.action === "get-logins")!;
     expect(request.url).toBe("https://example.com/login");
     expect(request.submitUrl).toBe("https://example.com/session");
@@ -119,7 +119,7 @@ describe("entries", () => {
 
     keefast.release();
 
-    expect(await logins).toEqual([alice]);
+    expect(await logins).toEqual([{ ...alice, hasTotp: false }]);
   });
 
   it("fails as locked when keefast was locked meanwhile", async () => {
@@ -195,6 +195,62 @@ describe("saveLogin", () => {
     keefast.locked = true;
 
     await expect(client.saveLogin(login)).rejects.toMatchObject({ reason: "locked" });
+  });
+});
+
+describe("totp", () => {
+  const github = { uuid: "0044", name: "GitHub", username: "alice", password: "s3cret" };
+
+  beforeEach(async () => {
+    await client.pair();
+  });
+
+  it("says which Entries keefast gave have TOTP", async () => {
+    keefast.entries.set("example.com", [alice, { ...github, totp: "123456" }]);
+
+    const entries = await client.entries("https://example.com/");
+
+    expect(entries.map(({ hasTotp }) => hasTotp)).toEqual([false, true]);
+  });
+
+  it("gets the current code of an Entry keefast gave for a site", async () => {
+    keefast.entries.set("example.com", [{ ...github, totp: "123456" }]);
+    await client.entries("https://example.com/");
+    keefast.entries.set("example.com", [{ ...github, totp: "654321" }]);
+    await client.entries("https://example.com/");
+
+    expect(await client.totp("0044")).toBe("654321");
+    expect(keefast.received.at(-1)).toMatchObject({ action: "get-totp", uuid: "0044" });
+  });
+
+  it("has none for an Entry keefast didn't give", async () => {
+    keefast.entries.set("example.com", [{ ...github, totp: "123456" }]);
+
+    expect(await client.totp("0044")).toBeUndefined();
+  });
+
+  it("fails as locked when keefast is locked", async () => {
+    keefast.locked = true;
+
+    await expect(client.totp("0044")).rejects.toMatchObject({ reason: "locked" });
+  });
+});
+
+describe("generatePassword", () => {
+  it("gets a password made with the user's generator settings", async () => {
+    expect(await client.generatePassword()).toBe("G3nerated!");
+  });
+
+  it("fails as denied when the settings can't make a password", async () => {
+    keefast.generated = undefined;
+
+    await expect(client.generatePassword()).rejects.toMatchObject({ reason: "denied" });
+  });
+
+  it("fails as not running without keefast", async () => {
+    keefast.running = false;
+
+    await expect(client.generatePassword()).rejects.toMatchObject({ reason: "not-running" });
   });
 });
 

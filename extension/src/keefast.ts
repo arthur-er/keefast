@@ -37,6 +37,8 @@ export interface Entry {
   name: string;
   username: string;
   password: string;
+  /** Whether the Entry has TOTP, whose code {@link KeefastClient.totp} gets. */
+  hasTotp: boolean;
 }
 
 /** A login the user submitted, for keefast to save. */
@@ -194,6 +196,28 @@ export class KeefastClient {
       if (error instanceof KeefastError && error.reason === "denied") return false;
       throw error;
     }
+  }
+
+  /**
+   * The current TOTP code of an Entry keefast gave for a site on this connection, or none if
+   * it has no TOTP or keefast didn't give it.
+   */
+  async totp(uuid: string): Promise<string | undefined> {
+    const reply = await this.sendEncrypted("get-totp", { uuid });
+    return typeof reply.totp === "string" && reply.totp !== "" ? reply.totp : undefined;
+  }
+
+  /**
+   * A new password, made with the user's generator settings in keefast. Fails as denied when
+   * the settings can't make one.
+   */
+  async generatePassword(): Promise<string> {
+    const reply = await this.sendEncrypted("generate-password", {});
+    // KeePassXC answered in an Entry, before it answered with the password alone.
+    const [entry] = Array.isArray(reply.entries) ? (reply.entries as Message[]) : [];
+    const password = reply.password ?? entry?.password;
+    if (typeof password !== "string" || password === "") throw unanswered();
+    return password;
   }
 
   /** Fails unless keefast is running with a Vault open. */
@@ -377,5 +401,6 @@ function toEntry(entry: Record<string, unknown>): Entry {
     name: String(entry.name ?? ""),
     username: String(entry.login ?? ""),
     password: String(entry.password ?? ""),
+    hasTotp: typeof entry.totp === "string" && entry.totp !== "",
   };
 }
