@@ -710,6 +710,83 @@ mod locking {
         assert_eq!(errors[0]["errorCode"], "1");
     }
 
+    const SHOP: &str = "https://shop.example/login";
+
+    /// Sends a `set-login` that the user is asked about, from an extension that has proved its
+    /// Pairing.
+    fn ask_to_save_a_login(browser: &mut Browser, password: &str) {
+        let (name, key) = browser.pairing.clone();
+        browser.request(&browser.extension.test_associate(&name, &key));
+        let login = browser
+            .extension
+            .set_login(SHOP, "carol", password, None, None);
+        assert_eq!(browser.request(&login), None, "the user is asked");
+        assert!(browser.workspace.pending_login().is_some());
+    }
+
+    #[test]
+    fn a_pending_set_login_is_answered_as_locked_when_its_vault_is_about_to_lock() {
+        let (mut browser, vault) = Browser::paired(storage());
+        ask_to_save_a_login(&mut browser, "s3cret");
+        browser.workspace.take_browser_messages();
+
+        lock_waits_for_the_user(&mut browser, vault);
+
+        assert!(browser.workspace.pending_login().is_none());
+        let errors: Vec<Value> = browser
+            .workspace
+            .take_browser_messages()
+            .iter()
+            .map(|outgoing| parse(&outgoing.message))
+            .filter(|message| message["action"] == "set-login")
+            .collect();
+        assert_eq!(errors.len(), 1, "the extension gets its reply");
+        assert_eq!(errors[0]["errorCode"], "1");
+    }
+
+    #[test]
+    fn a_stale_set_login_does_not_come_back_aimed_at_another_vault() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.unlock(&work_vault());
+        let work = browser
+            .workspace
+            .vaults()
+            .map(|open| open.id())
+            .find(|&id| id != vault)
+            .unwrap();
+        browser
+            .workspace
+            .pair_browser(work, "Home", &browser.pairing.1)
+            .unwrap();
+        ask_to_save_a_login(&mut browser, "first");
+
+        let saves = browser
+            .workspace
+            .lock_vault(vault, &mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        assert!(browser.workspace.vault(vault).unwrap().is_locking());
+
+        // The login the personal Vault was asked about is gone, not queued for the work Vault.
+        assert!(browser.workspace.pending_login().is_none());
+        ask_to_save_a_login(&mut browser, "second");
+    }
+
+    #[test]
+    fn a_lock_the_user_cancels_leaves_set_login_working() {
+        let (mut browser, vault) = Browser::paired(storage());
+        ask_to_save_a_login(&mut browser, "s3cret");
+
+        // The user's own lock answers the waiting login too, and Cancel brings the Vault back.
+        let saves = browser
+            .workspace
+            .lock_vault(vault, &mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        assert!(browser.workspace.pending_login().is_none());
+        browser.workspace.answer_lock(vault, UnsavedLock::Cancel);
+
+        ask_to_save_a_login(&mut browser, "again");
+    }
+
     #[test]
     fn a_lock_the_user_cancels_gives_the_vault_back_to_the_browser() {
         let (mut browser, vault) = Browser::paired(storage());

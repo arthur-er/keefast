@@ -973,7 +973,15 @@ impl Workspace {
     /// The open Vaults a captured login may go to: those paired with a Pairing the extension
     /// proved.
     fn login_vaults(&self, request: &LoginRequest) -> Vec<VaultId> {
-        self.readable_vaults()
+        Self::vaults_paired_for_login(self.readable_vaults(), request)
+    }
+
+    /// Which of `vaults` a captured login's Pairings are paired with.
+    fn vaults_paired_for_login<'a>(
+        vaults: impl Iterator<Item = &'a crate::OpenVault>,
+        request: &LoginRequest,
+    ) -> Vec<VaultId> {
+        vaults
             .filter(|open| {
                 request
                     .pairings
@@ -1100,8 +1108,10 @@ impl Workspace {
             request.undecided.iter().any(|&(of, _)| of == vault)
         });
         let mut logins = std::mem::take(&mut browser.logins);
+        // Matched against every open Vault, not just the readable ones: the Vault being cut off
+        // is marked as waiting to lock before this runs, and its logins must still be found.
         let logins_cut_off = take_where(&mut logins, |request| {
-            self.login_vaults(request).contains(&vault)
+            Self::vaults_paired_for_login(self.vaults.iter(), request).contains(&vault)
         });
         self.browser.logins = logins;
         let cut_off = pairings
