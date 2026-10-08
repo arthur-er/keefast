@@ -5,8 +5,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::SecretString;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
+use crate::edit::string_value;
 use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
 use crate::{OpenError, Timestamp, Totp, TotpError, totp};
@@ -243,12 +243,7 @@ impl Entry {
                 .map(|(_, element)| value(element))
                 .filter(|url| !url.is_empty())
                 .collect(),
-            totp: totp::read(&|name| {
-                strings()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, element)| Zeroizing::new(value(element)))
-                    .filter(|value| !value.trim().is_empty())
-            }),
+            totp: totp::read(&|name| string_value(entry, name)),
             custom_data: custom_data(entry),
             last_modified: last_modified(entry),
             history: entry

@@ -577,7 +577,7 @@ fn set_string(entry: &mut Element, key: &str, value: &str, protect: bool) {
 }
 
 /// The value of an Entry element's field, if it has one that isn't blank.
-fn string_value(entry: &Element, key: &str) -> Option<Zeroizing<String>> {
+pub(crate) fn string_value(entry: &Element, key: &str) -> Option<Zeroizing<String>> {
     entry
         .children_named("String")
         .find(|string| string.child("Key").is_some_and(|k| k.text() == key))

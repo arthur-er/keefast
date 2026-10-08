@@ -84,6 +84,7 @@ impl TotpCode {
 const DEFAULT_DIGITS: u32 = 6;
 const DEFAULT_PERIOD: u32 = 30;
 const STEAM_DIGITS: u32 = 5;
+const STEAM_ISSUER: &str = "Steam";
 const MAX_DIGITS: u32 = 10;
 const MAX_PERIOD: u32 = 86_400;
 const STEAM_ALPHABET: &[u8] = b"23456789BCDFGHJKMNPQRTVWXY";
@@ -130,15 +131,15 @@ impl Totp {
         let default_digits = if steam { STEAM_DIGITS } else { DEFAULT_DIGITS };
         let algorithm = query("algorithm").map_or(TotpAlgorithm::Sha1, |name| algorithm(&name));
         let digits = number(
-            query("digits").as_deref().map(|s| s.as_str()),
+            text(&query("digits")),
             default_digits,
-        )
-        .ok_or(TotpError::InvalidDigits)?;
+            TotpError::InvalidDigits,
+        )?;
         let period = number(
-            query("period").as_deref().map(|s| s.as_str()),
+            text(&query("period")),
             DEFAULT_PERIOD,
-        )
-        .ok_or(TotpError::InvalidPeriod)?;
+            TotpError::InvalidPeriod,
+        )?;
 
         let mut totp = Self::build(decode_base32(&secret)?, algorithm, digits, period)?;
         totp.steam = steam;
@@ -155,15 +156,22 @@ impl Totp {
         Ok(totp)
     }
 
-    /// TOTP settings from what the user pastes or types: an `otpauth://` URI, or a Base32
-    /// secret alone, which gets the usual 6 digits every 30 seconds with SHA-1.
-    pub fn parse(text: &str) -> Result<Self, TotpError> {
-        let text = text.trim();
+    /// TOTP settings from the setup form, as the user pastes or types them: an `otpauth://`
+    /// URI, which brings its own settings, or a Base32 secret with the settings given. Blank
+    /// digits or period mean the usual 6 digits and 30 seconds.
+    pub fn from_setup(
+        secret_or_uri: &str,
+        algorithm: TotpAlgorithm,
+        digits: &str,
+        period: &str,
+    ) -> Result<Self, TotpError> {
+        let text = secret_or_uri.trim();
         if is_otpauth(text) {
-            Self::from_uri(text)
-        } else {
-            Self::new(text, TotpAlgorithm::Sha1, DEFAULT_DIGITS, DEFAULT_PERIOD)
+            return Self::from_uri(text);
         }
+        let digits = number(Some(digits), DEFAULT_DIGITS, TotpError::InvalidDigits)?;
+        let period = number(Some(period), DEFAULT_PERIOD, TotpError::InvalidPeriod)?;
+        Self::new(text, algorithm, digits, period)
     }
 
     fn build(
@@ -213,15 +221,19 @@ impl Totp {
     }
 
     /// The settings as an `otpauth://` URI, as KeePassXC writes them. The URI's own label is
-    /// kept; without one, the label names the Entry's title and username.
+    /// kept; without one, the label names the Entry's title and username. Steam codes are
+    /// issued by Steam, the only way KeeWeb tells them apart.
     pub fn to_uri(&self, title: &str, username: &str) -> SecretString {
-        let or = |value: &Option<String>, fallback: &str, empty: &str| {
-            let value = value.as_deref().unwrap_or(fallback);
+        let label_part = |own: &Option<String>, fallback: &str, empty: &str| {
+            let value = own.as_deref().unwrap_or(fallback);
             let value = if value.is_empty() { empty } else { value };
             utf8_percent_encode(value, URI_COMPONENT).to_string()
         };
-        let issuer = or(&self.issuer, title, "keefast");
-        let account = or(&self.account, username, "none");
+        let issuer = match self.steam {
+            true => STEAM_ISSUER.to_owned(),
+            false => label_part(&self.issuer, title, "keefast"),
+        };
+        let account = label_part(&self.account, username, "none");
         let mut uri = format!(
             "otpauth://totp/{issuer}:{account}?secret={}&period={}&digits={}&issuer={issuer}",
             encode_base32(&self.secret, false).as_str(),
@@ -327,12 +339,16 @@ fn algorithm_name(algorithm: TotpAlgorithm) -> &'static str {
     }
 }
 
-/// A number setting: `default` when absent, `None` when not a number.
-fn number(text: Option<&str>, default: u32) -> Option<u32> {
+/// A number setting: `default` when absent, `error` when not a number.
+fn number(text: Option<&str>, default: u32, error: TotpError) -> Result<u32, TotpError> {
     match text.map(str::trim) {
-        None | Some("") => Some(default),
-        Some(text) => text.parse().ok(),
+        None | Some("") => Ok(default),
+        Some(text) => text.parse().map_err(|_| error),
     }
+}
+
+fn text(value: &Option<Zeroizing<String>>) -> Option<&str> {
+    value.as_deref().map(String::as_str)
 }
 
 /// Decodes Base32 leniently, as people copy secrets: any case, with spaces, dashes and
@@ -416,19 +432,23 @@ pub(crate) const TOTP_FIELDS: [&str; 10] = [
     KEEPASS2_ALGORITHM,
 ];
 
-/// A field's value by name; `None` when the field is missing or empty.
-pub(crate) type Fields<'a> = &'a dyn Fn(&str) -> Option<Zeroizing<String>>;
+/// Looks up an Entry's field by name; `None` when the field is missing or blank.
+pub(crate) type FieldLookup<'a> = &'a dyn Fn(&str) -> Option<Zeroizing<String>>;
 
-/// The Entry's TOTP settings, if it has any. Formats are tried in KeePassXC's order.
-pub(crate) fn read(field: Fields) -> Option<Result<Totp, TotpError>> {
-    if let Some(seed) = field(LEGACY_SEED) {
-        return Some(read_legacy(
-            &seed,
-            field(LEGACY_SETTINGS).as_deref().map(|s| s.as_str()),
-        ));
+/// The Entry's TOTP settings, if it has any. Formats are tried in KeePassXC's order, so the
+/// codes are KeePassXC's whenever it shows any; a `TOTP Seed` without `TOTP Settings`, which only
+/// KeeWeb reads, comes after `otp`, as KeeWeb reads it.
+pub(crate) fn read(field: FieldLookup) -> Option<Result<Totp, TotpError>> {
+    let seed = field(LEGACY_SEED);
+    let settings = field(LEGACY_SETTINGS);
+    if let (Some(seed), Some(settings)) = (&seed, &settings) {
+        return Some(read_legacy(seed, Some(settings)));
     }
     if let Some(otp) = field(OTP) {
         return Some(read_otp(&otp));
+    }
+    if let Some(seed) = seed {
+        return Some(read_legacy(&seed, None));
     }
     let secret = KEEPASS2_SECRETS
         .iter()
@@ -436,23 +456,30 @@ pub(crate) fn read(field: Fields) -> Option<Result<Totp, TotpError>> {
     Some(read_keepass2(secret, field))
 }
 
+/// KeePassXC's `period;digits` or `period;S` settings. As KeePassXC reads them, settings
+/// without both parts mean the defaults, and Steam codes always last 30 seconds.
 fn read_legacy(seed: &str, settings: Option<&str>) -> Result<Totp, TotpError> {
     let (period, digits) = settings
         .and_then(|settings| settings.split_once(';'))
         .unwrap_or_default();
     let steam = digits.trim() == "S";
-    let digits = match steam {
-        true => Some(STEAM_DIGITS),
-        false => number(Some(digits), DEFAULT_DIGITS),
+    let (digits, period) = match steam {
+        true => (STEAM_DIGITS, DEFAULT_PERIOD),
+        false => (
+            number(Some(digits), DEFAULT_DIGITS, TotpError::InvalidDigits)?,
+            number(Some(period), DEFAULT_PERIOD, TotpError::InvalidPeriod)?,
+        ),
     };
-    let mut totp = Totp::new(
-        seed,
-        TotpAlgorithm::Sha1,
-        digits.ok_or(TotpError::InvalidDigits)?,
-        number(Some(period), DEFAULT_PERIOD).ok_or(TotpError::InvalidPeriod)?,
-    )?;
+    let mut totp = Totp::new(seed, TotpAlgorithm::Sha1, digits, period)?;
     totp.steam = steam;
     Ok(totp)
+}
+
+/// Whether KeePassXC's legacy fields can hold `totp`: they name no hash, and Steam codes there
+/// have 5 characters every 30 seconds.
+fn fits_legacy(totp: &Totp) -> bool {
+    totp.algorithm == TotpAlgorithm::Sha1
+        && (!totp.steam || (totp.digits == STEAM_DIGITS && totp.period == DEFAULT_PERIOD))
 }
 
 fn read_otp(otp: &str) -> Result<Totp, TotpError> {
@@ -474,17 +501,17 @@ fn read_otp(otp: &str) -> Result<Totp, TotpError> {
         Some(key) => Totp::new(
             key,
             setting("otpHashMode").map_or(TotpAlgorithm::Sha1, algorithm),
-            number(setting("size"), DEFAULT_DIGITS).ok_or(TotpError::InvalidDigits)?,
-            number(setting("step"), DEFAULT_PERIOD).ok_or(TotpError::InvalidPeriod)?,
+            number(setting("size"), DEFAULT_DIGITS, TotpError::InvalidDigits)?,
+            number(setting("step"), DEFAULT_PERIOD, TotpError::InvalidPeriod)?,
         ),
         // A bare secret, which KeeWeb reads with the usual settings.
-        None => Totp::parse(otp),
+        None => Totp::new(otp, TotpAlgorithm::Sha1, DEFAULT_DIGITS, DEFAULT_PERIOD),
     }
 }
 
 fn read_keepass2(
     (encoding, secret): (&str, Zeroizing<String>),
-    field: Fields,
+    field: FieldLookup,
 ) -> Result<Totp, TotpError> {
     let secret = match encoding {
         KEEPASS2_BASE32 => decode_base32(&secret)?,
@@ -496,19 +523,11 @@ fn read_keepass2(
                 .map_err(|_| TotpError::InvalidSecret)?,
         ),
     };
-    let setting = |name| field(name);
-    let algorithm =
-        setting(KEEPASS2_ALGORITHM).map_or(TotpAlgorithm::Sha1, |name| algorithm(&name));
-    let digits = number(
-        setting(KEEPASS2_LENGTH).as_deref().map(|s| s.as_str()),
-        DEFAULT_DIGITS,
-    )
-    .ok_or(TotpError::InvalidDigits)?;
-    let period = number(
-        setting(KEEPASS2_PERIOD).as_deref().map(|s| s.as_str()),
-        DEFAULT_PERIOD,
-    )
-    .ok_or(TotpError::InvalidPeriod)?;
+    let algorithm = field(KEEPASS2_ALGORITHM).map_or(TotpAlgorithm::Sha1, |name| algorithm(&name));
+    let length = field(KEEPASS2_LENGTH);
+    let digits = number(text(&length), DEFAULT_DIGITS, TotpError::InvalidDigits)?;
+    let period = field(KEEPASS2_PERIOD);
+    let period = number(text(&period), DEFAULT_PERIOD, TotpError::InvalidPeriod)?;
     Totp::build(secret, algorithm, digits, period)
 }
 
@@ -541,7 +560,7 @@ pub(crate) struct Field {
 /// The fields that store `totp` in an Entry whose fields are now `field`: the formats the Entry
 /// already uses, where they can hold the settings, and an `otpauth://` URI in `otp` when the
 /// Entry uses that or nothing else can hold them.
-pub(crate) fn write(totp: &Totp, field: Fields, title: &str, username: &str) -> Vec<Field> {
+pub(crate) fn write(totp: &Totp, field: FieldLookup, title: &str, username: &str) -> Vec<Field> {
     let otp = field(OTP);
     let keeotp = otp.as_ref().is_some_and(|otp| {
         !is_otpauth(otp.trim())
@@ -557,8 +576,7 @@ pub(crate) fn write(totp: &Totp, field: Fields, title: &str, username: &str) -> 
     };
     let secret = encode_base32(&totp.secret, false);
     let mut fields = Vec::new();
-    // KeePassXC's legacy fields can't name a hash.
-    if legacy && totp.algorithm == TotpAlgorithm::Sha1 {
+    if legacy && fits_legacy(totp) {
         let digits = match totp.steam {
             true => "S".to_owned(),
             false => totp.digits.to_string(),
@@ -626,6 +644,42 @@ mod tests {
         }
         assert_eq!(encode_base32(b"f", true).as_str(), "MY======");
         assert_eq!(encode_base32(b"foobar", false).as_str(), "MZXW6YTBOI");
+    }
+
+    #[test]
+    fn reads_the_fields_in_keepassxcs_order() {
+        let sha1 = |digits| {
+            Totp::new(
+                "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                TotpAlgorithm::Sha1,
+                digits,
+                30,
+            )
+        };
+        let otp = "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=7";
+        let read_fields = |fields: &[(&str, &str)]| {
+            read(&|name: &str| {
+                let found = fields.iter().find(|(key, _)| *key == name);
+                found.map(|(_, value)| Zeroizing::new((*value).to_owned()))
+            })
+        };
+        let seed = ("TOTP Seed", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        // KeePassXC reads TOTP Settings first, and otp over a Seed without Settings.
+        assert_eq!(
+            read_fields(&[seed, ("TOTP Settings", "30;8"), ("otp", otp)]),
+            Some(sha1(8))
+        );
+        assert_eq!(read_fields(&[seed, ("otp", otp)]), Some(sha1(7)));
+        // KeeWeb reads a Seed alone with the usual settings.
+        assert_eq!(read_fields(&[seed]), Some(sha1(6)));
+        // Steam codes in the legacy fields always last 30 seconds.
+        let steam = read_fields(&[seed, ("TOTP Settings", "60;S")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (steam.is_steam(), steam.digits(), steam.period()),
+            (true, 5, 30)
+        );
     }
 
     #[test]

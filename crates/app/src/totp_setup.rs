@@ -8,8 +8,8 @@ use crate::theme::Theme;
 use crate::widgets::button;
 
 pub enum TotpSetupEvent {
-    /// The TOTP to set on the Entry, or `None` to remove it.
-    Save(Option<Totp>),
+    Save(Totp),
+    Remove,
     Cancel,
 }
 
@@ -82,25 +82,18 @@ impl TotpSetup {
 
     /// The TOTP the form describes. An `otpauth://` URI brings its own settings.
     fn totp(&self, cx: &App) -> Result<Totp, TotpError> {
-        let secret = self.secret.read(cx).text();
-        if secret
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("otpauth:")
-        {
-            return Totp::from_uri(secret);
-        }
-        let number = |field: &Entity<TextField>, error| {
-            field.read(cx).text().trim().parse().map_err(|_| error)
-        };
-        let digits = number(&self.digits, TotpError::InvalidDigits)?;
-        let period = number(&self.period, TotpError::InvalidPeriod)?;
-        Totp::new(secret, self.algorithm, digits, period)
+        let text = |field: &Entity<TextField>| field.read(cx).text();
+        Totp::from_setup(
+            text(&self.secret),
+            self.algorithm,
+            text(&self.digits),
+            text(&self.period),
+        )
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
         match self.totp(cx) {
-            Ok(totp) => cx.emit(TotpSetupEvent::Save(Some(totp))),
+            Ok(totp) => cx.emit(TotpSetupEvent::Save(totp)),
             Err(error) => {
                 self.error = Some(error);
                 cx.notify();
@@ -187,9 +180,11 @@ impl Render for TotpSetup {
                     .justify_end()
                     .gap_2()
                     .when(self.removable, |this| {
-                        this.child(button("totp-remove", strings::TOTP_REMOVE, theme).on_click(
-                            cx.listener(|_, _, _, cx| cx.emit(TotpSetupEvent::Save(None))),
-                        ))
+                        this.child(
+                            button("totp-remove", strings::TOTP_REMOVE, theme).on_click(
+                                cx.listener(|_, _, _, cx| cx.emit(TotpSetupEvent::Remove)),
+                            ),
+                        )
                     })
                     .child(
                         button("totp-cancel", strings::CANCEL, theme)

@@ -93,7 +93,7 @@ impl VaultBrowser {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let shown = this.update(cx, |this, cx| {
-                    if this.selected_totp(cx).is_some() {
+                    if this.shows_totp(cx) {
                         cx.notify();
                     }
                 });
@@ -151,6 +151,13 @@ impl VaultBrowser {
         cx.notify();
     }
 
+    /// Whether the selected Entry has TOTP, whose countdown needs redrawing.
+    fn shows_totp(&self, cx: &App) -> bool {
+        self.selected_entry
+            .and_then(|(vault, entry)| self.workspace.read(cx).entry(vault, entry))
+            .is_some_and(|entry| entry.totp().is_some_and(|totp| totp.is_ok()))
+    }
+
     /// The selected Entry's TOTP code now, if it has TOTP that can be read.
     fn selected_totp(&self, cx: &App) -> Option<TotpCode> {
         let (vault, entry) = self.selected_entry?;
@@ -203,10 +210,12 @@ impl VaultBrowser {
             return;
         };
         match event {
-            TotpSetupEvent::Save(totp) => {
-                let saved = self.edit(cx, |workspace| {
-                    workspace.set_totp(vault, entry, totp.as_ref())
-                });
+            TotpSetupEvent::Save(_) | TotpSetupEvent::Remove => {
+                let totp = match event {
+                    TotpSetupEvent::Save(totp) => Some(totp),
+                    _ => None,
+                };
+                let saved = self.edit(cx, |workspace| workspace.set_totp(vault, entry, totp));
                 if saved.is_some() {
                     self.detail = Detail::Entry;
                 }

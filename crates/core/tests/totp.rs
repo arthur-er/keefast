@@ -176,12 +176,29 @@ fn turns_down_uris_that_are_not_totp() {
 }
 
 #[test]
-fn setup_text_is_a_uri_or_a_secret() {
-    let uri = format!("otpauth://totp/alice?secret={SHA1_SECRET}&digits=8");
-    assert_eq!(Totp::parse(&uri).unwrap().digits(), 8);
-    let secret = Totp::parse(&format!("  {SHA1_SECRET} ")).unwrap();
-    assert_eq!((secret.digits(), secret.period()), (6, 30));
-    assert_eq!(Totp::parse("  "), Err(TotpError::MissingSecret));
+fn setup_text_is_a_uri_with_its_own_settings_or_a_secret() {
+    let setup =
+        |text: &str, digits, period| Totp::from_setup(text, TotpAlgorithm::Sha256, digits, period);
+    // A URI's own settings win over the form's, even ones that aren't numbers.
+    let uri = format!(" otpauth://totp/alice?secret={SHA1_SECRET}&digits=8");
+    let from_uri = setup(&uri, "seven", "").unwrap();
+    assert_eq!(
+        (from_uri.algorithm(), from_uri.digits(), from_uri.period()),
+        (TotpAlgorithm::Sha1, 8, 30)
+    );
+    let secret = setup(&format!("  {SHA1_SECRET} "), " 7 ", "45").unwrap();
+    assert_eq!(
+        (secret.algorithm(), secret.digits(), secret.period()),
+        (TotpAlgorithm::Sha256, 7, 45)
+    );
+    let defaults = setup(SHA1_SECRET, "", " ").unwrap();
+    assert_eq!((defaults.digits(), defaults.period()), (6, 30));
+    assert_eq!(
+        setup(SHA1_SECRET, "seven", "30"),
+        Err(TotpError::InvalidDigits)
+    );
+    assert_eq!(setup(SHA1_SECRET, "6", "-1"), Err(TotpError::InvalidPeriod));
+    assert_eq!(setup("  ", "6", "30"), Err(TotpError::MissingSecret));
 }
 
 #[test]
@@ -255,7 +272,7 @@ fn a_new_totp_is_written_as_an_otpauth_uri_like_keepassxc() {
 fn a_uri_keeps_its_own_issuer_and_account() {
     let mut vault = open();
     let id = entry(&vault, "No TOTP").id();
-    let totp = Totp::parse(&format!(
+    let totp = Totp::from_uri(&format!(
         "otpauth://totp/ACME%20Co:john.doe@email.com?secret={SHA1_SECRET}&issuer=ACME%20Co"
     ))
     .unwrap();
@@ -326,18 +343,26 @@ fn changing_a_totp_keeps_the_entrys_format() {
 #[test]
 fn settings_an_old_format_cant_hold_go_to_an_otpauth_uri() {
     let mut vault = open();
-    // KeePassXC's legacy fields have no algorithm, and KeePass2's and KeeOtp's no Steam.
+    // KeePassXC's legacy fields have no algorithm and only 30 second Steam codes, and
+    // KeePass2's and KeeOtp's no Steam at all.
     let sha256 = Totp::new(SHA256_SECRET, TotpAlgorithm::Sha256, 6, 30).unwrap();
     let steam = totp_of(&vault, "Steam");
+    let slow_steam = Totp::from_uri(&format!(
+        "otpauth://totp/Steam:alice?secret={SHA1_SECRET}&encoder=steam&period=60"
+    ))
+    .unwrap();
     let legacy = entry(&vault, "Legacy").id();
     let keepass2 = entry(&vault, "KeePass2").id();
+    let keeotp = entry(&vault, "KeeOtp").id();
     vault.set_totp(legacy, Some(&sha256), now()).unwrap();
     vault.set_totp(keepass2, Some(&steam), now()).unwrap();
+    vault.set_totp(keeotp, Some(&slow_steam), now()).unwrap();
 
     let vault = reopen(&vault);
     assert_eq!(totp_of(&vault, "Legacy"), sha256);
     assert_eq!(totp_of(&vault, "KeePass2"), steam);
-    for title in ["Legacy", "KeePass2"] {
+    assert_eq!(totp_of(&vault, "KeeOtp"), slow_steam);
+    for title in ["Legacy", "KeePass2", "KeeOtp"] {
         let fields = independent_fields(&vault, title);
         assert_eq!(fields.len(), 1, "{title}: {fields:?}");
         assert_eq!(fields[0].0, "otp");
@@ -430,4 +455,21 @@ fn a_totp_shows_its_secret_and_uri_for_editing() {
         format!("otpauth://totp/GitHub:none?secret={SHA1_SECRET}&period=30&digits=6&issuer=GitHub")
     );
     assert!(!format!("{totp:?}").contains(SHA1_SECRET));
+    // KeeWeb gives Steam codes only for TOTPs issued by Steam.
+    let steam = Totp::from_uri(&format!(
+        "otpauth://totp/Valve:alice?secret={SHA1_SECRET}&encoder=steam"
+    ))
+    .unwrap();
+    assert!(
+        steam
+            .to_uri("Games", "alice")
+            .expose_secret()
+            .starts_with("otpauth://totp/Steam:alice?")
+    );
+    assert!(
+        steam
+            .to_uri("Games", "alice")
+            .expose_secret()
+            .contains("&issuer=Steam&")
+    );
 }
