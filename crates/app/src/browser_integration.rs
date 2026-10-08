@@ -137,6 +137,7 @@ impl BrowserIntegration {
         Ok(())
     }
 
+    /// Turns the captured login down: nothing is saved.
     pub fn cancel_login(&mut self, login: LoginId, cx: &mut Context<Self>) {
         let reply = self
             .workspace

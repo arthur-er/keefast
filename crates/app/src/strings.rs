@@ -146,4 +146,5 @@ pub const LOGIN_NEW_BROWSER_GROUP: &str = "{name} (new Group)";
 pub const LOGIN_SAVE: &str = "Save";
 pub const BROWSER_GROUP_MARK: &str = "Browser group";
 pub const USE_AS_BROWSER_GROUP: &str = "Save browser logins here";
+pub const ERROR_IN_RECYCLE_BIN: &str = "Logins can't be saved in the Recycle Bin.";
 pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";

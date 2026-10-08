@@ -46,6 +46,8 @@ pub enum EditError {
     RootGroup,
     #[error("a Group cannot be moved into itself or one of its subgroups")]
     IntoItself,
+    #[error("the Group is in the Recycle Bin")]
+    InRecycleBin,
     #[error("a Pairing needs a name")]
     PairingNameEmpty,
     #[error("the Vault already has a Pairing with this name")]

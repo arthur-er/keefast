@@ -40,6 +40,13 @@ pub struct CapturedLogin {
     pub password: SecretString,
 }
 
+impl CapturedLogin {
+    /// What the site is called: its host, or the URL as given when it has none.
+    pub fn site_name(&self) -> String {
+        Site::parse(&self.url).map_or_else(|| self.url.clone(), |site| site.host())
+    }
+}
+
 /// A remembered answer to a site asking for an Entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessDecision {
@@ -238,9 +245,12 @@ impl Vault {
         }
     }
 
-    /// Makes `group` the Browser group. It stays so when renamed or moved.
+    /// Makes `group` the Browser group. It stays so when renamed or moved. A Group in the
+    /// Recycle Bin can't be.
     pub fn set_browser_group(&mut self, group: GroupId) -> Result<(), EditError> {
-        self.path_to(Kind::Group, group.0)?;
+        if self.is_group_in_recycle_bin(group)? {
+            return Err(EditError::InRecycleBin);
+        }
         set_custom_data(
             self.custom_data_mut(),
             BROWSER_GROUP_KEY,
@@ -250,7 +260,8 @@ impl Vault {
     }
 
     /// Saves a captured login as a new Entry in `group`, or else in the Browser group, made
-    /// if the Vault has none. The Entry is titled with the site's host.
+    /// if the Vault has none. The Entry is titled with the site's host. A Group in the
+    /// Recycle Bin is refused.
     pub fn add_login(
         &mut self,
         group: Option<GroupId>,
@@ -258,12 +269,14 @@ impl Vault {
         now: Timestamp,
     ) -> Result<EntryId, EditError> {
         let group = match group {
+            Some(group) if self.is_group_in_recycle_bin(group)? => {
+                return Err(EditError::InRecycleBin);
+            }
             Some(group) => group,
             None => self.ensure_browser_group(now)?,
         };
-        let title = Site::parse(&login.url).map_or_else(|| login.url.clone(), |site| site.host());
         let fields = EntryFields {
-            title,
+            title: login.site_name(),
             username: login.username.clone(),
             password: login.password.clone(),
             url: login.url.clone(),
@@ -273,7 +286,8 @@ impl Vault {
     }
 
     /// Updates an Entry with a captured login's username and password, keeping the version it
-    /// replaces in the Entry's history.
+    /// replaces in the Entry's history. A login without a username keeps the Entry's, as
+    /// KeePassXC does.
     pub fn update_login(
         &mut self,
         entry: EntryId,
@@ -281,11 +295,13 @@ impl Vault {
         now: Timestamp,
     ) -> Result<(), EditError> {
         let current = self.entry(entry).ok_or(EditError::EntryNotFound)?;
-        let fields = EntryFields {
-            username: login.username.clone(),
+        let mut fields = EntryFields {
             password: login.password.clone(),
             ..EntryFields::from(current)
         };
+        if !login.username.is_empty() {
+            fields.username = login.username.clone();
+        }
         self.update_entry(entry, &fields, now)
     }
 

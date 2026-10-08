@@ -9,7 +9,7 @@ mod support;
 
 use std::sync::Arc;
 
-use keefast_core::{CompositeKey, DEFAULT_BROWSER_GROUP, EntryId, GroupId};
+use keefast_core::{CompositeKey, DEFAULT_BROWSER_GROUP, EditError, EntryId, GroupId};
 use keefast_workspace::{
     AppConfig, ConnectionId, EditVaultError, LoginTarget, Outgoing, PendingLogin, VaultId,
     VaultLocation, Workspace,
@@ -531,4 +531,63 @@ fn the_last_chosen_vault_survives_in_the_config_file() {
     assert_eq!(store.load().unwrap().last_login_vault, Some(work_vault()));
     let text = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(text.contains("[last_login_vault]"), "{text}");
+}
+
+#[test]
+fn only_an_entry_offered_to_the_site_can_be_picked_for_update() {
+    let (mut browser, vaults) = Browser::new(&[personal_vault()]);
+    // "Other site" is for other.test, and "Hidden" is hidden from browsers.
+    for title in ["Other site", "Hidden"] {
+        let uuid = browser.entry_titled(vaults[0], title).to_hex();
+        let sent = browser
+            .extension
+            .set_login(EXAMPLE, "mallory", "x", Some(&uuid), None);
+
+        let pending = browser.ask(&sent);
+
+        assert_eq!(pending.entries, [], "{title} offered");
+        browser.workspace.cancel_login(pending.id);
+    }
+}
+
+#[test]
+fn an_update_without_a_username_keeps_the_entrys() {
+    let (mut browser, vaults) = Browser::new(&[personal_vault()]);
+    let example = browser.entry_titled(vaults[0], "Example");
+    let uuid = example.to_hex();
+    let sent = browser
+        .extension
+        .set_login(EXAMPLE, "", "new-secret", Some(&uuid), None);
+    let pending = browser.ask(&sent);
+
+    browser.save(&sent, pending.suggested);
+
+    let entry = browser.workspace.entry(vaults[0], example).unwrap();
+    assert_eq!(entry.username(), "alice");
+    assert_eq!(entry.password().expose_secret(), "new-secret");
+}
+
+#[test]
+fn a_login_cannot_go_to_the_recycle_bin() {
+    let (mut browser, vaults) = Browser::new(&[personal_vault()]);
+    let bin = browser.top_group(vaults[0], "Recycle Bin").unwrap();
+    let sent = browser
+        .extension
+        .set_login(SHOP, "carol", "s3cret", None, None);
+    let pending = browser.ask(&sent);
+
+    let refused = browser.workspace.save_login(
+        pending.id,
+        LoginTarget::NewEntry {
+            vault: vaults[0],
+            group: Some(bin),
+        },
+    );
+
+    assert_eq!(refused, Err(EditVaultError::Edit(EditError::InRecycleBin)));
+    assert_eq!(
+        browser.workspace.set_browser_group(vaults[0], bin),
+        Err(EditVaultError::Edit(EditError::InRecycleBin))
+    );
+    assert!(browser.workspace.pending_login().is_some());
 }

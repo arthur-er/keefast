@@ -1084,6 +1084,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::PairingNameEmpty) => strings::ERROR_PAIRING_NAME_EMPTY,
         EditVaultError::Edit(EditError::PairingNameTaken) => strings::ERROR_PAIRING_NAME_TAKEN,
         EditVaultError::NotPaired => strings::ERROR_NOT_PAIRED,
+        EditVaultError::Edit(EditError::InRecycleBin) => strings::ERROR_IN_RECYCLE_BIN,
     }
 }
 

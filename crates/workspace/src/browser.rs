@@ -879,8 +879,7 @@ impl Workspace {
         };
         Some(PendingLogin {
             id: *id,
-            site: Site::parse(&request.login.url)
-                .map_or_else(|| request.login.url.clone(), |site| site.host()),
+            site: request.login.site_name(),
             username: request.login.username.clone(),
             vaults,
             entries,
@@ -961,29 +960,30 @@ impl Workspace {
             .collect()
     }
 
-    /// The Entries in `vaults` a captured login could update: the one the extension picked,
-    /// then those for the site with the login's username.
+    /// The Entries in `vaults` a captured login could update, among those offered to its site:
+    /// the one the extension picked, then those with the login's username.
     fn login_entries(&self, request: &LoginRequest, vaults: &[VaultId]) -> Vec<(VaultId, EntryId)> {
-        let open = || vaults.iter().filter_map(|&vault| self.vault(vault));
-        let picked = request.picked.and_then(|entry| {
-            open()
-                .find(|open| open.vault.entry(entry).is_some())
-                .map(|open| (open.id, entry))
-        });
-        let site = Site::parse(&request.login.url);
-        let same_username = site.iter().flat_map(|site| {
-            open().flat_map(move |open| {
-                open.vault
-                    .entries_for_site(site)
-                    .into_iter()
-                    .filter(|found| found.entry.username() == request.login.username)
-                    .map(move |found| (open.id, found.entry.id()))
+        let Some(site) = Site::parse(&request.login.url) else {
+            return Vec::new();
+        };
+        let offered: Vec<(VaultId, &keefast_core::Entry)> = vaults
+            .iter()
+            .filter_map(|&vault| self.vault(vault))
+            .flat_map(|open| {
+                let found = open.vault.entries_for_site(&site);
+                found.into_iter().map(move |found| (open.id, found.entry))
             })
-        });
-        let mut entries: Vec<(VaultId, EntryId)> = picked.into_iter().collect();
-        for entry in same_username {
-            if !entries.contains(&entry) {
-                entries.push(entry);
+            .collect();
+        let picked = offered
+            .iter()
+            .filter(|(_, entry)| Some(entry.id()) == request.picked);
+        let same_username = offered
+            .iter()
+            .filter(|(_, entry)| entry.username() == request.login.username);
+        let mut entries = Vec::new();
+        for &(vault, entry) in picked.chain(same_username) {
+            if !entries.contains(&(vault, entry.id())) {
+                entries.push((vault, entry.id()));
             }
         }
         entries
