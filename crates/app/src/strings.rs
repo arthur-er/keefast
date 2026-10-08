@@ -278,6 +278,22 @@ pub const DROPBOX_ERROR_API: &str = "Dropbox reported an error.";
 pub const DROPBOX_ERROR_SECRET_STORE: &str =
     "The OS secret store isn't available, so keefast can't keep your Dropbox account connected.";
 
+pub const HISTORY_BUTTON: &str = "History";
+pub const HISTORY_TITLE: &str = "History of {title}";
+pub const HISTORY_CLOSE: &str = "Close";
+pub const HISTORY_CURRENT: &str = "Current version";
+pub const HISTORY_EMPTY: &str = "This Entry has no earlier versions yet. Each edit keeps the \
+version it replaces here.";
+pub const HISTORY_VERSION_OF: &str = "Version of {time}";
+pub const HISTORY_RESTORE: &str = "Restore this version";
+pub const HISTORY_RESTORED: &str =
+    "Version restored. The one it replaced is kept in the Entry's history.";
+pub const HISTORY_UNKNOWN_TIME: &str = "Unknown time";
+pub const HISTORY_TOTP_NONE: &str = "Not set up";
+pub const HISTORY_TOTP_SET: &str = "Set up";
+pub const HISTORY_TOTP_UNREADABLE: &str = "Set up, but its settings can't be read";
+pub const ERROR_VERSION_NOT_FOUND: &str = "That version is no longer in the Entry's history.";
+
 pub const LOGIN_TITLE: &str = "Save login?";
 pub const LOGIN_PROMPT: &str = "You signed in to {site} as “{username}”. Choose where keefast \
 saves this login.";
@@ -310,6 +326,11 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "vault_browser::SortByUrl" => "Sort Entries by URL",
         "vault_browser::SortByCreated" => "Sort Entries by Creation Time",
         "vault_browser::SortByModified" => "Sort Entries by Last Change",
+        "vault_browser::ShowEntryHistory" => "Show Entry History",
+        "entry_history::SelectOlderVersion" => "Select Older Version",
+        "entry_history::SelectNewerVersion" => "Select Newer Version",
+        "entry_history::RestoreVersion" => "Restore This Version",
+        "entry_history::CloseHistory" => "Close Entry History",
         "vault_browser::SaveAll" => "Save All Vaults",
         "vault_browser::OpenVault" => "Open Another Vault…",
         _ => return None,

@@ -155,6 +155,44 @@ fn an_edited_entry_keeps_its_previous_version_in_history_after_reopening() {
 }
 
 #[test]
+fn restoring_an_earlier_version_is_an_edit_that_saves_and_keeps_the_replaced_one() {
+    let mut h = harness();
+    let root = h.root();
+    let id = h
+        .workspace
+        .create_entry(h.vault, root, &fields("Bank", "first"))
+        .unwrap();
+    h.clock.advance(Duration::from_secs(60));
+    h.workspace
+        .update_entry(h.vault, id, &fields("Bank", "second"))
+        .unwrap();
+    h.workspace.save_vault(h.vault).unwrap();
+    h.clock.advance(Duration::from_secs(60));
+
+    h.workspace.restore_entry_version(h.vault, id, 0).unwrap();
+    assert_eq!(h.workspace.save_status(), SaveStatus::Unsaved);
+    h.workspace.save_vault(h.vault).unwrap();
+
+    let reopened = h.reopen();
+    let entry = reopened.entry(id).unwrap();
+    assert_eq!(entry.password().expose_secret(), "first");
+    assert_eq!(
+        entry.last_modified(),
+        Some(Timestamp::from_unix_seconds(START as i64 + 120))
+    );
+    let history: Vec<&str> = entry
+        .history()
+        .iter()
+        .map(|old| old.password().expose_secret())
+        .collect();
+    assert_eq!(history, ["first", "second"]);
+    assert_eq!(
+        h.workspace.restore_entry_version(h.vault, id, 9),
+        Err(EditVaultError::Edit(EditError::VersionNotFound))
+    );
+}
+
+#[test]
 fn custom_fields_survive_saving_and_reopening_with_their_protection() {
     let mut h = harness();
     let root = h.root();

@@ -7,6 +7,7 @@ mod clipboard;
 mod command_palette;
 mod dropbox_panel;
 mod entry_editor;
+mod entry_history;
 mod icons;
 mod locking;
 mod login_dialog;

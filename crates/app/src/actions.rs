@@ -18,6 +18,8 @@ actions!(
         CopyTotp,
         /// Copies the focused custom field of the selected Entry.
         CopyCustomField,
+        /// Shows the selected Entry's earlier versions.
+        ShowEntryHistory,
         SaveAll,
         OpenVault,
         /// Locks every open Vault.
@@ -31,6 +33,17 @@ actions!(
         SortByCreated,
         /// Sorts the Entry list by when Entries were last modified, newest first.
         SortByModified,
+    ]
+);
+
+actions!(
+    entry_history,
+    [
+        SelectOlderVersion,
+        SelectNewerVersion,
+        /// Makes the version shown in the Entry's history current again.
+        RestoreVersion,
+        CloseHistory,
     ]
 );
 
@@ -53,6 +66,8 @@ pub const SEARCH_CONTEXT: &str = "EntrySearch";
 /// The key context of a custom field in the Entry detail, which takes Enter and Ctrl+C for
 /// itself.
 pub const CUSTOM_FIELD_CONTEXT: &str = "CustomField";
+/// The key context of an Entry's history, shown in the detail pane.
+pub const HISTORY_CONTEXT: &str = "EntryHistory";
 /// The key context of the command palette.
 pub const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
 
@@ -79,6 +94,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-t", CopyTotp, list),
         KeyBinding::new("enter", CopyCustomField, custom_field),
         KeyBinding::new("secondary-c", CopyCustomField, custom_field),
+        KeyBinding::new("secondary-h", ShowEntryHistory, list),
+        KeyBinding::new("down", SelectOlderVersion, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("up", SelectNewerVersion, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("escape", CloseHistory, Some(HISTORY_CONTEXT)),
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
         KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),

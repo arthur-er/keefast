@@ -970,6 +970,19 @@ impl Workspace {
         self.edit(vault, |vault, now| vault.set_totp(entry, totp, now))
     }
 
+    /// Makes an earlier version of an Entry current again, by its index in the Entry's history,
+    /// oldest first. The version it replaces goes to the history.
+    pub fn restore_entry_version(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        version: usize,
+    ) -> Result<(), EditVaultError> {
+        self.edit(vault, |vault, now| {
+            vault.restore_entry_version(entry, version, now)
+        })
+    }
+
     /// The Entry's TOTP code now, with how long it lasts, or why its TOTP settings can't be
     /// read. `None` when the Entry has no TOTP, or isn't open.
     pub fn totp_code(&self, vault: VaultId, entry: EntryId) -> Option<Result<TotpCode, TotpError>> {

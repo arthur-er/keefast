@@ -38,15 +38,22 @@ impl Timestamp {
 
     /// `2026-10-07T23:15:22Z`: UTC in ISO 8601, as KeePassXC reads its Pairing dates.
     pub(crate) fn to_iso_8601(self) -> String {
+        let ((year, month, day), (hour, minute, second)) = self.utc();
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    }
+
+    /// `2026-10-07 23:15:22 UTC`, for people to read.
+    pub fn to_utc_string(self) -> String {
+        let ((year, month, day), (hour, minute, second)) = self.utc();
+        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
+    }
+
+    /// The UTC date and time of day.
+    fn utc(self) -> ((i64, i64, i64), (i64, i64, i64)) {
         let seconds = self.unix_seconds();
         let (days, of_day) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-        let (year, month, day) = civil_from_days(days);
-        format!(
-            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-            of_day / 3600,
-            of_day / 60 % 60,
-            of_day % 60
-        )
+        let time = (of_day / 3600, of_day / 60 % 60, of_day % 60);
+        (civil_from_days(days), time)
     }
 
     /// The UTC date, as `2026-10-07`.
@@ -119,6 +126,12 @@ mod tests {
         assert_eq!(iso(1_791_414_922), "2026-10-07T23:15:22Z");
         assert_eq!(iso(951_825_600), "2000-02-29T12:00:00Z");
         assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn writes_utc_for_people() {
+        let time = Timestamp::from_unix_seconds(1_791_414_922);
+        assert_eq!(time.to_utc_string(), "2026-10-07 23:15:22 UTC");
     }
 
     #[test]

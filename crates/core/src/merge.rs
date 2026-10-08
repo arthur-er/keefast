@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
-use crate::edit::{Kind, child_or_insert, insert_entry, push, set_time};
+use crate::edit::{HistoryLimits, Kind, child_or_insert, insert_entry, push, set_time};
 use crate::kdbx;
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node};
@@ -93,17 +93,6 @@ impl Vault {
         summary
     }
 
-    fn at(&self, path: &[usize]) -> &Element {
-        let mut element = self.root_group();
-        for &index in path {
-            element = match &element.children[index] {
-                Node::Element(child) => child,
-                _ => unreachable!("paths lead through elements"),
-            };
-        }
-        element
-    }
-
     /// The UUID of the Group holding the element at `path`.
     fn parent_of(&self, path: &[usize]) -> Option<Uuid> {
         let (_, parent) = path.split_last()?;
@@ -166,7 +155,6 @@ impl Merge<'_> {
 
         let target = self.target.at(&path);
         let location = time(source, "LocationChanged").max(time(target, "LocationChanged"));
-        let max_items = self.target.history_max_items();
         if modified(source) > modified(target) {
             // The source version wins; the target's goes to history.
             let mut loser = target.clone();
@@ -174,8 +162,9 @@ impl Merge<'_> {
             loser.take_child("History");
             versions.push(loser);
             let mut current = self.import(source);
+            let limits = self.target.history_limits();
             let history = child_or_insert(&mut current, "History", &[]);
-            add_versions(history, versions, modified(source), max_items);
+            add_versions(history, versions, modified(source), &limits);
             *self.target.at_mut(&path) = current;
             self.summary.entries_updated += 1;
         } else {
@@ -199,9 +188,10 @@ impl Merge<'_> {
                     .iter()
                     .map(|version| self.import(version))
                     .collect();
+                let limits = self.target.history_limits();
                 let target = self.target.at_mut(&path);
                 let history = child_or_insert(target, "History", &[]);
-                add_versions(history, versions, current, max_items);
+                add_versions(history, versions, current, &limits);
             }
         }
         set_location(self.target.at_mut(&path), location);
@@ -471,13 +461,13 @@ impl Merge<'_> {
 }
 
 /// Adds earlier versions of an Entry to its history, oldest first, leaving out those modified
-/// when one already there or the current version was, and trims it to `max_items`. Versions
+/// when one already there or the current version was, and trims it to the Vault's limits. Versions
 /// already there modified at the same time are counted once too.
 fn add_versions(
     history: &mut Element,
     versions: Vec<Element>,
     current: Option<Timestamp>,
-    max_items: Option<usize>,
+    limits: &HistoryLimits,
 ) {
     let mut entries: Vec<Element> = Vec::new();
     let mut others = Vec::new();
@@ -498,14 +488,11 @@ fn add_versions(
     entries.reverse();
     entries.dedup_by_key(|entry| modified(entry));
     entries.reverse();
-    if let Some(max) = max_items {
-        let excess = entries.len().saturating_sub(max);
-        entries.drain(..excess);
-    }
     history.children = others
         .into_iter()
         .chain(entries.into_iter().map(Node::Element))
         .collect();
+    limits.trim(history);
 }
 
 /// The earlier versions in an Entry's history.

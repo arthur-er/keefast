@@ -17,11 +17,12 @@ use secrecy::ExposeSecret;
 use crate::actions::{
     self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
     OpenVault, SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
-    SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername,
+    ShowEntryHistory, SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername,
 };
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
+use crate::entry_history::{EntryHistory, EntryHistoryEvent};
 use crate::icons;
 use crate::locking;
 use crate::merge_notice;
@@ -85,6 +86,8 @@ enum Detail {
     },
     /// Picking the Group to move an Entry or Group to.
     Moving(Subject),
+    /// An Entry's earlier versions.
+    History(Entity<EntryHistory>),
     /// Setting up an Entry's TOTP.
     Totp {
         setup: Entity<TotpSetup>,
@@ -268,6 +271,7 @@ impl VaultBrowser {
             } => Some(*vault),
             Detail::Moving(subject) => Some(subject.vault()),
             Detail::Totp { vault, .. } => Some(*vault),
+            Detail::History(history) => Some(history.read(cx).vault()),
         };
         if detail_vault.is_some_and(locked) {
             self.detail = Detail::Entry;
@@ -618,6 +622,58 @@ impl VaultBrowser {
                 }
             }
             TotpSetupEvent::Cancel => self.detail = Detail::Entry,
+        }
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    fn show_history(&mut self, _: &ShowEntryHistory, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((vault, entry)) = self.selected_entry(cx) {
+            self.open_history(vault, entry, window, cx);
+        }
+    }
+
+    fn open_history(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let history = cx.new(|cx| EntryHistory::new(workspace, vault, entry, cx));
+        cx.subscribe_in(&history, window, Self::on_history_event)
+            .detach();
+        window.focus(&history.focus_handle(cx));
+        self.detail = Detail::History(history);
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    fn on_history_event(
+        &mut self,
+        history: &Entity<EntryHistory>,
+        event: &EntryHistoryEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            EntryHistoryEvent::Restore(version) => {
+                let (vault, entry) =
+                    history.read_with(cx, |history, _| (history.vault(), history.entry()));
+                let restored = self.edit(cx, |workspace| {
+                    workspace.restore_entry_version(vault, entry, *version)
+                });
+                if restored.is_none() {
+                    return;
+                }
+                self.detail = Detail::Entry;
+                self.notice = Some(strings::HISTORY_RESTORED.into());
+                self.revealed_fields.clear();
+                self.copied_field = None;
+            }
+            EntryHistoryEvent::Close => self.detail = Detail::Entry,
         }
         window.focus(&self.focus);
         cx.notify();
@@ -1543,6 +1599,7 @@ impl VaultBrowser {
         match &self.detail {
             Detail::Editing { editor, .. } => pane.child(editor.clone()).into_any_element(),
             Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
+            Detail::History(history) => pane.child(history.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
                 .into_any_element(),
@@ -1615,6 +1672,13 @@ impl VaultBrowser {
                             tool_button("totp-entry", strings::TOTP_BUTTON, theme).on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     this.open_totp_setup(vault, id, window, cx)
+                                }),
+                            ),
+                        )
+                        .child(
+                            tool_button("history-entry", strings::HISTORY_BUTTON, theme).on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.open_history(vault, id, window, cx)
                                 }),
                             ),
                         )
@@ -1942,6 +2006,7 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(Self::copy_username))
             .on_action(cx.listener(Self::copy_password))
             .on_action(cx.listener(Self::copy_totp_code))
+            .on_action(cx.listener(Self::show_history))
             .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
             .on_action(
@@ -2005,6 +2070,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::IconNotFound) => strings::ERROR_ICON_NOT_FOUND,
         EditVaultError::Edit(EditError::IconNotPng) => strings::ERROR_ICON_NOT_PNG,
         EditVaultError::Edit(EditError::IconTooLarge) => strings::ERROR_ICON_TOO_LARGE,
+        EditVaultError::Edit(EditError::VersionNotFound) => strings::ERROR_VERSION_NOT_FOUND,
     }
 }
 
@@ -2083,7 +2149,7 @@ fn next_sort(sort: EntrySort) -> EntrySort {
     all[(ix + 1) % all.len()]
 }
 
-fn title_of(entry: &Entry) -> SharedString {
+pub fn title_of(entry: &Entry) -> SharedString {
     match entry.title() {
         "" => strings::UNTITLED.into(),
         title => title.to_owned().into(),

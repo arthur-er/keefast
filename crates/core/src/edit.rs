@@ -66,6 +66,8 @@ pub enum EditError {
     FieldNameEmpty,
     #[error("the Entry already has a field with this name")]
     FieldNameTaken,
+    #[error("the Entry has no such version in its history")]
+    VersionNotFound,
     #[error("a Pairing needs a name")]
     PairingNameEmpty,
     #[error("the Vault already has a Pairing with this name")]
@@ -90,6 +92,9 @@ const FIELDS: [(&str, &str); 5] = [
 
 /// KeePass's defaults, used when the Vault's `Meta` doesn't say.
 const DEFAULT_HISTORY_MAX_ITEMS: i64 = 10;
+const DEFAULT_HISTORY_MAX_SIZE: i64 = 6 * 1024 * 1024;
+/// What KeePass counts for an Entry version besides its fields and attachments.
+const VERSION_BASE_SIZE: u64 = 128;
 const FOLDER_ICON: &str = "48";
 const RECYCLE_BIN_ICON: &str = "43";
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
@@ -295,24 +300,52 @@ impl Vault {
         Ok(())
     }
 
+    /// Makes the version at `version` in the Entry's history, oldest first, current again. The
+    /// version it replaces goes to the history, which is trimmed to the Vault's limits; the
+    /// Entry stays where it is.
+    pub fn restore_entry_version(
+        &mut self,
+        entry: EntryId,
+        version: usize,
+        now: Timestamp,
+    ) -> Result<(), EditError> {
+        let path = self.path_to(Kind::Entry, entry.0)?;
+        let current = self.at(&path);
+        let mut restored = current
+            .child("History")
+            .and_then(|history| history.children_named("Entry").nth(version))
+            .cloned()
+            .ok_or(EditError::VersionNotFound)?;
+        let location = current
+            .child("Times")
+            .and_then(|times| times.child("LocationChanged"))
+            .and_then(|time| Timestamp::decode(&time.text()));
+
+        let element = self.archive(&path);
+        restored.take_child("History");
+        if let Some(history) = element.take_child("History") {
+            push(&mut restored, history);
+        }
+        *element = restored;
+        if let Some(location) = location {
+            set_time(element, "LocationChanged", location);
+        }
+        set_time(element, "LastModificationTime", now);
+        set_time(element, "LastAccessTime", now);
+        self.refresh();
+        Ok(())
+    }
+
     /// Adds the Entry at `path`, as it is now, to its history, which is trimmed to the Vault's
-    /// `HistoryMaxItems`, and returns the Entry to change.
+    /// limits, and returns the Entry to change.
     fn archive(&mut self, path: &[usize]) -> &mut Element {
-        let max_items = self.history_max_items();
+        let limits = self.history_limits();
         let element = self.at_mut(path);
         let mut previous = element.clone();
         previous.take_child("History");
         let history = child_or_insert(element, "History", &[]);
         history.children.push(Node::Element(previous));
-        if let Some(max) = max_items {
-            let mut excess = history.children_named("Entry").count().saturating_sub(max);
-            history.children.retain(|node| {
-                let is_entry = matches!(node, Node::Element(e) if e.name == "Entry");
-                let drop = is_entry && excess > 0;
-                excess -= usize::from(drop);
-                !drop
-            });
-        }
+        limits.trim(history);
         element
     }
 
@@ -451,6 +484,17 @@ impl Vault {
         }
     }
 
+    pub(crate) fn at(&self, path: &[usize]) -> &Element {
+        let mut element = self.root_group();
+        for &index in path {
+            element = match &element.children[index] {
+                Node::Element(child) => child,
+                _ => unreachable!("paths lead through elements"),
+            };
+        }
+        element
+    }
+
     pub(crate) fn at_mut(&mut self, path: &[usize]) -> &mut Element {
         let mut element = self.root_group_mut();
         for &index in path {
@@ -491,13 +535,27 @@ impl Vault {
         }
     }
 
-    /// `None` when the history is unlimited.
-    pub(crate) fn history_max_items(&self) -> Option<usize> {
-        let max = self
-            .meta_text("HistoryMaxItems")
-            .and_then(|text| text.trim().parse::<i64>().ok())
-            .unwrap_or(DEFAULT_HISTORY_MAX_ITEMS);
-        usize::try_from(max).ok()
+    /// The Vault's `HistoryMaxItems` and `HistoryMaxSize`, with what its attachments weigh.
+    pub(crate) fn history_limits(&self) -> HistoryLimits {
+        let setting = |name: &str, default: i64| {
+            let max = self
+                .meta_text(name)
+                .and_then(|text| text.trim().parse::<i64>().ok())
+                .unwrap_or(default);
+            // Negative means unlimited.
+            u64::try_from(max).ok()
+        };
+        HistoryLimits {
+            max_items: setting("HistoryMaxItems", DEFAULT_HISTORY_MAX_ITEMS)
+                .map(|max| usize::try_from(max).unwrap_or(usize::MAX)),
+            max_size: setting("HistoryMaxSize", DEFAULT_HISTORY_MAX_SIZE),
+            binary_sizes: self
+                .file
+                .binaries
+                .iter()
+                .map(|binary| binary.data.bytes().len() as u64)
+                .collect(),
+        }
     }
 
     fn recycle_bin_enabled(&self) -> bool {
@@ -559,6 +617,71 @@ impl Vault {
             push(&mut object, text_element("DeletionTime", now.encode()));
             push(objects, object);
         }
+    }
+}
+
+/// How many earlier versions of an Entry, and how much of them, the Vault keeps.
+pub(crate) struct HistoryLimits {
+    /// `None` when unlimited.
+    max_items: Option<usize>,
+    /// In bytes, as KeePass weighs Entries; `None` when unlimited.
+    max_size: Option<u64>,
+    /// The size of each attachment in the Vault's pool, by index.
+    binary_sizes: Vec<u64>,
+}
+
+impl HistoryLimits {
+    /// Drops the oldest versions, first listed, from an Entry's `History` until what is left
+    /// is within the limits, as KeePass does.
+    pub(crate) fn trim(&self, history: &mut Element) {
+        let sizes: Vec<u64> = history
+            .children_named("Entry")
+            .map(|version| self.size(version))
+            .collect();
+        let mut excess = self
+            .max_items
+            .map_or(0, |max| sizes.len().saturating_sub(max));
+        if let Some(max) = self.max_size {
+            let mut total: u64 = sizes[excess..].iter().sum();
+            while total > max {
+                total -= sizes[excess];
+                excess += 1;
+            }
+        }
+        history.children.retain(|node| {
+            let is_version = matches!(node, Node::Element(e) if e.name == "Entry");
+            let drop = is_version && excess > 0;
+            excess -= usize::from(drop);
+            !drop
+        });
+    }
+
+    /// Roughly what KeePass's `PwEntry.GetSize` counts: the fields and attachments, by name
+    /// and value, and the tags and URL override.
+    fn size(&self, version: &Element) -> u64 {
+        let length = |element: Option<&Element>| element.map_or(0, |e| e.text().len() as u64);
+        let strings: u64 = version
+            .children_named("String")
+            .map(|string| length(string.child("Key")) + length(string.child("Value")))
+            .sum();
+        let binaries: u64 = version
+            .children_named("Binary")
+            .map(|binary| {
+                let value = binary.child("Value");
+                let data = match value.and_then(|value| value.attribute("Ref")) {
+                    Some(index) => index
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|index| self.binary_sizes.get(index).copied())
+                        .unwrap_or(0),
+                    None => length(value),
+                };
+                length(binary.child("Key")) + data
+            })
+            .sum();
+        let other = length(version.child("Tags")) + length(version.child("OverrideURL"));
+        VERSION_BASE_SIZE + strings + binaries + other
     }
 }
 
