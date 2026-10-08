@@ -75,6 +75,14 @@ if [[ "$app" == *.AppImage && "$host" != "$XDG_DATA_HOME/keefast/"* ]]; then
   echo "the AppImage registered the host inside the image, which won't last: $host" >&2
   exit 1
 fi
+# The browser starts the host with the extension's origin. With no browser on its stdin it
+# soon exits, but it must at least load.
+if timeout 5 "$host" chrome-extension://smoke/ </dev/null >/dev/null 2>"$work/host.log"; [[ $? -ge 126 ]] ||
+  grep -q "error while loading shared libraries" "$work/host.log"; then
+  echo "keefast's native host does not start:" >&2
+  cat "$work/host.log" >&2
+  exit 1
+fi
 echo "keefast registered its native host at $host"
 
 # Sway rather than Weston: GPUI needs a seat, which headless Weston doesn't have.

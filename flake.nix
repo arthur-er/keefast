@@ -15,29 +15,22 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
+      # On NixOS: `environment.systemPackages = [ keefast.packages.${system}.default ];`, or
+      # use the overlay to get `pkgs.keefast`. `nix run` starts keefast.
+      overlays.default = final: _prev: {
+        keefast = final.callPackage ./nix/package.nix { };
+      };
+
       packages = forAllSystems (
         pkgs:
         let
-          keefast = pkgs.callPackage ./nix/package.nix { };
+          inherit (self.overlays.default pkgs pkgs) keefast;
         in
         {
           inherit keefast;
           default = keefast;
         }
       );
-
-      apps = forAllSystems (pkgs: {
-        default = {
-          type = "app";
-          program = nixpkgs.lib.getExe self.packages.${pkgs.stdenv.hostPlatform.system}.keefast;
-        };
-      });
-
-      # On NixOS: `environment.systemPackages = [ keefast.packages.${system}.default ];`, or
-      # use the overlay to get `pkgs.keefast`.
-      overlays.default = final: _prev: {
-        keefast = final.callPackage ./nix/package.nix { };
-      };
 
       devShells = forAllSystems (
         pkgs:

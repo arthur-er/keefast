@@ -13,6 +13,8 @@
 # pinned versions and checked against their SHA-256 into $KEEFAST_TOOLS_DIR (default
 # ~/.cache/keefast-packaging). They run extracted, so FUSE is not needed to build.
 set -euo pipefail
+# fetch runs in a command substitution, which must stop on errors too.
+shopt -s inherit_errexit
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bin_dir="$(realpath "${1:-$root/target/release}")"
@@ -55,8 +57,8 @@ fetch() {
   path="$tools_dir/$(basename "$url")"
   if ! echo "$sha  $path" | sha256sum --check --status 2>/dev/null; then
     mkdir -p "$tools_dir"
-    curl --fail --silent --show-error --location --output "$path.part" "$url"
-    echo "$sha  $path.part" | sha256sum --check --quiet
+    curl --fail --silent --show-error --location --output "$path.part" "$url" || return 1
+    echo "$sha  $path.part" | sha256sum --check --quiet >&2 || return 1
     mv "$path.part" "$path"
   fi
   chmod +x "$path"

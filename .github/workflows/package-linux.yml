@@ -16,11 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The oldest supported runner, so the binaries need the oldest glibc.
+          # The oldest supported runner, so the binaries need the oldest glibc. The scripts
+          # also package aarch64 (on ubuntu-22.04-arm), once the repository can use Arm runners.
           - arch: x86_64
             runner: ubuntu-22.04
-          - arch: aarch64
-            runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
