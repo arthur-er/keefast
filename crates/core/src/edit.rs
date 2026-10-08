@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::kdbx::random;
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node, Secret};
-use crate::{EntryId, GroupId, Timestamp, Vault};
+use crate::{Entry, EntryId, GroupId, Timestamp, Vault};
 
 /// The fields of an Entry that keefast edits.
 #[derive(Clone)]
@@ -63,6 +63,18 @@ const RECYCLE_BIN_ICON: &str = "43";
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
 const NO_UUID: Uuid = Uuid::nil();
 
+impl From<&Entry> for EntryFields {
+    fn from(entry: &Entry) -> Self {
+        Self {
+            title: entry.title().to_owned(),
+            username: entry.username().to_owned(),
+            password: entry.password().clone(),
+            url: entry.url().to_owned(),
+            notes: entry.notes().to_owned(),
+        }
+    }
+}
+
 impl EntryFields {
     fn values(&self) -> [&str; 5] {
         [
@@ -98,12 +110,7 @@ impl Vault {
         }
         push(&mut entry, times(now));
         for ((key, protect), value) in FIELDS.into_iter().zip(fields.values()) {
-            let mut string = Element::new("String");
-            push(&mut string, text_element("Key", key));
-            let mut element = Element::new("Value");
-            set_value(&mut element, value, self.protects(protect));
-            push(&mut string, element);
-            push(&mut entry, string);
+            push(&mut entry, new_string(key, value, self.protects(protect)));
         }
         let mut auto_type = Element::new("AutoType");
         push(&mut auto_type, text_element("Enabled", "True"));
@@ -126,15 +133,9 @@ impl Vault {
         now: Timestamp,
     ) -> Result<(), EditError> {
         let path = self.path_to(Kind::Entry, entry.0)?;
-        let unchanged = self.entry(entry).is_some_and(|current| {
-            [
-                current.title(),
-                current.username(),
-                current.password().expose_secret(),
-                current.url(),
-                current.notes(),
-            ] == fields.values()
-        });
+        let unchanged = self
+            .entry(entry)
+            .is_some_and(|current| EntryFields::from(current).values() == fields.values());
         if unchanged {
             return Ok(());
         }
@@ -226,6 +227,7 @@ impl Vault {
         let element = self.at_mut(&path);
         set_value(child_or_insert(element, "Name", &["UUID"]), name, false);
         set_time(element, "LastModificationTime", now);
+        set_time(element, "LastAccessTime", now);
         self.refresh();
         Ok(())
     }
@@ -282,14 +284,6 @@ impl Vault {
     }
 
     // Paths are the indices into `children`, from the root Group down to an element.
-
-    fn root_group(&self) -> &Element {
-        self.file
-            .document
-            .child("Root")
-            .and_then(|root| root.child("Group"))
-            .expect("a Vault always has a root Group")
-    }
 
     fn root_group_mut(&mut self) -> &mut Element {
         self.file
@@ -520,15 +514,22 @@ fn set_string(entry: &mut Element, key: &str, value: &str, protect: bool) {
             let protect = protect || value_element.is_protected();
             set_value(value_element, value, protect);
         }
-        None => {
-            let mut string = Element::new("String");
-            push(&mut string, text_element("Key", key));
-            let mut element = Element::new("Value");
-            set_value(&mut element, value, protect);
-            push(&mut string, element);
-            insert_after_last(entry, string, &["String", "Times", "Tags", "UUID"]);
-        }
+        None => insert_after_last(
+            entry,
+            new_string(key, value, protect),
+            &["String", "Times", "Tags", "UUID"],
+        ),
     }
+}
+
+/// A `<String>` field of an Entry.
+fn new_string(key: &str, value: &str, protect: bool) -> Element {
+    let mut string = Element::new("String");
+    push(&mut string, text_element("Key", key));
+    let mut element = Element::new("Value");
+    set_value(&mut element, value, protect);
+    push(&mut string, element);
+    string
 }
 
 fn set_time(element: &mut Element, name: &str, time: Timestamp) {

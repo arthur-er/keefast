@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity, EventEmitter, FocusHandle, Focusable, Window, div, prelude::*};
-use keefast_core::{Entry, EntryFields};
+use keefast_core::EntryFields;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::strings;
@@ -31,40 +31,33 @@ impl Focusable for EntryEditor {
 }
 
 impl EntryEditor {
-    /// A form filled from `entry`, or empty for a new Entry.
-    pub fn new(entry: Option<&Entry>, cx: &mut Context<Self>) -> Self {
+    /// A form filled with `fields`: an Entry's, or empty ones for a new Entry.
+    pub fn new(fields: &EntryFields, cx: &mut Context<Self>) -> Self {
         let field = |placeholder: &'static str,
-                     value: Option<&str>,
+                     value: &str,
                      style: fn(TextField) -> TextField,
                      cx: &mut Context<Self>| {
             let field = cx.new(|cx| {
                 let mut field = style(TextField::new(placeholder, cx));
-                if let Some(value) = value {
-                    field.set_text(value, cx);
-                }
+                field.set_text(value, cx);
                 field
             });
             cx.subscribe(&field, Self::on_field_event).detach();
             field
         };
         let plain = std::convert::identity;
-        let title = field(strings::EDITOR_TITLE, entry.map(Entry::title), plain, cx);
-        let username = field(
-            strings::DETAIL_USERNAME,
-            entry.map(Entry::username),
-            plain,
-            cx,
-        );
+        let title = field(strings::FIELD_TITLE, &fields.title, plain, cx);
+        let username = field(strings::DETAIL_USERNAME, &fields.username, plain, cx);
         let password = field(
             strings::DETAIL_PASSWORD,
-            entry.map(|entry| entry.password().expose_secret()),
+            fields.password.expose_secret(),
             TextField::masked,
             cx,
         );
-        let url = field(strings::DETAIL_URL, entry.map(Entry::url), plain, cx);
+        let url = field(strings::DETAIL_URL, &fields.url, plain, cx);
         let notes = field(
             strings::DETAIL_NOTES,
-            entry.map(Entry::notes),
+            &fields.notes,
             TextField::multiline,
             cx,
         );
@@ -128,7 +121,7 @@ impl Render for EntryEditor {
             .flex()
             .flex_col()
             .gap_3()
-            .child(labelled(strings::EDITOR_TITLE, &self.title))
+            .child(labelled(strings::FIELD_TITLE, &self.title))
             .child(labelled(strings::DETAIL_USERNAME, &self.username))
             .child(
                 div()
@@ -169,7 +162,7 @@ impl Render for EntryEditor {
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(EntryEditorEvent::Cancel))),
                     )
                     .child(
-                        button("editor-save", strings::SAVE_ENTRY, theme)
+                        button("editor-save", strings::EDITOR_DONE, theme)
                             .bg(theme.accent)
                             .text_color(theme.accent_text)
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),

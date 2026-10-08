@@ -30,8 +30,8 @@ pub const PASSWORD_MASK_CHAR: &str = "•";
 
 pub const CARET: &str = "▏";
 pub const CANCEL: &str = "Cancel";
-pub const EDITOR_TITLE: &str = "Title";
-pub const SAVE_ENTRY: &str = "Done";
+pub const FIELD_TITLE: &str = "Title";
+pub const EDITOR_DONE: &str = "Done";
 pub const REVEAL_PASSWORD: &str = "Show";
 pub const HIDE_PASSWORD: &str = "Hide";
 
@@ -45,7 +45,10 @@ pub const MOVE: &str = "Move…";
 pub const DELETE: &str = "Delete";
 pub const MOVE_TO: &str = "Move to:";
 
-pub const SAVE_VAULTS: &str = "Save";
+pub const SAVE: &str = "Save";
+pub const UNSAVED_MARKER: &str = " •";
+pub const CHECKBOX_ON: &str = "☑";
+pub const CHECKBOX_OFF: &str = "☐";
 pub const AUTOSAVE: &str = "Autosave";
 pub const STATUS_SAVED: &str = "All changes saved";
 pub const STATUS_UNSAVED: &str = "Unsaved changes";
@@ -58,4 +61,4 @@ pub const CONFIRM_DELETE_DETAIL: &str = "This cannot be undone.";
 
 pub const ERROR_MOVE_INTO_ITSELF: &str = "A Group cannot be moved into itself or its subgroups.";
 pub const ERROR_ROOT_GROUP: &str = "The top Group of a Vault cannot be moved or deleted.";
-pub const ERROR_NOT_FOUND: &str = "That item no longer exists.";
+pub const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";

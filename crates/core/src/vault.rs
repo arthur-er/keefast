@@ -66,13 +66,16 @@ impl Vault {
 
     /// Reads the Groups and Entries back from the document after an edit.
     pub(crate) fn refresh(&mut self) {
-        let group = self
-            .file
+        self.root = Group::from_element(self.root_group()).expect("edits keep every UUID valid");
+    }
+
+    /// The root Group's element in the document.
+    pub(crate) fn root_group(&self) -> &Element {
+        self.file
             .document
             .child("Root")
             .and_then(|root| root.child("Group"))
-            .expect("edits keep the root Group");
-        self.root = Group::from_element(group).expect("edits keep every UUID valid");
+            .expect("a Vault always has a root Group")
     }
 
     pub fn root(&self) -> &Group {

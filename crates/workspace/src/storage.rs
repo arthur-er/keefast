@@ -52,11 +52,13 @@ impl StorageProvider for LocalStorage {
     }
 
     /// Writes a temporary file next to the Vault file, flushes it to disk, then renames it over
-    /// the Vault file, so a crash mid-save never leaves a half-written Vault file.
+    /// the Vault file, so a crash mid-save never leaves a half-written Vault file. A symlinked
+    /// Vault file is saved where the link points, and the link is kept.
     fn write(&self, location: &VaultLocation, bytes: &[u8]) -> Result<(), StorageError> {
         let VaultLocation::Local(path) = location;
-        let temp = temp_path(path);
-        let result = write_and_rename(&temp, path, bytes);
+        let path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        let temp = temp_path(&path);
+        let result = write_and_rename(&temp, &path, bytes);
         if result.is_err() {
             let _ = fs::remove_file(&temp);
         }
@@ -66,6 +68,9 @@ impl StorageProvider for LocalStorage {
 
 fn write_and_rename(temp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(temp)?;
+    // Only Unix modes are copied: on Windows a read-only Vault file would make the temporary
+    // file read-only too, and replacing a read-only file fails there anyway.
+    #[cfg(unix)]
     if let Ok(existing) = fs::metadata(path) {
         file.set_permissions(existing.permissions())?;
     }

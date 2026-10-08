@@ -22,6 +22,10 @@ _Avoid_: Item, record, login
 A folder-like container in a Vault that holds Entries and other Groups.
 _Avoid_: Folder, category
 
+**Recycle Bin**:
+The Group that deleted Entries and Groups move to, when the Vault has it enabled, so a delete can be undone. Deleting from the Recycle Bin deletes for good.
+_Avoid_: Trash, deleted items
+
 **Storage provider**:
 Where a Vault file lives: the local filesystem or a remote service such as Dropbox.
 _Avoid_: Backend, remote, cloud

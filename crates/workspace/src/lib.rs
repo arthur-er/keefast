@@ -45,6 +45,15 @@ pub enum SaveVaultError {
     Storage(#[from] StorageError),
 }
 
+/// Where the open Vaults stand with their Vault files, most pressing first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveStatus {
+    Saving,
+    Failed,
+    Unsaved,
+    Saved,
+}
+
 /// A Vault the Workspace has open, together with where its Vault file lives.
 pub struct OpenVault {
     id: VaultId,
@@ -355,9 +364,37 @@ impl Workspace {
                 open.saved_edits = open.saved_edits.max(finished.edits);
                 open.failed_save_at = None;
             }
-            Err(_) => open.failed_save_at = Some(open.edits),
+            Err(_) => open.failed_save_at = Some(finished.edits),
         }
         finished.result
+    }
+
+    /// Starts saving every Vault with unsaved changes or a failed last save, except those
+    /// already being saved.
+    pub fn begin_saves(&mut self) -> Vec<PendingSave> {
+        let due: Vec<VaultId> = self
+            .vaults
+            .iter()
+            .filter(|open| (open.has_unsaved_changes() || open.save_failed()) && !open.saving)
+            .map(|open| open.id)
+            .collect();
+        due.into_iter()
+            .filter_map(|id| self.begin_save(id).ok())
+            .collect()
+    }
+
+    /// The save status of all open Vaults together.
+    pub fn save_status(&self) -> SaveStatus {
+        let any = |check: fn(&OpenVault) -> bool| self.vaults.iter().any(check);
+        if any(OpenVault::is_saving) {
+            SaveStatus::Saving
+        } else if any(OpenVault::save_failed) {
+            SaveStatus::Failed
+        } else if any(OpenVault::has_unsaved_changes) {
+            SaveStatus::Unsaved
+        } else {
+            SaveStatus::Saved
+        }
     }
 
     pub fn autosave(&self) -> bool {

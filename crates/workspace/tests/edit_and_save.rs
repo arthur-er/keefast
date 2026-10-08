@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use keefast_core::{CompositeKey, EntryFields, Timestamp, Vault};
 use keefast_workspace::{
-    EditVaultError, LocalStorage, SaveVaultError, StorageProvider, VaultId, VaultLocation,
-    Workspace,
+    EditVaultError, LocalStorage, SaveStatus, SaveVaultError, StorageProvider, VaultId,
+    VaultLocation, Workspace,
 };
 use secrecy::{ExposeSecret, SecretString};
 use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
@@ -389,4 +389,81 @@ fn a_failed_local_write_leaves_the_vault_file_and_no_temporary_file() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, ["personal.kdbx"]);
+}
+
+#[test]
+fn edits_made_while_a_save_fails_are_still_autosaved() {
+    let mut h = harness();
+    h.workspace.set_autosave(true);
+    let root = h.root();
+    h.workspace
+        .create_entry(h.vault, root, &fields("First", "pw"))
+        .unwrap();
+    let saves = h.workspace.begin_autosaves();
+    h.storage.fail_writes(true);
+    let failed: Vec<_> = saves.into_iter().map(|save| save.run()).collect();
+    let second = h
+        .workspace
+        .create_entry(h.vault, root, &fields("Second", "pw"))
+        .unwrap();
+    for finished in failed {
+        assert!(h.workspace.finish_save(finished).is_err());
+    }
+    h.storage.fail_writes(false);
+
+    let saves = h.workspace.begin_autosaves();
+
+    assert_eq!(
+        saves.len(),
+        1,
+        "the edit made during the failed save is due"
+    );
+    for save in saves {
+        h.workspace.finish_save(save.run()).unwrap();
+    }
+    assert!(h.reopen().entry(second).is_some());
+}
+
+#[test]
+fn saving_all_saves_unsaved_and_failed_vaults_and_reports_the_status() {
+    let mut h = harness();
+    assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
+    assert!(h.workspace.begin_saves().is_empty());
+    let root = h.root();
+    h.workspace
+        .create_entry(h.vault, root, &fields("Bank", "pw"))
+        .unwrap();
+    assert_eq!(h.workspace.save_status(), SaveStatus::Unsaved);
+
+    h.storage.fail_writes(true);
+    let saves = h.workspace.begin_saves();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(h.workspace.save_status(), SaveStatus::Saving);
+    for save in saves {
+        assert!(h.workspace.finish_save(save.run()).is_err());
+    }
+    assert_eq!(h.workspace.save_status(), SaveStatus::Failed);
+
+    h.storage.fail_writes(false);
+    for save in h.workspace.begin_saves() {
+        h.workspace.finish_save(save.run()).unwrap();
+    }
+    assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_local_storage_provider_saves_through_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("synced.kdbx");
+    let link = dir.path().join("personal.kdbx");
+    std::fs::write(&target, b"old").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    LocalStorage
+        .write(&VaultLocation::Local(link.clone()), b"new")
+        .unwrap();
+
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read(&target).unwrap(), b"new");
 }
