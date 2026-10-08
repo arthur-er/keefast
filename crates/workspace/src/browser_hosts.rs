@@ -112,13 +112,28 @@ impl Browser {
 /// browser's registry key, on Windows.
 pub struct NativeMessagingHosts {
     host_binary: PathBuf,
+    /// Where the host is shipped, when that place doesn't last: it is copied to `host_binary`
+    /// whenever the host is registered. Only AppImages need it.
+    #[cfg_attr(windows, allow(dead_code))]
+    host_source: Option<PathBuf>,
     /// The user's config directory on Linux; keefast's data directory on Windows.
     dir: PathBuf,
 }
 
 impl NativeMessagingHosts {
     pub fn new(host_binary: PathBuf, dir: PathBuf) -> Self {
-        Self { host_binary, dir }
+        Self {
+            host_binary,
+            host_source: None,
+            dir,
+        }
+    }
+
+    /// Copies the host from `source` to where the manifests point each time it is registered,
+    /// for a host shipped somewhere the browsers can't rely on.
+    pub fn copying_host_from(mut self, source: PathBuf) -> Self {
+        self.host_source = Some(source);
+        self
     }
 
     /// For the current user, with the native host installed next to the running app.
@@ -131,7 +146,33 @@ impl NativeMessagingHosts {
         let dir = dirs::data_dir()?.join("keefast");
         #[cfg(not(windows))]
         let dir = dirs::config_dir()?;
+        // An AppImage is mounted somewhere new each run, so the browsers start a copy of its
+        // host kept in keefast's data directory, refreshed whenever keefast registers it.
+        #[cfg(not(windows))]
+        if let Some(mount) = std::env::var_os("APPDIR")
+            && app.starts_with(mount)
+        {
+            let copy = dirs::data_dir()?.join("keefast").join(HOST_BINARY);
+            return Some(Self::new(copy, dir).copying_host_from(host));
+        }
         Some(Self::new(host, dir))
+    }
+
+    /// Puts the host where the manifests point, if it is shipped somewhere else.
+    #[cfg(not(windows))]
+    fn copy_host(&self) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Some(source) = &self.host_source else {
+            return Ok(());
+        };
+        fs::create_dir_all(
+            self.host_binary
+                .parent()
+                .expect("the host is in a directory"),
+        )?;
+        atomic_file::replace(&self.host_binary, &fs::read(source)?)?;
+        fs::set_permissions(&self.host_binary, fs::Permissions::from_mode(0o755))
     }
 
     /// The manifest that tells a browser how to start keefast's native host.
@@ -173,6 +214,7 @@ fn is_keefast_manifest(path: &Path) -> bool {
 impl BrowserHosts for NativeMessagingHosts {
     /// Writes the manifest for every browser whose config directory exists.
     fn install(&self) -> io::Result<Vec<Browser>> {
+        self.copy_host()?;
         let mut installed = Vec::new();
         for browser in Browser::ALL {
             if !self.dir.join(browser.linux_config_dir()).is_dir() {
@@ -191,6 +233,12 @@ impl BrowserHosts for NativeMessagingHosts {
             let path = self.manifest_path(browser);
             if is_keefast_manifest(&path) {
                 fs::remove_file(&path)?;
+            }
+        }
+        if self.host_source.is_some() {
+            match fs::remove_file(&self.host_binary) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
             }
         }
         Ok(())

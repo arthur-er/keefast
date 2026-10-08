@@ -15,23 +15,34 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
+      packages = forAllSystems (
+        pkgs:
+        let
+          keefast = pkgs.callPackage ./nix/package.nix { };
+        in
+        {
+          inherit keefast;
+          default = keefast;
+        }
+      );
+
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = nixpkgs.lib.getExe self.packages.${pkgs.stdenv.hostPlatform.system}.keefast;
+        };
+      });
+
+      # On NixOS: `environment.systemPackages = [ keefast.packages.${system}.default ];`, or
+      # use the overlay to get `pkgs.keefast`.
+      overlays.default = final: _prev: {
+        keefast = final.callPackage ./nix/package.nix { };
+      };
+
       devShells = forAllSystems (
         pkgs:
         let
-          # Libraries GPUI loads at runtime (dlopen), so they must be on LD_LIBRARY_PATH.
-          runtimeLibs = with pkgs; [
-            vulkan-loader
-            wayland
-            libxkbcommon
-            libGL
-            libx11
-            libxcb
-            libxcursor
-            libxi
-            libxrandr
-            fontconfig
-            freetype
-          ];
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}.keefast) runtimeLibs;
 
           default = pkgs.mkShell {
             packages = with pkgs; [

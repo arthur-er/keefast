@@ -6,6 +6,35 @@ A fast, native password manager for KeePass (KDBX) Vault files, written in Rust 
 
 Created in [T3 Code](https://t3.codes).
 
+## Install on Linux
+
+Each release has an AppImage, a tarball and the Companion extension as a zip. keefast runs on
+Wayland and X11; it needs a Vulkan driver (Mesa's is enough).
+
+- **AppImage**: `chmod +x keefast-*.AppImage` and run it.
+- **Tarball**: unpack it and run `bin/keefast`, or install it for your user with
+  `tar -xzf keefast-*-linux-*.tar.gz --strip-components=1 -C ~/.local`. It uses the system's
+  libxkbcommon and libxkbcommon-x11, which the AppImage brings along.
+- **Nix**: `nix run github:arthur-er/keefast`, or add the flake to your NixOS configuration:
+
+  ```nix
+  # flake.nix
+  inputs.keefast.url = "github:arthur-er/keefast";
+  # configuration.nix
+  environment.systemPackages = [ inputs.keefast.packages.${pkgs.system}.default ];
+  ```
+
+  The flake also has an overlay (`overlays.default`) that adds `pkgs.keefast`.
+
+Browser integration works from every one of them: keefast registers the `keefast-native-host`
+it shipped with. The AppImage is mounted somewhere new each run, so it copies its host to
+`~/.local/share/keefast/` and registers that copy, refreshed each time it starts with browser
+integration on.
+
+Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
+`scripts/package-linux.sh` makes the tarball and AppImage from a release build, and
+`scripts/smoke-linux.sh` checks that keefast starts on X11 and Wayland.
+
 ## Development
 
 The Cargo workspace lives in `crates/`:

@@ -197,4 +197,54 @@ mod linux {
         assert!(!manifest_at(config.path(), "chromium").exists());
         assert!(keepassxc.exists());
     }
+
+    #[test]
+    fn a_host_in_a_transient_place_is_copied_where_the_manifests_point() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let config = tempfile::tempdir().unwrap();
+        fs::create_dir_all(config.path().join("chromium")).unwrap();
+        // The host inside an AppImage, mounted somewhere new each run.
+        let mount = tempfile::tempdir().unwrap();
+        let bundled = mount.path().join("keefast-native-host");
+        fs::write(&bundled, "the host").unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let staged = data.path().join("keefast/keefast-native-host");
+        let hosts = NativeMessagingHosts::new(staged.clone(), config.path().into())
+            .copying_host_from(bundled.clone());
+
+        hosts.install().unwrap();
+
+        assert_eq!(fs::read_to_string(&staged).unwrap(), "the host");
+        let mode = fs::metadata(&staged).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "the copy is executable");
+        let text = fs::read_to_string(manifest_at(config.path(), "chromium")).unwrap();
+        let manifest: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(manifest["path"], staged.to_str().unwrap());
+
+        // A newer AppImage replaces the copy when it registers again.
+        fs::write(&bundled, "the newer host").unwrap();
+        hosts.install().unwrap();
+        assert_eq!(fs::read_to_string(&staged).unwrap(), "the newer host");
+
+        hosts.uninstall().unwrap();
+
+        assert!(!staged.exists());
+        assert!(!manifest_at(config.path(), "chromium").exists());
+    }
+
+    #[test]
+    fn an_installed_host_is_left_alone_on_uninstall() {
+        let config = tempfile::tempdir().unwrap();
+        fs::create_dir_all(config.path().join("chromium")).unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let host = bin.path().join("keefast-native-host");
+        fs::write(&host, "the host").unwrap();
+        let hosts = NativeMessagingHosts::new(host.clone(), config.path().into());
+
+        hosts.install().unwrap();
+        hosts.uninstall().unwrap();
+
+        assert!(host.exists());
+    }
 }
