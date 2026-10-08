@@ -132,6 +132,19 @@ impl Element {
         text
     }
 
+    /// The length in bytes of the element's character data, measured without decoding
+    /// protected content.
+    pub(crate) fn text_len(&self) -> usize {
+        self.children
+            .iter()
+            .map(|node| match node {
+                Node::Text(chunk) => chunk.len(),
+                Node::Protected(secret) => secret.bytes().len(),
+                Node::Element(_) | Node::Comment(_) => 0,
+            })
+            .sum()
+    }
+
     pub(crate) fn set_text(&mut self, text: impl Into<String>) {
         self.children.retain(|node| !matches!(node, Node::Text(_)));
         self.children.push(Node::Text(text.into()));

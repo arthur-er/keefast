@@ -25,10 +25,18 @@ pub struct EntryHistory {
     vault: VaultId,
     entry: EntryId,
     focus: FocusHandle,
-    /// The version shown, by index in the Entry's history, oldest first.
-    selected: Option<usize>,
+    /// The version shown.
+    selected: Option<Picked>,
     /// Whether the shown version's password and protected fields are shown.
     revealed: bool,
+}
+
+/// A version of the Entry, by its index in the history, oldest first, and when it was saved,
+/// which finds it again when a Merge changes the history while it is shown.
+#[derive(Clone, Copy, PartialEq)]
+struct Picked {
+    index: usize,
+    saved: Option<Timestamp>,
 }
 
 impl EventEmitter<EntryHistoryEvent> for EntryHistory {}
@@ -48,43 +56,55 @@ impl EntryHistory {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        let selected = workspace
-            .read(cx)
-            .entry(vault, entry)
-            .and_then(|entry| entry.history().len().checked_sub(1));
-        Self {
+        let mut history = Self {
             workspace,
             vault,
             entry,
             focus: cx.focus_handle(),
-            selected,
+            selected: None,
             revealed: false,
+        };
+        if let Some(newest) = history.versions(cx).checked_sub(1) {
+            history.select(newest, cx);
         }
+        history
     }
 
-    pub fn vault(&self) -> VaultId {
-        self.vault
-    }
-
-    pub fn entry(&self) -> EntryId {
-        self.entry
-    }
-
-    fn versions(&self, cx: &App) -> usize {
+    fn history<'a>(&self, cx: &'a App) -> &'a [Entry] {
         self.workspace
             .read(cx)
             .entry(self.vault, self.entry)
-            .map_or(0, |entry| entry.history().len())
+            .map_or(&[], Entry::history)
     }
 
-    /// The picked version, if it is still in the history: a Merge may have trimmed it.
+    fn versions(&self, cx: &App) -> usize {
+        self.history(cx).len()
+    }
+
+    /// Where the picked version is in the history now, if it is still there: a Merge may have
+    /// added versions before it, or trimmed it.
     fn selected(&self, cx: &App) -> Option<usize> {
-        self.selected.filter(|&index| index < self.versions(cx))
+        let picked = self.selected?;
+        let history = self.history(cx);
+        let saved = |index: usize| history.get(index).map(Entry::last_modified);
+        if saved(picked.index) == Some(picked.saved) {
+            return Some(picked.index);
+        }
+        history
+            .iter()
+            .position(|version| version.last_modified() == picked.saved)
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.selected != Some(index) {
-            self.selected = Some(index);
+        let Some(version) = self.history(cx).get(index) else {
+            return;
+        };
+        let picked = Picked {
+            index,
+            saved: version.last_modified(),
+        };
+        if self.selected != Some(picked) {
+            self.selected = Some(picked);
             self.revealed = false;
             cx.notify();
         }

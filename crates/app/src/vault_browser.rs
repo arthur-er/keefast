@@ -87,7 +87,11 @@ enum Detail {
     /// Picking the Group to move an Entry or Group to.
     Moving(Subject),
     /// An Entry's earlier versions.
-    History(Entity<EntryHistory>),
+    History {
+        view: Entity<EntryHistory>,
+        vault: VaultId,
+        entry: EntryId,
+    },
     /// Setting up an Entry's TOTP.
     Totp {
         setup: Entity<TotpSetup>,
@@ -645,7 +649,11 @@ impl VaultBrowser {
         cx.subscribe_in(&history, window, Self::on_history_event)
             .detach();
         window.focus(&history.focus_handle(cx));
-        self.detail = Detail::History(history);
+        self.detail = Detail::History {
+            view: history,
+            vault,
+            entry,
+        };
         self.error = None;
         self.notice = None;
         cx.notify();
@@ -653,15 +661,16 @@ impl VaultBrowser {
 
     fn on_history_event(
         &mut self,
-        history: &Entity<EntryHistory>,
+        _: &Entity<EntryHistory>,
         event: &EntryHistoryEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Detail::History { vault, entry, .. } = self.detail else {
+            return;
+        };
         match event {
             EntryHistoryEvent::Restore(version) => {
-                let (vault, entry) =
-                    history.read_with(cx, |history, _| (history.vault(), history.entry()));
                 let restored = self.edit(cx, |workspace| {
                     workspace.restore_entry_version(vault, entry, *version)
                 });
@@ -1599,7 +1608,7 @@ impl VaultBrowser {
         match &self.detail {
             Detail::Editing { editor, .. } => pane.child(editor.clone()).into_any_element(),
             Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
-            Detail::History(history) => pane.child(history.clone()).into_any_element(),
+            Detail::History { view, .. } => pane.child(view.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
                 .into_any_element(),

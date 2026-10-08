@@ -659,7 +659,7 @@ impl HistoryLimits {
     /// Roughly what KeePass's `PwEntry.GetSize` counts: the fields and attachments, by name
     /// and value, and the tags and URL override.
     fn size(&self, version: &Element) -> u64 {
-        let length = |element: Option<&Element>| element.map_or(0, |e| e.text().len() as u64);
+        let length = |element: Option<&Element>| element.map_or(0, |e| e.text_len() as u64);
         let strings: u64 = version
             .children_named("String")
             .map(|string| length(string.child("Key")) + length(string.child("Value")))

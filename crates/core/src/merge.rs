@@ -461,8 +461,8 @@ impl Merge<'_> {
 }
 
 /// Adds earlier versions of an Entry to its history, oldest first, leaving out those modified
-/// when one already there or the current version was, and trims it to the Vault's limits. Versions
-/// already there modified at the same time are counted once too.
+/// when one already there or the current version was, and trims it to the Vault's limits.
+/// Versions already there modified at the same time are counted once too.
 fn add_versions(
     history: &mut Element,
     versions: Vec<Element>,
