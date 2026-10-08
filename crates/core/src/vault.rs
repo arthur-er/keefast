@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use base64::Engine;
@@ -28,11 +29,22 @@ pub struct GroupId(pub(crate) Uuid);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntryId(pub(crate) Uuid);
 
+impl EntryId {
+    /// The UUID in lowercase hex without dashes, as KeePassXC shows it to browsers.
+    pub fn to_hex(self) -> String {
+        self.0.simple().to_string()
+    }
+}
+
+/// KeePassXC reads every field whose name starts with this as another URL for the Entry.
+const ADDITIONAL_URL_PREFIX: &str = "KP2A_URL";
+
 #[derive(Debug, Clone)]
 pub struct Group {
     id: GroupId,
     name: String,
     last_modified: Option<Timestamp>,
+    pub(crate) custom_data: BTreeMap<String, String>,
     groups: Vec<Group>,
     entries: Vec<Entry>,
 }
@@ -45,6 +57,9 @@ pub struct Entry {
     password: SecretString,
     url: String,
     notes: String,
+    /// More URLs the Entry is for, as KeePassXC stores them: fields named `KP2A_URL…`.
+    additional_urls: Vec<String>,
+    pub(crate) custom_data: BTreeMap<String, String>,
     last_modified: Option<Timestamp>,
     /// Earlier versions, oldest first.
     history: Vec<Entry>,
@@ -123,6 +138,19 @@ pub(crate) fn encode_uuid(uuid: Uuid) -> String {
     BASE64.encode(uuid.as_bytes())
 }
 
+/// An Entry's or Group's `CustomData` items, by key.
+fn custom_data(element: &Element) -> BTreeMap<String, String> {
+    element
+        .child("CustomData")
+        .into_iter()
+        .flat_map(|data| data.children_named("Item"))
+        .map(|item| {
+            let text = |name| item.child(name).map(Element::text).unwrap_or_default();
+            (text("Key"), text("Value"))
+        })
+        .collect()
+}
+
 /// When an Entry or Group was last modified, from its `Times`.
 fn last_modified(element: &Element) -> Option<Timestamp> {
     let time = element.child("Times")?.child("LastModificationTime")?;
@@ -135,6 +163,7 @@ impl Group {
             id: GroupId(uuid(group)?),
             name: group.child("Name").map(Element::text).unwrap_or_default(),
             last_modified: last_modified(group),
+            custom_data: custom_data(group),
             groups: group
                 .children_named("Group")
                 .map(Group::from_element)
@@ -185,12 +214,18 @@ impl Group {
 
 impl Entry {
     fn from_element(entry: &Element) -> Result<Self, OpenError> {
+        // Each field's name and value element, the value read only when wanted.
+        let strings = || {
+            entry.children_named("String").map(|string| {
+                let key = string.child("Key").map(Element::text).unwrap_or_default();
+                (key, string.child("Value"))
+            })
+        };
+        let value = |value: Option<&Element>| value.map(Element::text).unwrap_or_default();
         let field = |name: &str| {
-            entry
-                .children_named("String")
-                .find(|string| string.child("Key").is_some_and(|key| key.text() == name))
-                .and_then(|string| string.child("Value"))
-                .map(Element::text)
+            strings()
+                .find(|(key, _)| key == name)
+                .map(|(_, element)| value(element))
                 .unwrap_or_default()
         };
         Ok(Self {
@@ -200,6 +235,12 @@ impl Entry {
             password: SecretString::from(field("Password")),
             url: field("URL"),
             notes: field("Notes"),
+            additional_urls: strings()
+                .filter(|(key, _)| key.starts_with(ADDITIONAL_URL_PREFIX))
+                .map(|(_, element)| value(element))
+                .filter(|url| !url.is_empty())
+                .collect(),
+            custom_data: custom_data(entry),
             last_modified: last_modified(entry),
             history: entry
                 .child("History")
@@ -236,6 +277,11 @@ impl Entry {
 
     pub fn notes(&self) -> &str {
         &self.notes
+    }
+
+    /// The other URLs the Entry is for, besides its URL.
+    pub fn additional_urls(&self) -> &[String] {
+        &self.additional_urls
     }
 
     pub fn last_modified(&self) -> Option<Timestamp> {

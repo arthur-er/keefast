@@ -17,6 +17,8 @@ use keefast_workspace::{
 
 pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassxc-kdbx4.kdbx");
 pub const PASSWORD: &str = "fixture-password";
+/// KeePassXC's browser settings on Entries and Groups; see scripts/make-browser-fixture.sh.
+pub const BROWSER_KDBX: &[u8] = include_bytes!("../../../../fixtures/keepassxc-browser.kdbx");
 
 /// An in-memory Storage provider holding Vault files by location.
 #[derive(Default)]

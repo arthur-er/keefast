@@ -297,7 +297,7 @@ impl Vault {
             .expect("a Vault always has a root Group")
     }
 
-    fn path_to(&self, kind: Kind, id: Uuid) -> Result<Vec<usize>, EditError> {
+    pub(crate) fn path_to(&self, kind: Kind, id: Uuid) -> Result<Vec<usize>, EditError> {
         let mut path = Vec::new();
         if find(self.root_group(), kind, id, &mut path) {
             Ok(path)
@@ -306,7 +306,7 @@ impl Vault {
         }
     }
 
-    fn at_mut(&mut self, path: &[usize]) -> &mut Element {
+    pub(crate) fn at_mut(&mut self, path: &[usize]) -> &mut Element {
         let mut element = self.root_group_mut();
         for &index in path {
             element = match &mut element.children[index] {
@@ -418,7 +418,7 @@ impl Vault {
 }
 
 #[derive(Clone, Copy)]
-enum Kind {
+pub(crate) enum Kind {
     Entry,
     Group,
 }
@@ -493,7 +493,7 @@ pub(crate) fn text_element(name: &str, text: impl Into<String>) -> Element {
 
 /// Sets an element's content, protected or not. An empty unprotected value has no content at
 /// all, as when read back from `<Value/>`.
-fn set_value(element: &mut Element, value: &str, protect: bool) {
+pub(crate) fn set_value(element: &mut Element, value: &str, protect: bool) {
     element.attributes.retain(|(name, _)| name != "Protected");
     element.children.clear();
     if protect {
@@ -536,7 +536,7 @@ fn new_string(key: &str, value: &str, protect: bool) -> Element {
     string
 }
 
-fn set_time(element: &mut Element, name: &str, time: Timestamp) {
+pub(crate) fn set_time(element: &mut Element, name: &str, time: Timestamp) {
     let times = child_or_insert(element, "Times", &["Tags", "IconID", "Name", "UUID"]);
     set_value(child_or_insert(times, name, &[]), &time.encode(), false);
 }

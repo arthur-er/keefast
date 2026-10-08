@@ -87,3 +87,10 @@ pub const PAIRING_APPROVE: &str = "Pair";
 pub const PAIRING_DENY: &str = "Deny";
 pub const ERROR_PAIRING_NAME_EMPTY: &str = "Give this browser a name.";
 pub const ERROR_PAIRING_NAME_TAKEN: &str = "This Vault already has a browser with this name.";
+
+pub const ACCESS_TITLE: &str = "Allow access?";
+pub const ACCESS_PROMPT: &str = "{site} asks for these Entries. Allow only if you are signing in \
+there.";
+pub const ACCESS_REMEMBER: &str = "Remember this decision for {site}";
+pub const ACCESS_ALLOW: &str = "Allow";
+pub const ACCESS_DENY: &str = "Deny";

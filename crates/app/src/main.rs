@@ -1,5 +1,6 @@
 //! keefast's desktop app: GPUI views that render Workspace state and send it commands.
 
+mod access_dialog;
 mod browser_integration;
 mod entry_editor;
 mod pairing_dialog;
@@ -22,14 +23,15 @@ use keefast_workspace::{
     FileConfigStore, LocalStorage, NativeMessagingHosts, VaultLocation, Workspace,
 };
 
+use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
 use crate::browser_integration::BrowserIntegration;
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::unlock::{UnlockEvent, UnlockView};
 use crate::vault_browser::{OpenAnotherVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
-/// unlock dialog shown again to open another Vault. Pairing requests from browsers are asked
-/// over whatever is showing.
+/// unlock dialog shown again to open another Vault. Pairing and Access requests from browsers
+/// are asked over whatever is showing, Pairings first.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -37,6 +39,7 @@ struct KeefastWindow {
     browser: Option<Entity<VaultBrowser>>,
     showing_unlock: bool,
     pairing: Option<Entity<PairingDialog>>,
+    access: Option<Entity<AccessDialog>>,
 }
 
 impl KeefastWindow {
@@ -52,7 +55,7 @@ impl KeefastWindow {
             workspace
         });
         let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
-        cx.observe_in(&integration, window, Self::show_pending_pairing)
+        cx.observe_in(&integration, window, Self::show_pending_requests)
             .detach();
         let location = path.map(VaultLocation::Local);
         let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), location, cx));
@@ -66,23 +69,51 @@ impl KeefastWindow {
             browser: None,
             showing_unlock: true,
             pairing: None,
+            access: None,
         }
     }
 
-    /// Shows the dialog for the Pairing request to answer now, if there is one.
-    fn show_pending_pairing(
+    /// Shows the dialog for the browser request to answer now, if there is one: a Pairing
+    /// request, or else an Access request.
+    fn show_pending_requests(
         &mut self,
         integration: Entity<BrowserIntegration>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let changed = self.show_pending_pairing(&integration, window, cx)
+            | self.show_pending_access(&integration, window, cx);
+        if !changed {
+            return;
+        }
+        // The user is in the browser when it asks, so keefast comes to the front.
+        if let Some(dialog) = &self.pairing {
+            window.focus(&dialog.focus_handle(cx));
+            window.activate_window();
+        } else if let Some(dialog) = &self.access {
+            window.focus(&dialog.focus_handle(cx));
+            window.activate_window();
+        } else {
+            self.focus_screen(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows the dialog for the Pairing request to answer now, if there is one, and returns
+    /// whether that changed.
+    fn show_pending_pairing(
+        &mut self,
+        integration: &Entity<BrowserIntegration>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let pending = integration.read(cx).pending_pairing(cx);
         let showing = self
             .pairing
             .as_ref()
             .map(|dialog| dialog.read(cx).pairing());
         if pending.map(|pending| pending.id) == showing {
-            return;
+            return false;
         }
         self.pairing = pending.map(|pending| {
             let vault_name = self
@@ -94,13 +125,58 @@ impl KeefastWindow {
             let dialog = cx.new(|cx| PairingDialog::new(pending.id, vault_name, cx));
             cx.subscribe_in(&dialog, window, Self::on_pairing_event)
                 .detach();
-            window.focus(&dialog.focus_handle(cx));
             dialog
         });
-        if self.pairing.is_none() {
-            self.focus_screen(window, cx);
+        true
+    }
+
+    /// Shows the dialog for the Access request to answer now, if there is one, and returns
+    /// whether that changed.
+    fn show_pending_access(
+        &mut self,
+        integration: &Entity<BrowserIntegration>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let pending = integration.read(cx).pending_access(cx);
+        let showing = self.access.as_ref().map(|dialog| dialog.read(cx).access());
+        if pending.as_ref().map(|pending| pending.id) == showing {
+            return false;
         }
-        cx.notify();
+        self.access = pending.map(|pending| {
+            let workspace = self.workspace.read(cx);
+            let entries = pending
+                .entries
+                .iter()
+                .filter_map(|&(vault, entry)| {
+                    let open = workspace.vault(vault)?;
+                    let entry = open.vault().entry(entry)?;
+                    Some(AskedEntry {
+                        title: entry.title().to_owned().into(),
+                        username: entry.username().to_owned().into(),
+                        vault: open.display_name().into(),
+                    })
+                })
+                .collect();
+            let dialog = cx.new(|cx| AccessDialog::new(pending.id, pending.site, entries, cx));
+            cx.subscribe_in(&dialog, window, Self::on_access_event)
+                .detach();
+            dialog
+        });
+        true
+    }
+
+    fn on_access_event(
+        &mut self,
+        dialog: &Entity<AccessDialog>,
+        AccessDialogEvent(answer): &AccessDialogEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let access = dialog.read(cx).access();
+        self.integration.update(cx, |integration, cx| {
+            integration.answer_access(access, *answer, cx)
+        });
     }
 
     fn on_pairing_event(
@@ -184,11 +260,21 @@ impl Render for KeefastWindow {
             (Some(browser), false) => browser.clone().into_any_element(),
             _ => self.unlock.clone().into_any_element(),
         };
-        div().size_full().relative().child(screen).when_some(
-            self.pairing.clone(),
-            |this, dialog| {
+        let dialog = match (&self.pairing, &self.access) {
+            (Some(pairing), _) => Some(pairing.clone().into_any_element()),
+            (None, Some(access)) => Some(access.clone().into_any_element()),
+            (None, None) => None,
+        };
+        div()
+            .size_full()
+            .relative()
+            .child(screen)
+            .when_some(dialog, |this, dialog| {
+                // The backdrop keeps clicks on and around the dialog from reaching the screen.
                 this.child(
                     div()
+                        .id("dialog-backdrop")
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .flex()
@@ -197,8 +283,7 @@ impl Render for KeefastWindow {
                         .bg(rgba(0x00000080))
                         .child(dialog),
                 )
-            },
-        )
+            })
     }
 }
 

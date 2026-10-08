@@ -37,14 +37,14 @@ fn workspace_with_personal_vault() -> (Workspace, VaultId) {
 fn send(session: &mut BrowserSession, workspace: &Workspace, sent: &Sent) -> String {
     match session.handle(workspace, &sent.json) {
         BrowserReply::Send(reply) => reply,
-        BrowserReply::AskPairing(_) => panic!("unexpected Pairing request"),
+        other => panic!("unexpected request to the user: {other:?}"),
     }
 }
 
 fn ask_pairing(session: &mut BrowserSession, workspace: &Workspace, sent: &Sent) -> PairingRequest {
     match session.handle(workspace, &sent.json) {
         BrowserReply::AskPairing(request) => request,
-        BrowserReply::Send(reply) => panic!("expected a Pairing request, got {reply}"),
+        other => panic!("expected a Pairing request, got {other:?}"),
     }
 }
 
@@ -250,6 +250,7 @@ fn with_no_vault_open_keefast_answers_that_it_is_locked() {
         extension.get_database_hash(&[]),
         extension.associate(),
         extension.test_associate("Home", &extension.id_key()),
+        extension.get_logins("https://example.com/", None, &[]),
     ] {
         let reply = parse(&send(&mut session, &workspace, &sent));
         assert_eq!(reply["errorCode"], "1", "{reply}");

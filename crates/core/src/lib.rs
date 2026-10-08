@@ -10,14 +10,16 @@ mod kdbx;
 mod key;
 mod open;
 mod save;
+mod site;
 mod time;
 mod vault;
 mod xml;
 
-pub use browser::Pairing;
+pub use browser::{AccessDecision, Pairing, SiteEntry};
 pub use edit::{EditError, EntryFields};
 pub use key::CompositeKey;
 pub use open::OpenError;
 pub use save::SaveError;
+pub use site::Site;
 pub use time::Timestamp;
 pub use vault::{Entry, EntryId, Group, GroupId, Vault};

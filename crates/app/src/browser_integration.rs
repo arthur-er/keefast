@@ -7,7 +7,8 @@ use std::io;
 use gpui::{Context, Entity, Task};
 use keefast_native_host::ipc::{self, Replies, Server, ServerEvent};
 use keefast_workspace::{
-    ConnectionId, EditVaultError, Outgoing, PairingId, PendingPairing, Workspace,
+    AccessAnswer, AccessId, ConnectionId, EditVaultError, Outgoing, PairingId, PendingAccess,
+    PendingPairing, Workspace,
 };
 
 use crate::saving;
@@ -86,6 +87,30 @@ impl BrowserIntegration {
             .workspace
             .update(cx, |workspace, _| workspace.deny_pairing(pairing));
         self.send(reply);
+        cx.notify();
+    }
+
+    /// The site asking for Entries to put to the user now.
+    pub fn pending_access(&self, cx: &gpui::App) -> Option<PendingAccess> {
+        self.workspace.read(cx).pending_access()
+    }
+
+    /// Answers the site that asked with the user's decision, remembered on the Entries if the
+    /// user wants.
+    pub fn answer_access(
+        &mut self,
+        access: AccessId,
+        answer: AccessAnswer,
+        cx: &mut Context<Self>,
+    ) {
+        let replies = self.workspace.update(cx, |workspace, cx| {
+            cx.notify();
+            workspace.answer_access(access, answer)
+        });
+        self.send(replies);
+        if answer.remember {
+            saving::autosave(&self.workspace, cx);
+        }
         cx.notify();
     }
 

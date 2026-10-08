@@ -17,8 +17,9 @@ use keefast_core::{
 };
 
 pub use browser::{
-    BrowserReply, BrowserSession, ConnectionId, KEEPASSXC_VERSION, Outgoing, PairingId,
-    PairingRequest, PendingPairing, ProtocolError,
+    AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId,
+    KEEPASSXC_VERSION, Outgoing, PairingId, PairingRequest, PendingAccess, PendingPairing,
+    ProtocolError,
 };
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,

@@ -104,6 +104,20 @@ impl FakeExtension {
         )
     }
 
+    /// Asks for the logins for the page at `url`, its form submitting to `submit_url`, proving
+    /// the Pairings in `keys` (name and key).
+    pub fn get_logins(&self, url: &str, submit_url: Option<&str>, keys: &[(&str, &str)]) -> Sent {
+        let keys: Vec<Value> = keys
+            .iter()
+            .map(|(id, key)| json!({ "id": id, "key": key }))
+            .collect();
+        let mut message = json!({ "action": "get-logins", "id": "", "url": url, "keys": keys });
+        if let Some(submit_url) = submit_url {
+            message["submitUrl"] = submit_url.into();
+        }
+        self.encrypted("get-logins", message)
+    }
+
     /// Opens an encrypted reply, checking it answers `sent`, and returns its message.
     pub fn open(&self, sent: &Sent, reply: &str) -> Value {
         let reply: Value = serde_json::from_str(reply).unwrap();

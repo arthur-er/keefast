@@ -4,7 +4,8 @@
 //! Each connection from a native host gets a [`BrowserSession`], which holds that
 //! connection's encryption keys. Requests are JSON text; replies are JSON text to send back.
 //! Pairing needs the user's approval, so `associate` requests wait in a queue, one put to the
-//! user at a time, until approved with a name or denied.
+//! user at a time, until approved with a name or denied. Likewise a `get-logins` request for
+//! Entries the user hasn't decided on for that site waits for an Access decision.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -12,7 +13,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
+use keefast_core::{AccessDecision, EntryId, Site, SiteEntry};
+use secrecy::ExposeSecret;
 use serde_json::{Map, Value, json};
+use zeroize::Zeroize;
 
 use crate::{EditVaultError, VaultId, Workspace};
 
@@ -38,6 +42,8 @@ pub enum ProtocolError {
     KeyChangeFailed = 9,
     IncorrectAction = 12,
     EmptyMessageReceived = 13,
+    NoUrlProvided = 14,
+    NoLoginsFound = 15,
 }
 
 impl ProtocolError {
@@ -55,6 +61,8 @@ impl ProtocolError {
             ProtocolError::KeyChangeFailed => "Key change was not successful",
             ProtocolError::IncorrectAction => "Incorrect action",
             ProtocolError::EmptyMessageReceived => "Empty message received",
+            ProtocolError::NoUrlProvided => "No URL provided",
+            ProtocolError::NoLoginsFound => "No logins found",
         }
     }
 }
@@ -66,6 +74,8 @@ pub enum BrowserReply {
     Send(String),
     /// Ask the user whether to pair the extension with a Vault, then answer the request.
     AskPairing(PairingRequest),
+    /// Ask the user whether the site may have Entries, then answer the request.
+    AskAccess(AccessRequest),
 }
 
 /// An extension asking to be paired with a Vault, waiting for the user's answer.
@@ -81,6 +91,75 @@ impl PairingRequest {
     /// The Vault the extension would be paired with.
     pub fn vault(&self) -> VaultId {
         self.vault
+    }
+}
+
+/// A site asking for Entries the user hasn't decided on for it yet, waiting for the user's
+/// answer.
+#[derive(Debug, Clone)]
+pub struct AccessRequest {
+    logins: LoginsQuery,
+    /// The Entries to decide on.
+    undecided: Vec<(VaultId, EntryId)>,
+    request: Request,
+}
+
+impl AccessRequest {
+    /// The host of the site asking.
+    pub fn site(&self) -> &str {
+        &self.logins.hosts[0]
+    }
+
+    /// The Entries to decide on.
+    pub fn entries(&self) -> &[(VaultId, EntryId)] {
+        &self.undecided
+    }
+}
+
+/// The user's answer to a site asking for Entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessAnswer {
+    pub decision: AccessDecision,
+    /// Whether to remember the decision on the Entries, for this site.
+    pub remember: bool,
+}
+
+/// What a `get-logins` request asks for.
+#[derive(Debug, Clone)]
+struct LoginsQuery {
+    site: Site,
+    /// The site's host, and the host its form submits to if that differs: the hosts Access
+    /// decisions are made for.
+    hosts: Vec<String>,
+    /// The Pairings the extension holds keys for, as name and key.
+    keys: Vec<(String, String)>,
+    /// The `id` the extension sent, echoed back.
+    id: String,
+}
+
+/// An Entry offered to a site, with its Access decision for the site.
+struct Candidate<'a> {
+    vault: VaultId,
+    found: SiteEntry<'a>,
+    decision: Option<AccessDecision>,
+}
+
+impl Candidate<'_> {
+    fn id(&self) -> (VaultId, EntryId) {
+        (self.vault, self.found.entry.id())
+    }
+
+    /// The Entry as the extension receives it.
+    fn login(&self) -> Value {
+        let SiteEntry { entry, group } = self.found;
+        json!({
+            "login": entry.username(),
+            "name": entry.title(),
+            "password": entry.password().expose_secret(),
+            "uuid": entry.id().to_hex(),
+            "group": group.name(),
+            "stringFields": [],
+        })
     }
 }
 
@@ -133,6 +212,7 @@ impl BrowserSession {
             "get-databasehash" => self.get_database_hash(workspace, &request),
             "associate" => self.associate(workspace, &request),
             "test-associate" => self.test_associate(workspace, &request),
+            "get-logins" => self.get_logins(workspace, &request),
             _ => Err(ProtocolError::IncorrectAction),
         };
         reply.unwrap_or_else(fail)
@@ -165,6 +245,29 @@ impl BrowserSession {
     /// The reply to send when the user turns a Pairing down.
     pub fn deny_pairing(&self, pairing: &PairingRequest) -> String {
         self.error(&pairing.request, ProtocolError::ActionCancelledOrDenied)
+    }
+
+    /// Answers a site asking for Entries with the user's decision on them, remembered on the
+    /// Entries if the user wants, and returns the reply to send.
+    pub(crate) fn answer_access(
+        &self,
+        workspace: &mut Workspace,
+        access: &AccessRequest,
+        answer: AccessAnswer,
+    ) -> String {
+        if answer.remember {
+            for &(vault, entry) in &access.undecided {
+                // An Entry gone meanwhile has nothing to remember a decision on.
+                let _ = workspace.edit(vault, |vault, now| {
+                    vault.remember_access(entry, &access.logins.hosts, answer.decision, now)
+                });
+            }
+        }
+        let decided = |vault, entry| {
+            (answer.decision == AccessDecision::Allow && access.undecided.contains(&(vault, entry)))
+                .then_some(AccessDecision::Allow)
+        };
+        self.logins_reply(workspace, &access.request, &access.logins, decided)
     }
 
     /// Starts the session's encryption: the extension sends its public key, keefast answers
@@ -266,6 +369,101 @@ impl BrowserSession {
         )))
     }
 
+    /// Finds the logins for a site in the Vaults the extension is paired with, and answers
+    /// with those the user has allowed the site, or asks the user about the others first.
+    fn get_logins(
+        &mut self,
+        workspace: &Workspace,
+        request: &Map<String, Value>,
+    ) -> Result<BrowserReply, ProtocolError> {
+        let (request, message) = self.decrypt(request)?;
+        if text(&message, "action") != "get-logins" {
+            return Err(ProtocolError::IncorrectAction);
+        }
+        let url = text(&message, "url");
+        if url.is_empty() {
+            return Err(ProtocolError::NoUrlProvided);
+        }
+        let site = Site::parse(url).ok_or(ProtocolError::NoLoginsFound)?;
+        let mut hosts = vec![site.host()];
+        if let Some(form) = Site::parse(text(&message, "submitUrl"))
+            && form.host() != hosts[0]
+        {
+            hosts.push(form.host());
+        }
+        let keys = match message.get("keys") {
+            Some(Value::Array(keys)) => keys
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|key| (text(key, "id").to_owned(), text(key, "key").to_owned()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let logins = LoginsQuery {
+            site,
+            hosts,
+            keys,
+            id: text(&message, "id").to_owned(),
+        };
+        let candidates = candidates(workspace, &logins);
+        let undecided: Vec<(VaultId, EntryId)> = candidates
+            .iter()
+            .filter(|candidate| candidate.decision.is_none())
+            .map(Candidate::id)
+            .collect();
+        if undecided.is_empty() {
+            return Ok(BrowserReply::Send(self.logins_reply(
+                workspace,
+                &request,
+                &logins,
+                |_, _| None,
+            )));
+        }
+        Ok(BrowserReply::AskAccess(AccessRequest {
+            logins,
+            undecided,
+            request,
+        }))
+    }
+
+    /// The reply with the logins for a site: those allowed it, with `decided` standing in for
+    /// the Entries without a remembered decision. Without any, there are no logins found.
+    fn logins_reply(
+        &self,
+        workspace: &Workspace,
+        request: &Request,
+        logins: &LoginsQuery,
+        decided: impl Fn(VaultId, EntryId) -> Option<AccessDecision>,
+    ) -> String {
+        if workspace.vaults.is_empty() {
+            return self.error(request, ProtocolError::DatabaseNotOpened);
+        }
+        let entries: Vec<Value> = candidates(workspace, logins)
+            .iter()
+            .filter(|candidate| {
+                let (vault, entry) = candidate.id();
+                let decision = candidate.decision.or_else(|| decided(vault, entry));
+                decision == Some(AccessDecision::Allow)
+            })
+            .map(Candidate::login)
+            .collect();
+        if entries.is_empty() {
+            return self.error(request, ProtocolError::NoLoginsFound);
+        }
+        let vault = workspace
+            .browser_vault(&self.connected_ids)
+            .expect("a Vault is open");
+        self.encrypted_reply(
+            request,
+            json!({
+                "count": entries.len(),
+                "entries": entries,
+                "hash": browser_hash(workspace, vault),
+                "id": logins.id,
+            }),
+        )
+    }
+
     /// The request's encrypted `message`, as JSON.
     fn decrypt(
         &self,
@@ -291,7 +489,8 @@ impl BrowserSession {
         Ok((request, message))
     }
 
-    /// A successful reply, its `message` encrypted under the incremented nonce.
+    /// A successful reply, its `message` encrypted under the incremented nonce. The plain
+    /// message, which may hold passwords, is wiped once encrypted.
     fn encrypted_reply(&self, request: &Request, fields: Value) -> String {
         let keys = self
             .keys
@@ -303,11 +502,14 @@ impl BrowserSession {
         if let Value::Object(fields) = fields {
             message.extend(fields);
         }
-        let plain = Value::Object(message).to_string();
+        let mut message = Value::Object(message);
+        let mut plain = message.to_string();
         let sealed = keys
             .crypto
             .encrypt(&nonce.into(), plain.as_bytes())
             .expect("encrypting in memory cannot fail");
+        plain.zeroize();
+        wipe(&mut message);
         let mut reply = Map::new();
         reply.insert("action".into(), request.action.clone().into());
         reply.insert("message".into(), BASE64.encode(sealed).into());
@@ -318,6 +520,46 @@ impl BrowserSession {
 
     fn error(&self, request: &Request, error: ProtocolError) -> String {
         error_reply(&request.action, request.request_id.clone(), error)
+    }
+}
+
+/// Every Entry offered to the site in the open Vaults the extension is paired with, each with
+/// its remembered Access decision unless that is to deny the site.
+fn candidates<'a>(workspace: &'a Workspace, logins: &LoginsQuery) -> Vec<Candidate<'a>> {
+    let paired = |open: &&crate::OpenVault| {
+        logins
+            .keys
+            .iter()
+            .any(|(name, key)| open.vault.is_paired_with(name, key))
+    };
+    workspace
+        .vaults
+        .iter()
+        .filter(paired)
+        .flat_map(|open| {
+            open.vault
+                .entries_for_site(&logins.site)
+                .into_iter()
+                .map(move |found| (open.id, found))
+        })
+        .filter_map(|(vault, found)| {
+            let decision = found.entry.access_decision(&logins.hosts);
+            (decision != Some(AccessDecision::Deny)).then_some(Candidate {
+                vault,
+                found,
+                decision,
+            })
+        })
+        .collect()
+}
+
+/// Wipes every string in a JSON value, best effort, before it is dropped.
+fn wipe(value: &mut Value) {
+    match value {
+        Value::String(text) => text.zeroize(),
+        Value::Array(items) => items.iter_mut().for_each(wipe),
+        Value::Object(fields) => fields.values_mut().for_each(wipe),
+        _ => {}
     }
 }
 
@@ -336,6 +578,19 @@ pub struct PendingPairing {
     pub vault: VaultId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessId(u64);
+
+/// A site asking for Entries, waiting for the user's Access decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAccess {
+    pub id: AccessId,
+    /// The host of the site asking.
+    pub site: String,
+    /// The Entries to decide on.
+    pub entries: Vec<(VaultId, EntryId)>,
+}
+
 /// A reply for one extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
@@ -343,12 +598,15 @@ pub struct Outgoing {
     pub message: String,
 }
 
-/// Every extension's session, and the Pairing requests waiting for the user, oldest first.
+/// Every extension's session, and the Pairing and Access requests waiting for the user, oldest
+/// first.
 #[derive(Default)]
 pub(crate) struct BrowserConnections {
     sessions: HashMap<ConnectionId, BrowserSession>,
     pairings: VecDeque<(PairingId, ConnectionId, PairingRequest)>,
     next_pairing: u64,
+    accesses: VecDeque<(AccessId, ConnectionId, AccessRequest)>,
+    next_access: u64,
 }
 
 impl Workspace {
@@ -378,15 +636,88 @@ impl Workspace {
                 self.browser.pairings.push_back((id, connection, request));
                 None
             }
+            BrowserReply::AskAccess(request) => {
+                let id = AccessId(self.browser.next_access);
+                self.browser.next_access += 1;
+                self.browser.accesses.push_back((id, connection, request));
+                None
+            }
         }
     }
 
-    /// Forgets an extension that has gone, and its Pairing requests.
+    /// Forgets an extension that has gone, and its Pairing and Access requests.
     pub fn disconnect_browser(&mut self, connection: ConnectionId) {
         self.browser.sessions.remove(&connection);
         self.browser
             .pairings
             .retain(|(_, from, _)| *from != connection);
+        self.browser
+            .accesses
+            .retain(|(_, from, _)| *from != connection);
+    }
+
+    /// The site asking for Entries to put to the user now.
+    pub fn pending_access(&self) -> Option<PendingAccess> {
+        self.browser
+            .accesses
+            .front()
+            .map(|(id, _, request)| PendingAccess {
+                id: *id,
+                site: request.site().to_owned(),
+                entries: request.entries().to_vec(),
+            })
+    }
+
+    /// Answers the pending Access request `id` with the user's decision, and returns the
+    /// replies to send: its own, and those of other waiting requests the decision settled.
+    pub fn answer_access(&mut self, id: AccessId, answer: AccessAnswer) -> Vec<Outgoing> {
+        let Some((pending, ..)) = self.browser.accesses.front() else {
+            return Vec::new();
+        };
+        if *pending != id {
+            return Vec::new();
+        }
+        let (_, connection, request) = self.browser.accesses.pop_front().expect("pending");
+        let mut replies = Vec::new();
+        if let Some(session) = self.browser.sessions.remove(&connection) {
+            let message = session.answer_access(self, &request, answer);
+            self.browser.sessions.insert(connection, session);
+            replies.push(Outgoing {
+                connection,
+                message,
+            });
+        }
+        replies.extend(self.answer_settled_accesses());
+        replies
+    }
+
+    /// Answers the waiting Access requests none of whose Entries need a decision any more,
+    /// now that one was remembered, and returns their replies.
+    fn answer_settled_accesses(&mut self) -> Vec<Outgoing> {
+        let mut replies = Vec::new();
+        let mut index = 0;
+        while let Some((_, connection, request)) = self.browser.accesses.get(index) {
+            let still_undecided = candidates(self, &request.logins).iter().any(|candidate| {
+                candidate.decision.is_none() && request.undecided.contains(&candidate.id())
+            });
+            if still_undecided {
+                index += 1;
+                continue;
+            }
+            if let Some(session) = self.browser.sessions.get(connection) {
+                replies.push(Outgoing {
+                    connection: *connection,
+                    message: session.logins_reply(
+                        self,
+                        &request.request,
+                        &request.logins,
+                        |_, _| None,
+                    ),
+                });
+            }
+            self.browser.accesses.remove(index);
+        }
+        replies
     }
 
     /// The Pairing request to put to the user now.
@@ -447,18 +778,25 @@ impl Workspace {
         (*pending == id).then(|| (*connection, request.clone()))
     }
 
-    /// Ends every session and turns every pending Pairing down, for browser integration
-    /// turned off.
+    /// Ends every session and turns every pending Pairing and Access request down, for
+    /// browser integration turned off.
     pub(crate) fn end_browser_sessions(&mut self) -> Vec<Outgoing> {
         let browser = std::mem::take(&mut self.browser);
-        browser
+        let pairings = browser
             .pairings
             .into_iter()
-            .filter_map(|(_, connection, request)| {
+            .map(|(_, connection, request)| (connection, request.request));
+        let accesses = browser
+            .accesses
+            .into_iter()
+            .map(|(_, connection, request)| (connection, request.request));
+        pairings
+            .chain(accesses)
+            .filter_map(|(connection, request)| {
                 let session = browser.sessions.get(&connection)?;
                 Some(Outgoing {
                     connection,
-                    message: session.deny_pairing(&request),
+                    message: session.error(&request, ProtocolError::ActionCancelledOrDenied),
                 })
             })
             .collect()
