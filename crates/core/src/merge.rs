@@ -88,6 +88,7 @@ impl Vault {
         merge.deletions();
         merge.meta();
         let mut summary = merge.summary;
+        self.drop_revoked_pairings();
         summary.changed = (&self.file.document, self.file.binaries.len()) != (&before.0, before.1);
         self.refresh();
         summary

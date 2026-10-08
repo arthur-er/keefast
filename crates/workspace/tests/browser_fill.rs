@@ -1048,12 +1048,50 @@ fn a_revoked_pairing_finds_nothing_and_can_save_nothing() {
 }
 
 #[test]
-fn a_request_waiting_when_its_pairing_is_revoked_gets_nothing() {
+fn a_request_waiting_when_its_pairing_is_revoked_is_answered_with_nothing() {
     let (mut browser, vault) = Browser::paired(storage());
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
 
-    browser.workspace.revoke_pairing(vault, "Home").unwrap();
+    let replies = browser.workspace.revoke_pairing(vault, "Home").unwrap();
 
-    assert_eq!(browser.answer_entries(&sent, ALLOW), [] as [&str; 0]);
+    assert_eq!(replies.len(), 1);
+    assert_eq!(
+        titles(&browser.extension.open(&sent, &replies[0].message)),
+        [] as [&str; 0]
+    );
+    assert_eq!(browser.workspace.pending_access(), None);
+}
+
+#[test]
+fn a_decision_remembered_after_a_vaults_pairing_is_revoked_is_not_stored_in_it() {
+    let (mut browser, personal) = Browser::paired(storage());
+    let work = browser
+        .workspace
+        .open_vault(&work_vault(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+    browser
+        .workspace
+        .pair_browser(work, "Home", &browser.pairing.1)
+        .unwrap();
+    let sent = browser.get_logins(EXAMPLE);
+    assert_eq!(browser.ask(&sent).entries.len(), 4);
+
+    // The personal Vault's Entries still wait for the user.
+    assert_eq!(browser.workspace.revoke_pairing(work, "Home").unwrap(), []);
+    assert_eq!(
+        browser.answer_entries(&sent, REMEMBER_ALLOW),
+        ["Example", "Remembered", "Shown again"]
+    );
+
+    let decided = |vault| {
+        let example = browser.entry_id(vault, "Example");
+        browser
+            .workspace
+            .entry(vault, example)
+            .unwrap()
+            .access_decision(&["example.com".to_owned()])
+    };
+    assert_eq!(decided(personal), Some(AccessDecision::Allow));
+    assert_eq!(decided(work), None);
 }

@@ -140,6 +140,24 @@ impl BrowserIntegration {
         Ok(())
     }
 
+    /// Revokes the Vault's Pairing named `name`, answering the browser requests that leaves
+    /// nothing to decide on.
+    pub fn revoke_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), EditVaultError> {
+        let replies = self.workspace.update(cx, |workspace, cx| {
+            cx.notify();
+            workspace.revoke_pairing(vault, name)
+        })?;
+        self.send(replies);
+        saving::autosave(&self.workspace, cx);
+        cx.notify();
+        Ok(())
+    }
+
     /// The captured login to put to the user now.
     pub fn pending_login(&self, cx: &gpui::App) -> Option<PendingLogin> {
         self.workspace.read(cx).pending_login()

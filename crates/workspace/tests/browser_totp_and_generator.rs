@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_core::{
-    AccessDecision, CharacterRecipe, EntryId, PassphraseRecipe, Totp, TotpAlgorithm,
+    AccessDecision, CharacterRecipe, DefaultAccessPolicy, EntryId, PassphraseRecipe, Totp,
+    TotpAlgorithm,
 };
 use keefast_workspace::{
     AccessAnswer, ConnectionId, GeneratorMode, GeneratorSettings, UnlockSecrets, VaultId, Workspace,
@@ -331,6 +332,41 @@ fn get_totp_gives_no_code_to_another_extension_than_the_one_allowed() {
         .unwrap();
 
     assert_eq!(stranger.open(&sent, &reply)["totp"], "");
+}
+
+#[test]
+fn get_totp_gives_no_code_once_the_allow_it_was_given_by_is_forgotten() {
+    let mut browser = Browser::paired();
+    let remembered = browser.with_totp("Remembered");
+    // "Remembered" already allows example.com, so it is given without asking.
+    browser.get_logins(EXAMPLE, DENY);
+    assert_eq!(browser.get_totp(&remembered.to_hex())["totp"], RFC_CODE);
+
+    browser
+        .workspace
+        .forget_access(browser.vault, remembered, None)
+        .unwrap();
+
+    assert_eq!(browser.get_totp(&remembered.to_hex())["totp"], "");
+}
+
+#[test]
+fn get_totp_gives_no_code_once_the_default_access_policy_that_gave_it_changes() {
+    let mut browser = Browser::paired();
+    let example = browser.with_totp("Example");
+    browser
+        .workspace
+        .set_default_access_policy(browser.vault, DefaultAccessPolicy::AlwaysAllow)
+        .unwrap();
+    browser.get_logins(EXAMPLE, DENY);
+    assert_eq!(browser.get_totp(&example.to_hex())["totp"], RFC_CODE);
+
+    browser
+        .workspace
+        .set_default_access_policy(browser.vault, DefaultAccessPolicy::Ask)
+        .unwrap();
+
+    assert_eq!(browser.get_totp(&example.to_hex())["totp"], "");
 }
 
 #[test]

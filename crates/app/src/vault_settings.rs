@@ -6,7 +6,6 @@ use keefast_core::DefaultAccessPolicy;
 use keefast_workspace::{VaultId, Workspace};
 
 use crate::browser_integration::BrowserIntegration;
-use crate::saving;
 use crate::strings;
 use crate::theme::Theme;
 use crate::vault_browser::describe;
@@ -105,16 +104,10 @@ impl VaultSettings {
             }
             this.update(cx, |this, cx| {
                 let vault = this.vault;
-                let result = this
-                    .workspace
-                    .update(cx, |workspace, _| workspace.revoke_pairing(vault, &name));
-                match result {
-                    Ok(()) => {
-                        this.error = None;
-                        saving::autosave(&this.workspace, cx);
-                    }
-                    Err(error) => this.error = Some(describe(&error).into()),
-                }
+                let result = this.integration.update(cx, |integration, cx| {
+                    integration.revoke_pairing(vault, &name, cx)
+                });
+                this.error = result.err().map(|error| describe(&error).into());
                 cx.notify();
             })
             .ok();

@@ -314,7 +314,13 @@ impl BrowserSession {
     ) -> String {
         if answer.remember {
             let hosts = access.query.hosts();
-            for &(vault, entry) in &access.undecided {
+            // Only Entries the site may still be offered: not those of a Vault whose Pairing
+            // was revoked meanwhile.
+            let offered: Vec<(VaultId, EntryId)> = candidates(workspace, &access.query)
+                .iter()
+                .map(Candidate::id)
+                .collect();
+            for &(vault, entry) in access.undecided.iter().filter(|id| offered.contains(id)) {
                 // An Entry gone meanwhile has nothing to remember a decision on.
                 let _ = workspace.edit(vault, |vault, now| {
                     vault.remember_access(entry, &hosts, answer.decision, now)
@@ -1055,6 +1061,8 @@ impl Workspace {
             vault.set_default_access_policy(policy, now);
             Ok(())
         })?;
+        // What the old policy allowed is decided anew.
+        self.take_back_given(|given, _| given == vault);
         Ok(self.answer_settled_accesses())
     }
 
@@ -1066,13 +1074,31 @@ impl Workspace {
         entry: EntryId,
         host: Option<&str>,
     ) -> Result<(), EditVaultError> {
-        self.edit(vault, |vault, now| vault.forget_access(entry, host, now))
+        self.edit(vault, |vault, now| vault.forget_access(entry, host, now))?;
+        self.take_back_given(|given, given_entry| (given, given_entry) == (vault, entry));
+        Ok(())
     }
 
     /// Removes the Vault's Pairing named `name`: the extension holding its key gets nothing
-    /// from the Vault any more.
-    pub fn revoke_pairing(&mut self, vault: VaultId, name: &str) -> Result<(), EditVaultError> {
-        self.edit(vault, |vault, _| vault.revoke_pairing(name))
+    /// from the Vault any more. Returns the replies to the waiting Access requests that leaves
+    /// nothing to decide on.
+    pub fn revoke_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+    ) -> Result<Vec<Outgoing>, EditVaultError> {
+        self.edit(vault, |vault, now| vault.revoke_pairing(name, now))?;
+        Ok(self.answer_settled_accesses())
+    }
+
+    /// Forgets that the extensions were given the Entries `given` picks, so they get no TOTP
+    /// codes for them until they are given them again.
+    fn take_back_given(&mut self, given: impl Fn(VaultId, EntryId) -> bool) {
+        for session in self.browser.sessions.values_mut() {
+            session
+                .allowed
+                .retain(|&(vault, entry), _| !given(vault, entry));
+        }
     }
 
     /// The Pairing request to put to the user now.

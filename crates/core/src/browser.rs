@@ -18,6 +18,10 @@ use crate::{EditError, Entry, EntryFields, EntryId, Group, GroupId, Site, Timest
 const PAIRING_KEY_PREFIX: &str = "KPXC_BROWSER_";
 /// KeePassXC records when a Pairing was made under this prefix plus the Pairing's name.
 const PAIRING_CREATED_PREFIX: &str = "_CREATED_";
+/// keefast records a revoked Pairing under this prefix plus the Pairing's key, timed, so that a
+/// Merge with a version of the Vault file that still holds the Pairing doesn't bring it back.
+/// KeePassXC has no such record, so the key is keefast's own.
+const REVOKED_PAIRING_PREFIX: &str = "keefast_REVOKED_PAIRING_";
 /// KeePassXC remembers an Entry's Access decisions in its custom data under this key, as JSON:
 /// `{"Allow":[hosts],"Deny":[hosts],"Realm":""}`.
 const ACCESS_KEY: &str = "KeePassXC-Browser Settings";
@@ -101,6 +105,15 @@ impl DefaultAccessPolicy {
         }
     }
 
+    /// The policy written as `value`, asking for a value keefast doesn't know.
+    fn from_value(value: &str) -> Self {
+        match value {
+            "allow" => DefaultAccessPolicy::AlwaysAllow,
+            "deny" => DefaultAccessPolicy::AlwaysDeny,
+            _ => DefaultAccessPolicy::Ask,
+        }
+    }
+
     /// How the policy is written in the Vault's custom data.
     fn value(self) -> &'static str {
         match self {
@@ -175,16 +188,62 @@ impl Vault {
     }
 
     /// Removes the Pairing named `name`: the extension holding its key gets nothing from the
-    /// Vault any more.
-    pub fn revoke_pairing(&mut self, name: &str) -> Result<(), EditError> {
-        if !self.pairings().iter().any(|pairing| pairing.name == name) {
-            return Err(EditError::PairingNotFound);
+    /// Vault any more, even after a Merge with a version of the Vault file made before.
+    pub fn revoke_pairing(&mut self, name: &str, now: Timestamp) -> Result<(), EditError> {
+        let pairing = self
+            .pairings()
+            .into_iter()
+            .find(|pairing| pairing.name == name)
+            .ok_or(EditError::PairingNotFound)?;
+        self.remove_pairing(name);
+        self.set_vault_custom_data(
+            &format!("{REVOKED_PAIRING_PREFIX}{}", pairing.key),
+            name,
+            now,
+        );
+        Ok(())
+    }
+
+    /// Removes the Pairings revoked after they were made, which a Merge may have brought back.
+    /// A Pairing without a time, as KeePassXC writes them, was made before any revocation.
+    pub(crate) fn drop_revoked_pairings(&mut self) {
+        let items: Vec<&Element> = self
+            .file
+            .document
+            .child("Meta")
+            .and_then(|meta| meta.child("CustomData"))
+            .into_iter()
+            .flat_map(|data| data.children_named("Item"))
+            .collect();
+        let text = |item: &Element, name| item.child(name).map(Element::text).unwrap_or_default();
+        let modified = |item: &Element| {
+            item.child("LastModificationTime")
+                .and_then(|time| Timestamp::decode(&time.text()))
+        };
+        let revoked: Vec<String> = items
+            .iter()
+            .filter_map(|item| {
+                let name = text(item, "Key")
+                    .strip_prefix(PAIRING_KEY_PREFIX)?
+                    .to_owned();
+                let revocation = format!("{REVOKED_PAIRING_PREFIX}{}", text(item, "Value"));
+                let revoked_at = items
+                    .iter()
+                    .find(|other| text(other, "Key") == revocation)
+                    .map(|other| modified(other))?;
+                (modified(item) <= revoked_at).then_some(name)
+            })
+            .collect();
+        for name in revoked {
+            self.remove_pairing(&name);
         }
+    }
+
+    fn remove_pairing(&mut self, name: &str) {
         let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
         let custom_data = child_or_insert(meta, "CustomData", &[]);
         remove_custom_data(custom_data, &format!("{PAIRING_KEY_PREFIX}{name}"));
         remove_custom_data(custom_data, &format!("{PAIRING_CREATED_PREFIX}{name}"));
-        Ok(())
     }
 
     /// The Vault's custom data, `Meta/CustomData`, as key and value pairs.
@@ -304,17 +363,11 @@ impl Vault {
     /// What the Vault answers a site asking for an Entry without an Access decision for it.
     /// A value keefast doesn't know reads as asking.
     pub fn default_access_policy(&self) -> DefaultAccessPolicy {
-        let value = self
-            .custom_data()
+        self.custom_data()
             .find(|(key, _)| key == ACCESS_POLICY_KEY)
-            .map(|(_, value)| value);
-        [
-            DefaultAccessPolicy::AlwaysAllow,
-            DefaultAccessPolicy::AlwaysDeny,
-        ]
-        .into_iter()
-        .find(|policy| value.as_deref() == Some(policy.value()))
-        .unwrap_or_default()
+            .map_or_else(DefaultAccessPolicy::default, |(_, value)| {
+                DefaultAccessPolicy::from_value(&value)
+            })
     }
 
     /// Sets the Default access policy, timed so a Merge keeps the newest.
@@ -531,10 +584,10 @@ impl AccessSettings {
 /// Sets the custom data item `key` to `value`, adding it if there is none.
 /// Sets the custom data item with `key`, adding it if there is none, and returns it.
 fn set_custom_data<'a>(custom_data: &'a mut Element, key: &str, value: &str) -> &'a mut Element {
-    let index = custom_data.children.iter().position(|node| {
-        matches!(node, Node::Element(item)
-            if item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key))
-    });
+    let index = custom_data
+        .children
+        .iter()
+        .position(|node| is_item(node, key));
     let index = index.unwrap_or_else(|| {
         push(custom_data, custom_data_item(key, value));
         custom_data.children.len() - 1
@@ -548,10 +601,13 @@ fn set_custom_data<'a>(custom_data: &'a mut Element, key: &str, value: &str) -> 
 
 /// Removes the custom data item `key`, if there is one.
 fn remove_custom_data(custom_data: &mut Element, key: &str) {
-    custom_data.children.retain(|node| {
-        !matches!(node, Node::Element(item)
-            if item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key))
-    });
+    custom_data.children.retain(|node| !is_item(node, key));
+}
+
+/// Whether `node` is the custom data item `key`.
+fn is_item(node: &Node, key: &str) -> bool {
+    matches!(node, Node::Element(item)
+        if item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key))
 }
 
 fn custom_data_item(key: &str, value: &str) -> Element {

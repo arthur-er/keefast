@@ -557,3 +557,32 @@ fn the_default_access_policy_set_last_wins_on_both_sides() {
         DefaultAccessPolicy::AlwaysDeny
     );
 }
+
+#[test]
+fn a_pairing_revoked_on_one_side_stays_revoked_on_both() {
+    let (mut ours, mut theirs) = two_copies();
+    ours.add_pairing("Home", "aG9tZQ==", at(1)).unwrap();
+    theirs.merge(&ours);
+    // KeePassXC's Pairing, written without a time, and one keefast made.
+    ours.revoke_pairing("fixture-browser", at(2)).unwrap();
+    ours.revoke_pairing("Home", at(2)).unwrap();
+
+    merge_both_ways(&mut ours, &mut theirs);
+
+    assert_eq!(ours.pairings(), []);
+    assert_eq!(theirs.pairings(), []);
+}
+
+#[test]
+fn a_browser_paired_again_after_its_revocation_stays_paired() {
+    let (mut ours, mut theirs) = two_copies();
+    ours.add_pairing("Home", "aG9tZQ==", at(1)).unwrap();
+    ours.revoke_pairing("Home", at(2)).unwrap();
+    theirs.merge(&ours);
+    theirs.add_pairing("Home", "aG9tZQ==", at(3)).unwrap();
+
+    merge_both_ways(&mut ours, &mut theirs);
+
+    assert!(ours.is_paired_with("Home", "aG9tZQ=="));
+    assert!(theirs.is_paired_with("Home", "aG9tZQ=="));
+}

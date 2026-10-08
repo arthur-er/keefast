@@ -141,7 +141,7 @@ fn revoking_a_pairing_removes_it_and_when_it_was_made() {
     vault.add_pairing("Home", ID_KEY, now()).unwrap();
     vault.add_pairing("Work", "b3RoZXI=", now()).unwrap();
 
-    vault.revoke_pairing("Home").unwrap();
+    vault.revoke_pairing("Home", now()).unwrap();
 
     let reopened = reopen(&vault);
     assert!(!reopened.is_paired_with("Home", ID_KEY));
@@ -156,7 +156,7 @@ fn revoking_a_pairing_removes_it_and_when_it_was_made() {
 fn a_pairing_made_by_keepassxc_can_be_revoked() {
     let mut vault = open(KEEPASSXC_KDBX4);
 
-    vault.revoke_pairing("fixture-browser").unwrap();
+    vault.revoke_pairing("fixture-browser", now()).unwrap();
 
     assert_eq!(reopen(&vault).pairings(), []);
 }
@@ -165,7 +165,7 @@ fn a_pairing_made_by_keepassxc_can_be_revoked() {
 fn a_revoked_name_can_be_paired_again() {
     let mut vault = open(KEEPASSXC_KDBX4);
     vault.add_pairing("Home", ID_KEY, now()).unwrap();
-    vault.revoke_pairing("Home").unwrap();
+    vault.revoke_pairing("Home", now()).unwrap();
 
     vault.add_pairing("Home", "b3RoZXI=", now()).unwrap();
 
@@ -177,7 +177,7 @@ fn revoking_an_unknown_pairing_is_refused() {
     let mut vault = open(KEEPASSXC_KDBX4);
 
     assert_eq!(
-        vault.revoke_pairing("Nobody"),
+        vault.revoke_pairing("Nobody", now()),
         Err(EditError::PairingNotFound)
     );
     assert_eq!(vault.pairings().len(), 1);
