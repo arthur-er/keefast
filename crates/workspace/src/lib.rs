@@ -21,8 +21,8 @@ use std::time::{Duration, SystemTime};
 use secrecy::ExposeSecret;
 
 use keefast_core::{
-    EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId, KeyFileError,
-    MergeSummary, OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
+    EditError, Entry, EntryFields, EntryId, EntrySearch, EntrySort, GeneratorError, Group, GroupId,
+    KeyFileError, MergeSummary, OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
 };
 use secrecy::SecretString;
 
@@ -776,6 +776,18 @@ impl Workspace {
     /// The Entry list: every Entry in scope, including those in subgroups, sorted by title.
     /// Entries with the same title stay in the order their Vaults were opened.
     pub fn visible_entries(&self, scope: EntryScope) -> Vec<ListedEntry<'_>> {
+        self.find_entries(scope, &EntrySearch::default(), EntrySort::Title)
+    }
+
+    /// The Entry list narrowed by a search: the Entries in scope that match, best match first
+    /// and equally good ones in `sort` order. Entries that tie on both stay in the order their
+    /// Vaults were opened.
+    pub fn find_entries(
+        &self,
+        scope: EntryScope,
+        search: &EntrySearch,
+        sort: EntrySort,
+    ) -> Vec<ListedEntry<'_>> {
         let groups: Vec<(VaultId, &Group)> = match scope {
             EntryScope::AllVaults => self
                 .readable_vaults()
@@ -792,16 +804,12 @@ impl Workspace {
                 .into_iter()
                 .collect(),
         };
-        let mut entries: Vec<ListedEntry> = groups
-            .into_iter()
-            .flat_map(|(vault, group)| {
-                group
-                    .all_entries()
-                    .map(move |entry| ListedEntry { vault, entry })
-            })
-            .collect();
-        entries.sort_by_cached_key(|listed| listed.entry.title().to_lowercase());
-        entries
+        let entries = groups.into_iter().flat_map(|(vault, group)| {
+            group
+                .all_entries()
+                .map(move |entry| ListedEntry { vault, entry })
+        });
+        search.rank(entries, |listed| listed.entry, sort)
     }
 
     pub fn create_entry(

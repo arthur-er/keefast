@@ -443,7 +443,7 @@ impl KeefastWindow {
             (UnlockEvent::Unlocked, None) => {
                 let workspace = self.workspace.clone();
                 let integration = self.integration.clone();
-                let browser = cx.new(|cx| VaultBrowser::new(workspace, integration, cx));
+                let browser = cx.new(|cx| VaultBrowser::new(workspace, integration, window, cx));
                 cx.subscribe_in(&browser, window, Self::on_open_another)
                     .detach();
                 cx.subscribe_in(&browser, window, Self::on_unlock_locked)

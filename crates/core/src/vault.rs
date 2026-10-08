@@ -97,6 +97,8 @@ pub struct Entry {
     /// In Vault file order.
     custom_fields: Vec<CustomField>,
     pub(crate) custom_data: BTreeMap<String, String>,
+    tags: Vec<String>,
+    created: Option<Timestamp>,
     last_modified: Option<Timestamp>,
     /// Earlier versions, oldest first.
     history: Vec<Entry>,
@@ -209,8 +211,22 @@ fn custom_fields<'a>(
 
 /// When an Entry or Group was last modified, from its `Times`.
 fn last_modified(element: &Element) -> Option<Timestamp> {
-    let time = element.child("Times")?.child("LastModificationTime")?;
-    Timestamp::decode(&time.text())
+    time(element, "LastModificationTime")
+}
+
+/// One of an Entry's or Group's `Times`.
+fn time(element: &Element, name: &str) -> Option<Timestamp> {
+    Timestamp::decode(&element.child("Times")?.child(name)?.text())
+}
+
+/// An Entry's tags. KeePass separates them with `;`, KeeWeb and KeePassXC also with `,`.
+fn tags(entry: &Element) -> Vec<String> {
+    let text = entry.child("Tags").map(Element::text).unwrap_or_default();
+    text.split([';', ','])
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 impl Group {
@@ -299,6 +315,8 @@ impl Entry {
             totp: totp::read(&|name| string_value(entry, name)),
             custom_fields: custom_fields(strings()),
             custom_data: custom_data(entry),
+            tags: tags(entry),
+            created: time(entry, "CreationTime"),
             last_modified: last_modified(entry),
             history: entry
                 .child("History")
@@ -355,6 +373,14 @@ impl Entry {
         &self.custom_fields
     }
 
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    pub fn created(&self) -> Option<Timestamp> {
+        self.created
+    }
+
     pub fn last_modified(&self) -> Option<Timestamp> {
         self.last_modified
     }
@@ -374,6 +400,7 @@ impl fmt::Debug for Entry {
             .field("password", &"[hidden]")
             .field("url", &self.url)
             .field("custom_fields", &self.custom_fields)
+            .field("tags", &self.tags)
             .field("history", &self.history)
             .finish_non_exhaustive()
     }

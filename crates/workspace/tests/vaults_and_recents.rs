@@ -6,6 +6,7 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use keefast_core::{EntrySearch, EntrySort};
 use keefast_workspace::{
     AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, OpenVaultError,
     UnlockSecrets, VaultId, VaultLocation, Workspace,
@@ -77,6 +78,48 @@ fn the_entry_list_can_be_narrowed_to_a_group_of_one_vault() {
     let titles: Vec<&str> = entries.iter().map(|listed| listed.entry.title()).collect();
     assert_eq!(titles, ["GitHub", "Prod DB"]);
     assert!(entries.iter().all(|listed| listed.vault == work));
+}
+
+#[test]
+fn search_covers_every_open_vault_or_just_the_one_shown() {
+    let mut workspace = Workspace::new(storage());
+    let personal = open(&mut workspace, &personal_vault());
+    let work = open(&mut workspace, &work_vault());
+    let search = EntrySearch::new("gihtub");
+
+    let everywhere = workspace.find_entries(EntryScope::AllVaults, &search, EntrySort::Title);
+    let found: Vec<(VaultId, &str)> = everywhere
+        .iter()
+        .map(|listed| (listed.vault, listed.entry.title()))
+        .collect();
+    assert_eq!(found, [(personal, "GitHub"), (work, "GitHub")]);
+
+    let in_work = workspace.find_entries(EntryScope::Vault(work), &search, EntrySort::Title);
+    assert_eq!(in_work.len(), 1);
+    assert_eq!(in_work[0].vault, work);
+}
+
+#[test]
+fn the_entry_list_sorts_across_vaults() {
+    let mut workspace = Workspace::new(storage());
+    let personal = open(&mut workspace, &personal_vault());
+    let work = open(&mut workspace, &work_vault());
+    let group = workspace.vault(work).unwrap().vault().root().id();
+    let fields = keefast_core::EntryFields {
+        title: "Zulu".into(),
+        ..Default::default()
+    };
+    workspace.create_entry(work, group, &fields).unwrap();
+
+    let newest = workspace.find_entries(
+        EntryScope::AllVaults,
+        &EntrySearch::default(),
+        EntrySort::Created,
+    );
+
+    assert_eq!((newest[0].vault, newest[0].entry.title()), (work, "Zulu"));
+    assert_eq!(newest.len(), 9);
+    assert!(newest.iter().any(|listed| listed.vault == personal));
 }
 
 #[test]

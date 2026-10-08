@@ -22,6 +22,15 @@ actions!(
         OpenVault,
         /// Locks every open Vault.
         LockAll,
+        /// Moves the keyboard to the search field above the Entry list.
+        FocusSearch,
+        SortByTitle,
+        SortByUsername,
+        SortByUrl,
+        /// Sorts the Entry list newest first.
+        SortByCreated,
+        /// Sorts the Entry list by when Entries were last modified, newest first.
+        SortByModified,
     ]
 );
 
@@ -39,6 +48,8 @@ actions!(
 pub const CONTEXT: &str = "VaultBrowser";
 /// The key context of a text field, where keys type rather than act on the Entry list.
 pub const TEXT_FIELD_CONTEXT: &str = "TextField";
+/// The key context of the search field, where Up and Down still move through the Entry list.
+pub const SEARCH_CONTEXT: &str = "EntrySearch";
 /// The key context of a custom field in the Entry detail, which takes Enter and Ctrl+C for
 /// itself.
 pub const CUSTOM_FIELD_CONTEXT: &str = "CustomField";
@@ -55,6 +66,8 @@ pub fn bind_keys(cx: &mut App) {
     let custom_field = format!("{CONTEXT} && {CUSTOM_FIELD_CONTEXT}");
     let custom_field = Some(custom_field.as_str());
     let anywhere = Some(CONTEXT);
+    let search = format!("{CONTEXT} && {SEARCH_CONTEXT}");
+    let search = Some(search.as_str());
     cx.bind_keys([
         KeyBinding::new("down", SelectNextEntry, list),
         KeyBinding::new("up", SelectPreviousEntry, list),
@@ -72,5 +85,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", SelectNextCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("up", SelectPreviousCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("secondary-l", LockAll, anywhere),
+        KeyBinding::new("secondary-f", FocusSearch, anywhere),
+        KeyBinding::new("down", SelectNextEntry, search),
+        KeyBinding::new("up", SelectPreviousEntry, search),
     ]);
 }

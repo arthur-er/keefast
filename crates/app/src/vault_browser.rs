@@ -4,15 +4,19 @@ use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
     PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
-use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
+use keefast_core::{
+    EditError, Entry, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
+};
 use keefast_workspace::{
-    CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, View, Workspace,
+    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
+    Workspace,
 };
 use secrecy::ExposeSecret;
 
 use crate::actions::{
-    self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, LockAll, OpenEntry, OpenVault,
-    SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
+    self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
+    OpenVault, SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
+    SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername,
 };
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
@@ -38,6 +42,9 @@ pub struct VaultBrowser {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
     focus: FocusHandle,
+    /// Narrows the Entry list to the Entries matching what is typed in it.
+    search: Entity<TextField>,
+    sort: EntrySort,
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
     renaming: Option<(VaultId, GroupId, Entity<TextField>)>,
@@ -114,6 +121,7 @@ impl VaultBrowser {
     pub fn new(
         workspace: Entity<Workspace>,
         integration: Entity<BrowserIntegration>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |this, workspace, cx| {
@@ -138,10 +146,16 @@ impl VaultBrowser {
             }
         })
         .detach();
+        let search = cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx));
+        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(&search, window, Self::on_search_event)
+            .detach();
         Self {
             workspace,
             integration,
             focus: cx.focus_handle(),
+            search,
+            sort: EntrySort::default(),
             detail: Detail::Entry,
             renaming: None,
             totp_copied: None,
@@ -309,6 +323,55 @@ impl VaultBrowser {
         cx.notify();
     }
 
+    /// The Entry list: the Entries in scope matching the search, in the chosen order.
+    fn listed_entries<'a>(&self, workspace: &'a Workspace, cx: &App) -> Vec<ListedEntry<'a>> {
+        let search = EntrySearch::new(self.search.read(cx).text());
+        workspace.find_entries(workspace.view().scope, &search, self.sort)
+    }
+
+    fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.search.focus_handle(cx));
+    }
+
+    /// Enter in the search field goes to the Entry list, with the best match selected unless
+    /// a listed Entry is; Escape clears the search.
+    fn on_search_event(
+        &mut self,
+        _: &Entity<TextField>,
+        event: &TextFieldEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TextFieldEvent::Submit => {
+                self.select_in_list(|current, _| current.unwrap_or(0), cx);
+                window.focus(&self.focus);
+            }
+            TextFieldEvent::Cancel => {
+                if self.search.read(cx).text().is_empty() {
+                    window.focus(&self.focus);
+                }
+                self.search.update(cx, |search, cx| search.set_text("", cx));
+            }
+        }
+    }
+
+    fn sort_by(&mut self, sort: EntrySort, cx: &mut Context<Self>) {
+        self.sort = sort;
+        if let Some(ix) = self.selected_position(cx) {
+            self.entry_list_scroll.scroll_to_item(ix);
+        }
+        cx.notify();
+    }
+
+    /// Where the selected Entry is in the Entry list, if it is listed.
+    fn selected_position(&self, cx: &App) -> Option<usize> {
+        let workspace = self.workspace.read(cx);
+        self.listed_entries(workspace, cx)
+            .iter()
+            .position(|listed| Some((listed.vault, listed.entry.id())) == self.selected_entry(cx))
+    }
+
     fn select_entry(&mut self, vault: VaultId, entry: EntryId, cx: &mut Context<Self>) {
         let scope = self.scope(cx);
         self.show(
@@ -335,8 +398,8 @@ impl VaultBrowser {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace.read(cx);
-        let View { scope, entry } = workspace.view();
-        let entries = workspace.visible_entries(scope);
+        let View { entry, .. } = workspace.view();
+        let entries = self.listed_entries(workspace, cx);
         if entries.is_empty() {
             return;
         }
@@ -1102,7 +1165,8 @@ impl VaultBrowser {
             scope,
             entry: selected_entry,
         } = workspace.view();
-        let entries = workspace.visible_entries(scope);
+        let entries = self.listed_entries(workspace, cx);
+        let searching = !self.search.read(cx).text().trim().is_empty();
         let locked = match scope {
             EntryScope::Vault(vault) => workspace.locked_vault(vault),
             _ => None,
@@ -1252,7 +1316,31 @@ impl VaultBrowser {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(header),
                     )
-                    .child(toolbar),
+                    .child(toolbar)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .key_context(actions::SEARCH_CONTEXT)
+                                    .child(self.search.clone()),
+                            )
+                            .child(
+                                tool_button(
+                                    "sort",
+                                    format!("{}{}", strings::SORT_PREFIX, sort_label(self.sort)),
+                                    theme,
+                                )
+                                .flex_none()
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| this.sort_by(next_sort(this.sort), cx),
+                                )),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -1263,6 +1351,8 @@ impl VaultBrowser {
                     .when(rows.is_empty() && locked.is_none(), |this| {
                         this.p_3().text_color(theme.muted).child(if locking {
                             strings::LOCKING_NOTE
+                        } else if searching {
+                            strings::LIST_NO_MATCHES
                         } else {
                             strings::LIST_EMPTY
                         })
@@ -1649,6 +1739,24 @@ impl Render for VaultBrowser {
             .on_action(
                 cx.listener(|this, _: &LockAll, _, cx| locking::lock_all(&this.workspace, cx)),
             )
+            .on_action(cx.listener(Self::focus_search))
+            .on_action(
+                cx.listener(|this, _: &SortByTitle, _, cx| this.sort_by(EntrySort::Title, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SortByUsername, _, cx| {
+                    this.sort_by(EntrySort::Username, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &SortByUrl, _, cx| this.sort_by(EntrySort::Url, cx)))
+            .on_action(
+                cx.listener(|this, _: &SortByCreated, _, cx| this.sort_by(EntrySort::Created, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SortByModified, _, cx| {
+                    this.sort_by(EntrySort::Modified, cx)
+                }),
+            )
             .size_full()
             .relative()
             .flex()
@@ -1721,6 +1829,23 @@ fn grouped(code: &str) -> SharedString {
     }
     let (first, second) = code.split_at(code.len() / 2);
     format!("{first} {second}").into()
+}
+
+fn sort_label(sort: EntrySort) -> &'static str {
+    match sort {
+        EntrySort::Title => strings::SORT_TITLE,
+        EntrySort::Username => strings::SORT_USERNAME,
+        EntrySort::Url => strings::SORT_URL,
+        EntrySort::Created => strings::SORT_CREATED,
+        EntrySort::Modified => strings::SORT_MODIFIED,
+    }
+}
+
+/// The sort the sort button switches to next.
+fn next_sort(sort: EntrySort) -> EntrySort {
+    let all = EntrySort::ALL;
+    let ix = all.iter().position(|&each| each == sort).unwrap_or(0);
+    all[(ix + 1) % all.len()]
 }
 
 fn title_of(entry: &Entry) -> SharedString {

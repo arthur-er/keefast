@@ -50,6 +50,14 @@ pub const LOCK_SAVE: &str = "Save";
 pub const LOCK_DISCARD: &str = "Discard";
 
 pub const LIST_EMPTY: &str = "No Entries";
+pub const LIST_NO_MATCHES: &str = "No Entries match the search";
+pub const SEARCH_PLACEHOLDER: &str = "Search";
+pub const SORT_PREFIX: &str = "Sort: ";
+pub const SORT_TITLE: &str = "Title";
+pub const SORT_USERNAME: &str = "Username";
+pub const SORT_URL: &str = "URL";
+pub const SORT_CREATED: &str = "Created";
+pub const SORT_MODIFIED: &str = "Modified";
 pub const DETAIL_EMPTY: &str = "Select an Entry";
 pub const DETAIL_USERNAME: &str = "Username";
 pub const DETAIL_PASSWORD: &str = "Password";
