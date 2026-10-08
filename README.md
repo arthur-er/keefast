@@ -40,6 +40,10 @@ nix develop .#corpus -c scripts/check-interop.sh
 
 ## Keyboard
 
+Ctrl+Shift+P opens the command palette: type part of a command's name, pick one with Up/Down and
+press Enter to run it, or Escape to close the palette. It lists every action of what has focus,
+with its keys.
+
 In the Entry list, Up/Down (Home/End) select an Entry and Enter opens it for editing.
 Ctrl+B copies the selected Entry's username, Ctrl+C its password and Ctrl+T its TOTP code.
 keefast clears what it copied from the clipboard after 30 seconds, unless you have copied something else since; set

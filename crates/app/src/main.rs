@@ -4,6 +4,7 @@ mod access_dialog;
 mod actions;
 mod browser_integration;
 mod clipboard;
+mod command_palette;
 mod entry_editor;
 mod login_dialog;
 mod pairing_dialog;
@@ -29,16 +30,19 @@ use keefast_workspace::{
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
+use crate::actions::ToggleCommandPalette;
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
+use crate::command_palette::{CommandPalette, Dismissed};
 use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::unlock::{UnlockEvent, UnlockView};
 use crate::vault_browser::{OpenAnotherVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
-/// unlock dialog shown again to open another Vault. Pairing and Access requests and captured
-/// logins from browsers are asked over whatever is showing, in that order.
+/// unlock dialog shown again to open another Vault. The command palette opens over it, and
+/// Pairing and Access requests and captured logins from browsers are asked over everything, in
+/// that order.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -48,6 +52,7 @@ struct KeefastWindow {
     pairing: Option<Entity<PairingDialog>>,
     access: Option<Entity<AccessDialog>>,
     login: Option<Entity<LoginDialog>>,
+    palette: Option<Entity<CommandPalette>>,
 }
 
 impl KeefastWindow {
@@ -88,6 +93,38 @@ impl KeefastWindow {
             pairing: None,
             access: None,
             login: None,
+            palette: None,
+        }
+    }
+
+    fn toggle_command_palette(
+        &mut self,
+        _: &ToggleCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.palette.is_some() {
+            self.close_command_palette(window, cx);
+            return;
+        }
+        // A browser request is answered first.
+        if self.dialog(cx).is_some() {
+            return;
+        }
+        let palette = cx.new(|cx| CommandPalette::new(window, cx));
+        cx.subscribe(&palette, |this, _, _: &Dismissed, cx| {
+            this.palette = None;
+            cx.notify();
+        })
+        .detach();
+        self.palette = Some(palette);
+        cx.notify();
+    }
+
+    fn close_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(palette) = self.palette.take() {
+            palette.update(cx, |palette, cx| palette.dismiss(window, cx));
+            cx.notify();
         }
     }
 
@@ -349,7 +386,28 @@ impl Render for KeefastWindow {
         div()
             .size_full()
             .relative()
+            .on_action(cx.listener(Self::toggle_command_palette))
             .child(screen)
+            .when_some(self.palette.clone(), |this, palette| {
+                // Clicking beside the palette closes it.
+                this.child(
+                    div()
+                        .id("palette-backdrop")
+                        .occlude()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .justify_center()
+                        .items_start()
+                        .pt(px(80.))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.close_command_palette(window, cx)
+                            }),
+                        )
+                        .child(palette),
+                )
+            })
             .when_some(dialog, |this, dialog| {
                 // The backdrop keeps clicks on and around the dialog from reaching the screen.
                 this.child(

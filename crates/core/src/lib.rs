@@ -6,6 +6,7 @@
 
 mod browser;
 mod edit;
+mod fuzzy;
 mod generator;
 mod kdbx;
 mod key;
@@ -19,6 +20,7 @@ mod xml;
 
 pub use browser::{AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, Pairing, SiteEntry};
 pub use edit::{EditError, EntryFields};
+pub use fuzzy::{FuzzyMatch, fuzzy_match};
 pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
 };

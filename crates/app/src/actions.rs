@@ -1,6 +1,6 @@
-//! The keyboard actions of the three panes and the keys bound to them. Each is a GPUI action,
-//! so a command palette can list the ones available with `Window::available_actions` and show
-//! their keys with `Window::bindings_for_action`.
+//! The keyboard actions and the keys bound to them. Each is a GPUI action, so the command
+//! palette lists every one the focused view handles, by a name made from the action's: an action
+//! appears there once a view registers it with `on_action`.
 
 use gpui::{App, KeyBinding, actions};
 
@@ -23,6 +23,16 @@ actions!(
     ]
 );
 
+actions!(
+    command_palette,
+    [
+        /// Opens the command palette, or closes it.
+        ToggleCommandPalette,
+        SelectNextCommand,
+        SelectPreviousCommand,
+    ]
+);
+
 /// The key context of the three panes.
 pub const CONTEXT: &str = "VaultBrowser";
 /// The key context of a text field, where keys type rather than act on the Entry list.
@@ -30,6 +40,8 @@ pub const TEXT_FIELD_CONTEXT: &str = "TextField";
 /// The key context of a custom field in the Entry detail, which takes Enter and Ctrl+C for
 /// itself.
 pub const CUSTOM_FIELD_CONTEXT: &str = "CustomField";
+/// The key context of the command palette.
+pub const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
 
 pub fn bind_keys(cx: &mut App) {
     let list = format!("{CONTEXT} && !{TEXT_FIELD_CONTEXT}");
@@ -54,5 +66,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-c", CopyCustomField, custom_field),
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
+        KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),
+        KeyBinding::new("down", SelectNextCommand, Some(COMMAND_PALETTE_CONTEXT)),
+        KeyBinding::new("up", SelectPreviousCommand, Some(COMMAND_PALETTE_CONTEXT)),
     ]);
 }

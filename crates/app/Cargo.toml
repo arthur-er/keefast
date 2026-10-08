@@ -14,3 +14,6 @@ keefast-workspace.workspace = true
 gpui.workspace = true
 secrecy.workspace = true
 zeroize = "1"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

@@ -175,3 +175,10 @@ pub const BROWSER_GROUP_MARK: &str = "Browser group";
 pub const USE_AS_BROWSER_GROUP: &str = "Save browser logins here";
 pub const ERROR_IN_RECYCLE_BIN: &str = "Logins can't be saved in the Recycle Bin.";
 pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
+
+pub const PALETTE_PLACEHOLDER: &str = "Type a command";
+pub const PALETTE_NO_MATCHES: &str = "No matching commands";
+pub const KEY_CTRL: &str = "Ctrl";
+pub const KEY_ALT: &str = "Alt";
+pub const KEY_SUPER: &str = "Super";
+pub const KEY_SHIFT: &str = "Shift";
