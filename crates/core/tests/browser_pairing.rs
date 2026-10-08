@@ -134,3 +134,51 @@ fn several_pairings_are_kept_in_order() {
         .collect();
     assert_eq!(names, ["fixture-browser", "Home", "Work"]);
 }
+
+#[test]
+fn revoking_a_pairing_removes_it_and_when_it_was_made() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    vault.add_pairing("Home", ID_KEY, now()).unwrap();
+    vault.add_pairing("Work", "b3RoZXI=", now()).unwrap();
+
+    vault.revoke_pairing("Home").unwrap();
+
+    let reopened = reopen(&vault);
+    assert!(!reopened.is_paired_with("Home", ID_KEY));
+    assert!(reopened.is_paired_with("Work", "b3RoZXI="));
+    let xml = independent_xml(&vault);
+    assert!(!xml.contains("KPXC_BROWSER_Home"), "{xml}");
+    assert!(!xml.contains("_CREATED_Home"), "{xml}");
+    assert!(xml.contains("_CREATED_Work"), "{xml}");
+}
+
+#[test]
+fn a_pairing_made_by_keepassxc_can_be_revoked() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+
+    vault.revoke_pairing("fixture-browser").unwrap();
+
+    assert_eq!(reopen(&vault).pairings(), []);
+}
+
+#[test]
+fn a_revoked_name_can_be_paired_again() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    vault.add_pairing("Home", ID_KEY, now()).unwrap();
+    vault.revoke_pairing("Home").unwrap();
+
+    vault.add_pairing("Home", "b3RoZXI=", now()).unwrap();
+
+    assert!(vault.is_paired_with("Home", "b3RoZXI="));
+}
+
+#[test]
+fn revoking_an_unknown_pairing_is_refused() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+
+    assert_eq!(
+        vault.revoke_pairing("Nobody"),
+        Err(EditError::PairingNotFound)
+    );
+    assert_eq!(vault.pairings().len(), 1);
+}

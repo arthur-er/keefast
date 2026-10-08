@@ -1,6 +1,7 @@
 //! Filling on demand over the KeePassXC-Browser protocol: `get-logins` driven with real
 //! NaCl-encrypted messages from a fake extension through a Workspace, with Access decisions put
-//! to the user and remembered on the Entries.
+//! to the user and remembered on the Entries, the Vault's Default access policy standing in for
+//! those not made, and Pairings revoked.
 //!
 //! The Vault is KeePassXC's browser fixture: for https://example.com it offers "Example",
 //! "Remembered" (already allowed example.com, and denied evil.example.com) and "Shown again".
@@ -9,10 +10,10 @@ mod support;
 
 use std::sync::Arc;
 
-use keefast_core::AccessDecision;
+use keefast_core::{AccessDecision, DefaultAccessPolicy, EditError, EntryId};
 use keefast_workspace::{
-    AccessAnswer, ConnectionId, Outgoing, PendingAccess, UnlockSecrets, UnsavedLock, VaultId,
-    Workspace,
+    AccessAnswer, ConnectionId, EditVaultError, Outgoing, PendingAccess, UnlockSecrets,
+    UnsavedLock, VaultId, Workspace,
 };
 use serde_json::Value;
 use support::extension::{FakeExtension, Sent};
@@ -175,6 +176,31 @@ impl Browser {
                     .to_owned()
             })
             .collect()
+    }
+
+    fn set_policy(&mut self, vault: VaultId, policy: DefaultAccessPolicy) -> Vec<Outgoing> {
+        self.workspace
+            .set_default_access_policy(vault, policy)
+            .unwrap()
+    }
+
+    fn entry_id(&self, vault: VaultId, title: &str) -> EntryId {
+        self.workspace
+            .vault(vault)
+            .unwrap()
+            .vault()
+            .root()
+            .all_entries()
+            .find(|entry| entry.title() == title)
+            .unwrap()
+            .id()
+    }
+
+    /// Sends the request and expects keefast to find nothing for it, without asking.
+    #[track_caller]
+    fn nothing_found(&mut self, sent: &Sent) {
+        let reply = parse(&self.request(sent).expect("answered without asking"));
+        assert_eq!(reply["errorCode"], "15");
     }
 }
 
@@ -801,4 +827,233 @@ mod locking {
 
         browser.ask(&browser.get_logins(EXAMPLE));
     }
+}
+
+#[test]
+fn the_default_access_policy_asks() {
+    let (mut browser, vault) = Browser::paired(storage());
+
+    assert_eq!(
+        browser.workspace.default_access_policy(vault),
+        Some(DefaultAccessPolicy::Ask)
+    );
+    browser.ask(&browser.get_logins(EXAMPLE));
+}
+
+#[test]
+fn always_allow_gives_undecided_entries_without_asking_but_not_denied_ones() {
+    let (mut browser, vault) = Browser::paired(storage());
+
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysAllow);
+
+    let sent = browser.get_logins(EXAMPLE);
+    assert_eq!(
+        browser.entries_now(&sent),
+        ["Example", "Remembered", "Shown again"]
+    );
+    // "Remembered" denied evil.example.com, and that Deny beats the policy.
+    let elsewhere = browser.get_logins("https://evil.example.com/");
+    assert_eq!(browser.entries_now(&elsewhere), ["Example", "Shown again"]);
+    assert_eq!(browser.workspace.pending_access(), None);
+    // Nothing is remembered on the Entries: the policy decides each time.
+    let example = browser.entry_id(vault, "Example");
+    assert_eq!(
+        browser
+            .workspace
+            .entry(vault, example)
+            .unwrap()
+            .remembered_access(),
+        []
+    );
+}
+
+#[test]
+fn always_deny_gives_only_allowed_entries_without_asking() {
+    let (mut browser, vault) = Browser::paired(storage());
+
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysDeny);
+
+    // "Remembered" allowed example.com, and that Allow beats the policy.
+    let sent = browser.get_logins(EXAMPLE);
+    assert_eq!(browser.entries_now(&sent), ["Remembered"]);
+    browser.nothing_found(&browser.get_logins("https://other.test/"));
+    assert_eq!(browser.workspace.pending_access(), None);
+}
+
+#[test]
+fn a_decision_remembered_under_one_policy_beats_another() {
+    let (mut browser, vault) = Browser::paired(storage());
+    let sent = browser.get_logins("https://other.test/");
+    browser.ask(&sent);
+    browser.answer_entries(&sent, REMEMBER_ALLOW);
+
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysDeny);
+
+    let again = browser.get_logins("https://other.test/");
+    assert_eq!(browser.entries_now(&again), ["Other site"]);
+}
+
+#[test]
+fn the_default_access_policy_is_per_vault() {
+    let (mut browser, personal) = Browser::paired(storage());
+    let work = browser
+        .workspace
+        .open_vault(&work_vault(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+    browser
+        .workspace
+        .pair_browser(work, "Home", &browser.pairing.1)
+        .unwrap();
+
+    browser.set_policy(personal, DefaultAccessPolicy::AlwaysAllow);
+
+    // Only the work Vault's Entries are asked about.
+    let sent = browser.get_logins(EXAMPLE);
+    let pending = browser.ask(&sent);
+    assert!(pending.entries.iter().all(|&(vault, _)| vault == work));
+    assert_eq!(browser.titles_of(&pending), ["Example", "Shown again"]);
+    assert_eq!(browser.answer_entries(&sent, DENY).len(), 4);
+}
+
+#[test]
+fn the_default_access_policy_travels_with_the_vault_file() {
+    let storage = storage();
+    let (mut browser, vault) = Browser::paired(storage.clone());
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysDeny);
+    assert!(
+        browser
+            .workspace
+            .vault(vault)
+            .unwrap()
+            .has_unsaved_changes()
+    );
+
+    browser.workspace.save_vault(vault).unwrap();
+
+    let mut workspace = Workspace::new(storage);
+    let reopened = workspace
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+    assert_eq!(
+        workspace.default_access_policy(reopened),
+        Some(DefaultAccessPolicy::AlwaysDeny)
+    );
+}
+
+#[test]
+fn a_new_policy_answers_the_requests_it_settles() {
+    let (mut browser, vault) = Browser::paired(storage());
+    let first = browser.get_logins(EXAMPLE);
+    let other = browser.get_logins("https://other.test/");
+    browser.ask(&first);
+    browser.ask(&other);
+
+    let replies = browser.set_policy(vault, DefaultAccessPolicy::AlwaysAllow);
+
+    assert_eq!(replies.len(), 2);
+    assert_eq!(
+        titles(&browser.extension.open(&first, &replies[0].message)),
+        ["Example", "Remembered", "Shown again"]
+    );
+    assert_eq!(
+        titles(&browser.extension.open(&other, &replies[1].message)),
+        ["Other site"]
+    );
+    assert_eq!(browser.workspace.pending_access(), None);
+}
+
+#[test]
+fn back_to_asking_leaves_waiting_requests_waiting() {
+    let (mut browser, vault) = Browser::paired(storage());
+    browser.ask(&browser.get_logins(EXAMPLE));
+
+    assert_eq!(browser.set_policy(vault, DefaultAccessPolicy::Ask), []);
+
+    assert!(browser.workspace.pending_access().is_some());
+}
+
+#[test]
+fn a_forgotten_decision_is_asked_again() {
+    let (mut browser, vault) = Browser::paired(storage());
+    let remembered = browser.entry_id(vault, "Remembered");
+
+    browser
+        .workspace
+        .forget_access(vault, remembered, Some("example.com"))
+        .unwrap();
+
+    assert!(
+        browser
+            .workspace
+            .vault(vault)
+            .unwrap()
+            .has_unsaved_changes()
+    );
+    let pending = browser.ask(&browser.get_logins(EXAMPLE));
+    assert_eq!(
+        browser.titles_of(&pending),
+        ["Example", "Remembered", "Shown again"]
+    );
+}
+
+#[test]
+fn a_forgotten_deny_lets_the_default_access_policy_decide() {
+    let (mut browser, vault) = Browser::paired(storage());
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysAllow);
+    let remembered = browser.entry_id(vault, "Remembered");
+
+    browser
+        .workspace
+        .forget_access(vault, remembered, None)
+        .unwrap();
+
+    let elsewhere = browser.get_logins("https://evil.example.com/");
+    assert_eq!(
+        browser.entries_now(&elsewhere),
+        ["Example", "Remembered", "Shown again"]
+    );
+}
+
+#[test]
+fn a_revoked_pairing_finds_nothing_and_can_save_nothing() {
+    let (mut browser, vault) = Browser::paired(storage());
+    browser.set_policy(vault, DefaultAccessPolicy::AlwaysAllow);
+    let (name, key) = browser.pairing.clone();
+    browser.request(&browser.extension.test_associate(&name, &key));
+
+    browser.workspace.revoke_pairing(vault, "Home").unwrap();
+
+    assert!(
+        browser
+            .workspace
+            .vault(vault)
+            .unwrap()
+            .has_unsaved_changes()
+    );
+    assert_eq!(
+        browser.workspace.vault(vault).unwrap().vault().pairings(),
+        []
+    );
+    browser.nothing_found(&browser.get_logins(EXAMPLE));
+    let check = browser.extension.test_associate(&name, &key);
+    assert_eq!(parse(&browser.request(&check).unwrap())["errorCode"], "8");
+    let login = browser
+        .extension
+        .set_login(EXAMPLE, "alice", "new-secret", None, None);
+    assert_eq!(parse(&browser.request(&login).unwrap())["errorCode"], "8");
+    assert_eq!(
+        browser.workspace.revoke_pairing(vault, "Home"),
+        Err(EditVaultError::Edit(EditError::PairingNotFound))
+    );
+}
+
+#[test]
+fn a_request_waiting_when_its_pairing_is_revoked_gets_nothing() {
+    let (mut browser, vault) = Browser::paired(storage());
+    let sent = browser.get_logins(EXAMPLE);
+    browser.ask(&sent);
+
+    browser.workspace.revoke_pairing(vault, "Home").unwrap();
+
+    assert_eq!(browser.answer_entries(&sent, ALLOW), [] as [&str; 0]);
 }

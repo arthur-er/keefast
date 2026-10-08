@@ -1,6 +1,6 @@
 //! The Vault's side of browser integration: its identity in the KeePassXC-Browser protocol, the
 //! Pairings stored in it, the Entries it offers a site, the Access decisions remembered on
-//! them, and the Browser group captured logins are saved to.
+//! them, its Default access policy, and the Browser group captured logins are saved to.
 //!
 //! All of it lives in custom data (ADR 0005), under KeePassXC's keys where KeePassXC has them,
 //! so a Vault paired or decided on in KeePassXC works in keefast and the other way round.
@@ -27,6 +27,9 @@ const HIDE_KEY: &str = "BrowserHideEntry";
 /// The Browser group chosen for the Vault, as its UUID in the Vault's custom data. KeePassXC
 /// has no such setting, so the key is keefast's own.
 const BROWSER_GROUP_KEY: &str = "keefast_BROWSER_GROUP";
+/// The Vault's Default access policy, in its custom data. KeePassXC has no such setting, so the
+/// key is keefast's own.
+const ACCESS_POLICY_KEY: &str = "keefast_DEFAULT_ACCESS_POLICY";
 /// The name of the Browser group when none was chosen: a top Group of this name, created when
 /// the first login is saved.
 pub const DEFAULT_BROWSER_GROUP: &str = "Browser";
@@ -67,6 +70,43 @@ impl AccessDecision {
         match self {
             AccessDecision::Allow => AccessDecision::Deny,
             AccessDecision::Deny => AccessDecision::Allow,
+        }
+    }
+}
+
+/// An Access decision remembered on an Entry, for one host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RememberedAccess {
+    pub host: String,
+    pub decision: AccessDecision,
+}
+
+/// What a Vault answers a site asking for an Entry that has no Access decision for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DefaultAccessPolicy {
+    /// Ask the user.
+    #[default]
+    Ask,
+    AlwaysAllow,
+    AlwaysDeny,
+}
+
+impl DefaultAccessPolicy {
+    /// The decision the policy makes for the user, if it doesn't ask.
+    pub fn decision(self) -> Option<AccessDecision> {
+        match self {
+            DefaultAccessPolicy::Ask => None,
+            DefaultAccessPolicy::AlwaysAllow => Some(AccessDecision::Allow),
+            DefaultAccessPolicy::AlwaysDeny => Some(AccessDecision::Deny),
+        }
+    }
+
+    /// How the policy is written in the Vault's custom data.
+    fn value(self) -> &'static str {
+        match self {
+            DefaultAccessPolicy::Ask => "ask",
+            DefaultAccessPolicy::AlwaysAllow => "allow",
+            DefaultAccessPolicy::AlwaysDeny => "deny",
         }
     }
 }
@@ -131,6 +171,19 @@ impl Vault {
             &now.to_iso_8601(),
             now,
         );
+        Ok(())
+    }
+
+    /// Removes the Pairing named `name`: the extension holding its key gets nothing from the
+    /// Vault any more.
+    pub fn revoke_pairing(&mut self, name: &str) -> Result<(), EditError> {
+        if !self.pairings().iter().any(|pairing| pairing.name == name) {
+            return Err(EditError::PairingNotFound);
+        }
+        let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
+        let custom_data = child_or_insert(meta, "CustomData", &[]);
+        remove_custom_data(custom_data, &format!("{PAIRING_KEY_PREFIX}{name}"));
+        remove_custom_data(custom_data, &format!("{PAIRING_CREATED_PREFIX}{name}"));
         Ok(())
     }
 
@@ -215,6 +268,66 @@ impl Vault {
         set_time(element, "LastModificationTime", now);
         self.refresh();
         Ok(())
+    }
+
+    /// Forgets the Access decision remembered on the Entry for `host`, or for every host when
+    /// none is given, so the Default access policy applies again.
+    pub fn forget_access(
+        &mut self,
+        entry: EntryId,
+        host: Option<&str>,
+        now: Timestamp,
+    ) -> Result<(), EditError> {
+        let path = self.path_to(Kind::Entry, entry.0)?;
+        let mut settings = self
+            .entry(entry)
+            .map(Entry::access_settings)
+            .unwrap_or_default();
+        for decision in [AccessDecision::Allow, AccessDecision::Deny] {
+            match host {
+                Some(host) => settings.remove_host(decision, host),
+                None => settings.set_hosts(decision, Vec::new()),
+            }
+        }
+        let element = self.at_mut(&path);
+        let custom_data = child_or_insert(
+            element,
+            "CustomData",
+            &["AutoType", "Binary", "String", "Times"],
+        );
+        set_custom_data(custom_data, ACCESS_KEY, &settings.into_json());
+        set_time(element, "LastModificationTime", now);
+        self.refresh();
+        Ok(())
+    }
+
+    /// What the Vault answers a site asking for an Entry without an Access decision for it.
+    /// A value keefast doesn't know reads as asking.
+    pub fn default_access_policy(&self) -> DefaultAccessPolicy {
+        let value = self
+            .custom_data()
+            .find(|(key, _)| key == ACCESS_POLICY_KEY)
+            .map(|(_, value)| value);
+        [
+            DefaultAccessPolicy::AlwaysAllow,
+            DefaultAccessPolicy::AlwaysDeny,
+        ]
+        .into_iter()
+        .find(|policy| value.as_deref() == Some(policy.value()))
+        .unwrap_or_default()
+    }
+
+    /// Sets the Default access policy, timed so a Merge keeps the newest.
+    pub fn set_default_access_policy(&mut self, policy: DefaultAccessPolicy, now: Timestamp) {
+        self.set_vault_custom_data(ACCESS_POLICY_KEY, policy.value(), now);
+    }
+
+    /// The decision on giving the Entry to `hosts`: the Access decision remembered on it, or
+    /// else the Default access policy's, if it doesn't ask.
+    pub fn access_decision(&self, entry: &Entry, hosts: &[String]) -> Option<AccessDecision> {
+        entry
+            .access_decision(hosts)
+            .or_else(|| self.default_access_policy().decision())
     }
 }
 
@@ -338,6 +451,20 @@ impl Entry {
         }
     }
 
+    /// The Access decisions remembered on the Entry: the hosts allowed, then those denied.
+    pub fn remembered_access(&self) -> Vec<RememberedAccess> {
+        let settings = self.access_settings();
+        [AccessDecision::Allow, AccessDecision::Deny]
+            .into_iter()
+            .flat_map(|decision| {
+                settings.hosts(decision).map(move |host| RememberedAccess {
+                    host: host.to_owned(),
+                    decision,
+                })
+            })
+            .collect()
+    }
+
     fn access_settings(&self) -> AccessSettings {
         let settings = self
             .custom_data
@@ -417,6 +544,14 @@ fn set_custom_data<'a>(custom_data: &'a mut Element, key: &str, value: &str) -> 
     };
     child_or_insert(item, "Value", &["Key"]).set_text(value);
     item
+}
+
+/// Removes the custom data item `key`, if there is one.
+fn remove_custom_data(custom_data: &mut Element, key: &str) {
+    custom_data.children.retain(|node| {
+        !matches!(node, Node::Element(item)
+            if item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key))
+    });
 }
 
 fn custom_data_item(key: &str, value: &str) -> Element {

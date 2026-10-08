@@ -3,8 +3,8 @@
 //! again changes nothing.
 
 use keefast_core::{
-    CompositeKey, Entry, EntryFields, EntryId, Group, GroupId, MergeSummary, OpenError, Timestamp,
-    Vault,
+    CompositeKey, DefaultAccessPolicy, Entry, EntryFields, EntryId, Group, GroupId, MergeSummary,
+    OpenError, Timestamp, Vault,
 };
 use keepass::{Database, DatabaseKey};
 use secrecy::{ExposeSecret, SecretString};
@@ -538,4 +538,22 @@ fn the_browser_group_chosen_last_wins_on_both_sides() {
 
     assert_eq!(ours.browser_group(), Some(personal));
     assert_eq!(theirs.browser_group(), Some(personal));
+}
+
+#[test]
+fn the_default_access_policy_set_last_wins_on_both_sides() {
+    let (mut ours, mut theirs) = two_copies();
+    ours.set_default_access_policy(DefaultAccessPolicy::AlwaysDeny, at(2));
+    theirs.set_default_access_policy(DefaultAccessPolicy::AlwaysAllow, at(1));
+
+    merge_both_ways(&mut ours, &mut theirs);
+
+    assert_eq!(
+        ours.default_access_policy(),
+        DefaultAccessPolicy::AlwaysDeny
+    );
+    assert_eq!(
+        theirs.default_access_policy(),
+        DefaultAccessPolicy::AlwaysDeny
+    );
 }

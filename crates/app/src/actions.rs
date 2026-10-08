@@ -33,6 +33,8 @@ actions!(
         SortByCreated,
         /// Sorts the Entry list by when Entries were last modified, newest first.
         SortByModified,
+        /// Opens the settings of the Vault shown, or of the selected Entry's.
+        OpenVaultSettings,
     ]
 );
 

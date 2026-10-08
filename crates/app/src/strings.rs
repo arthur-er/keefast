@@ -197,6 +197,7 @@ pub const PAIRING_APPROVE: &str = "Pair";
 pub const PAIRING_DENY: &str = "Deny";
 pub const ERROR_PAIRING_NAME_EMPTY: &str = "Give this browser a name.";
 pub const ERROR_PAIRING_NAME_TAKEN: &str = "This Vault already has a browser with this name.";
+pub const ERROR_PAIRING_NOT_FOUND: &str = "This browser is no longer paired with the Vault.";
 
 pub const ACCESS_TITLE: &str = "Allow access?";
 pub const ACCESS_PROMPT: &str = "{site} asks for these Entries. Allow only if you are signing in \
@@ -204,6 +205,28 @@ there.";
 pub const ACCESS_REMEMBER: &str = "Remember this decision for {site}";
 pub const ACCESS_ALLOW: &str = "Allow";
 pub const ACCESS_DENY: &str = "Deny";
+pub const DETAIL_BROWSER_ACCESS: &str = "Browser access";
+pub const ACCESS_ALLOWED: &str = "Allowed";
+pub const ACCESS_DENIED: &str = "Denied";
+pub const ACCESS_FORGET: &str = "Forget";
+pub const ACCESS_FORGET_ALL: &str = "Forget all";
+
+pub const VAULT_SETTINGS: &str = "Settings";
+pub const VAULT_SETTINGS_TITLE: &str = "Settings for {vault}";
+pub const DEFAULT_ACCESS_POLICY: &str = "Default access policy";
+pub const DEFAULT_ACCESS_POLICY_NOTE: &str = "When a site asks for an Entry you haven't decided \
+on for it. A decision remembered on the Entry always comes first.";
+pub const POLICY_ASK: &str = "Ask me";
+pub const POLICY_ALLOW: &str = "Always allow";
+pub const POLICY_DENY: &str = "Always deny";
+pub const RADIO_ON: &str = "◉";
+pub const RADIO_OFF: &str = "○";
+pub const PAIRINGS: &str = "Paired browsers";
+pub const PAIRINGS_NOTE: &str = "These browsers can ask this Vault for logins while it is open.";
+pub const PAIRINGS_NONE: &str = "No browser is paired with this Vault.";
+pub const REVOKE_PAIRING: &str = "Revoke";
+pub const CONFIRM_REVOKE_PAIRING: &str = "Revoke the Pairing “{name}”?";
+pub const CONFIRM_REVOKE_PAIRING_DETAIL: &str = "It must pair again to fill logins.";
 
 pub const GENERATE_PASSWORD: &str = "Generate";
 pub const GENERATOR_CHARACTERS: &str = "Characters";
@@ -333,6 +356,7 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "entry_history::CloseHistory" => "Close Entry History",
         "vault_browser::SaveAll" => "Save All Vaults",
         "vault_browser::OpenVault" => "Open Another Vault…",
+        "vault_browser::OpenVaultSettings" => "Vault Settings",
         _ => return None,
     })
 }

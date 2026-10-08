@@ -5,8 +5,8 @@ use gpui::{
     PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{
-    EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId,
-    TotpCode,
+    AccessDecision, EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort,
+    Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
@@ -16,8 +16,9 @@ use secrecy::ExposeSecret;
 
 use crate::actions::{
     self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
-    OpenVault, SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
-    ShowEntryHistory, SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername,
+    OpenVault, OpenVaultSettings, SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry,
+    SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified, SortByTitle, SortByUrl,
+    SortByUsername,
 };
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
@@ -31,6 +32,7 @@ use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
+use crate::vault_settings::{VaultSettings, VaultSettingsClosed};
 use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
@@ -98,6 +100,8 @@ enum Detail {
         vault: VaultId,
         entry: EntryId,
     },
+    /// A Vault's settings.
+    Settings(Entity<VaultSettings>),
 }
 
 enum EditTarget {
@@ -276,6 +280,7 @@ impl VaultBrowser {
             Detail::Moving(subject) => Some(subject.vault()),
             Detail::Totp { vault, .. } => Some(*vault),
             Detail::History { vault, .. } => Some(*vault),
+            Detail::Settings(settings) => Some(settings.read(cx).vault()),
         };
         if detail_vault.is_some_and(locked) {
             self.detail = Detail::Entry;
@@ -659,6 +664,47 @@ impl VaultBrowser {
         cx.notify();
     }
 
+    /// Shows the settings of the Vault shown, or of the selected Entry's, or of the first Vault.
+    fn open_settings(
+        &mut self,
+        _: &OpenVaultSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let vault = self.scope(cx).vault().or_else(|| {
+            self.selected_entry(cx).map(|(vault, _)| vault).or_else(|| {
+                self.workspace
+                    .read(cx)
+                    .vaults()
+                    .next()
+                    .map(|open| open.id())
+            })
+        });
+        if let Some(vault) = vault {
+            self.show_settings(vault, window, cx);
+        }
+    }
+
+    fn show_settings(&mut self, vault: VaultId, window: &mut Window, cx: &mut Context<Self>) {
+        let (workspace, integration) = (self.workspace.clone(), self.integration.clone());
+        let settings = cx.new(|cx| VaultSettings::new(workspace, integration, vault, cx));
+        cx.subscribe_in(
+            &settings,
+            window,
+            |this, _, _: &VaultSettingsClosed, window, cx| {
+                this.detail = Detail::Entry;
+                window.focus(&this.focus);
+                cx.notify();
+            },
+        )
+        .detach();
+        window.focus(&settings.read(cx).initial_focus(cx));
+        self.detail = Detail::Settings(settings);
+        self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
     fn on_history_event(
         &mut self,
         _: &Entity<EntryHistory>,
@@ -688,7 +734,19 @@ impl VaultBrowser {
         cx.notify();
     }
 
-    /// Copies a custom field of the selected Entry.
+    /// Forgets the Access decision remembered on the Entry for `host`, or for every host.
+    fn forget_access(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        host: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit(cx, |workspace| {
+            workspace.forget_access(vault, entry, host.as_ref().map(SharedString::as_ref))
+        });
+    }
+
     /// Copies a custom field of the selected Entry, to be cleared like a copied password.
     fn copy_custom_field(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.copy(CopyField::CustomField(index), cx) {
@@ -1456,6 +1514,13 @@ impl VaultBrowser {
                         .on_click(cx.listener(|this, _, window, cx| this.new_group(window, cx))),
                 );
         }
+        if let EntryScope::Vault(vault) = scope {
+            toolbar = toolbar.child(
+                tool_button("vault-settings", strings::VAULT_SETTINGS, theme).on_click(
+                    cx.listener(move |this, _, window, cx| this.show_settings(vault, window, cx)),
+                ),
+            );
+        }
         if let EntryScope::Group(vault, group) = scope {
             let subject = Subject::Group(vault, group);
             let is_browser_group = workspace.browser_group(vault) == Some(group);
@@ -1609,6 +1674,7 @@ impl VaultBrowser {
             Detail::Editing { editor, .. } => pane.child(editor.clone()).into_any_element(),
             Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
             Detail::History { view, .. } => pane.child(view.clone()).into_any_element(),
+            Detail::Settings(settings) => pane.child(settings.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
                 .into_any_element(),
@@ -1882,7 +1948,79 @@ impl VaultBrowser {
                         .child(div().child(value))
                 }),
         )
+        .when_some(
+            self.render_access(vault, entry, theme, cx),
+            |this, access| this.child(access),
+        )
         .into_any_element()
+    }
+
+    /// The Access decisions remembered on the Entry, each of which can be forgotten, if it has
+    /// any.
+    fn render_access(
+        &self,
+        vault: VaultId,
+        entry: &Entry,
+        theme: Theme,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let remembered = entry.remembered_access();
+        if remembered.is_empty() {
+            return None;
+        }
+        let id = entry.id();
+        let link = |element_id: (&'static str, usize), label: &'static str| {
+            div()
+                .id(element_id)
+                .cursor_pointer()
+                .text_sm()
+                .text_color(theme.accent)
+                .child(label)
+        };
+        let rows = remembered.into_iter().enumerate().map(|(ix, access)| {
+            let host: SharedString = access.host.into();
+            let (decision, color) = match access.decision {
+                AccessDecision::Allow => (strings::ACCESS_ALLOWED, theme.muted),
+                AccessDecision::Deny => (strings::ACCESS_DENIED, theme.error),
+            };
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(div().flex_1().truncate().child(host.clone()))
+                .child(div().text_sm().text_color(color).child(decision))
+                .child(
+                    link(("forget-access", ix), strings::ACCESS_FORGET).on_click(cx.listener(
+                        move |this, _, _, cx| this.forget_access(vault, id, Some(host.clone()), cx),
+                    )),
+                )
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.muted)
+                                .child(strings::DETAIL_BROWSER_ACCESS),
+                        )
+                        .child(
+                            link(("forget-all-access", 0), strings::ACCESS_FORGET_ALL).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.forget_access(vault, id, None, cx)
+                                }),
+                            ),
+                        ),
+                )
+                .children(rows)
+                .into_any_element(),
+        )
     }
 
     /// The current TOTP code with its countdown, copied when clicked.
@@ -2039,6 +2177,7 @@ impl Render for VaultBrowser {
                     this.sort_by(EntrySort::Modified, cx)
                 }),
             )
+            .on_action(cx.listener(Self::open_settings))
             .size_full()
             .relative()
             .flex()
@@ -2072,6 +2211,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         | EditVaultError::VaultNotOpen => strings::ERROR_NOT_FOUND,
         EditVaultError::Edit(EditError::PairingNameEmpty) => strings::ERROR_PAIRING_NAME_EMPTY,
         EditVaultError::Edit(EditError::PairingNameTaken) => strings::ERROR_PAIRING_NAME_TAKEN,
+        EditVaultError::Edit(EditError::PairingNotFound) => strings::ERROR_PAIRING_NOT_FOUND,
         EditVaultError::NotPaired => strings::ERROR_NOT_PAIRED,
         EditVaultError::Edit(EditError::InRecycleBin) => strings::ERROR_IN_RECYCLE_BIN,
         EditVaultError::Edit(EditError::FieldNameEmpty) => strings::ERROR_FIELD_NAME_EMPTY,

@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::io;
 
 use gpui::{Context, Entity, Task};
+use keefast_core::DefaultAccessPolicy;
 use keefast_native_host::ipc::{self, Replies, Server, ServerEvent};
 use keefast_workspace::{
     AccessAnswer, AccessId, ConnectionId, EditVaultError, LoginId, LoginTarget, Outgoing,
-    PairingId, PendingAccess, PendingLogin, PendingPairing, Workspace,
+    PairingId, PendingAccess, PendingLogin, PendingPairing, VaultId, Workspace,
 };
 
 use crate::saving;
@@ -120,6 +121,23 @@ impl BrowserIntegration {
             saving::autosave(&self.workspace, cx);
         }
         cx.notify();
+    }
+
+    /// Sets the Vault's Default access policy, answering the browser requests it settles.
+    pub fn set_default_access_policy(
+        &mut self,
+        vault: VaultId,
+        policy: DefaultAccessPolicy,
+        cx: &mut Context<Self>,
+    ) -> Result<(), EditVaultError> {
+        let replies = self.workspace.update(cx, |workspace, cx| {
+            cx.notify();
+            workspace.set_default_access_policy(vault, policy)
+        })?;
+        self.send(replies);
+        saving::autosave(&self.workspace, cx);
+        cx.notify();
+        Ok(())
     }
 
     /// The captured login to put to the user now.

@@ -1,7 +1,10 @@
-//! The Entries a Vault offers a site, and the Access decisions remembered on them, read from and
-//! written to a Vault file the way KeePassXC keeps them.
+//! The Entries a Vault offers a site, the Access decisions remembered on them, read from and
+//! written to a Vault file the way KeePassXC keeps them, and the Vault's Default access policy.
 
-use keefast_core::{AccessDecision, CompositeKey, Site, Timestamp, Vault};
+use keefast_core::{
+    AccessDecision, CompositeKey, DefaultAccessPolicy, EditError, EntryId, RememberedAccess, Site,
+    Timestamp, Vault,
+};
 use keepass::{Database, DatabaseKey};
 
 const BROWSER_FIXTURE: &[u8] = include_bytes!("../../../fixtures/keepassxc-browser.kdbx");
@@ -230,5 +233,165 @@ fn decisions_are_written_in_keepassxcs_form() {
              </Value></Item></CustomData><History/>"
         ),
         "{xml}"
+    );
+}
+
+fn later() -> Timestamp {
+    Timestamp::from_unix_seconds(1_791_500_000)
+}
+
+fn decisions(vault: &Vault, title: &str) -> Vec<(String, AccessDecision)> {
+    entry_titled(vault, title)
+        .remembered_access()
+        .into_iter()
+        .map(|RememberedAccess { host, decision }| (host, decision))
+        .collect()
+}
+
+#[test]
+fn the_decisions_remembered_on_an_entry_are_listed_allowed_first() {
+    let mut vault = open(BROWSER_FIXTURE);
+    let remembered = entry_titled(&vault, "Remembered").id();
+    vault
+        .remember_access(
+            remembered,
+            &hosts(&["other.example.com"]),
+            AccessDecision::Allow,
+            now(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        decisions(&vault, "Remembered"),
+        [
+            ("example.com".to_owned(), AccessDecision::Allow),
+            ("other.example.com".to_owned(), AccessDecision::Allow),
+            ("evil.example.com".to_owned(), AccessDecision::Deny),
+        ]
+    );
+    assert_eq!(decisions(&vault, "Example"), []);
+}
+
+#[test]
+fn forgetting_a_host_asks_again_for_it_and_keeps_the_rest() {
+    let mut vault = open(BROWSER_FIXTURE);
+    let remembered = entry_titled(&vault, "Remembered").id();
+    let history = entry_titled(&vault, "Remembered").history().len();
+
+    vault
+        .forget_access(remembered, Some("evil.example.com"), later())
+        .unwrap();
+
+    let vault = reopen(&vault);
+    let entry = entry_titled(&vault, "Remembered");
+    assert_eq!(entry.access_decision(&hosts(&["evil.example.com"])), None);
+    assert_eq!(
+        entry.access_decision(&hosts(&["example.com"])),
+        Some(AccessDecision::Allow)
+    );
+    assert_eq!(entry.last_modified(), Some(later()));
+    assert_eq!(entry.history().len(), history, "no history for a decision");
+}
+
+#[test]
+fn forgetting_every_host_clears_the_entrys_decisions_but_not_keepassxcs_other_settings() {
+    let mut vault = open(BROWSER_FIXTURE);
+    let remembered = entry_titled(&vault, "Remembered").id();
+
+    vault.forget_access(remembered, None, later()).unwrap();
+
+    assert_eq!(decisions(&vault, "Remembered"), []);
+    let bytes = vault.save().unwrap();
+    let xml = Database::get_xml(&mut &bytes[..], DatabaseKey::new().with_password(PASSWORD))
+        .expect("keepass decrypts");
+    let xml: String = String::from_utf8(xml)
+        .unwrap()
+        .chars()
+        .filter(|c| !matches!(c, '\n' | '\t'))
+        .collect();
+    assert!(
+        xml.contains(
+            "<Key>KeePassXC-Browser Settings</Key><Value>\
+             {\"Allow\":[],\"Deny\":[],\"Realm\":\"\"}</Value>"
+        ),
+        "{xml}"
+    );
+}
+
+#[test]
+fn forgetting_needs_an_entry_of_the_vault() {
+    let mut vault = open(BROWSER_FIXTURE);
+    let missing = EntryId::from_hex("00112233445566778899aabbccddeeff").unwrap();
+
+    assert_eq!(
+        vault.forget_access(missing, None, later()),
+        Err(EditError::EntryNotFound)
+    );
+}
+
+#[test]
+fn the_default_access_policy_is_to_ask() {
+    let vault = open(BROWSER_FIXTURE);
+
+    assert_eq!(vault.default_access_policy(), DefaultAccessPolicy::Ask);
+    assert_eq!(DefaultAccessPolicy::Ask.decision(), None);
+}
+
+#[test]
+fn the_default_access_policy_is_stored_in_the_vaults_custom_data() {
+    for policy in [
+        DefaultAccessPolicy::AlwaysAllow,
+        DefaultAccessPolicy::AlwaysDeny,
+        DefaultAccessPolicy::Ask,
+    ] {
+        let mut vault = open(BROWSER_FIXTURE);
+
+        vault.set_default_access_policy(policy, now());
+
+        assert_eq!(reopen(&vault).default_access_policy(), policy);
+    }
+    let mut vault = open(BROWSER_FIXTURE);
+    vault.set_default_access_policy(DefaultAccessPolicy::AlwaysDeny, now());
+    vault.set_default_access_policy(DefaultAccessPolicy::AlwaysAllow, now());
+    let bytes = vault.save().unwrap();
+    let xml = Database::get_xml(&mut &bytes[..], DatabaseKey::new().with_password(PASSWORD))
+        .expect("keepass decrypts");
+    let xml = String::from_utf8(xml).unwrap();
+    assert_eq!(xml.matches("keefast_DEFAULT_ACCESS_POLICY").count(), 1);
+    assert!(xml.contains("<Value>allow</Value>"), "{xml}");
+}
+
+#[test]
+fn the_default_access_policy_stands_in_for_a_missing_decision_only() {
+    assert_eq!(
+        DefaultAccessPolicy::AlwaysAllow.decision(),
+        Some(AccessDecision::Allow)
+    );
+    assert_eq!(
+        DefaultAccessPolicy::AlwaysDeny.decision(),
+        Some(AccessDecision::Deny)
+    );
+    let mut vault = open(BROWSER_FIXTURE);
+    vault.set_default_access_policy(DefaultAccessPolicy::AlwaysAllow, now());
+    let remembered = entry_titled(&vault, "Remembered");
+
+    // A remembered Deny beats always allow, and a remembered Allow beats always deny.
+    assert_eq!(
+        vault.access_decision(remembered, &hosts(&["evil.example.com"])),
+        Some(AccessDecision::Deny)
+    );
+    assert_eq!(
+        vault.access_decision(remembered, &hosts(&["login.example.com"])),
+        Some(AccessDecision::Allow)
+    );
+    vault.set_default_access_policy(DefaultAccessPolicy::AlwaysDeny, now());
+    let remembered = entry_titled(&vault, "Remembered");
+    assert_eq!(
+        vault.access_decision(remembered, &hosts(&["example.com"])),
+        Some(AccessDecision::Allow)
+    );
+    assert_eq!(
+        vault.access_decision(remembered, &hosts(&["login.example.com"])),
+        Some(AccessDecision::Deny)
     );
 }

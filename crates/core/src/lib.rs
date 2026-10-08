@@ -25,7 +25,10 @@ pub use appearance::{
     CustomIcon, CustomIconId, EntryColor, EntryIcon, MAX_CUSTOM_ICON_BYTES, STANDARD_ICON_COUNT,
     parse_tags,
 };
-pub use browser::{AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, Pairing, SiteEntry};
+pub use browser::{
+    AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, DefaultAccessPolicy, Pairing,
+    RememberedAccess, SiteEntry,
+};
 pub use edit::{EditError, EntryFields};
 pub use fuzzy::{FuzzyMatch, fuzzy_match};
 pub use generator::{

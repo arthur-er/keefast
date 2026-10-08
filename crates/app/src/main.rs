@@ -21,6 +21,7 @@ mod theme;
 mod totp_setup;
 mod unlock;
 mod vault_browser;
+mod vault_settings;
 mod widgets;
 
 use std::path::PathBuf;

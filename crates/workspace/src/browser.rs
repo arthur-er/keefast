@@ -17,7 +17,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
-use keefast_core::{AccessDecision, CapturedLogin, EntryId, GroupId, Site, SiteEntry, Timestamp};
+use keefast_core::{
+    AccessDecision, CapturedLogin, DefaultAccessPolicy, EntryId, GroupId, Site, SiteEntry,
+    Timestamp,
+};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
 use zeroize::Zeroize;
@@ -649,7 +652,8 @@ impl BrowserSession {
 }
 
 /// Every Entry offered to the site in the open Vaults the extension is paired with, each with
-/// its remembered Access decision unless that is to deny the site.
+/// its Access decision, remembered or else made by its Vault's Default access policy, unless
+/// that is to deny the site.
 fn candidates<'a>(workspace: &'a Workspace, query: &SiteQuery) -> Vec<Candidate<'a>> {
     let paired = |open: &&crate::OpenVault| {
         query
@@ -662,18 +666,18 @@ fn candidates<'a>(workspace: &'a Workspace, query: &SiteQuery) -> Vec<Candidate<
         .readable_vaults()
         .filter(paired)
         .flat_map(|open| {
+            let hosts = &hosts;
             open.vault
                 .entries_for_site(&query.site)
                 .into_iter()
-                .map(move |found| (open.id, found))
-        })
-        .filter_map(|(vault, found)| {
-            let decision = found.entry.access_decision(&hosts);
-            (decision != Some(AccessDecision::Deny)).then_some(Candidate {
-                vault,
-                found,
-                decision,
-            })
+                .filter_map(move |found| {
+                    let decision = open.vault.access_decision(found.entry, hosts);
+                    (decision != Some(AccessDecision::Deny)).then_some(Candidate {
+                        vault: open.id,
+                        found,
+                        decision,
+                    })
+                })
         })
         .collect()
 }
@@ -1033,6 +1037,42 @@ impl Workspace {
         group: GroupId,
     ) -> Result<(), EditVaultError> {
         self.edit(vault, |open, now| open.set_browser_group(group, now))
+    }
+
+    /// What the Vault answers a site asking for an Entry without an Access decision for it.
+    pub fn default_access_policy(&self, vault: VaultId) -> Option<DefaultAccessPolicy> {
+        Some(self.vault(vault)?.vault.default_access_policy())
+    }
+
+    /// Sets the Vault's Default access policy, and returns the replies to the waiting Access
+    /// requests it settles.
+    pub fn set_default_access_policy(
+        &mut self,
+        vault: VaultId,
+        policy: DefaultAccessPolicy,
+    ) -> Result<Vec<Outgoing>, EditVaultError> {
+        self.edit(vault, |vault, now| {
+            vault.set_default_access_policy(policy, now);
+            Ok(())
+        })?;
+        Ok(self.answer_settled_accesses())
+    }
+
+    /// Forgets the Access decision remembered on the Entry for `host`, or for every host when
+    /// none is given.
+    pub fn forget_access(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        host: Option<&str>,
+    ) -> Result<(), EditVaultError> {
+        self.edit(vault, |vault, now| vault.forget_access(entry, host, now))
+    }
+
+    /// Removes the Vault's Pairing named `name`: the extension holding its key gets nothing
+    /// from the Vault any more.
+    pub fn revoke_pairing(&mut self, vault: VaultId, name: &str) -> Result<(), EditVaultError> {
+        self.edit(vault, |vault, _| vault.revoke_pairing(name))
     }
 
     /// The Pairing request to put to the user now.

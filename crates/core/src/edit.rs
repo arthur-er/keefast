@@ -78,6 +78,8 @@ pub enum EditError {
     IconNotPng,
     #[error("the icon image is too large")]
     IconTooLarge,
+    #[error("the Vault has no Pairing with this name")]
+    PairingNotFound,
 }
 
 /// The standard Entry fields as KeePass names them, with the `MemoryProtection` setting that
