@@ -16,6 +16,7 @@ pub fn lock_all(workspace: &Entity<Workspace>, cx: &mut App) {
     });
 }
 
+/// Locks one Vault, from the sidebar.
 pub fn lock_vault(workspace: &Entity<Workspace>, vault: VaultId, cx: &mut App) {
     lock_with(workspace, cx, |workspace, clipboard| {
         workspace.lock_vault(vault, clipboard)

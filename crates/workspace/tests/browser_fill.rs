@@ -624,6 +624,20 @@ mod locking {
     }
 
     #[test]
+    fn locking_every_vault_is_announced_once() {
+        let (mut browser, personal) = Browser::paired(storage());
+        browser.unlock(&work_vault());
+        // The Pairing is an unsaved change, which locking would ask about.
+        browser.workspace.save_vault(personal).unwrap();
+        browser.workspace.take_browser_messages();
+
+        let saves = browser.workspace.lock_all(&mut FakeClipboard::default());
+
+        assert!(saves.is_empty());
+        assert_eq!(browser.announcements(), ["database-locked"]);
+    }
+
+    #[test]
     fn locking_one_of_several_vaults_has_the_extension_reconnect() {
         let (mut browser, vault) = Browser::paired(storage());
         browser.unlock(&work_vault());

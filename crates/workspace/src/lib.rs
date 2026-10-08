@@ -196,11 +196,6 @@ impl OpenVault {
     pub fn save_failed(&self) -> bool {
         self.failed_save_at.is_some()
     }
-
-    /// Whether the Vault is to lock once its unsaved changes are saved or discarded.
-    pub fn is_locking(&self) -> bool {
-        self.lock_requested
-    }
 }
 
 /// An open-Vault command that has not run yet. It owns everything it needs, so the slow part
@@ -659,8 +654,17 @@ impl Workspace {
                 lock_requested: false,
             },
         );
-        if let Some(view) = view {
-            self.restore_view(view);
+        match view {
+            Some(view) => self.restore_view(view),
+            // Showing a Vault still locked, the user is shown the one they unlocked instead.
+            None if self
+                .view
+                .vault()
+                .is_some_and(|shown| self.vault(shown).is_none()) =>
+            {
+                self.view = View::from(EntryScope::Vault(id));
+            }
+            None => {}
         }
         self.announce_unlocked();
         id
@@ -946,7 +950,7 @@ impl Workspace {
             }
         };
         if open.lock_requested && !open.has_unsaved_changes() {
-            self.lock_now(finished.id);
+            self.lock_now(&[finished.id]);
         }
         outcome
     }

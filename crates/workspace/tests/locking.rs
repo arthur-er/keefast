@@ -307,6 +307,29 @@ fn an_entry_of_a_vault_still_locked_is_not_selected_on_unlocking_another() {
 }
 
 #[test]
+fn unlocking_another_vault_than_the_one_shown_shows_it() {
+    let mut h = harness();
+    h.workspace.show(View::from(EntryScope::Vault(h.personal)));
+    h.lock_all();
+    assert_eq!(h.workspace.vault_to_unlock(), Some(h.personal));
+
+    h.unlock(&work_vault()).unwrap();
+
+    assert_eq!(h.workspace.view(), View::from(EntryScope::Vault(h.work)));
+    assert_eq!(h.workspace.vault_to_unlock(), Some(h.personal));
+}
+
+#[test]
+fn the_first_locked_vault_is_offered_when_none_is_shown() {
+    let mut h = harness();
+    h.workspace.show(View::from(EntryScope::AllVaults));
+
+    h.lock_all();
+
+    assert_eq!(h.workspace.vault_to_unlock(), Some(h.personal));
+}
+
+#[test]
 fn locking_clears_what_keefast_copied_from_the_clipboard() {
     let mut h = harness();
     let github = h.entry(h.personal, "GitHub");

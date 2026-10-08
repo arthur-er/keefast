@@ -155,11 +155,7 @@ impl KeefastWindow {
     ) {
         let (all_locked, to_unlock, pending_lock) = {
             let workspace = workspace.read(cx);
-            let to_unlock = workspace
-                .view()
-                .vault()
-                .filter(|&vault| workspace.locked_vault(vault).is_some())
-                .or_else(|| workspace.locked_vaults().next().map(|locked| locked.id()));
+            let to_unlock = workspace.vault_to_unlock();
             let all_locked = workspace.vaults().next().is_none() && to_unlock.is_some();
             (all_locked, to_unlock, workspace.pending_lock())
         };

@@ -1096,41 +1096,35 @@ impl Workspace {
     /// Answers the pending Pairing, Access and login requests that involve a Vault about to
     /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked.
     pub(crate) fn cut_off_browser_requests(&mut self, vault: VaultId) {
-        let involved: Vec<bool> = self
-            .browser
-            .logins
-            .iter()
-            .map(|(_, _, request)| self.login_vaults(request).contains(&vault))
-            .collect();
-        let mut involved = involved.into_iter();
         let browser = &mut self.browser;
-        let mut cut_off = Vec::new();
-        browser.pairings.retain(|(_, connection, request)| {
-            let keep = request.vault != vault;
-            if !keep {
-                cut_off.push((*connection, request.request.clone()));
-            }
-            keep
+        let pairings = take_where(&mut browser.pairings, |request| request.vault == vault);
+        let accesses = take_where(&mut browser.accesses, |request| {
+            request.undecided.iter().any(|&(of, _)| of == vault)
         });
-        browser.accesses.retain(|(_, connection, request)| {
-            let keep = !request.undecided.iter().any(|&(of, _)| of == vault);
-            if !keep {
-                cut_off.push((*connection, request.request.clone()));
-            }
-            keep
+        let mut logins = std::mem::take(&mut browser.logins);
+        let logins_cut_off = take_where(&mut logins, |request| {
+            self.login_vaults(request).contains(&vault)
         });
-        browser.logins.retain(|(_, connection, request)| {
-            let keep = !involved.next().unwrap_or(false);
-            if !keep {
-                cut_off.push((*connection, request.request.clone()));
-            }
-            keep
-        });
+        self.browser.logins = logins;
+        let cut_off = pairings
+            .into_iter()
+            .map(|(connection, request)| (connection, request.request))
+            .chain(
+                accesses
+                    .into_iter()
+                    .map(|(c, request)| (c, request.request)),
+            )
+            .chain(
+                logins_cut_off
+                    .into_iter()
+                    .map(|(c, request)| (c, request.request)),
+            );
         for (connection, request) in cut_off {
-            if let Some(session) = browser.sessions.get(&connection) {
-                browser.unsolicited.push(Outgoing {
+            if let Some(session) = self.browser.sessions.get(&connection) {
+                let message = session.error(&request, ProtocolError::DatabaseNotOpened);
+                self.browser.unsolicited.push(Outgoing {
                     connection,
-                    message: session.error(&request, ProtocolError::DatabaseNotOpened),
+                    message,
                 });
             }
         }
@@ -1236,6 +1230,22 @@ impl Workspace {
     ) -> Result<(), EditVaultError> {
         self.edit(vault, |vault, now| vault.add_pairing(name, key, now))
     }
+}
+
+/// Takes the requests `involved` picks out of a queue of requests waiting for the user, in
+/// order, with the connections they came from.
+fn take_where<Id, R>(
+    queue: &mut VecDeque<(Id, ConnectionId, R)>,
+    mut involved: impl FnMut(&R) -> bool,
+) -> Vec<(ConnectionId, R)> {
+    let (taken, kept): (VecDeque<_>, VecDeque<_>) = std::mem::take(queue)
+        .into_iter()
+        .partition(|(_, _, request)| involved(request));
+    *queue = kept;
+    taken
+        .into_iter()
+        .map(|(_, connection, request)| (connection, request))
+        .collect()
 }
 
 fn browser_hash(workspace: &Workspace, vault: VaultId) -> String {

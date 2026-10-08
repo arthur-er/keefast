@@ -62,6 +62,16 @@ impl Workspace {
             .map(|locked| locked.id)
     }
 
+    /// The locked Vault to offer for unlocking first: the one the user was looking at, or else
+    /// the first locked.
+    pub fn vault_to_unlock(&self) -> Option<VaultId> {
+        let shown = self
+            .view
+            .vault()
+            .filter(|&id| self.locked_vault(id).is_some());
+        shown.or_else(|| self.locked.first().map(|locked| locked.id))
+    }
+
     /// The global Lock: locks every unlocked Vault, and clears what keefast copied from the
     /// clipboard. Run the returned saves, of Vaults to save before they lock, as any other.
     pub fn lock_all(&mut self, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
@@ -73,11 +83,6 @@ impl Workspace {
     /// [`Self::lock_all`].
     pub fn lock_vault(&mut self, id: VaultId, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
         self.request_lock(vec![id], clipboard)
-    }
-
-    /// Whether every Vault locks when the OS screen locks or the machine suspends.
-    pub fn lock_on_os_lock(&self) -> bool {
-        self.config.lock_on_os_lock
     }
 
     /// Tells the Workspace the OS screen locked or the machine is suspending: every Vault
@@ -146,7 +151,7 @@ impl Workspace {
         match answer {
             UnsavedLock::Save => self.begin_save(id).ok(),
             UnsavedLock::Discard => {
-                self.lock_now(id);
+                self.lock_now(&[id]);
                 None
             }
             UnsavedLock::Cancel => None,
@@ -162,6 +167,7 @@ impl Workspace {
     ) -> Vec<PendingSave> {
         self.pending_clear.clear_now(clipboard);
         let mut unsaved = Vec::new();
+        let mut saved = Vec::new();
         for id in ids {
             let Some(open) = self.vault_mut(id) else {
                 continue;
@@ -170,9 +176,10 @@ impl Workspace {
                 open.lock_requested = true;
                 unsaved.push(id);
             } else {
-                self.lock_now(id);
+                saved.push(id);
             }
         }
+        self.lock_now(&saved);
         if !self.config.autosave {
             return Vec::new();
         }
@@ -182,9 +189,19 @@ impl Workspace {
             .collect()
     }
 
-    /// Locks a Vault now, dropping its decrypted contents. Browser requests waiting on it are
-    /// answered that it is locked.
-    pub(crate) fn lock_now(&mut self, id: VaultId) {
+    /// Locks Vaults now, dropping their decrypted contents. Browser requests waiting on them
+    /// are answered that they are locked, and the extensions are told once.
+    pub(crate) fn lock_now(&mut self, ids: &[VaultId]) {
+        let before = self.locked.len();
+        for &id in ids {
+            self.lock_one(id);
+        }
+        if self.locked.len() > before {
+            self.announce_locked();
+        }
+    }
+
+    fn lock_one(&mut self, id: VaultId) {
         let Some(at) = self.vaults.iter().position(|open| open.id == id) else {
             return;
         };
@@ -200,7 +217,6 @@ impl Workspace {
                 view,
             },
         );
-        self.announce_locked();
     }
 
     /// Takes what the user is shown of a Vault that is locking out of the view, and returns
