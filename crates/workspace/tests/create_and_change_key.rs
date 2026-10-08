@@ -406,3 +406,105 @@ fn a_locked_vault_with_a_new_key_saved_unlocks_with_the_new_key_only() {
         .unwrap();
     assert_eq!(unlocked, id);
 }
+
+#[test]
+fn an_existing_file_is_never_replaced_with_a_new_vault() {
+    let storage = Arc::new(FakeStorage::default().with_file(&personal_vault(), KEEPASSXC_KDBX4));
+    let workspace = workspace(&storage);
+    let pending = workspace
+        .begin_create(
+            personal_vault(),
+            new_vault("Personal", UnlockSecrets::password(NEW_PASSWORD)),
+        )
+        .unwrap();
+
+    let result = pending.create();
+
+    assert!(matches!(result, Err(CreateVaultError::FileExists)));
+    assert_eq!(stored(&storage), KEEPASSXC_KDBX4);
+}
+
+#[test]
+fn a_new_vault_without_a_name_is_named_after_its_vault_file() {
+    let storage = Arc::new(FakeStorage::default());
+    let mut workspace = workspace(&storage);
+
+    let id = create(
+        &mut workspace,
+        &personal_vault(),
+        new_vault(" ", UnlockSecrets::password(NEW_PASSWORD)),
+    );
+
+    let name = personal_vault().display_name();
+    assert_eq!(workspace.vault(id).unwrap().vault().root().name(), name);
+}
+
+#[test]
+fn a_save_asked_for_while_another_runs_follows_it_even_without_autosave() {
+    let (storage, mut workspace, id) = opened();
+    let running = workspace.begin_save(id).unwrap();
+    workspace
+        .change_master_key(id, &UnlockSecrets::password(NEW_PASSWORD))
+        .unwrap();
+
+    assert!(matches!(
+        workspace.begin_save(id),
+        Err(SaveVaultError::InProgress)
+    ));
+    workspace.finish_save(running.run()).unwrap();
+    let follow_ups = workspace.begin_autosaves();
+    assert_eq!(follow_ups.len(), 1);
+    for save in follow_ups {
+        workspace.finish_save(save.run()).unwrap();
+    }
+
+    assert!(Vault::open(&stored(&storage), &CompositeKey::password(NEW_PASSWORD)).is_ok());
+    assert_eq!(workspace.save_status(), SaveStatus::Saved);
+    assert!(
+        workspace.begin_autosaves().is_empty(),
+        "asked once, saved once"
+    );
+}
+
+#[test]
+fn a_key_changed_again_while_the_first_change_is_saved_still_merges_and_saves() {
+    let (storage, mut workspace, id) = opened();
+    workspace
+        .change_master_key(id, &UnlockSecrets::password("first new password"))
+        .unwrap();
+    let first = workspace.begin_save(id).unwrap();
+    workspace
+        .change_master_key(id, &UnlockSecrets::password(NEW_PASSWORD))
+        .unwrap();
+    workspace.finish_save(first.run()).unwrap();
+
+    // Another device that has the first new key changes the Vault file meanwhile.
+    let mut theirs = Vault::open(
+        &stored(&storage),
+        &CompositeKey::password("first new password"),
+    )
+    .unwrap();
+    let root = theirs.root().id();
+    theirs
+        .create_entry(
+            root,
+            &fields("Elsewhere"),
+            Timestamp::from_unix_seconds(START as i64),
+        )
+        .unwrap();
+    storage.change_elsewhere(&personal_vault(), &theirs.save().unwrap());
+    workspace.save_vault(id).unwrap();
+
+    let saved = Vault::open(&stored(&storage), &CompositeKey::password(NEW_PASSWORD)).unwrap();
+    assert!(titles(&saved).contains(&"Elsewhere".to_owned()));
+}
+
+#[test]
+fn settings_the_vault_has_already_are_no_change() {
+    let (_, mut workspace, id) = opened();
+    let current = workspace.vault(id).unwrap().vault().encryption();
+
+    workspace.set_encryption(id, &current).unwrap();
+
+    assert_eq!(workspace.save_status(), SaveStatus::Saved);
+}

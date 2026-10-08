@@ -44,13 +44,30 @@ enum KdfKind {
 
 const MIB: u64 = 1024 * 1024;
 
+/// The ciphers and key derivation functions to pick from, with their button ids and names.
+const CIPHERS: [(&str, &str, Cipher); 3] = [
+    ("cipher-aes", strings::CIPHER_AES, Cipher::Aes256),
+    (
+        "cipher-chacha20",
+        strings::CIPHER_CHACHA20,
+        Cipher::ChaCha20,
+    ),
+    ("cipher-twofish", strings::CIPHER_TWOFISH, Cipher::Twofish),
+];
+const KDFS: [(&str, &str, KdfKind); 3] = [
+    ("kdf-argon2id", strings::KDF_ARGON2ID, KdfKind::Argon2id),
+    ("kdf-argon2d", strings::KDF_ARGON2D, KdfKind::Argon2d),
+    ("kdf-aes", strings::KDF_AES, KdfKind::AesKdf),
+];
+
 pub struct VaultKeyForm {
     workspace: Entity<Workspace>,
     purpose: Purpose,
     /// Where a new Vault file goes, and the name of its top Group.
     path: Entity<TextField>,
     name: Entity<TextField>,
-    /// Whether the master key changes, for an open Vault; a new Vault always gets one.
+    /// Whether the master key changes, for an open Vault, which starts off keeping its own; a
+    /// new Vault always gets one.
     set_key: bool,
     password: Entity<TextField>,
     confirm: Entity<TextField>,
@@ -65,6 +82,7 @@ pub struct VaultKeyForm {
     /// The settings the form started with, kept exactly where the user didn't change them.
     initial: Encryption,
     error: Option<SharedString>,
+    /// The new Vault file being written.
     creating: Option<Task<()>>,
 }
 
@@ -121,7 +139,7 @@ impl VaultKeyForm {
         Self {
             path: field(strings::NEW_VAULT_PATH_PLACEHOLDER, String::new(), false),
             name: field(strings::NEW_VAULT_NAME_PLACEHOLDER, String::new(), false),
-            set_key: true,
+            set_key: purpose == Purpose::Create,
             password: field(strings::UNLOCK_PASSWORD_PLACEHOLDER, String::new(), true),
             confirm: field(strings::KEY_CONFIRM_PLACEHOLDER, String::new(), true),
             key_file: None,
@@ -257,12 +275,8 @@ impl VaultKeyForm {
         let Some(path) = expand_path(self.path.read(cx).text()) else {
             return self.fail(strings::NEW_VAULT_ERROR_NO_PATH, cx);
         };
-        let name = match self.name.read(cx).text().trim() {
-            "" => VaultLocation::Local(path.clone()).display_name(),
-            name => name.to_owned(),
-        };
         let new = NewVault {
-            name,
+            name: self.name.read(cx).text().to_owned(),
             secrets,
             encryption,
         };
@@ -274,16 +288,17 @@ impl VaultKeyForm {
             Ok(pending) => pending,
             Err(error) => return self.fail(describe_create(&error), cx),
         };
-        let creating = cx
+        let created = cx
             .background_executor()
             .spawn(async move { pending.create() });
         self.error = None;
         self.creating = Some(cx.spawn(async move |this, cx| {
-            let result = creating.await;
+            let result = created.await;
             this.update(cx, |this, cx| {
                 this.creating = None;
                 match result {
                     Ok(created) => {
+                        this.clear_passwords(cx);
                         this.workspace.update(cx, |workspace, cx| {
                             workspace.add_unlocked(created);
                             cx.notify();
@@ -312,18 +327,23 @@ impl VaultKeyForm {
             if let Some(secrets) = &secrets {
                 workspace.change_master_key(vault, secrets)?;
             }
-            if encryption != self.initial {
-                workspace.set_encryption(vault, &encryption)?;
-            }
-            Ok::<_, ChangeKeyError>(secrets.is_some() || encryption != self.initial)
+            workspace.set_encryption(vault, &encryption)?;
+            Ok::<_, ChangeKeyError>(())
         });
         match changed {
-            Ok(true) => {
+            Ok(()) => {
+                self.clear_passwords(cx);
                 saving::save(&self.workspace, vault, cx);
                 cx.emit(VaultKeyEvent::Done);
             }
-            Ok(false) => cx.emit(VaultKeyEvent::Done),
             Err(error) => self.fail(describe_change(&error), cx),
+        }
+    }
+
+    /// Wipes the typed master password once it has been used (ADR 0004).
+    fn clear_passwords(&mut self, cx: &mut Context<Self>) {
+        for field in [&self.password, &self.confirm] {
+            field.update(cx, |field, cx| field.set_text("", cx));
         }
     }
 
@@ -483,6 +503,7 @@ fn describe_key(error: &NewKeyError) -> &'static str {
 fn describe_create(error: &CreateVaultError) -> &'static str {
     match error {
         CreateVaultError::AlreadyOpen(_) => strings::NEW_VAULT_ERROR_OPEN,
+        CreateVaultError::FileExists => strings::NEW_VAULT_ERROR_EXISTS,
         CreateVaultError::Key(error) => describe_key(error),
         CreateVaultError::Encryption(error) => describe_encryption(*error),
         CreateVaultError::Save(SaveError::Settings(_)) => strings::NEW_VAULT_ERROR_ENCRYPT,
@@ -522,7 +543,7 @@ impl Render for VaultKeyForm {
                     .border_color(theme.accent)
             })
         };
-        let creating = self.purpose == Purpose::Create;
+        let is_new = self.purpose == Purpose::Create;
         let title: SharedString = match self.purpose {
             Purpose::Create => strings::NEW_VAULT_TITLE.into(),
             Purpose::Change(vault) => {
@@ -553,7 +574,7 @@ impl Render for VaultKeyForm {
             .flex_col()
             .gap_3()
             .child(div().text_lg().child(title))
-            .when(creating, |this| {
+            .when(is_new, |this| {
                 this.child(
                     div()
                         .flex()
@@ -577,7 +598,7 @@ impl Render for VaultKeyForm {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(strings::MASTER_KEY),
                     )
-                    .when(!creating, |this| {
+                    .when(!is_new, |this| {
                         this.child(
                             div()
                                 .id("set-key")
@@ -658,68 +679,17 @@ impl Render for VaultKeyForm {
                 div()
                     .flex()
                     .gap_1()
-                    .child(
-                        choice(
-                            "cipher-aes",
-                            strings::CIPHER_AES,
-                            self.cipher == Cipher::Aes256,
+                    .children(CIPHERS.map(|(id, name, cipher)| {
+                        choice(id, name, self.cipher == cipher).on_click(
+                            cx.listener(move |this, _, _, cx| this.select_cipher(cipher, cx)),
                         )
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.select_cipher(Cipher::Aes256, cx)),
-                        ),
-                    )
-                    .child(
-                        choice(
-                            "cipher-chacha20",
-                            strings::CIPHER_CHACHA20,
-                            self.cipher == Cipher::ChaCha20,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.select_cipher(Cipher::ChaCha20, cx)),
-                        ),
-                    )
-                    .child(
-                        choice(
-                            "cipher-twofish",
-                            strings::CIPHER_TWOFISH,
-                            self.cipher == Cipher::Twofish,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.select_cipher(Cipher::Twofish, cx)),
-                        ),
-                    ),
+                    })),
             )
             .child(label(strings::KDF))
-            .child(
-                div()
-                    .flex()
-                    .gap_1()
-                    .child(
-                        choice(
-                            "kdf-argon2id",
-                            strings::KDF_ARGON2ID,
-                            self.kdf == KdfKind::Argon2id,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.select_kdf(KdfKind::Argon2id, cx)),
-                        ),
-                    )
-                    .child(
-                        choice(
-                            "kdf-argon2d",
-                            strings::KDF_ARGON2D,
-                            self.kdf == KdfKind::Argon2d,
-                        )
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.select_kdf(KdfKind::Argon2d, cx)),
-                        ),
-                    )
-                    .child(
-                        choice("kdf-aes", strings::KDF_AES, self.kdf == KdfKind::AesKdf).on_click(
-                            cx.listener(|this, _, _, cx| this.select_kdf(KdfKind::AesKdf, cx)),
-                        ),
-                    ),
-            )
+            .child(div().flex().gap_1().children(KDFS.map(|(id, name, kdf)| {
+                choice(id, name, self.kdf == kdf)
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_kdf(kdf, cx)))
+            })))
             .child(match argon2 {
                 true => div()
                     .flex()
@@ -877,6 +847,7 @@ mod tests {
             move |workspace, cx| VaultKeyForm::for_vault(workspace, vault, cx),
             workspace,
         );
+        form.update(cx, |form, cx| form.toggle_set_key(cx));
         type_into(&form, |form| &form.password, "new secret", cx);
         type_into(&form, |form| &form.confirm, "new secret", cx);
         // The fixture has AES-KDF.

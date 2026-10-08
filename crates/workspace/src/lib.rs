@@ -291,6 +291,8 @@ pub struct OpenVault {
     online: Option<OnlineSync>,
     /// The edit that changed the master key, while the Vault file doesn't have the new key.
     key_changed_at: Option<u64>,
+    /// Whether a save was asked for while another was running.
+    save_requested: bool,
 }
 
 impl OpenVault {
@@ -986,6 +988,7 @@ impl Workspace {
             auto_lock: false,
             online,
             key_changed_at: None,
+            save_requested: false,
         };
         let at = self.vaults.partition_point(|open| open.id < id);
         self.vaults.insert(at, open);
@@ -1309,7 +1312,8 @@ impl Workspace {
     }
 
     /// Starts saving a Vault. Run the returned save off the UI thread, then hand its outcome
-    /// to [`Self::finish_save`]. Only one save per Vault runs at a time.
+    /// to [`Self::finish_save`]. Only one save per Vault runs at a time: asked for while one
+    /// runs, the save is refused now and started by the next [`Self::begin_autosaves`].
     pub fn begin_save(&mut self, id: VaultId) -> Result<PendingSave, SaveVaultError> {
         self.begin(id, true)
     }
@@ -1322,11 +1326,14 @@ impl Workspace {
         let cache = self.cache_for(location);
         let open = self.vault_mut(id).ok_or(SaveVaultError::VaultNotOpen)?;
         if open.saving {
+            // Saved as soon as the running save is done, which may not have every edit.
+            open.save_requested |= write;
             return Err(SaveVaultError::InProgress);
         }
         open.saving = true;
         // A save kept on this machine is uploaded by whatever reaches the Vault file next.
         let write = write || open.online.as_ref().is_some_and(|sync| sync.upload_pending);
+        open.save_requested &= !write;
         // This save reads the Vault file if it changed, so the change is taken care of.
         open.file_changed = false;
         Ok(PendingSave {
@@ -1516,13 +1523,14 @@ impl Workspace {
     /// being saved. Call it after edits, after saves finish and after a Vault file changes. A
     /// Vault whose last save failed is not retried until it is edited again.
     ///
-    /// Autosave on or off, it also starts checking every Vault whose Vault file may have
-    /// changed elsewhere: changes found are Merged in, and the Merge saved unless the Vault has
-    /// unsaved edits, which wait for a save.
+    /// Autosave on or off, it also starts the saves asked for while another save ran, and
+    /// checks every Vault whose Vault file may have changed elsewhere: changes found are Merged
+    /// in, and the Merge saved unless the Vault has unsaved edits, which wait for a save.
     pub fn begin_autosaves(&mut self) -> Vec<PendingSave> {
         let autosave = self.config.autosave;
         self.begin_due(|open| {
-            autosave && open.has_unsaved_changes() && open.failed_save_at != Some(open.edits)
+            open.save_requested
+                || autosave && open.has_unsaved_changes() && open.failed_save_at != Some(open.edits)
         })
     }
 }

@@ -127,22 +127,22 @@ impl Vault {
 
     /// Saves the Vault with this master key from now on.
     ///
-    /// The key the Vault file has stays known, so that versions of the Vault file saved with
-    /// it elsewhere can still be opened to Merge them, until [`Self::forget_previous_key`]
-    /// once the change is saved.
+    /// The keys the Vault had before stay known, so that versions of the Vault file saved with
+    /// any of them, here or elsewhere, can still be opened to Merge them, until
+    /// [`Self::forget_previous_keys`] once the Vault file has the new key.
     pub fn change_key(&mut self, key: &CompositeKey, now: Timestamp) {
         let new = key.hash();
         let old = std::mem::replace(&mut self.key, new);
-        self.previous_key.get_or_insert(old);
+        self.previous_keys.push(old);
         let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
         let changed = child_or_insert(meta, "MasterKeyChanged", &["Color", "DatabaseName"]);
         set_value(changed, &now.encode(), false);
     }
 
-    /// Forgets the key the Vault was saved with before [`Self::change_key`], once the Vault
-    /// file has the new one. Versions of the Vault file saved with the old key no longer open.
-    pub fn forget_previous_key(&mut self) {
-        self.previous_key = None;
+    /// Forgets the keys the Vault had before [`Self::change_key`], once the Vault file has the
+    /// new one. Versions of the Vault file saved with an old key no longer open.
+    pub fn forget_previous_keys(&mut self) {
+        self.previous_keys.clear();
     }
 }
 

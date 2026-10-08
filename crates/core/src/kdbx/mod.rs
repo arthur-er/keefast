@@ -64,11 +64,7 @@ impl Settings {
     }
 
     pub(crate) fn encryption(&self) -> Encryption {
-        let cipher = match self.cipher {
-            OuterCipher::Aes256 => Cipher::Aes256,
-            OuterCipher::ChaCha20 => Cipher::ChaCha20,
-            OuterCipher::Twofish => Cipher::Twofish,
-        };
+        let cipher = self.cipher.into();
         let kdf = &self.kdf;
         let argon2 = || Argon2 {
             memory: kdf.u64("M").unwrap_or_default(),
@@ -88,11 +84,7 @@ impl Settings {
     /// Sets the cipher and KDF. A KDF that stays the same keeps the parameters keefast doesn't
     /// set, such as Argon2's version; a new one starts afresh. The seed is new on every save.
     pub(crate) fn set_encryption(&mut self, encryption: &Encryption) {
-        let cipher = match encryption.cipher {
-            Cipher::Aes256 => OuterCipher::Aes256,
-            Cipher::ChaCha20 => OuterCipher::ChaCha20,
-            Cipher::Twofish => OuterCipher::Twofish,
-        };
+        let cipher = OuterCipher::from(encryption.cipher);
         if cipher != self.cipher {
             self.cipher = cipher;
             self.cipher_uuid = cipher.uuid();
@@ -121,6 +113,26 @@ impl Settings {
                 self.kdf.set_u32("P", argon2.parallelism);
             }
             Kdf::AesKdf { rounds } => self.kdf.set_u64("R", rounds),
+        }
+    }
+}
+
+impl From<OuterCipher> for Cipher {
+    fn from(cipher: OuterCipher) -> Self {
+        match cipher {
+            OuterCipher::Aes256 => Cipher::Aes256,
+            OuterCipher::ChaCha20 => Cipher::ChaCha20,
+            OuterCipher::Twofish => Cipher::Twofish,
+        }
+    }
+}
+
+impl From<Cipher> for OuterCipher {
+    fn from(cipher: Cipher) -> Self {
+        match cipher {
+            Cipher::Aes256 => OuterCipher::Aes256,
+            Cipher::ChaCha20 => OuterCipher::ChaCha20,
+            Cipher::Twofish => OuterCipher::Twofish,
         }
     }
 }

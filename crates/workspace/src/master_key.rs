@@ -1,10 +1,11 @@
 //! Creating Vault files, and changing an open Vault's master key, cipher and key derivation.
 //!
 //! A change is an edit like any other: the Vault file gets it when the Vault is next saved. Until
-//! then the Vault keeps the key its Vault file has, so the save can still open and Merge a
-//! version of the Vault file another device saved meanwhile with that key. Once the save has
-//! gone through, the old key is forgotten (ADR 0004): a version saved elsewhere with it later can
-//! no longer be Merged, and the save fails rather than overwrite it (ADR 0006).
+//! then the Vault keeps the keys it had before, one of which its Vault file has, so the save can
+//! still open and Merge a version of the Vault file another device saved meanwhile. Once a save
+//! has written the latest key, the old ones are forgotten (ADR 0004): a version saved elsewhere
+//! with one later can no longer be Merged, and the save fails rather than overwrite it
+//! (ADR 0006).
 
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use crate::{
 
 /// What a new Vault is made with.
 pub struct NewVault {
-    /// The name of the Vault's top Group.
+    /// The name of the Vault's top Group; the Vault file's name when empty.
     pub name: String,
     pub secrets: UnlockSecrets,
     pub encryption: Encryption,
@@ -27,6 +28,8 @@ pub struct NewVault {
 pub enum CreateVaultError {
     #[error("a Vault from this Vault file is open")]
     AlreadyOpen(VaultId),
+    #[error("a file is already there")]
+    FileExists,
     #[error(transparent)]
     Key(#[from] NewKeyError),
     #[error(transparent)]
@@ -59,9 +62,14 @@ pub struct PendingCreate {
 }
 
 impl PendingCreate {
-    /// Writes the new Vault file, replacing any file already there, and returns its Vault to
-    /// add with [`Workspace::add_unlocked`].
+    /// Writes the new Vault file, and returns its Vault to add with [`Workspace::add_unlocked`].
+    /// A file already there is never replaced: it may be another Vault file.
     pub fn create(self) -> Result<UnlockedVault, CreateVaultError> {
+        match self.storage.read(&self.location) {
+            Ok(_) => return Err(CreateVaultError::FileExists),
+            Err(StorageError::NotFound(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
         let key = self.new.secrets.new_key()?;
         let vault = Vault::create(&self.new.name, &key, &self.new.encryption, self.now)?;
         let bytes = vault.save()?;
@@ -95,9 +103,12 @@ impl Workspace {
     pub fn begin_create(
         &self,
         location: VaultLocation,
-        new: NewVault,
+        mut new: NewVault,
     ) -> Result<PendingCreate, CreateVaultError> {
         new.encryption.check()?;
+        if new.name.trim().is_empty() {
+            new.name = location.display_name();
+        }
         let storage = self.storage_for(&location)?;
         let location = storage.canonical(&location);
         if let Some(open) = self
@@ -134,13 +145,16 @@ impl Workspace {
     }
 
     /// Sets the cipher and key derivation an open Vault is saved with. The Vault file has them
-    /// once the Vault is saved.
+    /// once the Vault is saved. Settings the Vault has already change nothing.
     pub fn set_encryption(
         &mut self,
         id: VaultId,
         encryption: &Encryption,
     ) -> Result<(), ChangeKeyError> {
         let open = self.vault_mut(id).ok_or(ChangeKeyError::VaultNotOpen)?;
+        if open.vault.encryption() == *encryption {
+            return Ok(());
+        }
         open.vault.set_encryption(encryption)?;
         open.edits += 1;
         Ok(())
@@ -155,11 +169,11 @@ impl OpenVault {
         self.key_changed_at = Some(self.edits);
     }
 
-    /// After a save that caught up with the Vault at `edits`: forgets the key the Vault file
-    /// had before a change of key the save wrote.
+    /// After a save that caught up with the Vault at `edits`: forgets the keys the Vault had
+    /// before the last change of key, if the save wrote it.
     pub(crate) fn key_change_saved(&mut self, edits: u64) {
         if self.key_changed_at.is_some_and(|changed| changed <= edits) {
-            self.vault.forget_previous_key();
+            self.vault.forget_previous_keys();
             self.key_changed_at = None;
         }
     }

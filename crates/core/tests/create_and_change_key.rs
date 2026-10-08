@@ -211,7 +211,7 @@ fn once_the_old_key_is_forgotten_versions_saved_with_it_no_longer_open() {
     let theirs = vault.save().unwrap();
 
     vault.change_key(&CompositeKey::password("new"), now());
-    vault.forget_previous_key();
+    vault.forget_previous_keys();
 
     assert!(matches!(
         vault.open_version(&theirs),
@@ -220,15 +220,18 @@ fn once_the_old_key_is_forgotten_versions_saved_with_it_no_longer_open() {
 }
 
 #[test]
-fn changing_the_key_twice_before_saving_keeps_the_key_the_vault_file_has() {
+fn changing_the_key_twice_before_saving_keeps_every_key_the_vault_file_may_have() {
     let old = CompositeKey::password(PASSWORD);
     let mut vault = create("Personal", &old, &quick());
-    let theirs = vault.save().unwrap();
+    let with_old_key = vault.save().unwrap();
 
     vault.change_key(&CompositeKey::password("first"), now());
+    // A save may write the first change while the second is made.
+    let with_first_key = vault.save().unwrap();
     vault.change_key(&CompositeKey::password("second"), now());
 
-    assert!(vault.open_version(&theirs).is_ok());
+    assert!(vault.open_version(&with_old_key).is_ok());
+    assert!(vault.open_version(&with_first_key).is_ok());
 }
 
 #[test]

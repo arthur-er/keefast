@@ -221,6 +221,8 @@ pub const NEW_VAULT_IN_PROGRESS: &str = "Creating the Vault: deriving the key…
 pub const NEW_VAULT_ERROR_NO_PATH: &str = "Choose where to save the Vault file.";
 pub const NEW_VAULT_ERROR_OPEN: &str =
     "A Vault from this Vault file is open. Choose another file, or lock and reopen that Vault.";
+pub const NEW_VAULT_ERROR_EXISTS: &str =
+    "A file is already there. keefast never replaces a file with a new Vault.";
 pub const NEW_VAULT_ERROR_WRITE: &str = "The Vault file could not be written there.";
 pub const NEW_VAULT_ERROR_ENCRYPT: &str = "The Vault could not be encrypted with these settings.";
 pub const CHANGE_KEY_TITLE: &str = "Master key and encryption of “{vault}”";

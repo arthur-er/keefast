@@ -25,8 +25,9 @@ pub struct Vault {
     pub(crate) file: VaultFile,
     /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
     pub(crate) key: Key,
-    /// The key the Vault file had before the key was changed, until the change is saved.
-    pub(crate) previous_key: Option<Key>,
+    /// The keys the Vault had before its key was changed, oldest first, until the Vault file
+    /// has the new one.
+    pub(crate) previous_keys: Vec<Key>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,7 +128,7 @@ impl Vault {
             custom_icons: custom_icons(&file.document),
             file,
             key,
-            previous_key: None,
+            previous_keys: Vec::new(),
         })
     }
 
