@@ -229,6 +229,7 @@ pub const CHANGE_KEY_TITLE: &str = "Master key and encryption of “{vault}”";
 pub const CHANGE_KEY_TOGGLE: &str = "Set a new master key";
 pub const CHANGE_KEY_APPLY: &str = "Save changes";
 pub const CHANGE_KEY_BUTTON: &str = "Key…";
+pub const VAULT_SETTINGS_CHANGE_KEY: &str = "Change master key and encryption…";
 pub const MASTER_KEY: &str = "Master key";
 pub const KEY_CONFIRM_LABEL: &str = "Repeat the master password";
 pub const KEY_CONFIRM_PLACEHOLDER: &str = "Type it again";

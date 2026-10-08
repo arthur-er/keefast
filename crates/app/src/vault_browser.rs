@@ -35,7 +35,7 @@ use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
 use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
-use crate::vault_settings::{VaultSettings, VaultSettingsClosed};
+use crate::vault_settings::{VaultSettings, VaultSettingsChangeKey, VaultSettingsClosed};
 use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
@@ -720,6 +720,14 @@ impl VaultBrowser {
                 this.detail = Detail::Entry;
                 window.focus(&this.focus);
                 cx.notify();
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &settings,
+            window,
+            move |this, _, _: &VaultSettingsChangeKey, window, cx| {
+                this.open_vault_key(Some(vault), window, cx)
             },
         )
         .detach();

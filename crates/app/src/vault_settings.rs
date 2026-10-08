@@ -14,6 +14,10 @@ use crate::widgets::{button, tool_button};
 /// Emitted when the user closes the settings.
 pub struct VaultSettingsClosed;
 
+/// Emitted when the user asks to change the Vault's master key and encryption, which has its
+/// own form.
+pub struct VaultSettingsChangeKey;
+
 const POLICIES: [(DefaultAccessPolicy, &str); 3] = [
     (DefaultAccessPolicy::Ask, strings::POLICY_ASK),
     (DefaultAccessPolicy::AlwaysAllow, strings::POLICY_ALLOW),
@@ -35,6 +39,7 @@ pub struct VaultSettings {
 }
 
 impl EventEmitter<VaultSettingsClosed> for VaultSettings {}
+impl EventEmitter<VaultSettingsChangeKey> for VaultSettings {}
 
 impl Focusable for VaultSettings {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -246,6 +251,23 @@ impl Render for VaultSettings {
                     .child(heading(strings::DEFAULT_ACCESS_POLICY))
                     .child(note(strings::DEFAULT_ACCESS_POLICY_NOTE))
                     .children(policies),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(heading(strings::MASTER_KEY))
+                    .child(
+                        div().flex().child(
+                            tool_button(
+                                "change-vault-key",
+                                strings::VAULT_SETTINGS_CHANGE_KEY,
+                                theme,
+                            )
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(VaultSettingsChangeKey))),
+                        ),
+                    ),
             )
             .child(
                 div()
