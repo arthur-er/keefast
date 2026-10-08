@@ -15,11 +15,13 @@ pub enum PasswordGeneratorEvent {
 }
 
 /// The generator panel in the Entry editor: picks the mode and its settings, which the
-/// Workspace remembers, and shows a password made with them.
+/// Workspace remembers, and shows a password made with them. On the settings screen it only
+/// shows what the settings make.
 pub struct PasswordGenerator {
     workspace: Entity<Workspace>,
     separator: Entity<TextField>,
     generated: Result<SecretString, GeneratorError>,
+    in_settings: bool,
 }
 
 impl EventEmitter<PasswordGeneratorEvent> for PasswordGenerator {}
@@ -52,6 +54,15 @@ impl PasswordGenerator {
             workspace,
             separator,
             generated,
+            in_settings: false,
+        }
+    }
+
+    /// The panel for the settings screen, without a password to use.
+    pub fn for_settings(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+        Self {
+            in_settings: true,
+            ..Self::new(workspace, cx)
         }
     }
 
@@ -74,6 +85,9 @@ impl PasswordGenerator {
     }
 
     fn use_password(&mut self, cx: &mut Context<Self>) {
+        if self.in_settings {
+            return;
+        }
         if let Ok(password) = &self.generated {
             cx.emit(PasswordGeneratorEvent::Use(password.clone()));
         }
@@ -150,7 +164,7 @@ fn error_message(error: &GeneratorError) -> String {
 
 impl Render for PasswordGenerator {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let settings = self.workspace.read(cx).generator_settings().clone();
         let mode_tab = |id: &'static str, label: &'static str, mode: GeneratorMode| {
             let selected = settings.mode == mode;
@@ -302,20 +316,24 @@ impl Render for PasswordGenerator {
                     .flex()
                     .justify_end()
                     .gap_2()
-                    .child(button("generator-cancel", strings::CANCEL, theme).on_click(
-                        cx.listener(|_, _, _, cx| cx.emit(PasswordGeneratorEvent::Cancel)),
-                    ))
+                    .when(!self.in_settings, |this| {
+                        this.child(button("generator-cancel", strings::CANCEL, theme).on_click(
+                            cx.listener(|_, _, _, cx| cx.emit(PasswordGeneratorEvent::Cancel)),
+                        ))
+                    })
                     .child(
                         button("generator-again", strings::GENERATOR_AGAIN, theme)
                             .on_click(cx.listener(|this, _, _, cx| this.regenerate(cx))),
                     )
-                    .child(
-                        button("generator-use", strings::GENERATOR_USE, theme)
-                            .when(self.generated.is_ok(), |this| {
-                                this.bg(theme.accent).text_color(theme.accent_text)
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.use_password(cx))),
-                    ),
+                    .when(!self.in_settings, |this| {
+                        this.child(
+                            button("generator-use", strings::GENERATOR_USE, theme)
+                                .when(self.generated.is_ok(), |this| {
+                                    this.bg(theme.accent).text_color(theme.accent_text)
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| this.use_password(cx))),
+                        )
+                    }),
             )
     }
 }

@@ -33,6 +33,20 @@ pub struct AppConfig {
     /// The Dropbox app keefast connects as, overriding the one it was built with. Not a secret:
     /// keefast connects with PKCE, which needs no client secret.
     pub dropbox_app_key: Option<String>,
+    pub theme: ThemeSetting,
+    /// Whether the favicons of Entry URLs' sites are downloaded. Off unless the user turns it
+    /// on, as keefast makes no network requests they haven't agreed to.
+    pub download_favicons: bool,
+}
+
+/// Which colours the app is drawn in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ThemeSetting {
+    /// Follow the OS light/dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 impl AppConfig {
@@ -52,6 +66,8 @@ impl Default for AppConfig {
             idle_lock_after: Some(Self::DEFAULT_IDLE_LOCK_AFTER),
             lock_on_os_lock: true,
             dropbox_app_key: None,
+            theme: ThemeSetting::System,
+            download_favicons: false,
         }
     }
 }
@@ -122,7 +138,7 @@ impl ConfigStore for FileConfigStore {
 /// Recent Vault files are read one by one, so one this version doesn't understand (a Storage
 /// provider from a newer version, say) is skipped rather than failing the whole file. Generator
 /// settings this version doesn't understand (a new mode, say) don't fail the file either: the
-/// generator goes back to its defaults.
+/// generator goes back to its defaults, and a theme it doesn't know follows the OS.
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct ConfigFile {
@@ -133,6 +149,9 @@ struct ConfigFile {
     /// 0 never locks the Vaults for inactivity.
     idle_lock_seconds: u64,
     lock_on_os_lock: bool,
+    /// `system`, `light` or `dark`.
+    theme: String,
+    download_favicons: bool,
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
@@ -175,6 +194,12 @@ impl From<ConfigFile> for AppConfig {
             idle_lock_after: wait_from_seconds(file.idle_lock_seconds),
             lock_on_os_lock: file.lock_on_os_lock,
             dropbox_app_key: file.dropbox_app_key.filter(|key| !key.is_empty()),
+            theme: match file.theme.as_str() {
+                "light" => ThemeSetting::Light,
+                "dark" => ThemeSetting::Dark,
+                _ => ThemeSetting::System,
+            },
+            download_favicons: file.download_favicons,
         }
     }
 }
@@ -187,6 +212,13 @@ impl From<&AppConfig> for ConfigFile {
             clipboard_clear_seconds: wait_to_seconds(config.clipboard_clear_after),
             idle_lock_seconds: wait_to_seconds(config.idle_lock_after),
             lock_on_os_lock: config.lock_on_os_lock,
+            theme: match config.theme {
+                ThemeSetting::System => "system",
+                ThemeSetting::Light => "light",
+                ThemeSetting::Dark => "dark",
+            }
+            .to_owned(),
+            download_favicons: config.download_favicons,
             recent_vaults: config
                 .recent_vaults
                 .iter()

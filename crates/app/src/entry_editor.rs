@@ -362,7 +362,7 @@ impl EntryEditor {
 
 impl Render for EntryEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let labelled = |label: &'static str, field: &Entity<TextField>| {
             div()
                 .flex()

@@ -8,6 +8,7 @@ mod command_palette;
 mod dropbox_panel;
 mod entry_editor;
 mod entry_history;
+mod favicons;
 mod icons;
 mod locking;
 mod login_dialog;
@@ -15,6 +16,7 @@ mod merge_notice;
 mod pairing_dialog;
 mod password_generator;
 mod saving;
+mod settings;
 mod strings;
 mod text_field;
 mod theme;
@@ -33,30 +35,33 @@ use gpui::{
     size,
 };
 use keefast_workspace::{
-    Dropbox, DropboxConfig, FileConfigStore, LocalStorage, NativeMessagingHosts, OsSecretStore,
-    UnsavedLock, VaultId, VaultLocation, Workspace,
+    Dropbox, DropboxConfig, FileConfigStore, HttpFavicons, LocalStorage, NativeMessagingHosts,
+    OsSecretStore, UnsavedLock, VaultId, VaultLocation, Workspace,
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
-use crate::actions::ToggleCommandPalette;
+use crate::actions::{OpenSettings, ToggleCommandPalette};
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
+use crate::settings::{SettingsClosed, SettingsView};
 use crate::unlock::{UnlockEvent, UnlockView};
 use crate::vault_browser::{OpenAnotherVault, UnlockLockedVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
 /// unlock dialog shown again to open another Vault, or to unlock one, and whenever every Vault
-/// is locked. The command palette opens over it, and Pairing and Access requests and captured
-/// logins from browsers are asked over everything, in that order.
+/// is locked. The settings screen covers either while open. The command palette opens over it,
+/// and Pairing and Access requests and captured logins from browsers are asked over
+/// everything, in that order.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
     unlock: Entity<UnlockView>,
     browser: Option<Entity<VaultBrowser>>,
     showing_unlock: bool,
+    settings: Option<Entity<SettingsView>>,
     pairing: Option<Entity<PairingDialog>>,
     access: Option<Entity<AccessDialog>>,
     login: Option<Entity<LoginDialog>>,
@@ -69,7 +74,9 @@ struct KeefastWindow {
 impl KeefastWindow {
     fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|_| {
-            let mut workspace = Workspace::new(Arc::new(LocalStorage));
+            // Nothing is downloaded until the user turns favicon download on.
+            let mut workspace = Workspace::new(Arc::new(LocalStorage))
+                .with_favicon_source(Arc::new(HttpFavicons::new()));
             if let Some(config) = FileConfigStore::in_os_config_dir() {
                 workspace = workspace.with_config(Arc::new(config));
             }
@@ -91,7 +98,12 @@ impl KeefastWindow {
             async {}
         })
         .detach();
+        theme::choose(workspace.read(cx).theme(), cx);
+        // The theme may follow the OS, so the window is drawn again when the OS changes it.
+        cx.observe_window_appearance(window, |_, window, _| window.refresh())
+            .detach();
         saving::watch_vault_files(&workspace, cx);
+        favicons::watch(&workspace, cx);
         locking::watch(&workspace, cx);
         // Any key typed in keefast counts as activity, wherever it goes.
         let typing = workspace.clone();
@@ -113,6 +125,7 @@ impl KeefastWindow {
             unlock,
             browser: None,
             showing_unlock: true,
+            settings: None,
             pairing: None,
             access: None,
             login: None,
@@ -146,6 +159,35 @@ impl KeefastWindow {
         cx.notify();
     }
 
+    fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        // A browser request is answered first.
+        if self.dialog(cx).is_some() {
+            return;
+        }
+        let settings = self.settings.get_or_insert_with(|| {
+            let settings = cx
+                .new(|cx| SettingsView::new(self.workspace.clone(), self.integration.clone(), cx));
+            cx.subscribe_in(&settings, window, Self::on_settings_closed)
+                .detach();
+            settings
+        });
+        window.focus(&settings.focus_handle(cx));
+        cx.notify();
+    }
+
+    fn on_settings_closed(
+        &mut self,
+        _: &Entity<SettingsView>,
+        _: &SettingsClosed,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings.take().is_some() {
+            self.focus_screen(window, cx);
+            cx.notify();
+        }
+    }
+
     fn close_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(palette) = self.palette.take() {
             palette.update(cx, |palette, cx| palette.dismiss(window, cx));
@@ -174,7 +216,7 @@ impl KeefastWindow {
             }
             self.showing_unlock = true;
             if self.dialog(cx).is_none() {
-                window.focus(&self.unlock.focus_handle(cx));
+                self.focus_screen(window, cx);
             }
             cx.notify();
         }
@@ -428,6 +470,10 @@ impl KeefastWindow {
     }
 
     fn focus_screen(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(settings) = &self.settings {
+            window.focus(&settings.focus_handle(cx));
+            return;
+        }
         match (&self.browser, self.showing_unlock) {
             (Some(browser), false) => window.focus(&browser.focus_handle(cx)),
             _ => window.focus(&self.unlock.focus_handle(cx)),
@@ -441,12 +487,11 @@ impl KeefastWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let browser = match (event, &self.browser) {
+        match (event, &self.browser) {
             (UnlockEvent::Cancelled, None) => return,
-            (UnlockEvent::Cancelled, Some(browser)) => browser.clone(),
+            (UnlockEvent::Cancelled, Some(_)) => {}
             (UnlockEvent::Unlocked, Some(browser)) => {
                 browser.update(cx, |browser, cx| browser.clear_detail(cx));
-                browser.clone()
             }
             (UnlockEvent::Unlocked, None) => {
                 let workspace = self.workspace.clone();
@@ -456,12 +501,12 @@ impl KeefastWindow {
                     .detach();
                 cx.subscribe_in(&browser, window, Self::on_unlock_locked)
                     .detach();
-                self.browser = Some(browser.clone());
-                browser
+                self.browser = Some(browser);
             }
-        };
-        window.focus(&browser.focus_handle(cx));
+        }
         self.showing_unlock = false;
+        // Unlocking runs in the background, so the settings may have been opened meanwhile.
+        self.focus_screen(window, cx);
         cx.notify();
     }
 
@@ -495,8 +540,9 @@ impl KeefastWindow {
 
 impl Render for KeefastWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let screen = match (&self.browser, self.showing_unlock) {
-            (Some(browser), false) => browser.clone().into_any_element(),
+        let screen = match (&self.settings, &self.browser, self.showing_unlock) {
+            (Some(settings), ..) => settings.clone().into_any_element(),
+            (None, Some(browser), false) => browser.clone().into_any_element(),
             _ => self.unlock.clone().into_any_element(),
         };
         let dialog = self.dialog(cx).map(|(view, _)| view);
@@ -504,6 +550,7 @@ impl Render for KeefastWindow {
             .size_full()
             .relative()
             .on_action(cx.listener(Self::toggle_command_palette))
+            .on_action(cx.listener(Self::open_settings))
             // Clicks and scrolling anywhere in keefast count as activity.
             .capture_any_mouse_down(
                 cx.listener(|this, _, _, cx| locking::note_activity(&this.workspace, cx)),

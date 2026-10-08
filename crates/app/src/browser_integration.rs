@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::io;
 
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
 use keefast_core::DefaultAccessPolicy;
 use keefast_native_host::ipc::{self, Replies, Server, ServerEvent};
 use keefast_workspace::{
@@ -13,6 +13,7 @@ use keefast_workspace::{
 };
 
 use crate::saving;
+use crate::strings;
 
 pub struct BrowserIntegration {
     workspace: Entity<Workspace>,
@@ -251,4 +252,26 @@ impl BrowserIntegration {
             }
         }
     }
+}
+
+/// What to tell the user about browser integration, if it is on: which browsers the native
+/// host is registered with, or what failed, and whether something did.
+pub fn status(integration: &Entity<BrowserIntegration>, cx: &App) -> Option<(SharedString, bool)> {
+    let integration = integration.read(cx);
+    let workspace = integration.workspace.read(cx);
+    if !workspace.browser_integration() {
+        return None;
+    }
+    if integration.serve_error().is_some() {
+        return Some((strings::BROWSER_ALREADY_SERVED.into(), true));
+    }
+    let summary = match workspace.browser_hosts_status()? {
+        Err(_) => return Some((strings::BROWSER_HOSTS_FAILED.into(), true)),
+        Ok(browsers) if browsers.is_empty() => strings::BROWSER_HOSTS_NONE.to_owned(),
+        Ok(browsers) => {
+            let names: Vec<&str> = browsers.iter().map(|browser| browser.name()).collect();
+            format!("{}{}", strings::BROWSER_HOSTS_FOR, names.join(", "))
+        }
+    };
+    Some((summary.into(), false))
 }

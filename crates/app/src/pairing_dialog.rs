@@ -64,7 +64,7 @@ impl PairingDialog {
 
 impl Render for PairingDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         div()
             .id("pairing-dialog")
             .w(px(440.))

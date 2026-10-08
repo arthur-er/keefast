@@ -82,7 +82,7 @@ impl AccessDialog {
 
 impl Render for AccessDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let entries = self.entries.iter().map(|entry| {
             let title = if entry.title.is_empty() {
                 strings::UNTITLED.into()

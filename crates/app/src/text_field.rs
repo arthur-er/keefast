@@ -145,7 +145,7 @@ fn empty_text() -> Zeroizing<String> {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let focused = self.focus.is_focused(window);
         let shown = if self.masked {
             let mask = |text: &str| strings::PASSWORD_MASK_CHAR.repeat(text.chars().count());

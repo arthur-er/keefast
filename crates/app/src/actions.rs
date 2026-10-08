@@ -59,6 +59,16 @@ actions!(
     ]
 );
 
+actions!(
+    settings,
+    [
+        /// Opens the app settings: the app-wide preferences kept on this machine.
+        OpenSettings,
+        /// Closes the app settings.
+        CloseSettings,
+    ]
+);
+
 /// The key context of the three panes.
 pub const CONTEXT: &str = "VaultBrowser";
 /// The key context of a text field, where keys type rather than act on the Entry list.
@@ -72,6 +82,8 @@ pub const CUSTOM_FIELD_CONTEXT: &str = "CustomField";
 pub const HISTORY_CONTEXT: &str = "EntryHistory";
 /// The key context of the command palette.
 pub const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
+/// The key context of the settings screen.
+pub const SETTINGS_CONTEXT: &str = "Settings";
 
 pub fn bind_keys(cx: &mut App) {
     let list = format!("{CONTEXT} && !{TEXT_FIELD_CONTEXT}");
@@ -103,6 +115,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
         KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),
+        KeyBinding::new("secondary-,", OpenSettings, None),
+        KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),
         KeyBinding::new("down", SelectNextCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("up", SelectPreviousCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("secondary-l", LockAll, anywhere),

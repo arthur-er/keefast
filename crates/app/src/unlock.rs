@@ -12,6 +12,7 @@ use keefast_workspace::{
 };
 use secrecy::SecretString;
 
+use crate::actions::OpenSettings;
 use crate::dropbox_panel::{self, DropboxPanel, DropboxPanelEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
@@ -452,7 +453,7 @@ fn progress_bar(theme: Theme) -> impl IntoElement {
 
 impl Render for UnlockView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let can_unlock = self.location.is_some() && self.unlocking.is_none();
         let can_cancel = self.can_cancel(cx);
         let config_error = self.workspace.read(cx).config_error().is_some();
@@ -611,6 +612,13 @@ impl Render for UnlockView {
                             .flex()
                             .justify_end()
                             .gap_2()
+                            .child(
+                                button("open-settings", strings::SETTINGS, theme)
+                                    .mr_auto()
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(OpenSettings), cx)
+                                    }),
+                            )
                             .when(can_cancel, |this| {
                                 this.child(
                                     button("cancel-unlock", strings::CANCEL, theme)

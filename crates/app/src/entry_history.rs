@@ -254,7 +254,7 @@ impl EntryHistory {
 
 impl Render for EntryHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let selected = self.selected(cx);
         let workspace = self.workspace.read(cx);
         let Some(entry) = workspace.entry(self.vault, self.entry) else {

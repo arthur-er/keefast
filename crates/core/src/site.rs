@@ -37,19 +37,35 @@ impl Site {
         }
     }
 
+    /// The site an Entry URL is for, if it is a web address. An Entry URL without a scheme is
+    /// taken to be `https`.
+    pub fn of_entry_url(entry_url: &str) -> Option<Self> {
+        let entry = parse_entry_url(entry_url)?;
+        let (https, host) = web_host(&entry)?;
+        Some(Self {
+            https,
+            host,
+            port: entry.port_or_known_default()?,
+        })
+    }
+
+    /// The site's scheme, host and port, as in `https://example.com:8443`; the port only when
+    /// it isn't the scheme's own.
+    pub fn origin(&self) -> String {
+        let (scheme, default_port) = match self.https {
+            true => ("https", 443),
+            false => ("http", 80),
+        };
+        match self.port == default_port {
+            true => format!("{scheme}://{}", self.host),
+            false => format!("{scheme}://{}:{}", self.host, self.port),
+        }
+    }
+
     /// Whether the Entry URL `entry_url` is for this page. An Entry URL without a scheme is
     /// taken to be `https`.
     pub fn matches(&self, entry_url: &str) -> bool {
-        let entry_url = entry_url.trim();
-        if entry_url.is_empty() {
-            return false;
-        }
-        let parsed = if entry_url.contains("://") {
-            Url::parse(entry_url)
-        } else {
-            Url::parse(&format!("https://{entry_url}"))
-        };
-        let Ok(entry) = parsed else {
+        let Some(entry) = parse_entry_url(entry_url) else {
             return false;
         };
         let Some((https, host)) = web_host(&entry) else {
@@ -69,6 +85,20 @@ impl Site {
             (entry, site) => entry == site,
         }
     }
+}
+
+/// An Entry URL, taken to be `https` without a scheme. `None` when empty or not a URL.
+fn parse_entry_url(entry_url: &str) -> Option<Url> {
+    let entry_url = entry_url.trim();
+    if entry_url.is_empty() {
+        return None;
+    }
+    let parsed = if entry_url.contains("://") {
+        Url::parse(entry_url)
+    } else {
+        Url::parse(&format!("https://{entry_url}"))
+    };
+    parsed.ok()
 }
 
 /// Whether the URL is `https` (otherwise `http`), and its host, without a trailing dot. `None`

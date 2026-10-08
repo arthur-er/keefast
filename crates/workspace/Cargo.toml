@@ -11,6 +11,7 @@ base64.workspace = true
 crypto_box.workspace = true
 dirs.workspace = true
 getrandom.workspace = true
+image.workspace = true
 keefast-core.workspace = true
 keyring.workspace = true
 notify.workspace = true

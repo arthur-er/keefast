@@ -392,7 +392,7 @@ impl Drop for DropboxPanel {
 
 impl Render for DropboxPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         div()
             .id("dropbox-panel")
             .track_focus(&self.focus)

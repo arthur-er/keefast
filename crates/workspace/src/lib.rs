@@ -8,6 +8,7 @@ mod clipboard;
 mod clock;
 mod config;
 mod dropbox;
+mod favicons;
 mod generator;
 mod locking;
 mod os_lock;
@@ -40,11 +41,12 @@ pub use browser_hosts::{
 };
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
-pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
+pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, ThemeSetting};
 pub use dropbox::{
     Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig, DropboxError,
     DropboxItem,
 };
+pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};
 pub use locking::{LockedVault, UnsavedLock};
 pub use os_lock::watch_os_lock;
@@ -412,6 +414,7 @@ pub struct Workspace {
     /// Told which Vault's Vault file may have changed, from the Storage provider's thread.
     on_file_change: Option<Arc<dyn Fn(VaultId) + Send + Sync>>,
     merges: Vec<MergeReport>,
+    favicons: favicons::Favicons,
 }
 
 impl Workspace {
@@ -442,6 +445,7 @@ impl Workspace {
             pending_clear: Default::default(),
             on_file_change: None,
             merges: Vec::new(),
+            favicons: Default::default(),
         }
     }
 
@@ -549,6 +553,16 @@ impl Workspace {
         &self.config.generator
     }
 
+    pub fn theme(&self) -> ThemeSetting {
+        self.config.theme
+    }
+
+    /// Changes which colours the app is drawn in, and remembers it in the app config.
+    pub fn set_theme(&mut self, theme: ThemeSetting) {
+        self.config.theme = theme;
+        self.save_config();
+    }
+
     /// Changes how passwords are generated, and remembers it in the app config. Returns
     /// whether anything changed.
     pub fn set_generator_settings(&mut self, settings: GeneratorSettings) -> bool {
@@ -648,6 +662,18 @@ impl Workspace {
         }
         self.pending_clear.copy(clipboard, text, clear_at);
         Ok(())
+    }
+
+    /// How long copied secrets stay on the clipboard; `None` keeps them there.
+    pub fn clipboard_clear_after(&self) -> Option<Duration> {
+        self.config.clipboard_clear_after
+    }
+
+    /// Changes how long secrets copied from now on stay on the clipboard, and remembers it in
+    /// the app config.
+    pub fn set_clipboard_clear_after(&mut self, after: Option<Duration>) {
+        self.config.clipboard_clear_after = after;
+        self.save_config();
     }
 
     /// How long until what keefast last copied is cleared from the clipboard, if it will be.

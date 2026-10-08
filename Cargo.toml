@@ -22,6 +22,8 @@ dirs = "5"
 flate2 = "1"
 getrandom = "0.4"
 hmac = "0.13"
+# Favicons come as ICO, PNG and more; only the formats sites use are read.
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 interprocess = "2.4"
 keyring = "4"
 notify = "8"

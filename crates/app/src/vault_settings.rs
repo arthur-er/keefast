@@ -162,7 +162,7 @@ impl VaultSettings {
 
 impl Render for VaultSettings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let Some(open) = self.workspace.read(cx).vault(self.vault) else {
             return div().into_any_element();
         };

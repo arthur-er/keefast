@@ -1,6 +1,19 @@
-use gpui::{Rgba, Window, WindowAppearance};
+use gpui::{App, Global, Rgba, Window, WindowAppearance};
+use keefast_workspace::ThemeSetting;
 
-/// The colours the views draw with, picked to follow the OS light/dark setting.
+/// The theme the user picked, which every view draws with.
+struct ChosenTheme(ThemeSetting);
+
+impl Global for ChosenTheme {}
+
+/// Draws every window in `setting`'s colours from now on.
+pub fn choose(setting: ThemeSetting, cx: &mut App) {
+    cx.set_global(ChosenTheme(setting));
+    cx.refresh_windows();
+}
+
+/// The colours the views draw with: those the user picked, or else those following the OS
+/// light/dark setting.
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub background: Rgba,
@@ -16,10 +29,17 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn for_window(window: &Window) -> Self {
-        match window.appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::DARK,
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::LIGHT,
+    pub fn for_window(window: &Window, cx: &App) -> Self {
+        let setting = cx
+            .try_global::<ChosenTheme>()
+            .map_or(ThemeSetting::System, |chosen| chosen.0);
+        match setting {
+            ThemeSetting::Light => Self::LIGHT,
+            ThemeSetting::Dark => Self::DARK,
+            ThemeSetting::System => match window.appearance() {
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::DARK,
+                WindowAppearance::Light | WindowAppearance::VibrantLight => Self::LIGHT,
+            },
         }
     }
 

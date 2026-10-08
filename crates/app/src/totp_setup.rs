@@ -113,7 +113,7 @@ impl TotpSetup {
 
 impl Render for TotpSetup {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let label = |text: &'static str| div().text_sm().text_color(theme.muted).child(text);
         let labelled = |text: &'static str, field: &Entity<TextField>| {
             div()

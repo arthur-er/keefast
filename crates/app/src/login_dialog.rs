@@ -171,7 +171,7 @@ impl LoginDialog {
 
 impl Render for LoginDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         let rows = self.rows.iter().enumerate().map(|(ix, row)| {
             let line = div()
                 .id(("login-row", ix))

@@ -5,8 +5,8 @@ use gpui::{
     PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{
-    AccessDecision, EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort,
-    Group, GroupId, TotpCode,
+    AccessDecision, EditError, Entry, EntryColor, EntryFields, EntryIcon, EntryId, EntrySearch,
+    EntrySort, Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
@@ -16,14 +16,15 @@ use secrecy::ExposeSecret;
 
 use crate::actions::{
     self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
-    OpenVault, OpenVaultSettings, SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry,
-    SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified, SortByTitle, SortByUrl,
-    SortByUsername,
+    OpenSettings, OpenVault, OpenVaultSettings, SaveAll, SelectFirstEntry, SelectLastEntry,
+    SelectNextEntry, SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified,
+    SortByTitle, SortByUrl, SortByUsername,
 };
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::entry_history::{EntryHistory, EntryHistoryEvent};
+use crate::favicons;
 use crate::icons;
 use crate::locking;
 use crate::merge_notice;
@@ -45,6 +46,7 @@ pub struct UnlockLockedVault(pub VaultId);
 /// commands to edit Entries and Groups and to save the Vaults.
 pub struct VaultBrowser {
     workspace: Entity<Workspace>,
+    /// What a Vault's settings pane sends browser changes through.
     integration: Entity<BrowserIntegration>,
     focus: FocusHandle,
     /// Narrows the Entry list to the Entries matching what is typed in it.
@@ -1036,12 +1038,6 @@ impl VaultBrowser {
         self.start_autosaves(cx);
     }
 
-    fn toggle_browser_integration(&mut self, cx: &mut Context<Self>) {
-        self.integration.update(cx, |integration, cx| {
-            integration.set_enabled(!integration.enabled(cx), cx)
-        });
-    }
-
     /// Tab moves between the Entry's custom fields and the other controls.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
@@ -1293,13 +1289,6 @@ impl VaultBrowser {
         };
         let autosave = workspace.autosave();
         let config_error = workspace.config_error().is_some();
-        let browser_integration = workspace.browser_integration();
-        let serve_error = self.integration.read(cx).serve_error().is_some();
-        let browsers = match browser_integration {
-            false => None,
-            true if serve_error => Some((strings::BROWSER_ALREADY_SERVED.into(), true)),
-            true => browser_hosts_summary(workspace),
-        };
 
         div()
             .flex()
@@ -1349,28 +1338,10 @@ impl VaultBrowser {
                     ),
             )
             .child(
-                div()
-                    .id("browser-integration")
-                    .flex()
-                    .gap_1()
-                    .text_sm()
-                    .cursor_pointer()
-                    .child(if browser_integration {
-                        strings::CHECKBOX_ON
-                    } else {
-                        strings::CHECKBOX_OFF
-                    })
-                    .child(strings::BROWSER_INTEGRATION)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_browser_integration(cx))),
+                tool_button("open-settings", strings::SETTINGS, theme)
+                    .text_center()
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )
-            .when_some(browsers, |this, (summary, failed)| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(if failed { theme.error } else { theme.muted })
-                        .child(summary),
-                )
-            })
     }
 
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1434,9 +1405,7 @@ impl VaultBrowser {
                     .border_color(theme.border)
                     .cursor_pointer()
                     .when(selected, |this| this.bg(theme.selection))
-                    .children(open.map(|open| {
-                        icons::entry_icon(entry.icon(), open.vault(), px(18.), theme.muted)
-                    }))
+                    .children(entry_mark(workspace, vault, entry, px(18.), theme.muted))
                     .child(
                         div()
                             .flex_1()
@@ -1712,9 +1681,7 @@ impl VaultBrowser {
                 .child(div().child(value))
         };
         let expired = workspace.is_expired(entry);
-        let icon = workspace
-            .vault(vault)
-            .map(|open| icons::entry_icon(entry.icon(), open.vault(), px(24.), theme.text));
+        let icon = entry_mark(workspace, vault, entry, px(24.), theme.text);
 
         pane.child(
             div()
@@ -2138,7 +2105,7 @@ impl VaultBrowser {
 
 impl Render for VaultBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_window(window);
+        let theme = Theme::for_window(window, cx);
         self.ensure_custom_field_focus(cx);
         div()
             .id("vault-browser")
@@ -2188,19 +2155,6 @@ impl Render for VaultBrowser {
             .child(self.render_detail(theme, cx))
             .children(self.render_merge_notice(theme, cx))
     }
-}
-
-/// Which browsers the native host is registered with, and whether registering failed.
-fn browser_hosts_summary(workspace: &Workspace) -> Option<(SharedString, bool)> {
-    let summary = match workspace.browser_hosts_status()? {
-        Err(_) => return Some((strings::BROWSER_HOSTS_FAILED.into(), true)),
-        Ok(browsers) if browsers.is_empty() => strings::BROWSER_HOSTS_NONE.to_owned(),
-        Ok(browsers) => {
-            let names: Vec<&str> = browsers.iter().map(|browser| browser.name()).collect();
-            format!("{}{}", strings::BROWSER_HOSTS_FOR, names.join(", "))
-        }
-    };
-    Some((summary.into(), false))
 }
 
 pub fn describe(error: &EditVaultError) -> &'static str {
@@ -2279,6 +2233,24 @@ fn grouped(code: &str) -> SharedString {
     }
     let (first, second) = code.split_at(code.len() / 2);
     format!("{first} {second}").into()
+}
+
+/// What marks an Entry in the list and above its details: its custom icon if it has one, else
+/// its site's favicon once downloaded (when the user turned that on), else its standard icon.
+fn entry_mark(
+    workspace: &Workspace,
+    vault: VaultId,
+    entry: &Entry,
+    size: gpui::Pixels,
+    color: gpui::Rgba,
+) -> Option<AnyElement> {
+    let open = workspace.vault(vault)?;
+    if !matches!(entry.icon(), EntryIcon::Custom(_))
+        && let Some(favicon) = favicons::image(workspace, vault, entry.id(), f32::from(size))
+    {
+        return Some(favicon);
+    }
+    Some(icons::entry_icon(entry.icon(), open.vault(), size, color))
 }
 
 fn sort_label(sort: EntrySort) -> &'static str {

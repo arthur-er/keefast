@@ -181,7 +181,6 @@ pub const ERROR_FIELD_NAME_EMPTY: &str = "Give every custom field a name.";
 pub const ERROR_FIELD_NAME_TAKEN: &str =
     "Each field needs a name of its own, other than Title, UserName, Password, URL or Notes.";
 
-pub const BROWSER_INTEGRATION: &str = "Browser integration";
 pub const BROWSER_HOSTS_FOR: &str = "Set up for ";
 pub const BROWSER_HOSTS_NONE: &str =
     "No supported browser found (Chrome, Chromium, Brave, Edge, Vivaldi).";
@@ -329,6 +328,39 @@ pub const USE_AS_BROWSER_GROUP: &str = "Save browser logins here";
 pub const ERROR_IN_RECYCLE_BIN: &str = "Logins can't be saved in the Recycle Bin.";
 pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
 
+/// The app-wide settings, kept on this machine, as opposed to a Vault's own settings.
+pub const SETTINGS: &str = "App settings";
+pub const SETTINGS_TITLE: &str = "App settings";
+pub const SETTINGS_CLOSE: &str = "Done";
+pub const SETTINGS_APPEARANCE: &str = "Appearance";
+pub const SETTINGS_THEME: &str = "Theme";
+pub const THEME_SYSTEM: &str = "Same as the system";
+pub const THEME_LIGHT: &str = "Light";
+pub const THEME_DARK: &str = "Dark";
+pub const SETTINGS_LOCKING: &str = "Locking";
+pub const SETTINGS_IDLE_LOCK: &str = "Lock every Vault after this long without input";
+pub const SETTINGS_LOCK_ON_OS_LOCK: &str =
+    "Lock every Vault when the screen locks or the computer sleeps";
+pub const SETTINGS_CLIPBOARD: &str = "Clipboard";
+pub const SETTINGS_CLIPBOARD_CLEAR: &str = "Clear copied usernames and passwords after";
+pub const SETTINGS_SAVING: &str = "Saving";
+pub const SETTINGS_AUTOSAVE: &str = "Save Vaults automatically after every change";
+pub const SETTINGS_GENERATOR: &str = "Password generator";
+pub const SETTINGS_GENERATOR_NOTE: &str =
+    "keefast and the browser extension generate passwords with these settings.";
+pub const SETTINGS_BROWSER: &str = "Browser";
+pub const SETTINGS_BROWSER_INTEGRATION: &str =
+    "Let browser extensions ask keefast for logins (KeePassXC-Browser protocol)";
+pub const SETTINGS_NETWORK: &str = "Network";
+pub const SETTINGS_FAVICONS: &str = "Download website icons for Entries";
+pub const SETTINGS_FAVICONS_NOTE: &str = "keefast then asks each Entry's website for its icon, \
+so those websites see your IP address. Nothing goes through anyone else, and the icons are kept \
+in memory only, never on disk.";
+pub const NEVER: &str = "Never";
+pub const DURATION_SECONDS: &str = "{n} s";
+pub const DURATION_MINUTES: &str = "{n} min";
+pub const DURATION_HOURS: &str = "{n} h";
+
 /// The names of commands in the command palette, by action. The palette names an action not
 /// listed here after the action itself.
 pub fn command_name(action: &str) -> Option<&'static str> {
@@ -357,6 +389,8 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "vault_browser::SaveAll" => "Save All Vaults",
         "vault_browser::OpenVault" => "Open Another Vault…",
         "vault_browser::OpenVaultSettings" => "Vault Settings",
+        "settings::OpenSettings" => "Open App Settings",
+        "settings::CloseSettings" => "Close App Settings",
         _ => return None,
     })
 }

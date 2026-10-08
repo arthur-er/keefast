@@ -148,3 +148,32 @@ fn a_site_is_known_by_its_host() {
     );
     assert_eq!(site("http://[::1]:8080/").host(), "::1");
 }
+
+#[test]
+fn an_entry_url_names_the_site_its_favicon_comes_from() {
+    let origin = |url: &str| Site::of_entry_url(url).map(|site| site.origin());
+
+    assert_eq!(
+        origin("https://login.example.com/session?next=/").as_deref(),
+        Some("https://login.example.com")
+    );
+    assert_eq!(
+        origin("example.com/login").as_deref(),
+        Some("https://example.com")
+    );
+    assert_eq!(
+        origin("  HTTP://Example.COM./ ").as_deref(),
+        Some("http://example.com")
+    );
+    assert_eq!(
+        origin("https://example.com:8443/").as_deref(),
+        Some("https://example.com:8443")
+    );
+    assert_eq!(
+        origin("https://[::1]:8080").as_deref(),
+        Some("https://[::1]:8080")
+    );
+    assert_eq!(origin(""), None);
+    assert_eq!(origin("ftp://example.com"), None);
+    assert_eq!(origin("cmd://putty.exe"), None);
+}

@@ -46,8 +46,22 @@ with its keys.
 
 In the Entry list, Up/Down (Home/End) select an Entry and Enter opens it for editing.
 Ctrl+B copies the selected Entry's username, Ctrl+C its password and Ctrl+T its TOTP code.
-keefast clears what it copied from the clipboard after 30 seconds, unless you have copied something else since; set
-`clipboard_clear_seconds` in `keefast/config.toml` to change the wait (0 never clears).
+keefast clears what it copied from the clipboard after 30 seconds, unless you have copied something else since;
+change the wait in App settings.
+
+## App settings
+
+App settings (Ctrl+, or "App settings" in the sidebar and the unlock dialog) hold the preferences
+kept on this machine, in `keefast/config.toml` in the OS config directory: the theme (the
+system's light/dark setting, or always light or dark), the idle lock and locking with the OS, how
+long copied secrets stay on the clipboard, autosave, the password generator, browser integration
+and favicon download. Tab moves between the settings and Enter or Space picks one; Escape closes
+them.
+
+Favicon download is off by default, as keefast makes no network requests you haven't agreed to.
+Turned on, keefast asks each Entry's site for `/favicon.ico`, or the icon its home page links
+to, and never a third-party favicon service. Favicons are kept in memory only, and forgotten when
+every Vault locks: a cache on disk would list your sites in the clear.
 
 ## Tags, colours, icons and expiry
 
@@ -62,7 +76,7 @@ KeePassXC, KeePass and KeeWeb store them, so those clients show them too.
 ## Browser integration
 
 keefast speaks the KeePassXC-Browser protocol (ADR 0003) with its Companion extension, and the
-stock KeePassXC-Browser extension works with it too. Turn on "Browser integration" in keefast:
+stock KeePassXC-Browser extension works with it too. Turn on browser integration in keefast's App settings:
 it registers `keefast-native-host`, installed next to the `keefast` binary, with Chrome,
 Chromium, Brave, Edge and Vivaldi. It registers under KeePassXC's host name, so it takes over
 from a KeePassXC registered for the same browsers; turning it off removes only keefast's

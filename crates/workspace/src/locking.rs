@@ -97,6 +97,29 @@ impl Workspace {
         self.request_lock(all, clipboard, true)
     }
 
+    /// How long without the user's input before every Vault locks; `None` never locks them.
+    pub fn idle_lock_after(&self) -> Option<Duration> {
+        self.config.idle_lock_after
+    }
+
+    /// Changes how long the Vaults wait for the user's input before they lock, counting from
+    /// their last input, and remembers it in the app config.
+    pub fn set_idle_lock_after(&mut self, after: Option<Duration>) {
+        self.config.idle_lock_after = after;
+        self.save_config();
+    }
+
+    pub fn lock_on_os_lock(&self) -> bool {
+        self.config.lock_on_os_lock
+    }
+
+    /// Turns locking every Vault when the OS locks or suspends on or off, and remembers the
+    /// choice in the app config.
+    pub fn set_lock_on_os_lock(&mut self, lock: bool) {
+        self.config.lock_on_os_lock = lock;
+        self.save_config();
+    }
+
     /// Tells the Workspace the user gave keefast input, which postpones the idle lock.
     pub fn note_activity(&mut self) {
         self.last_activity = self.clock.now();
@@ -221,6 +244,7 @@ impl Workspace {
         }
         if self.locked.len() > before {
             self.announce_locked();
+            self.forget_unused_favicons();
         }
     }
 

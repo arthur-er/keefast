@@ -3264,6 +3264,7 @@ dependencies = [
  "crypto_box",
  "dirs 5.0.1",
  "getrandom 0.4.3",
+ "image",
  "keefast-core",
  "keyring",
  "notify",
