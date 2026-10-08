@@ -390,6 +390,11 @@ mod tests {
             "Copy Custom Field"
         );
         assert_eq!(command_name("vault_browser::LockAll"), "Lock All Vaults");
+        assert_eq!(command_name("vault_browser::FocusSearch"), "Search Entries");
+        assert_eq!(
+            command_name("vault_browser::SortByModified"),
+            "Sort Entries by Last Change"
+        );
     }
 
     #[test]
