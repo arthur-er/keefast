@@ -1,5 +1,6 @@
 // Drives KeePassLib, KeePass2's own file layer.
-// Usage: keepass2.exe write <out.kdbx> <password> kdbx3|kdbx4   writes a fixture Vault file
+// Usage: keepass2.exe write <out.kdbx> <password> kdbx3|kdbx4 [key file]
+//                                                              writes a fixture Vault file
 //        keepass2.exe export <in.kdbx> <password>              prints a Vault file as XML
 using System;
 using System.Reflection;
@@ -29,17 +30,18 @@ static class Fixture
         return entry;
     }
 
-    static CompositeKey Key(string password)
+    static CompositeKey Key(string password, string keyFile = null)
     {
         var key = new CompositeKey();
         key.AddUserKey(new KcpPassword(password));
+        if (keyFile != null) key.AddUserKey(new KcpKeyFile(keyFile));
         return key;
     }
 
     static void Main(string[] args)
     {
         if (args[0] == "export") Export(args[1], args[2]);
-        else Write(args[1], args[2], args[3] == "kdbx4");
+        else Write(args[1], args[2], args[3] == "kdbx4", args.Length > 4 ? args[4] : null);
     }
 
     static void Export(string path, string password)
@@ -50,9 +52,9 @@ static class Fixture
             new KdbxFile(db).Save(stdout, null, KdbxFormat.PlainXml, new NullStatusLogger());
     }
 
-    static void Write(string path, string password, bool kdbx4)
+    static void Write(string path, string password, bool kdbx4, string keyFile)
     {
-        var key = Key(password);
+        var key = Key(password, keyFile);
         var db = new PwDatabase();
         db.New(new IOConnectionInfo(), key);
         db.Name = "KeePass2 fixture";

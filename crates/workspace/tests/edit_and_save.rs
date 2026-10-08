@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use keefast_core::{CompositeKey, EntryFields, Timestamp, Vault};
 use keefast_workspace::{
-    EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError, StorageProvider, VaultId,
-    VaultLocation, Workspace,
+    Credentials, EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError,
+    StorageProvider, VaultId, VaultLocation, Workspace,
 };
 use secrecy::{ExposeSecret, SecretString};
 use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
@@ -38,8 +38,8 @@ fn harness() -> Harness {
     }
 }
 
-fn key() -> CompositeKey {
-    CompositeKey::password(PASSWORD)
+fn key() -> Credentials {
+    Credentials::password(PASSWORD)
 }
 
 fn fields(title: &str, password: &str) -> EntryFields {
@@ -56,7 +56,7 @@ impl Harness {
     /// Opens what the Storage provider holds now, as a fresh Workspace would.
     fn reopen(&self) -> Vault {
         let bytes = self.storage.file(&personal_vault()).unwrap();
-        Vault::open(&bytes, &key()).expect("saved Vault file opens")
+        Vault::open(&bytes, &CompositeKey::password(PASSWORD)).expect("saved Vault file opens")
     }
 
     fn root(&self) -> keefast_core::GroupId {

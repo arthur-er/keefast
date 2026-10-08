@@ -1,9 +1,15 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, PathPromptOptions,
-    SharedString, Task, Window, div, prelude::*, px,
+    Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, PathPromptOptions, SharedString, Task, Window, div, prelude::*, px, relative,
 };
-use keefast_core::{CompositeKey, OpenError};
-use keefast_workspace::{OpenVaultError, StorageError, VaultId, VaultLocation, Workspace};
+use keefast_core::{KeyFileError, OpenError};
+use keefast_workspace::{
+    Credentials, OpenVaultError, StorageError, VaultId, VaultLocation, Workspace,
+};
+use secrecy::SecretString;
 
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
@@ -17,14 +23,31 @@ pub enum UnlockEvent {
     Cancelled,
 }
 
-/// The unlock dialog: pick a recent Vault file or choose one, type the master password, unlock
-/// off the UI thread.
+/// The unlock dialog: pick a recent Vault file or choose one, type the master password and/or
+/// choose a key file, unlock off the UI thread.
 pub struct UnlockView {
     workspace: Entity<Workspace>,
     location: Option<VaultLocation>,
     password: Entity<TextField>,
-    error: Option<SharedString>,
+    key_file: Option<PathBuf>,
+    error: Option<UnlockError>,
     unlocking: Option<Task<()>>,
+}
+
+/// Why the last unlock failed: what the user should know, plus the technical reason, if any.
+#[derive(Clone)]
+struct UnlockError {
+    message: SharedString,
+    detail: Option<SharedString>,
+}
+
+impl UnlockError {
+    fn new(message: &'static str) -> Self {
+        Self {
+            message: message.into(),
+            detail: None,
+        }
+    }
 }
 
 impl EventEmitter<UnlockEvent> for UnlockView {}
@@ -40,6 +63,7 @@ impl UnlockView {
     pub fn new(
         workspace: Entity<Workspace>,
         location: Option<VaultLocation>,
+        key_file: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let password =
@@ -53,6 +77,7 @@ impl UnlockView {
             workspace,
             location,
             password,
+            key_file,
             error: None,
             unlocking: None,
         };
@@ -62,10 +87,11 @@ impl UnlockView {
         view
     }
 
-    /// Readies the dialog to open another Vault: no password, and the most recent Vault file
-    /// that isn't open yet.
+    /// Readies the dialog to open another Vault: no password or key file, and the most recent
+    /// Vault file that isn't open yet.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.clear_password(cx);
+        self.key_file = None;
         self.error = None;
         self.location = self.most_recent_closed(cx);
         cx.notify();
@@ -112,22 +138,45 @@ impl UnlockView {
     }
 
     fn choose_file(&mut self, cx: &mut Context<Self>) {
+        self.pick_file(strings::UNLOCK_CHOOSE_FILE_PROMPT, cx, |this, path| {
+            this.location = Some(VaultLocation::Local(path));
+        });
+    }
+
+    fn choose_key_file(&mut self, cx: &mut Context<Self>) {
+        self.pick_file(strings::UNLOCK_CHOOSE_KEY_FILE_PROMPT, cx, |this, path| {
+            this.key_file = Some(path);
+        });
+    }
+
+    fn clear_key_file(&mut self, cx: &mut Context<Self>) {
+        self.key_file = None;
+        self.error = None;
+        cx.notify();
+    }
+
+    fn pick_file(
+        &mut self,
+        prompt: &'static str,
+        cx: &mut Context<Self>,
+        picked: impl FnOnce(&mut Self, PathBuf) + 'static,
+    ) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some(strings::UNLOCK_CHOOSE_FILE_PROMPT.into()),
+            prompt: Some(prompt.into()),
         });
         cx.spawn(async move |this, cx| {
-            let picked = paths.await;
+            let result = paths.await;
             this.update(cx, |this, cx| {
-                match picked {
+                match result {
                     Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
-                        this.location = Some(VaultLocation::Local(paths.swap_remove(0)));
+                        picked(this, paths.swap_remove(0));
                         this.error = None;
                     }
                     Ok(Ok(_)) | Err(_) => {}
-                    Ok(Err(_)) => this.error = Some(strings::UNLOCK_ERROR_PICKER.into()),
+                    Ok(Err(_)) => this.error = Some(UnlockError::new(strings::UNLOCK_ERROR_PICKER)),
                 }
                 cx.notify();
             })
@@ -143,8 +192,11 @@ impl UnlockView {
         if self.unlocking.is_some() {
             return;
         }
-        let key = CompositeKey::password(self.password.read(cx).text());
-        let pending = match self.workspace.read(cx).begin_open(location, key) {
+        let credentials = Credentials::new(
+            SecretString::from(self.password.read(cx).text()),
+            self.key_file.clone(),
+        );
+        let pending = match self.workspace.read(cx).begin_open(location, credentials) {
             Ok(pending) => pending,
             Err(OpenVaultError::AlreadyOpen(vault)) => {
                 self.clear_password(cx);
@@ -152,7 +204,7 @@ impl UnlockView {
                 return;
             }
             Err(error) => {
-                self.error = Some(describe(&error).into());
+                self.error = Some(describe(&error));
                 cx.notify();
                 return;
             }
@@ -174,7 +226,7 @@ impl UnlockView {
                         });
                         cx.emit(UnlockEvent::Unlocked(vault));
                     }
-                    Err(error) => this.error = Some(describe(&error).into()),
+                    Err(error) => this.error = Some(describe(&error)),
                 }
                 cx.notify();
             })
@@ -265,15 +317,59 @@ impl UnlockView {
     }
 }
 
-fn describe(error: &OpenVaultError) -> &'static str {
-    match error {
-        OpenVaultError::AlreadyOpen(_) => strings::UNLOCK_ERROR_ALREADY_OPEN,
-        OpenVaultError::Vault(OpenError::WrongKey) => strings::UNLOCK_ERROR_WRONG_KEY,
-        OpenVaultError::Vault(OpenError::Corrupt(_)) => strings::UNLOCK_ERROR_CORRUPT,
-        OpenVaultError::Vault(OpenError::Unsupported(_)) => strings::UNLOCK_ERROR_UNSUPPORTED,
-        OpenVaultError::Storage(StorageError::NotFound(_)) => strings::UNLOCK_ERROR_NOT_FOUND,
-        OpenVaultError::Storage(StorageError::Io(_)) => strings::UNLOCK_ERROR_READ,
+/// Tells a wrong key, a damaged or unsupported Vault file and key file problems apart.
+fn describe(error: &OpenVaultError) -> UnlockError {
+    let (message, detail) = match error {
+        OpenVaultError::AlreadyOpen(_) => (strings::UNLOCK_ERROR_ALREADY_OPEN, None),
+        OpenVaultError::Vault(OpenError::WrongKey) => (strings::UNLOCK_ERROR_WRONG_KEY, None),
+        OpenVaultError::Vault(OpenError::Corrupt(reason)) => {
+            (strings::UNLOCK_ERROR_CORRUPT, Some(reason))
+        }
+        OpenVaultError::Vault(OpenError::Unsupported(reason)) => {
+            (strings::UNLOCK_ERROR_UNSUPPORTED, Some(reason))
+        }
+        OpenVaultError::Storage(StorageError::NotFound(_)) => {
+            (strings::UNLOCK_ERROR_NOT_FOUND, None)
+        }
+        OpenVaultError::Storage(StorageError::Io(_)) => (strings::UNLOCK_ERROR_READ, None),
+        OpenVaultError::KeyFileNotFound(_) => (strings::UNLOCK_ERROR_KEY_FILE_NOT_FOUND, None),
+        OpenVaultError::KeyFileUnreadable(_) => (strings::UNLOCK_ERROR_KEY_FILE_READ, None),
+        OpenVaultError::KeyFile(KeyFileError::Corrupt(reason)) => {
+            (strings::UNLOCK_ERROR_KEY_FILE_CORRUPT, Some(reason))
+        }
+        OpenVaultError::KeyFile(KeyFileError::Unsupported(reason)) => {
+            (strings::UNLOCK_ERROR_KEY_FILE_UNSUPPORTED, Some(reason))
+        }
+    };
+    UnlockError {
+        message: message.into(),
+        detail: detail.map(|reason| reason.clone().into()),
     }
+}
+
+/// An indeterminate progress bar: key derivation can't report how far along it is.
+fn progress_bar(theme: Theme) -> impl IntoElement {
+    div()
+        .relative()
+        .h(px(4.))
+        .w_full()
+        .rounded_full()
+        .overflow_hidden()
+        .bg(theme.border)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .h_full()
+                .w(relative(0.3))
+                .rounded_full()
+                .bg(theme.accent)
+                .with_animation(
+                    "unlock-progress",
+                    Animation::new(Duration::from_millis(1200)).repeat(),
+                    |bar, delta| bar.left(relative(delta * 1.3 - 0.3)),
+                ),
+        )
 }
 
 impl Render for UnlockView {
@@ -285,6 +381,15 @@ impl Render for UnlockView {
         let file_label: SharedString = match &self.location {
             Some(location) => location.description().into(),
             None => strings::UNLOCK_NO_FILE.into(),
+        };
+        let key_file_label: SharedString = match &self.key_file {
+            Some(path) => path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+            None => strings::UNLOCK_NO_KEY_FILE.into(),
         };
         let recents = self.render_recents(theme, cx);
         div()
@@ -332,8 +437,68 @@ impl Render for UnlockView {
                             .child(strings::UNLOCK_PASSWORD_LABEL),
                     )
                     .child(self.password.clone())
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::UNLOCK_KEY_FILE_LABEL),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_sm()
+                                    .when(self.key_file.is_none(), |this| {
+                                        this.text_color(theme.muted)
+                                    })
+                                    .child(key_file_label),
+                            )
+                            .when(self.key_file.is_some(), |this| {
+                                this.child(
+                                    tool_button(
+                                        "clear-key-file",
+                                        strings::UNLOCK_CLEAR_KEY_FILE,
+                                        theme,
+                                    )
+                                    .text_color(theme.muted)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.clear_key_file(cx)),
+                                    ),
+                                )
+                            })
+                            .child(
+                                button("choose-key-file", strings::UNLOCK_CHOOSE_KEY_FILE, theme)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.choose_key_file(cx)),
+                                    ),
+                            ),
+                    )
+                    .when(self.unlocking.is_some(), |this| {
+                        this.child(progress_bar(theme)).child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted)
+                                .child(strings::UNLOCK_PROGRESS),
+                        )
+                    })
                     .when_some(self.error.clone(), |this, error| {
-                        this.child(div().text_sm().text_color(theme.error).child(error))
+                        this.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .child(div().text_sm().text_color(theme.error).child(error.message))
+                                .when_some(error.detail, |this, detail| {
+                                    this.child(
+                                        div().text_xs().text_color(theme.muted).child(detail),
+                                    )
+                                }),
+                        )
                     })
                     .when(config_error, |this| {
                         this.child(

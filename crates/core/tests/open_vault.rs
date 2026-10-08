@@ -115,3 +115,24 @@ fn a_kdbx3_1_vault_file_with_an_altered_header_is_reported_as_corrupt() {
 
     assert!(matches!(result, Err(OpenError::Corrupt(_))));
 }
+
+#[test]
+fn a_kdbx_version_from_the_future_is_reported_as_unsupported() {
+    let mut future = KEEPASSXC_KDBX4.to_vec();
+    future[10..12].copy_from_slice(&5u16.to_le_bytes());
+
+    let result = Vault::open(&future, &CompositeKey::password(PASSWORD));
+
+    assert!(matches!(result, Err(OpenError::Unsupported(_))));
+}
+
+#[test]
+fn a_keepass_1_file_is_reported_as_unsupported() {
+    // KeePass 1.x (KDB) shares the signature but has its own file type.
+    let mut kdb = vec![0x03, 0xd9, 0xa2, 0x9a, 0x65, 0xfb, 0x4b, 0xb5];
+    kdb.extend_from_slice(&[0; 116]);
+
+    let result = Vault::open(&kdb, &CompositeKey::password(PASSWORD));
+
+    assert!(matches!(result, Err(OpenError::Unsupported(_))));
+}

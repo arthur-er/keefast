@@ -22,7 +22,7 @@ pub use edit::{EditError, EntryFields};
 pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
 };
-pub use key::CompositeKey;
+pub use key::{CompositeKey, KeyFileError};
 pub use open::OpenError;
 pub use save::SaveError;
 pub use site::Site;

@@ -51,7 +51,7 @@ struct KeefastWindow {
 }
 
 impl KeefastWindow {
-    fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|_| {
             let mut workspace = Workspace::new(Arc::new(LocalStorage));
             if let Some(config) = FileConfigStore::in_os_config_dir() {
@@ -74,8 +74,8 @@ impl KeefastWindow {
         let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
         cx.observe_in(&integration, window, Self::show_pending_requests)
             .detach();
-        let location = path.map(VaultLocation::Local);
-        let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), location, cx));
+        let location = args.vault_file.map(VaultLocation::Local);
+        let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), location, args.key_file, cx));
         cx.subscribe_in(&unlock, window, Self::on_unlock_event)
             .detach();
         window.focus(&unlock.focus_handle(cx));
@@ -368,11 +368,33 @@ impl Render for KeefastWindow {
     }
 }
 
+/// The command line: `keefast [VAULT_FILE] [--key-file KEY_FILE]`.
+#[derive(Default)]
+struct Args {
+    vault_file: Option<PathBuf>,
+    key_file: Option<PathBuf>,
+}
+
+impl Args {
+    fn parse(mut args: impl Iterator<Item = std::ffi::OsString>) -> Self {
+        // Recent Vault files are remembered by full path, so relative paths are made absolute.
+        let absolute = |path: std::ffi::OsString| {
+            std::path::absolute(&path).unwrap_or_else(|_| PathBuf::from(path))
+        };
+        let mut parsed = Args::default();
+        while let Some(arg) = args.next() {
+            if arg == "--key-file" {
+                parsed.key_file = args.next().map(absolute);
+            } else if parsed.vault_file.is_none() {
+                parsed.vault_file = Some(absolute(arg));
+            }
+        }
+        parsed
+    }
+}
+
 fn main() {
-    // Recent Vault files are remembered by full path, so a relative path is made absolute.
-    let path = std::env::args_os()
-        .nth(1)
-        .map(|path| std::path::absolute(&path).unwrap_or_else(|_| PathBuf::from(path)));
+    let args = Args::parse(std::env::args_os().skip(1));
     Application::new().run(move |cx: &mut App| {
         actions::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
@@ -386,7 +408,7 @@ fn main() {
                 app_id: Some(strings::APP_NAME.into()),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| KeefastWindow::new(path, window, cx)),
+            |window, cx| cx.new(|cx| KeefastWindow::new(args, window, cx)),
         )
         .expect("failed to open the main window");
         cx.on_window_closed(|cx| cx.quit()).detach();

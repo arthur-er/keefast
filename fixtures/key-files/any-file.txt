@@ -1,0 +1,1 @@
+Any file can be a key file; this one is hashed.

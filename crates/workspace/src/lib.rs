@@ -7,17 +7,19 @@ mod browser_hosts;
 mod clipboard;
 mod clock;
 mod config;
+mod credentials;
 mod generator;
 mod storage;
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use secrecy::ExposeSecret;
 
 use keefast_core::{
-    CompositeKey, EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId,
+    EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId, KeyFileError,
     OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
 };
 use secrecy::SecretString;
@@ -33,6 +35,7 @@ pub use browser_hosts::{
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
+pub use credentials::Credentials;
 pub use generator::{GeneratorMode, GeneratorSettings};
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
 
@@ -60,6 +63,12 @@ pub enum OpenVaultError {
     AlreadyOpen(VaultId),
     #[error(transparent)]
     Storage(#[from] StorageError),
+    #[error("key file not found: {0}")]
+    KeyFileNotFound(PathBuf),
+    #[error("could not read the key file: {0}")]
+    KeyFileUnreadable(io::Error),
+    #[error(transparent)]
+    KeyFile(#[from] KeyFileError),
     #[error(transparent)]
     Vault(#[from] OpenError),
 }
@@ -141,17 +150,18 @@ impl OpenVault {
 }
 
 /// An open-Vault command that has not run yet. It owns everything it needs, so the slow part
-/// (reading the Vault file and key derivation) can run off the UI thread.
+/// (reading the Vault file and key file, and key derivation) can run off the UI thread.
 pub struct PendingOpen {
     storage: Arc<dyn StorageProvider>,
     location: VaultLocation,
-    key: CompositeKey,
+    credentials: Credentials,
 }
 
 impl PendingOpen {
     pub fn unlock(self) -> Result<UnlockedVault, OpenVaultError> {
         let bytes = self.storage.read(&self.location)?;
-        let vault = Vault::open(&bytes, &self.key)?;
+        let key = self.credentials.composite_key()?;
+        let vault = Vault::open(&bytes, &key)?;
         Ok(UnlockedVault {
             location: self.location,
             vault,
@@ -427,9 +437,9 @@ impl Workspace {
     pub fn open_vault(
         &mut self,
         location: &VaultLocation,
-        key: &CompositeKey,
+        credentials: &Credentials,
     ) -> Result<VaultId, OpenVaultError> {
-        let pending = self.begin_open(location.clone(), key.clone())?;
+        let pending = self.begin_open(location.clone(), credentials.clone())?;
         Ok(self.add_unlocked(pending.unlock()?))
     }
 
@@ -439,7 +449,7 @@ impl Workspace {
     pub fn begin_open(
         &self,
         location: VaultLocation,
-        key: CompositeKey,
+        credentials: Credentials,
     ) -> Result<PendingOpen, OpenVaultError> {
         let location = self.storage.canonical(&location);
         if let Some(open) = self.open_vault_at(&location) {
@@ -448,7 +458,7 @@ impl Workspace {
         Ok(PendingOpen {
             storage: Arc::clone(&self.storage),
             location,
-            key,
+            credentials,
         })
     }
 

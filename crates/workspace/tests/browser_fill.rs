@@ -9,8 +9,10 @@ mod support;
 
 use std::sync::Arc;
 
-use keefast_core::{AccessDecision, CompositeKey};
-use keefast_workspace::{AccessAnswer, ConnectionId, Outgoing, PendingAccess, VaultId, Workspace};
+use keefast_core::AccessDecision;
+use keefast_workspace::{
+    AccessAnswer, ConnectionId, Credentials, Outgoing, PendingAccess, VaultId, Workspace,
+};
 use serde_json::Value;
 use support::extension::{FakeExtension, Sent};
 use support::{BROWSER_KDBX, FakeStorage, PASSWORD, personal_vault, work_vault};
@@ -61,7 +63,7 @@ impl Browser {
     fn paired(storage: Arc<FakeStorage>) -> (Self, VaultId) {
         let mut workspace = Workspace::new(storage);
         let vault = workspace
-            .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
+            .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
             .unwrap();
         workspace.set_browser_integration(true);
         let mut extension = FakeExtension::new();
@@ -246,7 +248,7 @@ fn a_remembered_allow_is_stored_on_the_entries_and_not_asked_again() {
     let (key_name, key) = browser.pairing.clone();
     let mut workspace = Workspace::new(storage);
     workspace
-        .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
+        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
         .unwrap();
     workspace.set_browser_integration(true);
     let mut later = FakeExtension::new();
@@ -333,7 +335,7 @@ fn an_unpaired_vault_is_invisible() {
     // The work Vault holds the same Entries, but isn't paired with this browser.
     browser
         .workspace
-        .open_vault(&work_vault(), &CompositeKey::password(PASSWORD))
+        .open_vault(&work_vault(), &Credentials::password(PASSWORD))
         .unwrap();
 
     let sent = browser.get_logins(EXAMPLE);

@@ -25,6 +25,8 @@ in `.github/workflows/ci.yml`.
 ```sh
 cargo test --workspace
 cargo run -p keefast -- fixtures/keepassxc-kdbx4.kdbx   # master password: fixture-password
+# With a key file (fixtures/key-files/ has one Vault file per key file format):
+cargo run -p keefast -- fixtures/key-files/keepassxc-xml-v2.kdbx --key-file fixtures/key-files/xml-v2.keyx
 ```
 
 The Vault files in `fixtures/` are the round-trip corpus (ADR 0002): real files written by
