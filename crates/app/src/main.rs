@@ -1,4 +1,6 @@
 //! keefast's desktop app: GPUI views that render Workspace state and send it commands.
+// Windows opens a console window for a console program, so release builds are GUI programs there.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod access_dialog;
 mod actions;
@@ -644,11 +646,13 @@ fn dropbox_config(workspace: &Workspace) -> Option<DropboxConfig> {
     Some(config)
 }
 
-/// The command line: `keefast [VAULT_FILE] [--key-file KEY_FILE]`.
+/// The command line: `keefast [VAULT_FILE] [--key-file KEY_FILE]`, or
+/// `keefast --unregister-browser-hosts`, which the Windows installer runs when it uninstalls.
 #[derive(Default)]
 struct Args {
     vault_file: Option<PathBuf>,
     key_file: Option<PathBuf>,
+    unregister_browser_hosts: bool,
 }
 
 impl Args {
@@ -661,6 +665,8 @@ impl Args {
         while let Some(arg) = args.next() {
             if arg == "--key-file" {
                 parsed.key_file = args.next().map(absolute);
+            } else if arg == "--unregister-browser-hosts" {
+                parsed.unregister_browser_hosts = true;
             } else if arg.to_string_lossy().starts_with("--") {
                 eprintln!("keefast: ignoring unknown option {}", arg.to_string_lossy());
             } else if parsed.vault_file.is_none() {
@@ -673,6 +679,9 @@ impl Args {
 
 fn main() {
     let args = Args::parse(std::env::args_os().skip(1));
+    if args.unregister_browser_hosts {
+        unregister_browser_hosts();
+    }
     Application::new()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
@@ -694,4 +703,47 @@ fn main() {
             cx.on_window_closed(|cx| cx.quit()).detach();
             cx.activate(true);
         });
+}
+
+/// Removes keefast's registrations of its native host and exits, without opening a window.
+/// Browser integration stays on in the app config, so reinstalling keefast registers it again.
+fn unregister_browser_hosts() -> ! {
+    use keefast_workspace::BrowserHosts;
+
+    let result = NativeMessagingHosts::for_current_user()
+        .ok_or_else(|| std::io::Error::other("no data directory for the current user"))
+        .and_then(|hosts| hosts.uninstall());
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("keefast: couldn't unregister the native host: {error}");
+            std::process::exit(1)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Args {
+        Args::parse(args.iter().map(std::ffi::OsString::from))
+    }
+
+    #[test]
+    fn the_installer_can_ask_to_unregister_the_native_host() {
+        let args = parse(&["--unregister-browser-hosts"]);
+
+        assert!(args.unregister_browser_hosts);
+        assert_eq!(args.vault_file, None);
+    }
+
+    #[test]
+    fn opening_a_vault_file_leaves_the_native_host_registered() {
+        let args = parse(&["personal.kdbx", "--key-file", "personal.keyx"]);
+
+        assert!(!args.unregister_browser_hosts);
+        assert!(args.vault_file.unwrap().ends_with("personal.kdbx"));
+        assert!(args.key_file.unwrap().ends_with("personal.keyx"));
+    }
 }

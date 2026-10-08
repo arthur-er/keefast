@@ -35,6 +35,23 @@ Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is
 `scripts/package-linux.sh` makes the tarball and AppImage from a release build, and
 `scripts/smoke-linux.sh` checks that keefast starts on X11 and Wayland.
 
+## Install on Windows
+
+Each release has an MSI, `keefast-<version>-windows-x86_64.msi`. It installs keefast for your
+user, without asking for administrator rights, in `%LOCALAPPDATA%\Programs\keefast`, with a
+Start menu shortcut. Installing a newer MSI upgrades keefast in place.
+
+Browser integration registers the `keefast-native-host` installed next to `keefast.exe`.
+Uninstalling keefast (Settings > Apps) removes those registrations, and only keefast's; your
+config and Vault files stay, so a reinstalled keefast registers the host again when it starts
+if browser integration was on.
+
+Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
+`.github/workflows/package-windows.yml` makes the MSI from a release build with WiX
+(`packaging/windows/keefast.wxs`), and `scripts/smoke-windows.ps1` checks that it installs, and
+that uninstalling removes keefast and its browser registrations but leaves another program's
+alone. Pull requests that change the installer run that workflow too.
+
 ## Development
 
 The Cargo workspace lives in `crates/`:

@@ -26,6 +26,10 @@ jobs:
     needs: version
     uses: ./.github/workflows/package-linux.yml
 
+  windows:
+    needs: version
+    uses: ./.github/workflows/package-windows.yml
+
   # The Companion extension is the same on every platform, so it ships once, as its own zip,
   # rather than inside each platform's package.
   extension:
@@ -54,7 +58,7 @@ jobs:
 
   release:
     name: Draft the release
-    needs: [linux, extension]
+    needs: [linux, windows, extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write

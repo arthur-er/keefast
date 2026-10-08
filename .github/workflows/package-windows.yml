@@ -1,0 +1,70 @@
+# Builds the Windows MSI, smoke-checks that it installs and uninstalls cleanly, and uploads it as
+# the `windows-x86_64` artifact. Called by the release workflow; it also runs on pull requests that
+# change the installer, and by hand to try a build.
+name: Package for Windows
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - packaging/windows/**
+      - scripts/smoke-windows.ps1
+      - .github/workflows/package-windows.yml
+
+env:
+  CARGO_TERM_COLOR: always
+  # WiX v5 is under the MS-RL; later versions ask each user to accept their EULA.
+  WIX_VERSION: 5.0.2
+
+jobs:
+  package:
+    name: Package (x86_64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # GPUI compiles its HLSL shaders with fxc.exe from the Windows SDK.
+      - name: Locate fxc.exe
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
+          "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: cargo build --release --locked -p keefast -p keefast-native-host
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version $env:WIX_VERSION
+
+      - name: Build the MSI
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$' |
+            Select-Object -First 1).Matches.Groups[1].Value
+          if (-not $version) { throw "no version in Cargo.toml" }
+          # An MSI's version is numbers only, so a pre-release gets its release's number.
+          $msiVersion = $version -replace '[-+].*$', ''
+          $msi = "dist\keefast-$version-windows-x86_64.msi"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          wix build packaging/windows/keefast.wxs -arch x64 `
+            -d Version=$msiVersion -d BinDir=target\release -o $msi
+          if ($LASTEXITCODE) { throw "wix build failed" }
+          wix msi validate $msi
+          if ($LASTEXITCODE) { throw "wix msi validate failed" }
+
+      - name: Smoke check installing and uninstalling
+        run: scripts/smoke-windows.ps1 (Get-Item dist\*.msi).FullName
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*.msi
+          if-no-files-found: error
