@@ -188,6 +188,7 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "vault_browser::CopyUsername" => "Copy Username",
         "vault_browser::CopyPassword" => "Copy Password",
         "vault_browser::CopyTotp" => "Copy TOTP Code",
+        "vault_browser::CopyCustomField" => "Copy Custom Field",
         "vault_browser::SaveAll" => "Save All Vaults",
         "vault_browser::OpenVault" => "Open Another Vault…",
         _ => return None,

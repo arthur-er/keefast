@@ -385,6 +385,10 @@ mod tests {
     fn names_from_strings_come_first() {
         assert_eq!(command_name("vault_browser::CopyTotp"), "Copy TOTP Code");
         assert_eq!(command_name("vault_browser::OpenEntry"), "Edit Entry");
+        assert_eq!(
+            command_name("vault_browser::CopyCustomField"),
+            "Copy Custom Field"
+        );
     }
 
     #[test]
