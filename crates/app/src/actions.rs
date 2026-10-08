@@ -24,6 +24,9 @@ actions!(
         OpenVault,
         /// Locks every open Vault.
         LockAll,
+        /// Checks every Dropbox Vault for changes made elsewhere now, and uploads saves made
+        /// offline.
+        SyncNow,
         /// Moves the keyboard to the search field above the Entry list.
         FocusSearch,
         SortByTitle,

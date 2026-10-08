@@ -5,6 +5,7 @@ mod atomic_file;
 mod attachments;
 mod browser;
 mod browser_hosts;
+mod cache;
 mod clipboard;
 mod clock;
 mod config;
@@ -41,6 +42,7 @@ pub use browser::{
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,
 };
+pub use cache::{CachedFile, FileVaultCache, VaultCache};
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, ThemeSetting};
@@ -179,6 +181,26 @@ pub enum SaveStatus {
     Saved,
 }
 
+/// Where a Vault in a remote service, such as Dropbox, stands with its Vault file there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncStatus {
+    /// The Vault file there has everything saved here.
+    Synced,
+    /// Checking the Vault file there for changes, or uploading to it.
+    Syncing,
+    /// The service can't be reached. Saves are kept on this machine meanwhile.
+    Offline,
+    /// The last sync failed for another reason.
+    Error,
+}
+
+/// Why a remote Vault's last sync didn't go through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncProblem {
+    Offline,
+    Failed,
+}
+
 /// A Vault the Workspace has open, together with where its Vault file lives.
 pub struct OpenVault {
     id: VaultId,
@@ -202,6 +224,15 @@ pub struct OpenVault {
     /// Whether that lock was not asked for by the user (idle, OS lock or suspend), and so
     /// can't be cancelled by whoever is at the keyboard.
     auto_lock: bool,
+    /// Whether the Vault was saved to the local cache only, and its remote Vault file still
+    /// lacks that save.
+    upload_pending: bool,
+    /// Why the last sync with the remote Vault file didn't go through, if it didn't.
+    sync_problem: Option<SyncProblem>,
+    /// How many syncs in a row didn't go through, to wait longer before the next.
+    sync_failures: u32,
+    /// When the remote Vault file is next checked for changes; `None` for local Vault files.
+    next_sync: Option<SystemTime>,
 }
 
 impl OpenVault {
@@ -240,22 +271,49 @@ impl OpenVault {
     pub fn save_failed(&self) -> bool {
         self.failed_save_at.is_some()
     }
+
+    /// Where the Vault stands with its remote Vault file. `None` for local Vault files.
+    pub fn sync_status(&self) -> Option<SyncStatus> {
+        if !self.location.is_remote() {
+            return None;
+        }
+        Some(match (self.saving, self.sync_problem) {
+            (true, _) => SyncStatus::Syncing,
+            (false, Some(SyncProblem::Offline)) => SyncStatus::Offline,
+            (false, Some(SyncProblem::Failed)) => SyncStatus::Error,
+            // Saved here only, with the upload about to start.
+            (false, None) if self.upload_pending => SyncStatus::Syncing,
+            (false, None) => SyncStatus::Synced,
+        })
+    }
 }
 
 /// An open-Vault command that has not run yet. It owns everything it needs, so the slow part
 /// (reading the Vault file and key file, and key derivation) can run off the UI thread.
 pub struct PendingOpen {
     storage: Arc<dyn StorageProvider>,
+    cache: Option<Arc<dyn VaultCache>>,
     location: VaultLocation,
     secrets: UnlockSecrets,
 }
 
+/// Where an opened Vault file was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fetched {
+    /// Its Storage provider.
+    Stored,
+    /// The cache, as its Storage provider couldn't be reached.
+    CachedOffline,
+    /// The cache, which holds a save not uploaded yet.
+    CachedUnuploaded,
+}
+
 impl PendingOpen {
     pub fn unlock(self) -> Result<UnlockedVault, OpenVaultError> {
-        let stored = self.storage.read(&self.location)?;
+        let (bytes, revision, fetched) = self.fetch()?;
         let mut opened = Err(OpenError::WrongKey);
         for key in self.secrets.composite_keys()? {
-            opened = Vault::open(&stored.bytes, &key);
+            opened = Vault::open(&bytes, &key);
             if !matches!(opened, Err(OpenError::WrongKey)) {
                 break;
             }
@@ -264,8 +322,40 @@ impl PendingOpen {
         Ok(UnlockedVault {
             location: self.location,
             vault,
-            revision: stored.revision,
+            revision,
+            fetched,
         })
+    }
+
+    /// Reads the Vault file, caching it if it is remote. A cached save not uploaded yet is
+    /// newer than the remote Vault file, so it is opened instead, and uploaded once open; a
+    /// remote Vault file out of reach is opened from the cache.
+    fn fetch(&self) -> Result<(Vec<u8>, Option<Revision>, Fetched), StorageError> {
+        let cached = || self.cache.as_ref()?.load(&self.location);
+        if let Some(cached) = cached().filter(|cached| !cached.uploaded) {
+            return Ok((cached.bytes, cached.revision, Fetched::CachedUnuploaded));
+        }
+        match self.storage.read(&self.location) {
+            Ok(stored) => {
+                if let Some(cache) = &self.cache {
+                    // Best effort: without it, the Vault just won't open offline.
+                    let _ = cache.store(
+                        &self.location,
+                        &CachedFile {
+                            bytes: stored.bytes.clone(),
+                            revision: Some(stored.revision.clone()),
+                            uploaded: true,
+                        },
+                    );
+                }
+                Ok((stored.bytes, Some(stored.revision), Fetched::Stored))
+            }
+            Err(StorageError::Offline(reason)) => match cached() {
+                Some(cached) => Ok((cached.bytes, cached.revision, Fetched::CachedOffline)),
+                None => Err(StorageError::Offline(reason)),
+            },
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -273,20 +363,26 @@ impl PendingOpen {
 pub struct UnlockedVault {
     location: VaultLocation,
     vault: Vault,
-    revision: Revision,
+    revision: Option<Revision>,
+    fetched: Fetched,
 }
 
 /// A save that has not run yet: a snapshot of the Vault, so the slow part (key derivation,
 /// encryption and writing) can run off the UI thread while editing goes on.
 ///
-/// A save never overwrites changes made to the Vault file elsewhere: it Merges them in first,
-/// then writes. A save that is only a check for such changes writes only after a Merge, and
-/// only if the Vault had no unsaved edits and the Vault file lacks something: unsaved edits
-/// wait for the user, or autosave, to save them.
+/// A save never overwrites changes made to the Vault file elsewhere: it fetches the Vault
+/// file's revision, Merges in what changed since it was last read, then writes, conditional on
+/// that revision, and tries again if it changed meanwhile. A save that is only a check for such
+/// changes writes only after a Merge, and only if the Vault had no unsaved edits and the Vault
+/// file lacks something: unsaved edits wait for the user, or autosave, to save them.
+///
+/// A remote Vault file out of reach is saved to the local cache instead, and uploaded later.
 pub struct PendingSave {
     id: VaultId,
     edits: u64,
     storage: Arc<dyn StorageProvider>,
+    /// The local cache, for a remote Vault file.
+    cache: Option<Arc<dyn VaultCache>>,
     location: VaultLocation,
     vault: Vault,
     revision: Option<Revision>,
@@ -310,6 +406,7 @@ impl PendingSave {
         FinishedSave {
             id: self.id,
             edits: self.edits,
+            write: self.write,
             merged,
             result,
         }
@@ -318,49 +415,104 @@ impl PendingSave {
     fn sync(&mut self, merged: &mut Vec<Vault>) -> Result<Synced, SaveVaultError> {
         let mut write = self.write;
         for _ in 0..SAVE_ATTEMPTS {
-            if write {
-                let bytes = self.vault.save()?;
-                match self
-                    .storage
-                    .write(&self.location, &bytes, self.revision.as_ref())
-                {
-                    Ok(revision) => return Ok(Synced::saved(revision)),
-                    Err(StorageError::Conflict) => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            let stored = match self.storage.read(&self.location) {
-                Ok(stored) => stored,
-                // Gone, perhaps for a moment while a sync tool replaces it: nothing to Merge.
-                Err(StorageError::NotFound(_)) if !write => return Ok(Synced::behind(None)),
+            let current = match self.storage.revision(&self.location) {
+                Ok(revision) => Some(revision),
+                Err(StorageError::NotFound(_)) => None,
+                Err(StorageError::Offline(_)) if write => return self.keep_offline(),
                 Err(error) => return Err(error.into()),
             };
-            if self.revision.as_ref() == Some(&stored.revision) && !write {
+            // Gone, perhaps for a moment while a sync tool replaces it: nothing to Merge.
+            let stored = match current {
+                Some(current) if self.revision.as_ref() != Some(&current) => {
+                    match self.storage.read(&self.location) {
+                        Ok(stored) => Some(stored),
+                        Err(StorageError::NotFound(_)) => None,
+                        Err(StorageError::Offline(_)) if write => return self.keep_offline(),
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                _ => None,
+            };
+            if let Some(stored) = stored {
+                let theirs = self.vault.open_version(&stored.bytes)?;
+                self.vault.merge(&theirs);
+                self.revision = Some(stored.revision.clone());
+                // A check writes only for a Vault without unsaved edits, and only if the Vault
+                // file lacks something the Vault has.
+                write =
+                    self.write || (!self.unsaved && theirs.clone().merge(&self.vault).changed());
+                merged.push(theirs);
+                if !write {
+                    self.cache_synced(stored.bytes);
+                    return Ok(match self.unsaved {
+                        true => Synced::behind(Some(stored.revision)),
+                        false => Synced::saved(stored.revision),
+                    });
+                }
+            } else if !write {
                 return Ok(Synced::behind(None));
             }
-            let theirs = self.vault.open_version(&stored.bytes)?;
-            self.vault.merge(&theirs);
-            self.revision = Some(stored.revision.clone());
-            // A check writes only for a Vault without unsaved edits, and only if the Vault
-            // file lacks something the Vault has.
-            write = self.write || (!self.unsaved && theirs.clone().merge(&self.vault).changed());
-            merged.push(theirs);
-            if !write {
-                return Ok(match self.unsaved {
-                    true => Synced::behind(Some(stored.revision)),
-                    false => Synced::saved(stored.revision),
-                });
+            let bytes = self.vault.save()?;
+            match self
+                .storage
+                .write(&self.location, &bytes, self.revision.as_ref())
+            {
+                Ok(revision) => {
+                    self.revision = Some(revision.clone());
+                    self.cache_synced(bytes);
+                    return Ok(Synced::saved(revision));
+                }
+                // Changed meanwhile: Merge it in, and try again.
+                Err(StorageError::Conflict) => {}
+                Err(StorageError::Offline(_)) => return self.keep_offline(),
+                Err(error) => return Err(error.into()),
             }
         }
         Err(StorageError::Conflict.into())
+    }
+
+    /// Saves the Vault to the local cache, as its remote Vault file can't be reached, to be
+    /// uploaded once it can. Without a cache, the save fails.
+    fn keep_offline(&self) -> Result<Synced, SaveVaultError> {
+        let offline = || StorageError::Offline("no local cache to keep the save in".into());
+        let cache = self.cache.as_ref().ok_or_else(offline)?;
+        let file = CachedFile {
+            bytes: self.vault.save()?,
+            revision: self.revision.clone(),
+            uploaded: false,
+        };
+        cache
+            .store(&self.location, &file)
+            .map_err(StorageError::Io)?;
+        Ok(Synced {
+            revision: self.revision.clone(),
+            caught_up: true,
+            offline: true,
+        })
+    }
+
+    /// Caches the remote Vault file as it now is, at the revision last read or written. Best
+    /// effort: without it, the Vault opens offline as it was last cached.
+    fn cache_synced(&self, bytes: Vec<u8>) {
+        if let Some(cache) = &self.cache {
+            let file = CachedFile {
+                bytes,
+                revision: self.revision.clone(),
+                uploaded: true,
+            };
+            let _ = cache.store(&self.location, &file);
+        }
     }
 }
 
 /// Where a save left the Vault file.
 struct Synced {
     revision: Option<Revision>,
-    /// Whether the Vault file now holds everything the saved snapshot did.
+    /// Whether the Vault file, or the local cache standing in for it, now holds everything the
+    /// saved snapshot did.
     caught_up: bool,
+    /// Whether the save was kept in the local cache, to upload later.
+    offline: bool,
 }
 
 impl Synced {
@@ -368,6 +520,7 @@ impl Synced {
         Self {
             revision: Some(revision),
             caught_up: true,
+            offline: false,
         }
     }
 
@@ -376,7 +529,24 @@ impl Synced {
         Self {
             revision,
             caught_up: false,
+            offline: false,
         }
+    }
+}
+
+/// How long to wait before checking a remote Vault file again, after `failures` syncs in a row
+/// didn't go through: longer each time, up to [`Workspace::MAX_SYNC_WAIT`].
+fn sync_wait(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(8);
+    Workspace::SYNC_INTERVAL
+        .saturating_mul(1 << doublings)
+        .min(Workspace::MAX_SYNC_WAIT)
+}
+
+/// Schedules the next check of a remote Vault file.
+fn schedule_sync(open: &mut OpenVault, now: SystemTime) {
+    if open.location.is_remote() {
+        open.next_sync = Some(now + sync_wait(open.sync_failures));
     }
 }
 
@@ -384,6 +554,8 @@ impl Synced {
 pub struct FinishedSave {
     id: VaultId,
     edits: u64,
+    /// Whether it was a save, or only a check of the Vault file.
+    write: bool,
     /// The versions of the Vault file Merged, to Merge into the open Vault too.
     merged: Vec<Vault>,
     result: Result<Synced, SaveVaultError>,
@@ -392,8 +564,12 @@ pub struct FinishedSave {
 pub struct Workspace {
     /// The Storage provider for local Vault files.
     storage: Arc<dyn StorageProvider>,
-    /// The Storage provider for Vault files in Dropbox, when keefast has a Dropbox app key.
+    /// The Dropbox account and its files, when keefast has a Dropbox app key.
     dropbox: Option<Arc<Dropbox>>,
+    /// The Storage provider for Vault files in Dropbox: `dropbox`, or a stand-in for it.
+    dropbox_storage: Option<Arc<dyn StorageProvider>>,
+    /// The local cache of remote Vault files.
+    cache: Option<Arc<dyn VaultCache>>,
     clock: Arc<dyn Clock>,
     /// The unlocked Vaults, in the order they were opened.
     vaults: Vec<OpenVault>,
@@ -422,6 +598,11 @@ pub struct Workspace {
 impl Workspace {
     /// How many recent Vault files are remembered.
     pub const MAX_RECENT_VAULTS: usize = 10;
+    /// How often remote Vault files are checked for changes made elsewhere. Dropbox doesn't
+    /// tell desktop apps of changes, so keefast asks.
+    pub const SYNC_INTERVAL: Duration = Duration::from_secs(30);
+    /// The longest wait between checks while a remote Vault file can't be reached.
+    pub const MAX_SYNC_WAIT: Duration = Duration::from_secs(5 * 60);
 
     pub fn new(storage: Arc<dyn StorageProvider>) -> Self {
         Self::with_clock(storage, Arc::new(SystemClock))
@@ -432,6 +613,8 @@ impl Workspace {
         Self {
             storage,
             dropbox: None,
+            dropbox_storage: None,
+            cache: None,
             clock,
             last_activity,
             vaults: Vec::new(),
@@ -478,7 +661,21 @@ impl Workspace {
 
     /// Reads and writes Vault files in Dropbox through `dropbox` from now on.
     pub fn with_dropbox(mut self, dropbox: Arc<Dropbox>) -> Self {
+        self.dropbox_storage = Some(dropbox.clone());
         self.dropbox = Some(dropbox);
+        self
+    }
+
+    /// Reads and writes Vault files in Dropbox through `storage`, a stand-in for Dropbox, from
+    /// now on.
+    pub fn with_dropbox_storage(mut self, storage: Arc<dyn StorageProvider>) -> Self {
+        self.dropbox_storage = Some(storage);
+        self
+    }
+
+    /// Keeps remote Vault files in `cache` from now on, so they open and save offline.
+    pub fn with_vault_cache(mut self, cache: Arc<dyn VaultCache>) -> Self {
+        self.cache = Some(cache);
         self
     }
 
@@ -501,11 +698,15 @@ impl Workspace {
         match location {
             VaultLocation::Local(_) => Ok(Arc::clone(&self.storage)),
             VaultLocation::Dropbox(_) => self
-                .dropbox
+                .dropbox_storage
                 .clone()
-                .map(|dropbox| dropbox as Arc<dyn StorageProvider>)
                 .ok_or_else(|| StorageError::Unavailable(location.clone())),
         }
+    }
+
+    /// The local cache for the Vault file at `location`, if it is remote.
+    fn cache_for(&self, location: &VaultLocation) -> Option<Arc<dyn VaultCache>> {
+        location.is_remote().then(|| self.cache.clone()).flatten()
     }
 
     pub fn browser_integration(&self) -> bool {
@@ -720,6 +921,7 @@ impl Workspace {
         }
         Ok(PendingOpen {
             storage,
+            cache: self.cache_for(&location),
             location,
             secrets,
         })
@@ -744,24 +946,33 @@ impl Workspace {
             }
         };
         let watch = self.watch(id, &unlocked.location);
+        let offline = unlocked.fetched == Fetched::CachedOffline;
+        let mut open = OpenVault {
+            id,
+            location: unlocked.location,
+            vault: unlocked.vault,
+            edits: 0,
+            saved_edits: 0,
+            saving: false,
+            failed_save_at: None,
+            revision: unlocked.revision,
+            file_changed: false,
+            watch,
+            lock_requested: false,
+            auto_lock: false,
+            upload_pending: unlocked.fetched == Fetched::CachedUnuploaded,
+            sync_problem: offline.then_some(SyncProblem::Offline),
+            sync_failures: u32::from(offline),
+            next_sync: None,
+        };
+        let now = self.clock.now();
+        schedule_sync(&mut open, now);
+        // A save not uploaded yet is uploaded at once.
+        if open.upload_pending {
+            open.next_sync = open.next_sync.map(|_| now);
+        }
         let at = self.vaults.partition_point(|open| open.id < id);
-        self.vaults.insert(
-            at,
-            OpenVault {
-                id,
-                location: unlocked.location,
-                vault: unlocked.vault,
-                edits: 0,
-                saved_edits: 0,
-                saving: false,
-                failed_save_at: None,
-                revision: Some(unlocked.revision),
-                file_changed: false,
-                watch,
-                lock_requested: false,
-                auto_lock: false,
-            },
-        );
+        self.vaults.insert(at, open);
         match view {
             Some(view) => self.restore_view(view),
             // Showing a Vault still locked, the user is shown the one they unlocked instead.
@@ -1092,17 +1303,21 @@ impl Workspace {
     fn begin(&mut self, id: VaultId, write: bool) -> Result<PendingSave, SaveVaultError> {
         let location = &self.vault(id).ok_or(SaveVaultError::VaultNotOpen)?.location;
         let storage = self.storage_for(location)?;
+        let cache = self.cache_for(location);
         let open = self.vault_mut(id).ok_or(SaveVaultError::VaultNotOpen)?;
         if open.saving {
             return Err(SaveVaultError::InProgress);
         }
         open.saving = true;
+        // A save kept on this machine is uploaded by whatever reaches the Vault file next.
+        let write = write || open.upload_pending;
         // This save reads the Vault file if it changed, so the change is taken care of.
         open.file_changed = false;
         Ok(PendingSave {
             id,
             edits: open.edits,
             storage,
+            cache,
             location: open.location.clone(),
             vault: open.vault.clone(),
             revision: open.revision.clone(),
@@ -1137,14 +1352,30 @@ impl Workspace {
                 if synced.caught_up {
                     open.saved_edits = open.saved_edits.max(finished.edits);
                     open.failed_save_at = None;
+                    open.upload_pending = synced.offline;
                 }
+                open.sync_problem = synced.offline.then_some(SyncProblem::Offline);
                 Ok(())
             }
             Err(error) => {
-                open.failed_save_at = Some(finished.edits);
+                let offline = matches!(error, SaveVaultError::Storage(StorageError::Offline(_)));
+                // Out of reach is no failed save when there was nothing to save.
+                if finished.write || !offline {
+                    open.failed_save_at = Some(finished.edits);
+                }
+                open.sync_problem = Some(match offline {
+                    true => SyncProblem::Offline,
+                    false => SyncProblem::Failed,
+                });
                 Err(error)
             }
         };
+        open.sync_failures = match open.sync_problem {
+            Some(_) => open.sync_failures.saturating_add(1),
+            None => 0,
+        };
+        let now = self.clock.now();
+        schedule_sync(open, now);
         if open.lock_requested && !open.has_unsaved_changes() {
             self.lock_now(&[finished.id]);
         }
@@ -1172,6 +1403,58 @@ impl Workspace {
         due.into_iter()
             .filter_map(|(id, write)| self.begin(id, write).ok())
             .collect()
+    }
+
+    /// How long until a remote Vault file is due to be checked for changes made elsewhere, if
+    /// an unlocked Vault has one. Call [`Self::begin_syncs`] then.
+    pub fn sync_in(&self) -> Option<Duration> {
+        let now = self.clock.now();
+        self.vaults
+            .iter()
+            .filter(|open| !open.saving)
+            .filter_map(|open| open.next_sync)
+            .min()
+            .map(|at| at.duration_since(now).unwrap_or_default())
+    }
+
+    /// Starts checking every remote Vault file that is due for it, Merging in changes made
+    /// elsewhere and uploading saves kept on this machine meanwhile. Locked Vaults are never
+    /// checked.
+    pub fn begin_syncs(&mut self) -> Vec<PendingSave> {
+        let now = self.clock.now();
+        let due: Vec<VaultId> = self
+            .vaults
+            .iter()
+            .filter(|open| !open.saving && open.next_sync.is_some_and(|at| at <= now))
+            .map(|open| open.id)
+            .collect();
+        let mut syncs = Vec::new();
+        for id in due {
+            match self.begin(id, false) {
+                Ok(sync) => syncs.push(sync),
+                // Not reachable at all, as without Dropbox: try again later, not at once.
+                Err(_) => {
+                    if let Some(open) = self.vault_mut(id) {
+                        open.sync_problem = Some(SyncProblem::Failed);
+                        open.sync_failures = open.sync_failures.saturating_add(1);
+                        schedule_sync(open, now);
+                    }
+                }
+            }
+        }
+        syncs
+    }
+
+    /// Starts checking every remote Vault file now, without waiting for its turn, like
+    /// [`Self::begin_syncs`].
+    pub fn sync_now(&mut self) -> Vec<PendingSave> {
+        let now = self.clock.now();
+        for open in &mut self.vaults {
+            if open.next_sync.is_some() {
+                open.next_sync = Some(now);
+            }
+        }
+        self.begin_syncs()
     }
 
     /// The save status of all open Vaults together.

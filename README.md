@@ -117,8 +117,6 @@ holds no client secret), then sends the browser back to keefast on
 `http://localhost:47826/dropbox`. keefast keeps the account's tokens in the OS secret store
 (Windows Credential Manager, or the Secret Service on Linux), never in `config.toml`; recent
 Vault files remember only the Dropbox path. "Disconnect" revokes the tokens and removes them.
-Saving a Dropbox Vault replaces only the revision keefast read, so a change made on another
-device is never overwritten.
 
 keefast needs a Dropbox app to connect as. To set one up:
 
@@ -139,6 +137,32 @@ soon as the browser opens its page, and holds a few Vault files (master password
 ```sh
 cargo run -p keefast-workspace --example fake_dropbox   # prints the environment to start keefast with
 ```
+
+Type `change` into the fake Dropbox's terminal to have "another device" add a Group to every
+Vault file, which keefast finds and Merges in within 30 seconds.
+
+### Dropbox sync
+
+- **Saving** fetches the Vault file's revision from Dropbox, Merges in whatever another device
+  saved since, and uploads only over that revision. If another device uploads in between,
+  Dropbox refuses, and keefast Merges again and retries. Nothing is overwritten.
+- **Background checks**: Dropbox doesn't notify desktop apps of changes, so keefast checks each
+  open Dropbox Vault every 30 seconds. A check asks only for the revision, and downloads and
+  Merges the Vault file only when it changed. While Dropbox can't be reached, checks back off
+  (up to every 5 minutes). "Sync Now" in the command palette checks at once. Locked Vaults are
+  never checked.
+- **Offline**: every Dropbox Vault file keefast opens is cached in
+  `<local data dir>/keefast/vault-cache/` (`~/.local/share` on Linux, `%LOCALAPPDATA%` on
+  Windows), with its revision. The cache holds the Vault file itself, encrypted with the
+  Vault's key, never anything decrypted. Without a network a cached Vault still opens, and
+  saves go to the cache. They're uploaded, with a Merge, as soon as Dropbox is reachable
+  again, even after a restart or a lock.
+- **Sync status**: the sidebar shows each Dropbox Vault as *Synced*, *Syncing…*, *Offline* or
+  *Sync error*.
+
+The cache is keyed by Dropbox path, not by account. Connecting a different Dropbox account
+that has a Vault file at the same path reuses its cache entry. A save made offline would then
+be Merged into the other account's file, if the same key opens it.
 
 The test against the real Dropbox is opt-in: it needs a sandbox account and someone to click
 "Allow" (see `crates/workspace/tests/dropbox_live.rs`):

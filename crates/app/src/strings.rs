@@ -30,6 +30,8 @@ pub const UNLOCK_ERROR_ALREADY_OPEN: &str = "A Vault from this Vault file is alr
 pub const UNLOCK_FROM_DROPBOX: &str = "From Dropbox…";
 pub const UNLOCK_ERROR_NO_PROVIDER: &str =
     "This Vault file is in Dropbox, which this build of keefast can't reach.";
+pub const UNLOCK_ERROR_OFFLINE: &str =
+    "Dropbox can't be reached, and this Vault file has not been opened on this machine before.";
 pub const RECENT_VAULTS: &str = "Recent Vault files";
 pub const LOCKED_VAULTS: &str = "Locked Vaults";
 pub const RECENT_FORGET: &str = "×";
@@ -167,6 +169,12 @@ pub const STATUS_SAVED: &str = "All changes saved";
 pub const STATUS_UNSAVED: &str = "Unsaved changes";
 pub const STATUS_SAVING: &str = "Saving…";
 pub const STATUS_SAVE_FAILED: &str = "Save failed";
+
+/// Where a Dropbox Vault stands with its Vault file in Dropbox, beside its name in the sidebar.
+pub const SYNC_SYNCED: &str = "Synced";
+pub const SYNC_SYNCING: &str = "Syncing…";
+pub const SYNC_OFFLINE: &str = "Offline";
+pub const SYNC_ERROR: &str = "Sync error";
 
 /// A Merge of changes made to a Vault file elsewhere, by another device or a sync tool.
 pub const MERGE_NOTICE: &str = "Merged changes made elsewhere into {vault}";

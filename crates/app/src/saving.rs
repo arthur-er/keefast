@@ -9,6 +9,36 @@ use keefast_workspace::{PendingSave, Workspace};
 /// How long a Vault file must stay unchanged before it is read: sync tools write in steps.
 const SETTLE: Duration = Duration::from_millis(500);
 
+/// Checks Dropbox Vaults for changes made elsewhere whenever one is due, Merging them in and
+/// uploading saves made offline, for as long as the app runs.
+pub fn sync_remote_vaults(workspace: &Entity<Workspace>, cx: &mut App) {
+    let workspace = workspace.clone();
+    cx.spawn(async move |cx| {
+        // With no check due, look again soon: a Vault may be opened or unlocked meanwhile,
+        // with a save made offline to upload at once.
+        const AT_MOST: Duration = Duration::from_secs(5);
+        while let Ok(wait) = workspace.read_with(cx, |workspace, _| workspace.sync_in()) {
+            cx.background_executor()
+                .timer(wait.unwrap_or(AT_MOST).min(AT_MOST))
+                .await;
+            let synced = cx.update(|cx| {
+                let syncs = workspace.update(cx, |workspace, _| workspace.begin_syncs());
+                run(&workspace, syncs, cx);
+            });
+            if synced.is_err() {
+                return;
+            }
+        }
+    })
+    .detach();
+}
+
+/// Checks every Dropbox Vault now, without waiting for its turn.
+pub fn sync_now(workspace: &Entity<Workspace>, cx: &mut App) {
+    let syncs = workspace.update(cx, |workspace, _| workspace.sync_now());
+    run(workspace, syncs, cx);
+}
+
 /// Watches the open Vaults' Vault files, and Merges in changes made elsewhere once each has
 /// settled, saving the Merge.
 pub fn watch_vault_files(workspace: &Entity<Workspace>, cx: &mut App) {

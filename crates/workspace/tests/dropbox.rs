@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 use keefast_workspace::{
     Dropbox, DropboxAccount, DropboxConfig, DropboxError, DropboxItem, EntryScope, OpenVaultError,
-    StorageError, UnlockSecrets, VaultId, VaultLocation, Workspace,
+    StorageError, StorageProvider, SyncStatus, UnlockSecrets, VaultId, VaultLocation, Workspace,
 };
 use support::fake_dropbox::{ACCOUNT_EMAIL, ACCOUNT_NAME, APP_KEY, FakeDropbox};
-use support::{FakeConfigStore, FakeSecretStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD};
+use support::{
+    FakeConfigStore, FakeSecretStore, FakeStorage, FakeVaultCache, KEEPASSXC_KDBX4, PASSWORD,
+};
 
 fn config(fake: &FakeDropbox) -> DropboxConfig {
     DropboxConfig {
@@ -456,4 +458,103 @@ fn without_dropbox_a_dropbox_vault_file_is_unavailable() {
         result,
         Err(OpenVaultError::Storage(StorageError::Unavailable(_)))
     ));
+}
+
+#[test]
+fn a_revision_is_fetched_without_downloading_the_vault_file() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    fake.add_folder("/Vaults/Work");
+    let (dropbox, _) = connected(&fake);
+
+    let revision = dropbox.revision(&personal()).unwrap();
+
+    assert_eq!(revision, dropbox.read(&personal()).unwrap().revision);
+    assert_eq!(fake.downloads(), 1, "only the read downloaded it");
+    assert!(matches!(
+        dropbox.revision(&VaultLocation::Dropbox("/Vaults/Work".into())),
+        Err(StorageError::NotFound(_))
+    ));
+    assert!(matches!(
+        dropbox.revision(&VaultLocation::Dropbox("/Vaults/Gone.kdbx".into())),
+        Err(StorageError::NotFound(_))
+    ));
+}
+
+#[test]
+fn checking_a_dropbox_vault_downloads_it_only_once_changed() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, _) = connected(&fake);
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default())).with_dropbox(dropbox);
+    let vault = workspace
+        .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+    let sync = |workspace: &mut Workspace| {
+        for sync in workspace.sync_now() {
+            workspace.finish_save(sync.run()).unwrap();
+        }
+    };
+
+    sync(&mut workspace);
+    assert_eq!(fake.downloads(), 1);
+
+    let mut theirs = keefast_core::Vault::open(
+        KEEPASSXC_KDBX4,
+        &keefast_core::CompositeKey::password(PASSWORD),
+    )
+    .unwrap();
+    let root = theirs.root().id();
+    theirs
+        .create_group(
+            root,
+            "From the phone",
+            keefast_core::Timestamp::from_unix_seconds(2_000_000_000),
+        )
+        .unwrap();
+    fake.add_file("/Vaults/Personal.kdbx", &theirs.save().unwrap());
+    sync(&mut workspace);
+
+    assert_eq!(fake.downloads(), 2);
+    assert!(group_names(&workspace, vault).contains(&"From the phone".to_owned()));
+    assert_eq!(
+        workspace.vault(vault).unwrap().sync_status(),
+        Some(SyncStatus::Synced)
+    );
+}
+
+#[test]
+fn dropbox_out_of_reach_opens_the_cached_vault_file_offline() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, secrets) = connected(&fake);
+    let cache = Arc::new(FakeVaultCache::default());
+    let mut online = Workspace::new(Arc::new(FakeStorage::default()))
+        .with_dropbox(dropbox)
+        .with_vault_cache(cache.clone());
+    online
+        .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+
+    // keefast starts again without a network.
+    let mut unreachable = config(&fake);
+    unreachable.api_url = "http://127.0.0.1:9".into();
+    unreachable.content_url = "http://127.0.0.1:9".into();
+    let offline = Arc::new(Dropbox::new(unreachable, secrets));
+    assert!(matches!(
+        offline.read(&personal()),
+        Err(StorageError::Offline(_))
+    ));
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default()))
+        .with_dropbox(offline)
+        .with_vault_cache(cache);
+    let vault = workspace
+        .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+
+    assert_eq!(workspace.visible_entries(EntryScope::Vault(vault)).len(), 4);
+    assert_eq!(
+        workspace.vault(vault).unwrap().sync_status(),
+        Some(SyncStatus::Offline)
+    );
 }

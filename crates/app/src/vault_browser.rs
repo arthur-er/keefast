@@ -9,8 +9,8 @@ use keefast_core::{
     EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
-    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
-    Workspace,
+    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, SyncStatus, VaultId,
+    View, Workspace,
 };
 use secrecy::ExposeSecret;
 
@@ -18,7 +18,7 @@ use crate::actions::{
     self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
     OpenSettings, OpenVault, OpenVaultSettings, SaveAll, SelectFirstEntry, SelectLastEntry,
     SelectNextEntry, SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified,
-    SortByTitle, SortByUrl, SortByUsername,
+    SortByTitle, SortByUrl, SortByUsername, SyncNow,
 };
 use crate::attachments::{self, Preview};
 use crate::browser_integration::BrowserIntegration;
@@ -1185,6 +1185,12 @@ impl VaultBrowser {
                 true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
                 false => open.display_name(),
             };
+            let sync = open.sync_status().map(|status| match status {
+                SyncStatus::Synced => (strings::SYNC_SYNCED, theme.muted),
+                SyncStatus::Syncing => (strings::SYNC_SYNCING, theme.muted),
+                SyncStatus::Offline => (strings::SYNC_OFFLINE, theme.muted),
+                SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
+            });
             rows.push(
                 div()
                     .flex()
@@ -1198,6 +1204,15 @@ impl VaultBrowser {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .on_click(select),
                     )
+                    .children(sync.map(|(status, color)| {
+                        div()
+                            .id(("sync-status", rows.len()))
+                            .flex_none()
+                            .mr_2()
+                            .text_xs()
+                            .text_color(color)
+                            .child(status)
+                    }))
                     .child(
                         tool_button(("lock-vault", rows.len()), strings::LOCK, theme)
                             .text_xs()
@@ -2248,6 +2263,9 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
             .on_action(
                 cx.listener(|this, _: &LockAll, _, cx| locking::lock_all(&this.workspace, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SyncNow, _, cx| saving::sync_now(&this.workspace, cx)),
             )
             .on_action(cx.listener(Self::focus_search))
             .on_action(

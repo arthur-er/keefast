@@ -36,8 +36,8 @@ use gpui::{
     size,
 };
 use keefast_workspace::{
-    Dropbox, DropboxConfig, FileConfigStore, HttpFavicons, LocalStorage, NativeMessagingHosts,
-    OsSecretStore, UnsavedLock, VaultId, VaultLocation, Workspace,
+    Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons, LocalStorage,
+    NativeMessagingHosts, OsSecretStore, UnsavedLock, VaultId, VaultLocation, Workspace,
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
@@ -88,6 +88,9 @@ impl KeefastWindow {
                 let dropbox = Dropbox::new(config, Arc::new(OsSecretStore));
                 workspace = workspace.with_dropbox(Arc::new(dropbox));
             }
+            if let Some(cache) = FileVaultCache::in_os_data_dir() {
+                workspace = workspace.with_vault_cache(Arc::new(cache));
+            }
             workspace
         });
         // Nothing keefast copied outlives it.
@@ -105,6 +108,7 @@ impl KeefastWindow {
             .detach();
         saving::watch_vault_files(&workspace, cx);
         favicons::watch(&workspace, cx);
+        saving::sync_remote_vaults(&workspace, cx);
         locking::watch(&workspace, cx);
         // Any key typed in keefast counts as activity, wherever it goes.
         let typing = workspace.clone();

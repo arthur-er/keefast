@@ -52,6 +52,7 @@ struct FakeState {
     saw_client_secret: bool,
     /// The `Dropbox-API-Arg` headers received, to check they are ASCII.
     api_args: Vec<String>,
+    downloads: usize,
 }
 
 impl FakeState {
@@ -156,6 +157,11 @@ impl FakeDropbox {
         self.lock().saw_client_secret
     }
 
+    /// How many times a file was downloaded.
+    pub fn downloads(&self) -> usize {
+        self.lock().downloads
+    }
+
     pub fn api_args(&self) -> Vec<String> {
         self.lock().api_args.clone()
     }
@@ -239,7 +245,11 @@ fn handle(state: &Mutex<FakeState>, mut request: Request) {
                         let (path, offset) = cursor.rsplit_once('|').unwrap();
                         list_folder(&state, path, offset.parse().unwrap())
                     }
-                    "/2/files/download" => download(&state, &arg.unwrap()),
+                    "/2/files/download" => {
+                        state.downloads += 1;
+                        download(&state, &arg.unwrap())
+                    }
+                    "/2/files/get_metadata" => metadata(&state, &args),
                     "/2/files/upload" => upload(&mut state, &arg.unwrap(), body),
                     _ => Response::from_string("not found")
                         .with_status_code(404)
@@ -400,6 +410,26 @@ fn download(state: &FakeState, arg: &Value) -> Reply {
         .with_header(header("Content-Type", "application/octet-stream"))
         .with_header(header("Dropbox-API-Result", &ascii_json(&metadata)))
         .boxed()
+}
+
+fn metadata(state: &FakeState, args: &Value) -> Reply {
+    let path = args["path"].as_str().unwrap().to_lowercase();
+    if let Some(file) = state.files.get(&path) {
+        return ok_json(json!({
+            ".tag": "file", "name": file.path.rsplit('/').next(), "path_display": file.path,
+            "path_lower": path, "rev": file.rev, "size": file.bytes.len(), "id": "id:file",
+        }));
+    }
+    if let Some(folder) = state.folders.get(&path) {
+        return ok_json(json!({
+            ".tag": "folder", "name": folder.rsplit('/').next(), "path_display": folder,
+            "path_lower": path, "id": "id:folder",
+        }));
+    }
+    error(
+        409,
+        json!({ "error_summary": "path/not_found/..", "error": {} }),
+    )
 }
 
 fn upload(state: &mut FakeState, arg: &Value, bytes: Vec<u8>) -> Reply {

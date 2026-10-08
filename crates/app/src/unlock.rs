@@ -408,6 +408,9 @@ fn describe(error: &OpenVaultError) -> UnlockError {
         OpenVaultError::Storage(StorageError::Unavailable(_)) => {
             (strings::UNLOCK_ERROR_NO_PROVIDER, None)
         }
+        OpenVaultError::Storage(StorageError::Offline(reason)) => {
+            (strings::UNLOCK_ERROR_OFFLINE, Some(reason))
+        }
         OpenVaultError::Storage(StorageError::Dropbox(error)) => {
             return UnlockError::new(dropbox_panel::describe(error));
         }

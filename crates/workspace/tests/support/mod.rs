@@ -12,8 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keefast_workspace::{
-    AppConfig, Browser, BrowserHosts, Clipboard, Clock, ConfigError, ConfigStore, Revision,
-    SecretStore, SecretStoreError, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
+    AppConfig, Browser, BrowserHosts, CachedFile, Clipboard, Clock, ConfigError, ConfigStore,
+    Revision, SecretStore, SecretStoreError, StorageError, StorageProvider, StoredFile, VaultCache,
+    VaultLocation, Watch,
 };
 use secrecy::{ExposeSecret, SecretString};
 
@@ -37,6 +38,9 @@ pub struct FakeStorage {
     watchers: Arc<Mutex<Vec<(VaultLocation, OnChange)>>>,
     /// Changes made elsewhere, landing just before the next write each.
     races: Mutex<Vec<(VaultLocation, Vec<u8>)>>,
+    offline: Mutex<bool>,
+    reads: Mutex<usize>,
+    conflicts: Mutex<usize>,
 }
 
 impl FakeStorage {
@@ -104,10 +108,34 @@ impl FakeStorage {
     pub fn writes(&self) -> usize {
         *self.writes.lock().unwrap()
     }
+
+    /// Makes the provider unreachable, as without a network, until turned off again.
+    pub fn go_offline(&self, offline: bool) {
+        *self.offline.lock().unwrap() = offline;
+    }
+
+    /// How many times a Vault file's bytes were read.
+    pub fn reads(&self) -> usize {
+        *self.reads.lock().unwrap()
+    }
+
+    /// How many writes were turned down because the Vault file had changed.
+    pub fn conflicts(&self) -> usize {
+        *self.conflicts.lock().unwrap()
+    }
+
+    fn check_online(&self) -> Result<(), StorageError> {
+        match *self.offline.lock().unwrap() {
+            true => Err(StorageError::Offline("no network".into())),
+            false => Ok(()),
+        }
+    }
 }
 
 impl StorageProvider for FakeStorage {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
+        self.check_online()?;
+        *self.reads.lock().unwrap() += 1;
         let files = self.files.lock().unwrap();
         let (bytes, revision) = files
             .get(location)
@@ -124,6 +152,7 @@ impl StorageProvider for FakeStorage {
         bytes: &[u8],
         expected: Option<&Revision>,
     ) -> Result<Revision, StorageError> {
+        self.check_online()?;
         if *self.failing_writes.lock().unwrap() {
             return Err(StorageError::Io(io::Error::other("disk full")));
         }
@@ -144,10 +173,20 @@ impl StorageProvider for FakeStorage {
         if let (Some(expected), Some(current)) = (expected, current)
             && *expected != current
         {
+            *self.conflicts.lock().unwrap() += 1;
             return Err(StorageError::Conflict);
         }
         *self.writes.lock().unwrap() += 1;
         Ok(self.put(location, bytes))
+    }
+
+    fn revision(&self, location: &VaultLocation) -> Result<Revision, StorageError> {
+        self.check_online()?;
+        let files = self.files.lock().unwrap();
+        let (_, revision) = files
+            .get(location)
+            .ok_or_else(|| StorageError::NotFound(location.clone()))?;
+        Ok(Revision::new(revision.to_string()))
     }
 
     fn watch(&self, location: &VaultLocation, on_change: OnChange) -> Option<Watch> {
@@ -175,6 +214,41 @@ impl Drop for Unwatch {
             .lock()
             .unwrap()
             .retain(|(_, on_change)| Arc::as_ptr(on_change) as *const () as usize != self.id);
+    }
+}
+
+/// An in-memory cache of Vault files, as the encrypted local cache keeps them on disk.
+#[derive(Default)]
+pub struct FakeVaultCache {
+    files: Mutex<HashMap<VaultLocation, CachedFile>>,
+    failing: Mutex<bool>,
+}
+
+impl FakeVaultCache {
+    pub fn cached(&self, location: &VaultLocation) -> Option<CachedFile> {
+        self.files.lock().unwrap().get(location).cloned()
+    }
+
+    /// Makes every store fail, like a full disk, until turned off again.
+    pub fn fail(&self, fail: bool) {
+        *self.failing.lock().unwrap() = fail;
+    }
+}
+
+impl VaultCache for FakeVaultCache {
+    fn load(&self, location: &VaultLocation) -> Option<CachedFile> {
+        self.cached(location)
+    }
+
+    fn store(&self, location: &VaultLocation, file: &CachedFile) -> io::Result<()> {
+        if *self.failing.lock().unwrap() {
+            return Err(io::Error::other("disk full"));
+        }
+        self.files
+            .lock()
+            .unwrap()
+            .insert(location.clone(), file.clone());
+        Ok(())
     }
 }
 

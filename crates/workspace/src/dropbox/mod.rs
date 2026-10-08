@@ -496,6 +496,19 @@ impl StorageProvider for Dropbox {
         })
     }
 
+    /// Asks Dropbox for the file's metadata only, so checking for changes doesn't download it.
+    fn revision(&self, location: &VaultLocation) -> Result<Revision, StorageError> {
+        let path = self.location_path(location)?;
+        let metadata = self
+            .rpc("files/get_metadata", &json!({ "path": path }))
+            .map_err(|error| storage_error(error, location))?;
+        match (metadata[".tag"].as_str(), metadata["rev"].as_str()) {
+            (Some("file"), Some(rev)) => Ok(Revision::new(rev)),
+            // A folder, or a file deleted: no Vault file there.
+            _ => Err(StorageError::NotFound(location.clone())),
+        }
+    }
+
     /// Uploads with Dropbox's own revision check, so a change made on another device in
     /// between is never overwritten: Dropbox refuses, and the save Merges it in first.
     fn write(
@@ -516,6 +529,7 @@ fn storage_error(error: DropboxError, location: &VaultLocation) -> StorageError 
     match error {
         DropboxError::NotFound => StorageError::NotFound(location.clone()),
         DropboxError::Conflict => StorageError::Conflict,
+        DropboxError::Network(reason) => StorageError::Offline(reason),
         error => StorageError::Dropbox(error),
     }
 }

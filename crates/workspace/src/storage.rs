@@ -38,6 +38,12 @@ impl VaultLocation {
         }
     }
 
+    /// Whether the Vault file lives in a remote service, reached over the network: such Vault
+    /// files are cached on this machine, and checked for changes now and then.
+    pub fn is_remote(&self) -> bool {
+        matches!(self, VaultLocation::Dropbox(_))
+    }
+
     /// Where the Vault file is, in full: its path, or its Storage provider reference.
     pub fn description(&self) -> String {
         match self {
@@ -88,6 +94,10 @@ pub enum StorageError {
     Io(#[from] io::Error),
     #[error("no Storage provider can reach {0:?}")]
     Unavailable(VaultLocation),
+    /// The Storage provider can't be reached now, as without a network; trying again later
+    /// may work.
+    #[error("can't reach the Vault file's Storage provider: {0}")]
+    Offline(String),
     #[error(transparent)]
     Dropbox(#[from] DropboxError),
 }
@@ -95,6 +105,12 @@ pub enum StorageError {
 /// Reads and writes Vault files wherever they live. Injected into the Workspace.
 pub trait StorageProvider: Send + Sync {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError>;
+
+    /// The Vault file's current revision. Providers that can tell it without the Vault file's
+    /// bytes do, so checking for changes made elsewhere stays cheap.
+    fn revision(&self, location: &VaultLocation) -> Result<Revision, StorageError> {
+        self.read(location).map(|stored| stored.revision)
+    }
 
     /// The one location to know a Vault file by, so a Vault file reached two ways (a symlink,
     /// `..` in a path) is still recognised as the same Vault file.

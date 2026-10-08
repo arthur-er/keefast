@@ -55,6 +55,18 @@ fn connect_browse_open_save_and_disconnect_with_the_real_dropbox() {
     let root = workspace.vault(vault).unwrap().vault().root().id();
     workspace.create_group(vault, root, "Saved live").unwrap();
     workspace.save_vault(vault).unwrap();
+    // A background check asks for the revision only, which matches what the save uploaded.
+    assert_eq!(
+        dropbox.revision(&location).unwrap(),
+        dropbox.read(&location).unwrap().revision
+    );
+    for sync in workspace.sync_now() {
+        workspace.finish_save(sync.run()).unwrap();
+    }
+    assert_eq!(
+        workspace.vault(vault).unwrap().sync_status(),
+        Some(keefast_workspace::SyncStatus::Synced)
+    );
 
     dropbox.disconnect().unwrap();
     assert!(secrets.is_empty());
