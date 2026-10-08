@@ -64,12 +64,14 @@ fn relay_replies(
     let flag = Arc::clone(&open);
     thread::spawn(move || {
         while let Ok(Some(message)) = read_frame(&mut from_app) {
-            if write_frame(&mut *browser_out.lock().unwrap(), &message).is_err() {
-                break;
-            }
             // The app answers "not running" while its browser integration is off: treat it as
             // gone, so the host ends at the next request and the extension reconnects later.
-            if is_not_running(&message) {
+            // It is marked gone before the browser hears, so no next request reaches it.
+            let gone = is_not_running(&message);
+            if gone {
+                flag.store(false, Ordering::Release);
+            }
+            if write_frame(&mut *browser_out.lock().unwrap(), &message).is_err() || gone {
                 break;
             }
         }
