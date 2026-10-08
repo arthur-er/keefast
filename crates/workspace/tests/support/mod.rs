@@ -19,6 +19,8 @@ pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassx
 pub const PASSWORD: &str = "fixture-password";
 /// KeePassXC's browser settings on Entries and Groups; see scripts/make-browser-fixture.sh.
 pub const BROWSER_KDBX: &[u8] = include_bytes!("../../../../fixtures/keepassxc-browser.kdbx");
+/// TOTP settings in every client's field format; see scripts/make-totp-fixture.sh.
+pub const TOTP_KDBX: &[u8] = include_bytes!("../../../../fixtures/totp.kdbx");
 
 /// An in-memory Storage provider holding Vault files by location.
 #[derive(Default)]

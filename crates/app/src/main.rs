@@ -9,6 +9,7 @@ mod saving;
 mod strings;
 mod text_field;
 mod theme;
+mod totp_setup;
 mod unlock;
 mod vault_browser;
 mod widgets;

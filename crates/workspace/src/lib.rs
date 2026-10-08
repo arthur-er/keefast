@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use keefast_core::{
     CompositeKey, EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId,
-    OpenError, SaveError, Timestamp, Vault,
+    OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
 };
 use secrecy::SecretString;
 
@@ -549,6 +549,25 @@ impl Workspace {
     /// Moves the Group to the Recycle Bin, or deletes it for good, like [`Self::delete_entry`].
     pub fn delete_group(&mut self, vault: VaultId, group: GroupId) -> Result<(), EditVaultError> {
         self.edit(vault, |vault, now| vault.delete_group(group, now))
+    }
+
+    /// Sets up TOTP on an Entry, or removes it with `None`, keeping the version it replaces in
+    /// the Entry's history.
+    pub fn set_totp(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        totp: Option<&Totp>,
+    ) -> Result<(), EditVaultError> {
+        self.edit(vault, |vault, now| vault.set_totp(entry, totp, now))
+    }
+
+    /// The Entry's TOTP code now, with how long it lasts, or why its TOTP settings can't be
+    /// read. `None` when the Entry has no TOTP, or isn't open.
+    pub fn totp_code(&self, vault: VaultId, entry: EntryId) -> Option<Result<TotpCode, TotpError>> {
+        let totp = self.entry(vault, entry)?.totp()?;
+        let now = Timestamp::from_system_time(self.clock.now());
+        Some(totp.map(|totp| totp.code(now)))
     }
 
     fn edit<T>(

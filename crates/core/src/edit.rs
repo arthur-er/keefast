@@ -5,11 +5,13 @@
 
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::kdbx::random;
+use crate::totp::{self, TOTP_FIELDS};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node, Secret};
-use crate::{Entry, EntryId, GroupId, Timestamp, Vault};
+use crate::{Entry, EntryId, GroupId, Timestamp, Totp, Vault};
 
 /// The fields of an Entry that keefast edits.
 #[derive(Clone)]
@@ -144,9 +146,65 @@ impl Vault {
             return Ok(());
         }
         let protection = FIELDS.map(|(_, protect)| self.protects(protect));
-        let max_items = self.history_max_items();
+        let element = self.archive(&path);
+        for (((key, _), protect), value) in FIELDS.into_iter().zip(protection).zip(fields.values())
+        {
+            set_string(element, key, value, protect);
+        }
+        set_time(element, "LastModificationTime", now);
+        set_time(element, "LastAccessTime", now);
+        self.refresh();
+        Ok(())
+    }
 
-        let element = self.at_mut(&path);
+    /// Sets up TOTP on an Entry, or removes it with `None`. The settings go to the fields the
+    /// Entry already keeps TOTP in, so every client keeps reading them, or to an `otpauth://`
+    /// URI in `otp` as KeePassXC and KeeWeb write it. The version replaced goes to the Entry's
+    /// history. Setting the TOTP it already has changes nothing.
+    pub fn set_totp(
+        &mut self,
+        entry: EntryId,
+        totp: Option<&Totp>,
+        now: Timestamp,
+    ) -> Result<(), EditError> {
+        let path = self.path_to(Kind::Entry, entry.0)?;
+        let current = self.entry(entry).expect("the path leads to it");
+        let unchanged = match (current.totp(), totp) {
+            (None, None) => true,
+            (Some(Ok(current)), Some(new)) => current == new,
+            _ => false,
+        };
+        if unchanged {
+            return Ok(());
+        }
+        let (title, username) = (current.title().to_owned(), current.username().to_owned());
+
+        let element = self.archive(&path);
+        let fields = totp.map(|totp| {
+            let field = |name: &str| string_value(element, name);
+            totp::write(totp, &field, &title, &username)
+        });
+        element.children.retain(|node| {
+            let Node::Element(string) = node else {
+                return true;
+            };
+            let key = string.child("Key").map(Element::text);
+            !(string.name == "String" && key.is_some_and(|key| TOTP_FIELDS.contains(&&*key)))
+        });
+        for field in fields.into_iter().flatten() {
+            set_string(element, field.name, &field.value, field.protect);
+        }
+        set_time(element, "LastModificationTime", now);
+        set_time(element, "LastAccessTime", now);
+        self.refresh();
+        Ok(())
+    }
+
+    /// Adds the Entry at `path`, as it is now, to its history, which is trimmed to the Vault's
+    /// `HistoryMaxItems`, and returns the Entry to change.
+    fn archive(&mut self, path: &[usize]) -> &mut Element {
+        let max_items = self.history_max_items();
+        let element = self.at_mut(path);
         let mut previous = element.clone();
         previous.take_child("History");
         let history = child_or_insert(element, "History", &[]);
@@ -160,15 +218,7 @@ impl Vault {
                 !drop
             });
         }
-
-        for (((key, _), protect), value) in FIELDS.into_iter().zip(protection).zip(fields.values())
-        {
-            set_string(element, key, value, protect);
-        }
-        set_time(element, "LastModificationTime", now);
-        set_time(element, "LastAccessTime", now);
-        self.refresh();
-        Ok(())
+        element
     }
 
     pub fn move_entry(
@@ -524,6 +574,16 @@ fn set_string(entry: &mut Element, key: &str, value: &str, protect: bool) {
             &["String", "Times", "Tags", "UUID"],
         ),
     }
+}
+
+/// The value of an Entry element's field, if it has one that isn't blank.
+fn string_value(entry: &Element, key: &str) -> Option<Zeroizing<String>> {
+    entry
+        .children_named("String")
+        .find(|string| string.child("Key").is_some_and(|k| k.text() == key))
+        .and_then(|string| string.child("Value"))
+        .map(|value| Zeroizing::new(value.text()))
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// A `<String>` field of an Entry.

@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
-    PromptLevel, SharedString, Window, div, prelude::*, px,
+    AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyDownEvent, PromptLevel, SharedString, Window, div, prelude::*, px, relative,
 };
-use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId};
+use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
 use keefast_workspace::{EditVaultError, EntryScope, SaveStatus, VaultId, Workspace};
 
 use crate::browser_integration::BrowserIntegration;
@@ -11,6 +13,7 @@ use crate::saving;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
 use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
@@ -27,6 +30,8 @@ pub struct VaultBrowser {
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
     renaming: Option<(VaultId, GroupId, Entity<TextField>)>,
+    /// The Entry whose TOTP code was copied last, to say so until another is selected.
+    totp_copied: Option<(VaultId, EntryId)>,
     error: Option<SharedString>,
 }
 
@@ -39,6 +44,12 @@ enum Detail {
     },
     /// Picking the Group to move an Entry or Group to.
     Moving(Subject),
+    /// Setting up an Entry's TOTP.
+    Totp {
+        setup: Entity<TotpSetup>,
+        vault: VaultId,
+        entry: EntryId,
+    },
 }
 
 enum EditTarget {
@@ -77,6 +88,21 @@ impl VaultBrowser {
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         cx.observe(&integration, |_, _, cx| cx.notify()).detach();
+        // Keeps the shown TOTP code and its countdown current.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let shown = this.update(cx, |this, cx| {
+                    if this.selected_totp(cx).is_some() {
+                        cx.notify();
+                    }
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         let mut browser = Self {
             workspace,
             integration,
@@ -85,6 +111,7 @@ impl VaultBrowser {
             selected_entry: None,
             detail: Detail::Entry,
             renaming: None,
+            totp_copied: None,
             error: None,
         };
         browser.select(EntryScope::Vault(vault), cx);
@@ -119,7 +146,74 @@ impl VaultBrowser {
     fn select_entry(&mut self, vault: VaultId, entry: EntryId, cx: &mut Context<Self>) {
         self.selected_entry = Some((vault, entry));
         self.detail = Detail::Entry;
+        self.totp_copied = None;
         self.error = None;
+        cx.notify();
+    }
+
+    /// The selected Entry's TOTP code now, if it has TOTP that can be read.
+    fn selected_totp(&self, cx: &App) -> Option<TotpCode> {
+        let (vault, entry) = self.selected_entry?;
+        self.workspace.read(cx).totp_code(vault, entry)?.ok()
+    }
+
+    /// Copies the selected Entry's current TOTP code.
+    fn copy_totp(&mut self, cx: &mut Context<Self>) {
+        let Some(code) = self.selected_totp(cx) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(code.code().to_owned()));
+        self.totp_copied = self.selected_entry;
+        cx.notify();
+    }
+
+    fn open_totp_setup(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(current) = self.workspace.read(cx).entry(vault, entry) else {
+            return;
+        };
+        let (title, username) = (current.title().to_owned(), current.username().to_owned());
+        let totp = current.totp().and_then(Result::ok).cloned();
+        let setup = cx.new(|cx| TotpSetup::new(totp.as_ref(), &title, &username, cx));
+        cx.subscribe_in(&setup, window, Self::on_totp_setup_event)
+            .detach();
+        window.focus(&setup.focus_handle(cx));
+        self.detail = Detail::Totp {
+            setup,
+            vault,
+            entry,
+        };
+        self.error = None;
+        cx.notify();
+    }
+
+    fn on_totp_setup_event(
+        &mut self,
+        _: &Entity<TotpSetup>,
+        event: &TotpSetupEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Detail::Totp { vault, entry, .. } = self.detail else {
+            return;
+        };
+        match event {
+            TotpSetupEvent::Save(totp) => {
+                let saved = self.edit(cx, |workspace| {
+                    workspace.set_totp(vault, entry, totp.as_ref())
+                });
+                if saved.is_some() {
+                    self.detail = Detail::Entry;
+                }
+            }
+            TotpSetupEvent::Cancel => self.detail = Detail::Entry,
+        }
+        window.focus(&self.focus);
         cx.notify();
     }
 
@@ -338,6 +432,7 @@ impl VaultBrowser {
         match keystroke.key.as_str() {
             "s" => self.save_all(cx),
             "o" => cx.emit(OpenAnotherVault),
+            "t" => self.copy_totp(cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -588,7 +683,11 @@ impl VaultBrowser {
                                 this.child(div().flex_none().text_xs().child(name))
                             }),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_entry(vault, id, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        // So the keyboard shortcuts act on the Entry just picked.
+                        window.focus(&this.focus);
+                        this.select_entry(vault, id, cx)
+                    }))
                     .into_any_element()
             })
             .collect();
@@ -674,6 +773,8 @@ impl VaultBrowser {
         let pane = div()
             .id("entry-detail")
             .flex_1()
+            // Long values wrap rather than widen the pane past the window.
+            .min_w_0()
             .h_full()
             .overflow_y_scroll()
             .bg(theme.panel)
@@ -687,6 +788,7 @@ impl VaultBrowser {
 
         match &self.detail {
             Detail::Editing { editor, .. } => pane.child(editor.clone()).into_any_element(),
+            Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
                 .into_any_element(),
@@ -739,6 +841,13 @@ impl VaultBrowser {
                                 this.open_editor(EditTarget::Existing(vault, id), window, cx)
                             }),
                         ))
+                        .child(
+                            tool_button("totp-entry", strings::TOTP_BUTTON, theme).on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.open_totp_setup(vault, id, window, cx)
+                                }),
+                            ),
+                        )
                         .child(tool_button("move-entry", strings::MOVE, theme).on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.detail = Detail::Moving(Subject::Entry(vault, id));
@@ -762,12 +871,98 @@ impl VaultBrowser {
             strings::DETAIL_PASSWORD,
             strings::HIDDEN_PASSWORD.into(),
         ))
+        .when_some(workspace.totp_code(vault, id), |this, code| {
+            this.child(match code {
+                Ok(code) => {
+                    let copied = self.totp_copied == Some((vault, id));
+                    self.render_totp(code, copied, theme, cx)
+                }
+                Err(error) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::DETAIL_TOTP),
+                    )
+                    .child(div().text_color(theme.error).child(
+                        strings::TOTP_UNREADABLE.replace("{reason}", totp_setup::describe(error)),
+                    ))
+                    .into_any_element(),
+            })
+        })
         .child(field(strings::DETAIL_URL, entry.url().to_owned().into()))
         .child(field(
             strings::DETAIL_NOTES,
             entry.notes().to_owned().into(),
         ))
         .into_any_element()
+    }
+
+    /// The current TOTP code with its countdown, copied when clicked.
+    fn render_totp(
+        &self,
+        code: TotpCode,
+        copied: bool,
+        theme: Theme,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let left = code.remaining() as f32 / code.period() as f32;
+        div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::DETAIL_TOTP)
+                    .child(div().text_color(theme.accent).child(if copied {
+                        strings::TOTP_COPIED
+                    } else {
+                        strings::TOTP_COPY_HINT
+                    })),
+            )
+            .child(
+                div()
+                    .id("totp-code")
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| this.copy_totp(cx)))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(grouped(code.code())),
+                    )
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .h(px(4.))
+                            .rounded_full()
+                            .bg(theme.border)
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(left))
+                                    .rounded_full()
+                                    .bg(theme.accent),
+                            ),
+                    )
+                    .child(
+                        div().text_sm().text_color(theme.muted).child(
+                            strings::TOTP_SECONDS_LEFT
+                                .replace("{seconds}", &code.remaining().to_string()),
+                        ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Every Group of the Vault, to pick where an Entry or Group moves to.
@@ -883,6 +1078,15 @@ fn flatten_groups<'a>(groups: &'a [Group], depth: usize, out: &mut Vec<(&'a Grou
         out.push((group, depth));
         flatten_groups(group.groups(), depth + 1, out);
     }
+}
+
+/// A code split in two halves to read it more easily: `123 456`.
+fn grouped(code: &str) -> SharedString {
+    if code.len() < 6 {
+        return code.to_owned().into();
+    }
+    let (first, second) = code.split_at(code.len() / 2);
+    format!("{first} {second}").into()
 }
 
 fn title_of(entry: &Entry) -> SharedString {

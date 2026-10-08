@@ -13,6 +13,7 @@ mod open;
 mod save;
 mod site;
 mod time;
+mod totp;
 mod vault;
 mod xml;
 
@@ -26,4 +27,5 @@ pub use open::OpenError;
 pub use save::SaveError;
 pub use site::Site;
 pub use time::Timestamp;
+pub use totp::{Totp, TotpAlgorithm, TotpCode, TotpError};
 pub use vault::{Entry, EntryId, Group, GroupId, Vault};

@@ -5,10 +5,11 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::SecretString;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
-use crate::{OpenError, Timestamp};
+use crate::{OpenError, Timestamp, Totp, TotpError, totp};
 
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
 ///
@@ -59,6 +60,8 @@ pub struct Entry {
     notes: String,
     /// More URLs the Entry is for, as KeePassXC stores them: fields named `KP2A_URL…`.
     additional_urls: Vec<String>,
+    /// The Entry's TOTP settings, from whichever client's fields hold them.
+    totp: Option<Result<Totp, TotpError>>,
     pub(crate) custom_data: BTreeMap<String, String>,
     last_modified: Option<Timestamp>,
     /// Earlier versions, oldest first.
@@ -240,6 +243,12 @@ impl Entry {
                 .map(|(_, element)| value(element))
                 .filter(|url| !url.is_empty())
                 .collect(),
+            totp: totp::read(&|name| {
+                strings()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, element)| Zeroizing::new(value(element)))
+                    .filter(|value| !value.trim().is_empty())
+            }),
             custom_data: custom_data(entry),
             last_modified: last_modified(entry),
             history: entry
@@ -282,6 +291,13 @@ impl Entry {
     /// The other URLs the Entry is for, besides its URL.
     pub fn additional_urls(&self) -> &[String] {
         &self.additional_urls
+    }
+
+    /// The Entry's TOTP settings, if it has any, or why they can't be read.
+    pub fn totp(&self) -> Option<Result<&Totp, TotpError>> {
+        self.totp
+            .as_ref()
+            .map(|totp| totp.as_ref().map_err(|error| *error))
     }
 
     pub fn last_modified(&self) -> Option<Timestamp> {

@@ -111,3 +111,28 @@ pub const GENERATOR_USE: &str = "Use password";
 pub const GENERATOR_ERROR_NO_CLASSES: &str = "Choose at least one kind of character.";
 pub const GENERATOR_ERROR_LENGTH: &str = "The length must be between {min} and {max}.";
 pub const GENERATOR_ERROR_WORDS: &str = "The number of words must be between {min} and {max}.";
+
+pub const DETAIL_TOTP: &str = "TOTP";
+pub const TOTP_BUTTON: &str = "TOTP…";
+pub const TOTP_COPY_HINT: &str = "Click or press Ctrl+T to copy";
+pub const TOTP_COPIED: &str = "Copied";
+pub const TOTP_SECONDS_LEFT: &str = "{seconds} s";
+pub const TOTP_UNREADABLE: &str = "This Entry's TOTP settings can't be read: {reason}";
+pub const TOTP_SETUP_TITLE: &str = "Set up TOTP";
+pub const TOTP_SECRET: &str = "Secret key or otpauth:// URI";
+pub const TOTP_SECRET_PLACEHOLDER: &str = "e.g. JBSWY3DPEHPK3PXP";
+pub const TOTP_URI_NOTE: &str =
+    "Paste the otpauth:// URI from the site's QR code, or type its secret key and settings.";
+pub const TOTP_DIGITS: &str = "Digits";
+pub const TOTP_PERIOD: &str = "Period (seconds)";
+pub const TOTP_ALGORITHM: &str = "Algorithm";
+pub const TOTP_SHA1: &str = "SHA-1";
+pub const TOTP_SHA256: &str = "SHA-256";
+pub const TOTP_SHA512: &str = "SHA-512";
+pub const TOTP_REMOVE: &str = "Remove TOTP";
+pub const TOTP_ERROR_MISSING_SECRET: &str = "Enter the secret key or otpauth:// URI.";
+pub const TOTP_ERROR_INVALID_SECRET: &str =
+    "The secret key isn't valid: use the letters A–Z and digits 2–7.";
+pub const TOTP_ERROR_DIGITS: &str = "A code has 1 to 10 digits.";
+pub const TOTP_ERROR_PERIOD: &str = "The period is 1 to 86400 seconds.";
+pub const TOTP_ERROR_NOT_TOTP: &str = "This isn't an otpauth://totp/ URI.";
