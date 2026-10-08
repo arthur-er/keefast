@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_core::{
-    AccessDecision, CharacterRecipe, CompositeKey, EntryId, PassphraseRecipe, Totp, TotpAlgorithm,
+    AccessDecision, CharacterRecipe, EntryId, PassphraseRecipe, Totp, TotpAlgorithm,
 };
 use keefast_workspace::{
-    AccessAnswer, ConnectionId, GeneratorMode, GeneratorSettings, VaultId, Workspace,
+    AccessAnswer, ConnectionId, GeneratorMode, GeneratorSettings, UnlockSecrets, VaultId, Workspace,
 };
 use serde_json::{Value, json};
 use support::extension::{FakeExtension, Sent};
@@ -60,7 +60,7 @@ impl Browser {
         let clock = Arc::new(FakeClock::at_unix_seconds(RFC_TIME));
         let mut workspace = Workspace::with_clock(storage, clock.clone());
         let vault = workspace
-            .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
+            .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
             .unwrap();
         workspace.set_browser_integration(true);
         let extension = connect(&mut workspace, FIRST);
