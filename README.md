@@ -47,7 +47,7 @@ config and Vault files stay, so a reinstalled keefast registers the host again w
 if browser integration was on.
 
 Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
-`.github/workflows/package-windows.yml` makes the MSI from a release build with WiX
+`scripts/package-windows.ps1` makes the MSI from a release build with WiX
 (`packaging/windows/keefast.wxs`), and `scripts/smoke-windows.ps1` checks that it installs, and
 that uninstalling removes keefast and its browser registrations but leaves another program's
 alone. Pull requests that change the installer run that workflow too.

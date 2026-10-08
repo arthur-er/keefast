@@ -39,8 +39,9 @@ use gpui::{
     size,
 };
 use keefast_workspace::{
-    Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons, LocalStorage,
-    NativeMessagingHosts, OsSecretStore, UnsavedLock, VaultId, VaultLocation, Workspace,
+    BrowserHosts, Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons,
+    LocalStorage, NativeMessagingHosts, OsSecretStore, UnsavedLock, VaultId, VaultLocation,
+    Workspace,
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
@@ -708,8 +709,6 @@ fn main() {
 /// Removes keefast's registrations of its native host and exits, without opening a window.
 /// Browser integration stays on in the app config, so reinstalling keefast registers it again.
 fn unregister_browser_hosts() -> ! {
-    use keefast_workspace::BrowserHosts;
-
     let result = NativeMessagingHosts::for_current_user()
         .ok_or_else(|| std::io::Error::other("no data directory for the current user"))
         .and_then(|hosts| hosts.uninstall());
@@ -739,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_vault_file_leaves_the_native_host_registered() {
+    fn opening_a_vault_file_does_not_ask_to_unregister_the_native_host() {
         let args = parse(&["personal.kdbx", "--key-file", "personal.keyx"]);
 
         assert!(!args.unregister_browser_hosts);

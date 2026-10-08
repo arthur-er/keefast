@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - packaging/windows/**
+      - scripts/package-windows.ps1
       - scripts/smoke-windows.ps1
       - .github/workflows/package-windows.yml
 
@@ -45,20 +46,8 @@ jobs:
       - name: Install WiX
         run: dotnet tool install --global wix --version $env:WIX_VERSION
 
-      - name: Build the MSI
-        run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$' |
-            Select-Object -First 1).Matches.Groups[1].Value
-          if (-not $version) { throw "no version in Cargo.toml" }
-          # An MSI's version is numbers only, so a pre-release gets its release's number.
-          $msiVersion = $version -replace '[-+].*$', ''
-          $msi = "dist\keefast-$version-windows-x86_64.msi"
-          New-Item -ItemType Directory -Force dist | Out-Null
-          wix build packaging/windows/keefast.wxs -arch x64 `
-            -d Version=$msiVersion -d BinDir=target\release -o $msi
-          if ($LASTEXITCODE) { throw "wix build failed" }
-          wix msi validate $msi
-          if ($LASTEXITCODE) { throw "wix msi validate failed" }
+      - name: Package
+        run: scripts/package-windows.ps1 target\release dist
 
       - name: Smoke check installing and uninstalling
         run: scripts/smoke-windows.ps1 (Get-Item dist\*.msi).FullName

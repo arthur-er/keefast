@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  keefast's Windows installer, built with WiX v5 by .github/workflows/package-windows.yml:
-
-    wix build packaging/windows/keefast.wxs -arch x64 -d Version=0.1.0 -d BinDir=target\release -o keefast.msi
+  keefast's Windows installer, built with WiX v5 by scripts/package-windows.ps1.
 
   It installs for the current user, without elevation, as browser integration is per user too:
   the app registers its native host under HKEY_CURRENT_USER, pointing at the keefast-native-host
@@ -17,7 +15,8 @@
     Scope="perUser"
     Language="1033">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of keefast is already installed." />
+    <!-- A pre-release has its release's version, so the release must upgrade it. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of keefast is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/arthur-er/keefast" />
