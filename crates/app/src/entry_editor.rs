@@ -46,8 +46,10 @@ pub struct EntryEditor {
     /// The expiry the Entry had, kept to the second while its date isn't changed.
     original_expiry: Option<Timestamp>,
     attachments: Vec<Attachment>,
-    /// Why the form can't be saved, an icon imported, or files picked to attach read.
+    /// Why the form can't be saved, or an icon imported.
     error: Option<SharedString>,
+    /// Why files picked to attach couldn't be read.
+    attachment_errors: Option<SharedString>,
 }
 
 /// A custom field being edited.
@@ -139,6 +141,7 @@ impl EntryEditor {
             original_expiry: fields.expires,
             attachments: fields.attachments.clone(),
             error: None,
+            attachment_errors: None,
         }
     }
 
@@ -266,7 +269,7 @@ impl EntryEditor {
                         Err(error) => errors.push(error),
                     }
                 }
-                this.error = (!errors.is_empty()).then(|| errors.join("\n").into());
+                this.attachment_errors = (!errors.is_empty()).then(|| errors.join("\n").into());
                 cx.notify();
             })
             .ok();
@@ -684,39 +687,13 @@ impl EntryEditor {
             .iter()
             .enumerate()
             .map(|(index, attachment)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(attachment.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .text_color(theme.muted)
-                                    .child(attachments::size_label(attachment.size())),
-                            )
-                            .child(
-                                div()
-                                    .id(("remove-attachment", index))
-                                    .cursor_pointer()
-                                    .text_color(theme.accent)
-                                    .child(strings::REMOVE_ATTACHMENT)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.remove_attachment(index, cx)
-                                    })),
-                            ),
-                    )
+                let remove = div()
+                    .id(("remove-attachment", index))
+                    .cursor_pointer()
+                    .text_color(theme.accent)
+                    .child(strings::REMOVE_ATTACHMENT)
+                    .on_click(cx.listener(move |this, _, _, cx| this.remove_attachment(index, cx)));
+                attachments::row(attachment, remove, theme)
             });
 
         div()
@@ -739,6 +716,9 @@ impl EntryEditor {
                             .on_click(cx.listener(|this, _, _, cx| this.add_attachments(cx))),
                     ),
             )
+            .when_some(self.attachment_errors.clone(), |this, error| {
+                this.child(div().text_sm().text_color(theme.error).child(error))
+            })
             .children(rows)
     }
 

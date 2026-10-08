@@ -5,8 +5,8 @@ use gpui::{
     PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{
-    AccessDecision, EditError, Entry, EntryColor, EntryFields, EntryIcon, EntryId, EntrySearch,
-    EntrySort, Group, GroupId, TotpCode,
+    AccessDecision, AttachmentPreview, EditError, Entry, EntryColor, EntryFields, EntryIcon,
+    EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
@@ -2052,76 +2052,45 @@ impl VaultBrowser {
     /// The selected Entry's attachments, each with its size, a preview when it is text or an
     /// image, and a way to save it to disk.
     fn render_attachments(&self, entry: &Entry, theme: Theme, cx: &Context<Self>) -> AnyElement {
-        let rows =
-            entry
-                .attachments()
-                .iter()
-                .enumerate()
-                .map(|(index, attachment)| {
-                    let preview = self
-                        .attachment_preview
-                        .as_ref()
-                        .filter(|preview| preview.shows(index, attachment));
-                    let link = |id: &'static str, label: &'static str| {
-                        div()
-                            .id((id, index))
-                            .cursor_pointer()
-                            .text_color(theme.accent)
-                            .child(label)
-                    };
+        let rows = entry
+            .attachments()
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                let preview = self
+                    .attachment_preview
+                    .as_ref()
+                    .filter(|preview| preview.shows(index, attachment));
+                let link = |id: &'static str, label: &'static str| {
                     div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(attachment.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_3()
-                                        .text_sm()
-                                        .child(
-                                            div()
-                                                .text_color(theme.muted)
-                                                .child(attachments::size_label(attachment.size())),
-                                        )
-                                        .when(attachments::can_preview(attachment), |this| {
-                                            this.child(
-                                                link(
-                                                    "preview-attachment",
-                                                    if preview.is_some() {
-                                                        strings::HIDE_PREVIEW
-                                                    } else {
-                                                        strings::PREVIEW_ATTACHMENT
-                                                    },
-                                                )
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_attachment_preview(index, cx)
-                                                })),
-                                            )
-                                        })
-                                        .child(
-                                            link("save-attachment", strings::SAVE_ATTACHMENT)
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.save_attachment(index, cx)
-                                                })),
-                                        ),
-                                ),
-                        )
-                        .when_some(preview, |this, preview| {
-                            this.child(preview.render(attachment, theme))
-                        })
-                });
+                        .id((id, index))
+                        .cursor_pointer()
+                        .text_color(theme.accent)
+                        .child(label)
+                };
+                let previewable = attachment.preview() != AttachmentPreview::None;
+                let links = div()
+                    .flex()
+                    .gap_3()
+                    .when(previewable, |this| {
+                        let label = if preview.is_some() {
+                            strings::HIDE_PREVIEW
+                        } else {
+                            strings::PREVIEW_ATTACHMENT
+                        };
+                        this.child(link("preview-attachment", label).on_click(cx.listener(
+                            move |this, _, _, cx| this.toggle_attachment_preview(index, cx),
+                        )))
+                    })
+                    .child(link("save-attachment", strings::SAVE_ATTACHMENT).on_click(
+                        cx.listener(move |this, _, _, cx| this.save_attachment(index, cx)),
+                    ));
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(attachments::row(attachment, links, theme))
+                    .when_some(preview, |this, preview| this.child(preview.render(theme)))
+            });
         div()
             .flex()
             .flex_col()

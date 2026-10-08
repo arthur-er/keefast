@@ -9,6 +9,7 @@ use keefast_core::{
 use keepass::{Database, DatabaseKey};
 
 const KEEPASS2_KDBX4: &[u8] = include_bytes!("../../../fixtures/keepass2-kdbx4.kdbx");
+const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../fixtures/keepassxc-kdbx4.kdbx");
 const KEEPASS2_KDBX3: &[u8] = include_bytes!("../../../fixtures/keepass2-kdbx3.kdbx");
 const PASSWORD: &str = "fixture-password";
 const CODES: &[u8] = b"recovery-code-1\nrecovery-code-2\n";
@@ -44,8 +45,11 @@ fn id_of(vault: &Vault, title: &str) -> EntryId {
     entry_titled(vault, title).id()
 }
 
+/// Attachments' names and contents.
+type Files = Vec<(String, Vec<u8>)>;
+
 /// Each attachment's name and contents.
-fn files(entry: &Entry) -> Vec<(String, Vec<u8>)> {
+fn files(entry: &Entry) -> Files {
     entry
         .attachments()
         .iter()
@@ -273,14 +277,10 @@ fn attachment_names_must_be_present_and_unique() {
 #[test]
 fn adding_an_attachment_with_a_taken_name_numbers_it() {
     let mut attachments = Vec::new();
-    let mut add = |name: &str| Attachment::new(name, b"x".to_vec()).add_to(&mut attachments);
-    let first = add("codes.txt");
-    let second = add("codes.txt");
-    let third = add("codes.txt");
-    let plain = add("README");
-    let plain_again = add("README");
+    for name in ["codes.txt", "codes.txt", "codes.txt", "README", "README"] {
+        Attachment::new(name, b"x".to_vec()).add_to(&mut attachments);
+    }
 
-    assert_eq!([first, second, third, plain, plain_again], [0, 1, 2, 3, 4]);
     let names: Vec<&str> = attachments.iter().map(|a| &*a.name).collect();
     assert_eq!(
         names,
@@ -291,6 +291,42 @@ fn adding_an_attachment_with_a_taken_name_numbers_it() {
             "README",
             "README (2)"
         ]
+    );
+}
+
+#[test]
+fn attachments_merged_in_stay_right_through_edits_and_a_save() {
+    // The Merge adds the other Vault's attachments to this one's pool; editing afterwards
+    // drops and renumbers pool contents, which must leave every Entry with what it had.
+    let mut vault = open(KEEPASS2_KDBX4);
+    vault.merge(&open(KEEPASSXC_KDBX4));
+    let before: Vec<(String, Files)> = vault
+        .root()
+        .all_entries()
+        .filter(|entry| entry.title() != "Email")
+        .map(|entry| (entry.title().to_owned(), files(entry)))
+        .collect();
+    set_attachments(
+        &mut vault,
+        "Email",
+        vec![Attachment::new("new.txt", b"new".to_vec())],
+    );
+
+    let reopened = reopen(&vault);
+    assert_eq!(
+        files(entry_titled(&reopened, "Email")),
+        [file("new.txt", b"new")]
+    );
+    let after: Vec<_> = reopened
+        .root()
+        .all_entries()
+        .filter(|entry| entry.title() != "Email")
+        .map(|entry| (entry.title().to_owned(), files(entry)))
+        .collect();
+    assert_eq!(after, before);
+    assert!(
+        after.iter().any(|(_, files)| !files.is_empty()),
+        "other Entries kept attachments to check"
     );
 }
 

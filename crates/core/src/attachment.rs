@@ -61,13 +61,12 @@ impl Attachment {
     }
 
     /// Adds the attachment to an Entry's `attachments`, numbering its name if another one has
-    /// it already, as in `codes (2).txt`. Returns where it was added.
-    pub fn add_to(mut self, attachments: &mut Vec<Attachment>) -> usize {
+    /// it already, as in `codes (2).txt`.
+    pub fn add_to(mut self, attachments: &mut Vec<Attachment>) {
         self.name = unique_name(&self.name, |name| {
             attachments.iter().any(|other| other.name == name)
         });
         attachments.push(self);
-        attachments.len() - 1
     }
 
     /// The size in bytes.
@@ -130,7 +129,7 @@ fn unique_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
 }
 
 /// An Entry element's attachments, in order. References to contents the pool doesn't have are
-/// left out.
+/// left out; the next edit drops them (see [`drop_unused`]).
 pub(crate) fn read(entry: &Element, pool: &[Binary]) -> Vec<Attachment> {
     entry
         .children_named("Binary")
@@ -190,8 +189,11 @@ pub(crate) fn write(entry: &mut Element, attachments: &[Attachment], pool: &mut 
 }
 
 /// Drops the pool's contents that no reference in `document` points at, and renumbers the
-/// references to what is left. References to contents the pool never had are kept as they are.
+/// references to what is left. References to contents the pool never had are dropped too, as
+/// KeePassXC drops them: no client can read them, and once the pool grows they would point at
+/// contents added for another Entry.
 pub(crate) fn drop_unused(document: &mut Element, pool: &mut Vec<Binary>) {
+    drop_dangling(document, pool.len());
     let mut used = vec![false; pool.len()];
     visit_references(document, &mut |index| {
         if let Some(used) = used.get_mut(*index) {
@@ -214,6 +216,17 @@ pub(crate) fn drop_unused(document: &mut Element, pool: &mut Vec<Binary>) {
             *index = new;
         }
     });
+}
+
+/// Removes the attachments whose reference points past the pool.
+fn drop_dangling(element: &mut Element, pool_len: usize) {
+    element.children.retain(|node| {
+        !matches!(node, Node::Element(binary) if binary.name == "Binary"
+            && reference(binary).is_some_and(|index| index >= pool_len))
+    });
+    for child in element.elements_mut() {
+        drop_dangling(child, pool_len);
+    }
 }
 
 /// Calls `visit` with every attachment reference in the document, in Entries and their history
@@ -283,7 +296,11 @@ mod tests {
 
         let data: Vec<&[u8]> = pool.iter().map(|binary| binary.data.bytes()).collect();
         assert_eq!(data, [&b"a"[..], b"c"]);
-        assert_eq!(refs(&document), ["1", "0", "9"]);
+        assert_eq!(
+            refs(&document),
+            ["1", "0"],
+            "the dangling reference is gone"
+        );
     }
 
     #[test]

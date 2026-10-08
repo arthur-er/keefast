@@ -4,7 +4,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, Image, ObjectFit, PathPromptOptions, Task, div, img, prelude::*, px};
+use gpui::{
+    AnyElement, App, Div, Image, ObjectFit, PathPromptOptions, SharedString, Task, div, img,
+    prelude::*, px,
+};
 use keefast_core::{Attachment, AttachmentPreview, ImageFormat};
 use keefast_workspace::{read_attachment, write_attachment};
 
@@ -27,40 +30,78 @@ pub fn size_label(bytes: usize) -> String {
     }
 }
 
-/// Whether the attachment is text or an image keefast can show.
-pub fn can_preview(attachment: &Attachment) -> bool {
-    attachment.preview() != AttachmentPreview::None
+/// An attachment's row: its name, then its size and `links` to act on it.
+pub fn row(attachment: &Attachment, links: impl IntoElement, theme: Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(attachment.name.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .text_sm()
+                .child(
+                    div()
+                        .text_color(theme.muted)
+                        .child(size_label(attachment.size())),
+                )
+                .child(links),
+        )
 }
 
-/// An attachment being previewed. An image is decoded once, not on every frame.
+/// An attachment being previewed, made ready once rather than on every frame.
 pub struct Preview {
     index: usize,
-    name: String,
-    image: Option<Arc<Image>>,
+    /// What is previewed, to tell when the Entry's attachment at `index` has changed.
+    attachment: Attachment,
+    content: PreviewContent,
+}
+
+enum PreviewContent {
+    Image(Arc<Image>),
+    Text { shown: SharedString, cut: bool },
+    None,
 }
 
 impl Preview {
     pub fn new(index: usize, attachment: &Attachment) -> Self {
-        let image = match attachment.preview() {
-            AttachmentPreview::Image(format) => Some(Arc::new(Image::from_bytes(
+        let content = match attachment.preview() {
+            AttachmentPreview::Image(format) => PreviewContent::Image(Arc::new(Image::from_bytes(
                 image_format(format),
                 attachment.data().to_vec(),
             ))),
-            _ => None,
+            AttachmentPreview::Text(text) => {
+                let cut = text.len() > PREVIEW_TEXT_LIMIT;
+                let shown = &text[..text.floor_char_boundary(PREVIEW_TEXT_LIMIT)];
+                PreviewContent::Text {
+                    shown: shown.to_owned().into(),
+                    cut,
+                }
+            }
+            AttachmentPreview::None => PreviewContent::None,
         };
         Self {
             index,
-            name: attachment.name.clone(),
-            image,
+            attachment: attachment.clone(),
+            content,
         }
     }
 
-    /// Whether this previews the attachment at `index`, still the one it was made for.
+    /// Whether this previews `attachment`, the Entry's attachment at `index`.
     pub fn shows(&self, index: usize, attachment: &Attachment) -> bool {
-        self.index == index && self.name == attachment.name
+        self.index == index && self.attachment == *attachment
     }
 
-    pub fn render(&self, attachment: &Attachment, theme: Theme) -> AnyElement {
+    pub fn render(&self, theme: Theme) -> AnyElement {
         let frame = div()
             .mt_1()
             .p_2()
@@ -68,48 +109,40 @@ impl Preview {
             .border_1()
             .border_color(theme.border)
             .bg(theme.background);
-        if let Some(image) = &self.image {
-            return frame
+        match &self.content {
+            PreviewContent::Image(image) => frame
                 .child(
                     img(image.clone())
                         .max_w_full()
                         .max_h(px(320.))
                         .object_fit(ObjectFit::ScaleDown),
                 )
-                .into_any_element();
-        }
-        let AttachmentPreview::Text(text) = attachment.preview() else {
-            return frame.into_any_element();
-        };
-        let cut = text.len() > PREVIEW_TEXT_LIMIT;
-        let shown = if cut {
-            &text[..text.floor_char_boundary(PREVIEW_TEXT_LIMIT)]
-        } else {
-            text
-        };
-        frame
-            .id("attachment-text-preview")
-            .max_h(px(320.))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .font_family("monospace")
-                    .text_sm()
-                    .whitespace_normal()
-                    .child(shown.to_owned()),
-            )
-            .when(cut, |this| {
-                this.child(
+                .into_any_element(),
+            PreviewContent::Text { shown, cut } => frame
+                .id("attachment-text-preview")
+                .max_h(px(320.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
                     div()
+                        .font_family("monospace")
                         .text_sm()
-                        .text_color(theme.muted)
-                        .child(strings::ATTACHMENT_PREVIEW_CUT),
+                        .whitespace_normal()
+                        .child(shown.clone()),
                 )
-            })
-            .into_any_element()
+                .when(*cut, |this| {
+                    this.child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::ATTACHMENT_PREVIEW_CUT),
+                    )
+                })
+                .into_any_element(),
+            PreviewContent::None => frame.into_any_element(),
+        }
     }
 }
 

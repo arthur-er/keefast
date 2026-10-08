@@ -180,6 +180,12 @@ impl EntryFields {
                 return Err(EditError::FieldNameTaken);
             }
         }
+        Ok(())
+    }
+
+    /// Every attachment needs a name of its own. Only checked for attachments being set, so an
+    /// Entry another client gave clashing names can still be edited otherwise.
+    fn check_attachments(&self) -> Result<(), EditError> {
         for (index, attachment) in self.attachments.iter().enumerate() {
             if attachment.name.trim().is_empty() {
                 return Err(EditError::AttachmentNameEmpty);
@@ -223,6 +229,7 @@ impl Vault {
     ) -> Result<EntryId, EditError> {
         let path = self.path_to(Kind::Group, group.0)?;
         fields.check(self)?;
+        fields.check_attachments()?;
         let id = new_uuid();
         let mut entry = Element::new("Entry");
         push(&mut entry, text_element("UUID", encode_uuid(id)));
@@ -238,6 +245,8 @@ impl Vault {
             let value = field.value.expose_secret();
             push(&mut entry, new_string(&field.name, value, field.protected));
         }
+        // References that point past the pool go first, so none lands on contents added here.
+        self.drop_unused_attachments();
         attachment::write(&mut entry, &fields.attachments, &mut self.file.binaries);
         let mut auto_type = Element::new("AutoType");
         push(&mut auto_type, text_element("Enabled", "True"));
@@ -269,6 +278,12 @@ impl Vault {
             return Ok(());
         }
         let current = EntryFields::from(current);
+        if attachments_changed {
+            fields.check_attachments()?;
+            // References that point past the pool go first, so none lands on contents added
+            // here.
+            self.drop_unused_attachments();
+        }
         let protection = FIELDS.map(|(_, protect)| self.protects(protect));
         // The history is trimmed by what its attachments weigh, so archive before the pool of
         // attachment contents is taken out to be written to.

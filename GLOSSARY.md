@@ -26,6 +26,10 @@ _Avoid_: Keyfile, key, token
 A single stored credential or secret record inside a Vault (title, username, password, URL, notes, custom fields, attachments, history).
 _Avoid_: Item, record, login
 
+**Attachment**:
+A file kept with an Entry, such as recovery codes or a key file. Its contents live once in the Vault file's binary pool, shared by every Entry and history version that has it.
+_Avoid_: Binary, file (for the stored copy)
+
 **Group**:
 A folder-like container in a Vault that holds Entries and other Groups.
 _Avoid_: Folder, category
