@@ -160,3 +160,17 @@ fn an_xml_key_file_of_an_unknown_version_is_unsupported() {
 
     assert!(matches!(result, Err(KeyFileError::Unsupported(_))));
 }
+
+#[test]
+fn an_empty_password_with_a_key_file_is_not_the_key_file_alone() {
+    let vault = fixture!("keepass2-empty-password-kdbx4.kdbx");
+
+    let alone = Vault::open(vault, &CompositeKey::key_file(ANY_FILE).unwrap());
+    let with_empty = Vault::open(
+        vault,
+        &CompositeKey::password_and_key_file("", ANY_FILE).unwrap(),
+    );
+
+    assert!(matches!(alone, Err(OpenError::WrongKey)));
+    assert!(with_empty.is_ok());
+}

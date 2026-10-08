@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use keefast_workspace::{
-    AppConfig, ConfigError, ConfigStore, Credentials, EntryScope, FileConfigStore, OpenVaultError,
-    VaultId, VaultLocation, Workspace,
+    AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, OpenVaultError,
+    UnlockSecrets, VaultId, VaultLocation, Workspace,
 };
 use support::{
     FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault,
@@ -22,8 +22,8 @@ fn storage() -> Arc<FakeStorage> {
     )
 }
 
-fn key() -> Credentials {
-    Credentials::password(PASSWORD)
+fn key() -> UnlockSecrets {
+    UnlockSecrets::password(PASSWORD)
 }
 
 fn workspace_with(config: Arc<dyn ConfigStore>) -> Workspace {
@@ -124,7 +124,7 @@ fn a_vault_file_that_fails_to_open_is_not_remembered() {
     let config = Arc::new(FakeConfigStore::default());
     let mut workspace = workspace_with(config.clone());
 
-    let wrong = workspace.open_vault(&personal_vault(), &Credentials::password("wrong"));
+    let wrong = workspace.open_vault(&personal_vault(), &UnlockSecrets::password("wrong"));
 
     assert!(wrong.is_err());
     assert!(workspace.recent_vaults().is_empty());

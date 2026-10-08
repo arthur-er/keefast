@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use keefast_core::{KeyFileError, OpenError};
-use keefast_workspace::{Credentials, EntryScope, OpenVaultError, VaultLocation, Workspace};
+use keefast_workspace::{EntryScope, OpenVaultError, UnlockSecrets, VaultLocation, Workspace};
 use secrecy::SecretString;
 use support::{FakeStorage, PASSWORD};
 
@@ -21,8 +21,8 @@ fn workspace_with(fixture: &str) -> Workspace {
     Workspace::new(Arc::new(FakeStorage::default().with_file(&vault(), &bytes)))
 }
 
-fn credentials(password: &str, key_file: &str) -> Credentials {
-    Credentials::new(
+fn secrets(password: &str, key_file: &str) -> UnlockSecrets {
+    UnlockSecrets::new(
         SecretString::from(password),
         Some(key_files().join(key_file)),
     )
@@ -33,7 +33,7 @@ fn a_vault_opens_with_its_password_and_key_file() {
     let mut workspace = workspace_with("keepassxc-xml-v2.kdbx");
 
     let id = workspace
-        .open_vault(&vault(), &credentials(PASSWORD, "xml-v2.keyx"))
+        .open_vault(&vault(), &secrets(PASSWORD, "xml-v2.keyx"))
         .unwrap();
 
     assert_eq!(workspace.visible_entries(EntryScope::Vault(id)).len(), 1);
@@ -43,7 +43,7 @@ fn a_vault_opens_with_its_password_and_key_file() {
 fn with_a_key_file_an_empty_password_means_the_key_file_alone() {
     let mut workspace = workspace_with("keepassxc-raw-32.kdbx");
 
-    let opened = workspace.open_vault(&vault(), &credentials("", "raw-32.key"));
+    let opened = workspace.open_vault(&vault(), &secrets("", "raw-32.key"));
 
     assert!(opened.is_ok());
 }
@@ -53,7 +53,7 @@ fn the_key_file_is_read_off_the_ui_thread_with_the_vault_file() {
     let mut workspace = workspace_with("keepass2-xml-v2-kdbx4.kdbx");
 
     let pending = workspace
-        .begin_open(vault(), credentials(PASSWORD, "xml-v2.keyx"))
+        .begin_open(vault(), secrets(PASSWORD, "xml-v2.keyx"))
         .unwrap();
     let unlocked = std::thread::spawn(move || pending.unlock())
         .join()
@@ -68,7 +68,7 @@ fn the_key_file_is_read_off_the_ui_thread_with_the_vault_file() {
 fn a_missing_key_file_is_reported_as_such() {
     let mut workspace = workspace_with("keepassxc-xml-v2.kdbx");
 
-    let result = workspace.open_vault(&vault(), &credentials(PASSWORD, "not-here.key"));
+    let result = workspace.open_vault(&vault(), &secrets(PASSWORD, "not-here.key"));
 
     assert!(matches!(result, Err(OpenVaultError::KeyFileNotFound(_))));
 }
@@ -83,7 +83,7 @@ fn a_damaged_key_file_is_reported_as_such() {
 
     let result = workspace.open_vault(
         &vault(),
-        &Credentials::new(SecretString::from(PASSWORD), Some(damaged)),
+        &UnlockSecrets::new(SecretString::from(PASSWORD), Some(damaged)),
     );
 
     assert!(matches!(
@@ -96,10 +96,19 @@ fn a_damaged_key_file_is_reported_as_such() {
 fn the_wrong_key_file_is_a_wrong_key() {
     let mut workspace = workspace_with("keepassxc-xml-v2.kdbx");
 
-    let result = workspace.open_vault(&vault(), &credentials(PASSWORD, "any-file.txt"));
+    let result = workspace.open_vault(&vault(), &secrets(PASSWORD, "any-file.txt"));
 
     assert!(matches!(
         result,
         Err(OpenVaultError::Vault(OpenError::WrongKey))
     ));
+}
+
+#[test]
+fn with_a_key_file_an_empty_password_also_tries_keepass_2s_empty_password() {
+    let mut workspace = workspace_with("keepass2-empty-password-kdbx4.kdbx");
+
+    let opened = workspace.open_vault(&vault(), &secrets("", "any-file.txt"));
+
+    assert!(opened.is_ok());
 }

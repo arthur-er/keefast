@@ -158,6 +158,8 @@ create keepassxc-any-file.kdbx any-file.txt yes
 
 # KeePass2 writes KDBX 4.1 with Argon2id: the password and KeePassXC's XML v2.0 key file.
 MONO_PATH=$KEEPASSLIB mono "$work/keepass2.exe" write keepass2-xml-v2-kdbx4.kdbx "$pw" kdbx4 xml-v2.keyx
+# KeePass 2 can also combine an empty password with a key file, unlike a key file alone.
+MONO_PATH=$KEEPASSLIB mono "$work/keepass2.exe" write keepass2-empty-password-kdbx4.kdbx "" kdbx4 any-file.txt
 cd ..
 
 chmod 644 ./*.kdbx key-files/*

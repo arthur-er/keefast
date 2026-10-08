@@ -7,7 +7,7 @@ use gpui::{
 };
 use keefast_core::{KeyFileError, OpenError};
 use keefast_workspace::{
-    Credentials, OpenVaultError, StorageError, VaultId, VaultLocation, Workspace,
+    OpenVaultError, StorageError, UnlockSecrets, VaultId, VaultLocation, Workspace,
 };
 use secrecy::SecretString;
 
@@ -159,7 +159,7 @@ impl UnlockView {
         &mut self,
         prompt: &'static str,
         cx: &mut Context<Self>,
-        picked: impl FnOnce(&mut Self, PathBuf) + 'static,
+        on_picked: impl FnOnce(&mut Self, PathBuf) + 'static,
     ) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -172,7 +172,7 @@ impl UnlockView {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
-                        picked(this, paths.swap_remove(0));
+                        on_picked(this, paths.swap_remove(0));
                         this.error = None;
                     }
                     Ok(Ok(_)) | Err(_) => {}
@@ -192,11 +192,11 @@ impl UnlockView {
         if self.unlocking.is_some() {
             return;
         }
-        let credentials = Credentials::new(
+        let secrets = UnlockSecrets::new(
             SecretString::from(self.password.read(cx).text()),
             self.key_file.clone(),
         );
-        let pending = match self.workspace.read(cx).begin_open(location, credentials) {
+        let pending = match self.workspace.read(cx).begin_open(location, secrets) {
             Ok(pending) => pending,
             Err(OpenVaultError::AlreadyOpen(vault)) => {
                 self.clear_password(cx);

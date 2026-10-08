@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use keefast_core::{CompositeKey, EntryFields, Timestamp, Vault};
 use keefast_workspace::{
-    Credentials, EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError,
-    StorageProvider, VaultId, VaultLocation, Workspace,
+    EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError, StorageProvider,
+    UnlockSecrets, VaultId, VaultLocation, Workspace,
 };
 use secrecy::{ExposeSecret, SecretString};
 use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
@@ -38,8 +38,8 @@ fn harness() -> Harness {
     }
 }
 
-fn key() -> Credentials {
-    Credentials::password(PASSWORD)
+fn key() -> UnlockSecrets {
+    UnlockSecrets::password(PASSWORD)
 }
 
 fn fields(title: &str, password: &str) -> EntryFields {

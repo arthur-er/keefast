@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use keefast_core::EditError;
 use keefast_workspace::{
-    BrowserReply, BrowserSession, Credentials, EditVaultError, KEEPASSXC_VERSION, PairingRequest,
+    BrowserReply, BrowserSession, EditVaultError, KEEPASSXC_VERSION, PairingRequest, UnlockSecrets,
     VaultId, Workspace,
 };
 use serde_json::{Value, json};
@@ -29,7 +29,7 @@ fn storage() -> Arc<FakeStorage> {
 fn workspace_with_personal_vault() -> (Workspace, VaultId) {
     let mut workspace = Workspace::new(storage());
     let vault = workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .unwrap();
     (workspace, vault)
 }
@@ -137,7 +137,7 @@ fn a_pairing_is_saved_with_the_vault_and_recognised_in_a_later_session() {
     let storage = storage();
     let mut workspace = Workspace::new(storage.clone());
     let vault = workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .unwrap();
     let (extension, mut session) = connected(&workspace);
     pair(&mut workspace, &extension, &mut session, "Home");
@@ -146,7 +146,7 @@ fn a_pairing_is_saved_with_the_vault_and_recognised_in_a_later_session() {
     // keefast restarts; the extension reconnects with a new session key.
     let mut workspace = Workspace::new(storage);
     workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .unwrap();
     let mut later = FakeExtension::new();
     let mut session = BrowserSession::new();
@@ -331,7 +331,7 @@ fn unknown_actions_and_garbage_are_refused() {
 #[test]
 fn the_browser_deals_with_the_focused_vault() {
     let mut workspace = Workspace::new(storage());
-    let key = Credentials::password(PASSWORD);
+    let key = UnlockSecrets::password(PASSWORD);
     workspace.open_vault(&personal_vault(), &key).unwrap();
     let work = workspace.open_vault(&work_vault(), &key).unwrap();
     workspace.focus_vault(Some(work));
@@ -358,7 +358,7 @@ fn the_browser_deals_with_the_focused_vault() {
 #[test]
 fn unfocused_the_browser_deals_with_a_vault_it_holds_a_key_for() {
     let storage = storage();
-    let key = Credentials::password(PASSWORD);
+    let key = UnlockSecrets::password(PASSWORD);
     // Pair the work Vault alone, then open it after the personal one.
     let mut workspace = Workspace::new(storage.clone());
     let work = workspace.open_vault(&work_vault(), &key).unwrap();

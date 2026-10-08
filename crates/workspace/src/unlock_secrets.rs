@@ -10,13 +10,12 @@ use crate::OpenVaultError;
 
 /// What the user gave to unlock a Vault file: a master password, a key file on disk, or both.
 #[derive(Clone)]
-pub struct Credentials {
+pub struct UnlockSecrets {
     password: SecretString,
     key_file: Option<PathBuf>,
 }
 
-impl Credentials {
-    /// With a key file, an empty password means the key file alone, as in KeePassXC.
+impl UnlockSecrets {
     pub fn new(password: SecretString, key_file: Option<PathBuf>) -> Self {
         Self { password, key_file }
     }
@@ -25,20 +24,24 @@ impl Credentials {
         Self::new(SecretString::from(password.into()), None)
     }
 
-    /// Reads the key file, if any, and combines it with the password. Blocks on the disk.
-    pub(crate) fn composite_key(&self) -> Result<CompositeKey, OpenVaultError> {
+    /// The composite keys to try, in order. Reads the key file, if any, so it blocks on the disk.
+    ///
+    /// With a key file, an empty password means the key file alone, as in KeePassXC. KeePass 2
+    /// can also make a Vault file with an empty password plus a key file, so that is tried next.
+    pub(crate) fn composite_keys(&self) -> Result<Vec<CompositeKey>, OpenVaultError> {
         let password = self.password.expose_secret();
         let Some(path) = &self.key_file else {
-            return Ok(CompositeKey::password(password));
+            return Ok(vec![CompositeKey::password(password)]);
         };
         let contents = Zeroizing::new(fs::read(path).map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => OpenVaultError::KeyFileNotFound(path.clone()),
             _ => OpenVaultError::KeyFileUnreadable(error),
         })?);
+        let with_password = CompositeKey::password_and_key_file(password, &contents)?;
         Ok(if password.is_empty() {
-            CompositeKey::key_file(&contents)?
+            vec![CompositeKey::key_file(&contents)?, with_password]
         } else {
-            CompositeKey::password_and_key_file(password, &contents)?
+            vec![with_password]
         })
     }
 }

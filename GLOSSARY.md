@@ -14,6 +14,10 @@ _Avoid_: Database, file, store
 The encrypted KDBX file that a Vault is read from and saved to, wherever it is stored.
 _Avoid_: Database file, kdbx
 
+**Key file**:
+A file whose contents unlock a Vault file, alone or together with the master password, in any of the formats KeePass clients use.
+_Avoid_: Keyfile, key, token
+
 **Entry**:
 A single stored credential or secret record inside a Vault (title, username, password, URL, notes, custom fields, attachments, history).
 _Avoid_: Item, record, login

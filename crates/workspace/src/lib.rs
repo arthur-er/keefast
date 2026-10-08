@@ -7,9 +7,9 @@ mod browser_hosts;
 mod clipboard;
 mod clock;
 mod config;
-mod credentials;
 mod generator;
 mod storage;
+mod unlock_secrets;
 
 use std::io;
 use std::path::PathBuf;
@@ -35,9 +35,9 @@ pub use browser_hosts::{
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
-pub use credentials::Credentials;
 pub use generator::{GeneratorMode, GeneratorSettings};
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
+pub use unlock_secrets::UnlockSecrets;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VaultId(u64);
@@ -66,7 +66,7 @@ pub enum OpenVaultError {
     #[error("key file not found: {0}")]
     KeyFileNotFound(PathBuf),
     #[error("could not read the key file: {0}")]
-    KeyFileUnreadable(io::Error),
+    KeyFileUnreadable(#[source] io::Error),
     #[error(transparent)]
     KeyFile(#[from] KeyFileError),
     #[error(transparent)]
@@ -154,14 +154,20 @@ impl OpenVault {
 pub struct PendingOpen {
     storage: Arc<dyn StorageProvider>,
     location: VaultLocation,
-    credentials: Credentials,
+    secrets: UnlockSecrets,
 }
 
 impl PendingOpen {
     pub fn unlock(self) -> Result<UnlockedVault, OpenVaultError> {
         let bytes = self.storage.read(&self.location)?;
-        let key = self.credentials.composite_key()?;
-        let vault = Vault::open(&bytes, &key)?;
+        let mut opened = Err(OpenError::WrongKey);
+        for key in self.secrets.composite_keys()? {
+            opened = Vault::open(&bytes, &key);
+            if !matches!(opened, Err(OpenError::WrongKey)) {
+                break;
+            }
+        }
+        let vault = opened?;
         Ok(UnlockedVault {
             location: self.location,
             vault,
@@ -437,9 +443,9 @@ impl Workspace {
     pub fn open_vault(
         &mut self,
         location: &VaultLocation,
-        credentials: &Credentials,
+        secrets: &UnlockSecrets,
     ) -> Result<VaultId, OpenVaultError> {
-        let pending = self.begin_open(location.clone(), credentials.clone())?;
+        let pending = self.begin_open(location.clone(), secrets.clone())?;
         Ok(self.add_unlocked(pending.unlock()?))
     }
 
@@ -449,7 +455,7 @@ impl Workspace {
     pub fn begin_open(
         &self,
         location: VaultLocation,
-        credentials: Credentials,
+        secrets: UnlockSecrets,
     ) -> Result<PendingOpen, OpenVaultError> {
         let location = self.storage.canonical(&location);
         if let Some(open) = self.open_vault_at(&location) {
@@ -458,7 +464,7 @@ impl Workspace {
         Ok(PendingOpen {
             storage: Arc::clone(&self.storage),
             location,
-            credentials,
+            secrets,
         })
     }
 

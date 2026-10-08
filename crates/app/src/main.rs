@@ -385,6 +385,8 @@ impl Args {
         while let Some(arg) = args.next() {
             if arg == "--key-file" {
                 parsed.key_file = args.next().map(absolute);
+            } else if arg.to_string_lossy().starts_with("--") {
+                eprintln!("keefast: ignoring unknown option {}", arg.to_string_lossy());
             } else if parsed.vault_file.is_none() {
                 parsed.vault_file = Some(absolute(arg));
             }

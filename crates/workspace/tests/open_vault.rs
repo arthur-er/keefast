@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use keefast_core::OpenError;
 use keefast_workspace::{
-    Credentials, EntryScope, ListedEntry, LocalStorage, OpenVaultError, StorageError,
-    StorageProvider, VaultLocation, Workspace,
+    EntryScope, ListedEntry, LocalStorage, OpenVaultError, StorageError, StorageProvider,
+    UnlockSecrets, VaultLocation, Workspace,
 };
 use support::{FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
 
@@ -27,7 +27,7 @@ fn opening_a_vault_shows_every_entry_sorted_by_title() {
     let mut workspace = workspace_with_fixture();
 
     let id = workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .expect("vault opens");
 
     let entries = workspace.visible_entries(EntryScope::Vault(id));
@@ -41,7 +41,7 @@ fn opening_a_vault_shows_every_entry_sorted_by_title() {
 fn selecting_a_group_shows_its_entries_and_those_of_its_subgroups() {
     let mut workspace = workspace_with_fixture();
     let id = workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .unwrap();
 
     let work = workspace.vault(id).unwrap().vault().root().groups()[0].id();
@@ -54,7 +54,7 @@ fn selecting_a_group_shows_its_entries_and_those_of_its_subgroups() {
 fn an_opened_vault_is_listed_with_its_location_and_display_name() {
     let mut workspace = workspace_with_fixture();
     let id = workspace
-        .open_vault(&personal_vault(), &Credentials::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .unwrap();
 
     let open: Vec<_> = workspace.vaults().map(|vault| vault.id()).collect();
@@ -71,7 +71,7 @@ fn several_vaults_can_be_open_at_once() {
         .with_file(&personal_vault(), KEEPASSXC_KDBX4)
         .with_file(&work_vault, KEEPASSXC_KDBX4);
     let mut workspace = Workspace::new(Arc::new(storage));
-    let key = Credentials::password(PASSWORD);
+    let key = UnlockSecrets::password(PASSWORD);
 
     let personal = workspace.open_vault(&personal_vault(), &key).unwrap();
     let work = workspace.open_vault(&work_vault, &key).unwrap();
@@ -84,7 +84,7 @@ fn several_vaults_can_be_open_at_once() {
 fn a_wrong_password_leaves_no_vault_open() {
     let mut workspace = workspace_with_fixture();
 
-    let result = workspace.open_vault(&personal_vault(), &Credentials::password("wrong"));
+    let result = workspace.open_vault(&personal_vault(), &UnlockSecrets::password("wrong"));
 
     assert!(matches!(
         result,
@@ -97,7 +97,7 @@ fn a_wrong_password_leaves_no_vault_open() {
 fn a_missing_vault_file_is_a_storage_error() {
     let mut workspace = Workspace::new(Arc::new(FakeStorage::default()));
 
-    let result = workspace.open_vault(&personal_vault(), &Credentials::password(PASSWORD));
+    let result = workspace.open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD));
 
     assert!(matches!(
         result,
@@ -110,7 +110,7 @@ fn unlocking_can_run_on_another_thread() {
     let mut workspace = workspace_with_fixture();
 
     let pending = workspace
-        .begin_open(personal_vault(), Credentials::password(PASSWORD))
+        .begin_open(personal_vault(), UnlockSecrets::password(PASSWORD))
         .unwrap();
     let unlocked = std::thread::spawn(move || pending.unlock())
         .join()
@@ -130,7 +130,7 @@ fn the_local_storage_provider_reads_vault_files_from_disk() {
     let id = workspace
         .open_vault(
             &VaultLocation::Local(path),
-            &Credentials::password(PASSWORD),
+            &UnlockSecrets::password(PASSWORD),
         )
         .unwrap();
 
