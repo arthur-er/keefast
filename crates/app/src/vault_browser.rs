@@ -325,9 +325,8 @@ impl VaultBrowser {
     }
 
     fn toggle_browser_integration(&mut self, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.set_browser_integration(!workspace.browser_integration());
-            cx.notify();
+        self.integration.update(cx, |integration, cx| {
+            integration.set_enabled(!integration.enabled(cx), cx)
         });
     }
 

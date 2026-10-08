@@ -76,22 +76,22 @@ impl KeefastWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let pending = integration.read(cx).pending_pairing();
+        let pending = integration.read(cx).pending_pairing(cx);
         let showing = self
             .pairing
             .as_ref()
             .map(|dialog| dialog.read(cx).pairing());
-        if pending.map(|(pairing, _)| pairing) == showing {
+        if pending.map(|pending| pending.id) == showing {
             return;
         }
-        self.pairing = pending.map(|(pairing, vault)| {
+        self.pairing = pending.map(|pending| {
             let vault_name = self
                 .workspace
                 .read(cx)
-                .vault(vault)
+                .vault(pending.vault)
                 .map(|open| open.display_name())
                 .unwrap_or_default();
-            let dialog = cx.new(|cx| PairingDialog::new(pairing, vault_name, cx));
+            let dialog = cx.new(|cx| PairingDialog::new(pending.id, vault_name, cx));
             cx.subscribe_in(&dialog, window, Self::on_pairing_event)
                 .detach();
             window.focus(&dialog.focus_handle(cx));

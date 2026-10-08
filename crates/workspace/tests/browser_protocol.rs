@@ -166,11 +166,7 @@ fn test_associate_fails_for_an_unknown_name_or_key() {
     pair(&mut workspace, &extension, &mut session, "Home");
     let other = FakeExtension::new();
 
-    for (id, key) in [
-        ("Work", extension.id_key()),
-        ("Home", other.id_key()),
-        ("", String::new()),
-    ] {
+    for (id, key) in [("Work", extension.id_key()), ("Home", other.id_key())] {
         let reply = parse(&send(
             &mut session,
             &workspace,
@@ -179,6 +175,13 @@ fn test_associate_fails_for_an_unknown_name_or_key() {
         assert_eq!(reply["errorCode"], "8", "{id:?}");
         assert_eq!(reply["action"], "test-associate");
     }
+    // Without a name or key, KeePassXC answers as if no database were open.
+    let empty = parse(&send(
+        &mut session,
+        &workspace,
+        &extension.test_associate("", ""),
+    ));
+    assert_eq!(empty["errorCode"], "1");
 }
 
 #[test]
@@ -389,4 +392,128 @@ fn approving_for_a_vault_no_longer_open_answers_that_keefast_is_locked() {
         .unwrap();
 
     assert_eq!(parse(&reply)["errorCode"], "1");
+}
+
+mod connections {
+    //! The same protocol through the Workspace's connections: one session per native host,
+    //! and Pairing requests put to the user one at a time.
+
+    use keefast_workspace::{ConnectionId, Outgoing};
+
+    use super::*;
+
+    const FIRST: ConnectionId = ConnectionId(1);
+    const SECOND: ConnectionId = ConnectionId(2);
+
+    fn integrated_workspace() -> (Workspace, VaultId) {
+        let (mut workspace, vault) = workspace_with_personal_vault();
+        workspace.set_browser_integration(true);
+        (workspace, vault)
+    }
+
+    fn request(workspace: &mut Workspace, connection: ConnectionId, sent: &Sent) -> Option<String> {
+        workspace.handle_browser_request(connection, &sent.json)
+    }
+
+    /// An extension that has exchanged keys over `connection`.
+    fn connect(workspace: &mut Workspace, connection: ConnectionId) -> FakeExtension {
+        let mut extension = FakeExtension::new();
+        let reply = request(workspace, connection, &extension.change_public_keys()).unwrap();
+        extension.accept_keys(&parse(&reply));
+        extension
+    }
+
+    #[test]
+    fn pairing_requests_are_put_to_the_user_one_at_a_time_in_order() {
+        let (mut workspace, vault) = integrated_workspace();
+        let first = connect(&mut workspace, FIRST);
+        let second = connect(&mut workspace, SECOND);
+        let first_associate = first.associate();
+        let second_associate = second.associate();
+
+        assert_eq!(request(&mut workspace, FIRST, &first_associate), None);
+        assert_eq!(request(&mut workspace, SECOND, &second_associate), None);
+        let pending = workspace.pending_pairing().unwrap();
+        assert_eq!(pending.vault, vault);
+
+        let Outgoing {
+            connection,
+            message,
+        } = workspace
+            .approve_pairing(pending.id, "Laptop")
+            .unwrap()
+            .unwrap();
+        assert_eq!(connection, FIRST);
+        assert_eq!(first.open(&first_associate, &message)["id"], "Laptop");
+
+        let next = workspace.pending_pairing().unwrap();
+        assert_ne!(next.id, pending.id);
+        let denied = workspace.deny_pairing(next.id).unwrap();
+        assert_eq!(denied.connection, SECOND);
+        assert_eq!(parse(&denied.message)["errorCode"], "6");
+        assert_eq!(workspace.pending_pairing(), None);
+    }
+
+    #[test]
+    fn a_refused_name_keeps_the_request_pending() {
+        let (mut workspace, _) = integrated_workspace();
+        let extension = connect(&mut workspace, FIRST);
+        request(&mut workspace, FIRST, &extension.associate());
+        let pending = workspace.pending_pairing().unwrap();
+
+        assert!(
+            workspace
+                .approve_pairing(pending.id, "fixture-browser")
+                .is_err()
+        );
+
+        assert_eq!(workspace.pending_pairing(), Some(pending));
+    }
+
+    #[test]
+    fn an_extension_that_goes_away_takes_its_pairing_request_with_it() {
+        let (mut workspace, _) = integrated_workspace();
+        let extension = connect(&mut workspace, FIRST);
+        request(&mut workspace, FIRST, &extension.associate());
+        let pending = workspace.pending_pairing().unwrap();
+
+        workspace.disconnect_browser(FIRST);
+
+        assert_eq!(workspace.pending_pairing(), None);
+        assert_eq!(
+            workspace.approve_pairing(pending.id, "Laptop").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn with_integration_off_requests_are_answered_that_keefast_is_not_running() {
+        let (mut workspace, _) = workspace_with_personal_vault();
+        let extension = FakeExtension::new();
+
+        let reply = request(&mut workspace, FIRST, &extension.change_public_keys()).unwrap();
+
+        let reply = parse(&reply);
+        assert_eq!(reply["errorCode"], "5");
+        assert_eq!(reply["action"], "change-public-keys");
+        assert_eq!(reply["requestID"], "r1");
+    }
+
+    #[test]
+    fn turning_integration_off_ends_sessions_and_turns_pending_pairings_down() {
+        let (mut workspace, _) = integrated_workspace();
+        let extension = connect(&mut workspace, FIRST);
+        request(&mut workspace, FIRST, &extension.associate());
+
+        let replies = workspace.set_browser_integration(false);
+
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].connection, FIRST);
+        assert_eq!(parse(&replies[0].message)["errorCode"], "6");
+        assert_eq!(workspace.pending_pairing(), None);
+        // Turned on again, the old session's keys are gone.
+        workspace.set_browser_integration(true);
+        let reply = request(&mut workspace, FIRST, &extension.get_database_hash(&[])).unwrap();
+        assert_eq!(parse(&reply)["errorCode"], "4");
+    }
 }

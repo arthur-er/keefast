@@ -16,7 +16,10 @@ use keefast_core::{
     Timestamp, Vault,
 };
 
-pub use browser::{BrowserReply, BrowserSession, KEEPASSXC_VERSION, PairingRequest, ProtocolError};
+pub use browser::{
+    BrowserReply, BrowserSession, ConnectionId, KEEPASSXC_VERSION, Outgoing, PairingId,
+    PairingRequest, PendingPairing, ProtocolError,
+};
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,
 };
@@ -198,6 +201,7 @@ pub struct Workspace {
     config_error: Option<ConfigError>,
     /// The Vault the user is looking at, which the browser pairs with.
     focused_vault: Option<VaultId>,
+    browser: browser::BrowserConnections,
     browser_hosts: Option<Arc<dyn BrowserHosts>>,
     /// Where the native host was last registered, or why it couldn't be.
     browser_hosts_status: Option<io::Result<Vec<Browser>>>,
@@ -221,6 +225,7 @@ impl Workspace {
             config_store: None,
             config_error: None,
             focused_vault: None,
+            browser: Default::default(),
             browser_hosts: None,
             browser_hosts_status: None,
         }
@@ -256,15 +261,19 @@ impl Workspace {
     }
 
     /// Turns browser integration on or off: registers or unregisters the native host with the
-    /// browsers, and remembers the choice in the app config.
-    pub fn set_browser_integration(&mut self, enabled: bool) {
+    /// browsers, and remembers the choice in the app config. Turned off, every extension's
+    /// session ends; the replies returned turn their pending Pairing requests down.
+    pub fn set_browser_integration(&mut self, enabled: bool) -> Vec<Outgoing> {
         self.config.browser_integration = enabled;
         self.save_config();
         if enabled {
             self.register_browser_hosts();
-        } else if let Some(hosts) = &self.browser_hosts {
+            return Vec::new();
+        }
+        if let Some(hosts) = &self.browser_hosts {
             self.browser_hosts_status = Some(hosts.uninstall().map(|()| Vec::new()));
         }
+        self.end_browser_sessions()
     }
 
     /// The browsers the native host was last registered with, or why it couldn't be. `None`
@@ -288,6 +297,12 @@ impl Workspace {
         if let Some(store) = &self.config_store {
             self.config_error = store.save(&self.config).err();
         }
+    }
+
+    /// Tells the Workspace which Vault the user is looking at, if one. The browser pairs with
+    /// that Vault.
+    pub fn focus_vault(&mut self, vault: Option<VaultId>) {
+        self.focused_vault = vault;
     }
 
     /// Vault files opened lately, most recent first, whether open now or not.

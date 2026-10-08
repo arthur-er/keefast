@@ -20,10 +20,10 @@ struct App<W> {
 }
 
 /// Relays messages from the browser to the app, and the app's messages back, until the browser
-/// closes `browser_in`. The app is connected to when the first message arrives. While it can't
-/// be reached, or once it has gone, every request is answered with the protocol's "not
-/// running" error. The host never connects again: a new app knows nothing of this session's
-/// keys, and the extension starts a new host to reconnect.
+/// closes `browser_in`. The app is connected to when the first message arrives. If it can't be
+/// reached, or has gone, the request is answered with the protocol's "not running" error and
+/// the relay ends: the browser sees the host disconnect, and the extension starts a new host
+/// to reconnect, with a new key exchange, rather than keep asking an app that isn't there.
 pub fn run<R, W>(
     mut browser_in: impl Read,
     browser_out: impl Write + Send + 'static,
@@ -47,9 +47,8 @@ where
             app.open.load(Ordering::Acquire) && write_frame(&mut app.to_app, &message).is_ok()
         });
         if !sent {
-            app = None;
             let reply = not_running_reply(&message);
-            write_frame(&mut *browser_out.lock().unwrap(), &reply)?;
+            return write_frame(&mut *browser_out.lock().unwrap(), &reply);
         }
     }
     Ok(())

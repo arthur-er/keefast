@@ -2,6 +2,8 @@ use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Window, div, prelude::*, px,
 };
 
+use keefast_workspace::PairingId;
+
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
@@ -14,7 +16,7 @@ pub enum PairingDialogEvent {
 
 /// Asks the user whether to pair a browser extension with a Vault, and what to call it.
 pub struct PairingDialog {
-    pairing: u64,
+    pairing: PairingId,
     vault_name: SharedString,
     name: gpui::Entity<TextField>,
     error: Option<SharedString>,
@@ -29,7 +31,7 @@ impl Focusable for PairingDialog {
 }
 
 impl PairingDialog {
-    pub fn new(pairing: u64, vault_name: String, cx: &mut Context<Self>) -> Self {
+    pub fn new(pairing: PairingId, vault_name: String, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| TextField::new(strings::PAIRING_NAME_PLACEHOLDER, cx));
         cx.subscribe(&name, |this, _, event, cx| match event {
             TextFieldEvent::Submit => this.approve(cx),
@@ -45,7 +47,7 @@ impl PairingDialog {
     }
 
     /// The Pairing request this dialog answers.
-    pub fn pairing(&self) -> u64 {
+    pub fn pairing(&self) -> PairingId {
         self.pairing
     }
 
@@ -77,12 +79,7 @@ impl Render for PairingDialog {
             .text_color(theme.text)
             .shadow_lg()
             .child(div().text_xl().child(strings::PAIRING_TITLE))
-            .child(div().child(format!(
-                "{}{}{}",
-                strings::PAIRING_PROMPT_BEFORE,
-                self.vault_name,
-                strings::PAIRING_PROMPT_AFTER
-            )))
+            .child(div().child(strings::PAIRING_PROMPT.replace("{vault}", &self.vault_name)))
             .child(
                 div()
                     .text_sm()

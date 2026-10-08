@@ -79,9 +79,8 @@ pub const BROWSER_HOSTS_FAILED: &str = "Browser integration could not be set up.
 pub const BROWSER_ALREADY_SERVED: &str = "Another keefast is already serving the browser.";
 
 pub const PAIRING_TITLE: &str = "Pair a browser";
-pub const PAIRING_PROMPT_BEFORE: &str = "A browser extension asks to connect to the Vault “";
-pub const PAIRING_PROMPT_AFTER: &str =
-    "”. If this was you, name this browser so you can recognise it later.";
+pub const PAIRING_PROMPT: &str = "A browser extension asks to pair with the Vault “{vault}”. If \
+this was you, name this browser so you can recognise it later.";
 pub const PAIRING_NAME_LABEL: &str = "Browser name";
 pub const PAIRING_NAME_PLACEHOLDER: &str = "e.g. Chrome on my laptop";
 pub const PAIRING_APPROVE: &str = "Pair";

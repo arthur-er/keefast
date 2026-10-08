@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 async-channel = "2"
-interprocess.workspace = true
 keefast-native-host.workspace = true
 keefast-core.workspace = true
 keefast-workspace.workspace = true

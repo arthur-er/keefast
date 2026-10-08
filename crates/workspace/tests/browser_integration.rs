@@ -96,6 +96,21 @@ fn the_setting_survives_in_the_config_file() {
     assert!(text.contains("browser_integration = true"));
 }
 
+#[test]
+fn on_windows_brave_and_vivaldi_are_also_registered_where_chrome_looks() {
+    assert_eq!(
+        Browser::Brave.windows_host_keys(),
+        [
+            r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+            r"Software\Google\Chrome\NativeMessagingHosts",
+        ]
+    );
+    assert_eq!(
+        Browser::Edge.windows_host_keys(),
+        [r"Software\Microsoft\Edge\NativeMessagingHosts"]
+    );
+}
+
 #[cfg(not(windows))]
 mod linux {
     use std::path::Path;

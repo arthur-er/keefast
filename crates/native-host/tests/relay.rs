@@ -55,7 +55,7 @@ fn oversized_frames_are_refused() {
 }
 
 #[test]
-fn without_the_app_every_request_gets_the_not_running_error() {
+fn without_the_app_the_request_gets_the_not_running_error_and_the_host_ends() {
     let (mut browser, host) = host_without_app();
 
     send(
@@ -63,8 +63,6 @@ fn without_the_app_every_request_gets_the_not_running_error() {
         &json!({"action": "change-public-keys", "publicKey": "a2V5", "nonce": "bm9uY2U=", "requestID": "7"}),
     );
     let reply = receive(&mut browser);
-    send(&mut browser, &json!({"action": "get-databasehash"}));
-    let second = receive(&mut browser);
 
     assert_eq!(reply["action"], "change-public-keys");
     assert_eq!(reply["errorCode"], "5");
@@ -75,9 +73,9 @@ fn without_the_app_every_request_gets_the_not_running_error() {
             .unwrap()
             .contains("keefast is not running")
     );
-    assert_eq!(second["action"], "get-databasehash");
-    drop(browser);
+    // The host ends, so the browser sees it disconnect and the extension starts a new one.
     host.join().unwrap().unwrap();
+    assert_eq!(read_frame(&mut browser).unwrap(), None);
 }
 
 #[test]
@@ -122,35 +120,69 @@ fn when_the_app_goes_away_requests_get_the_not_running_error() {
     send(&mut browser, &json!({"action": "get-databasehash"}));
     assert_eq!(receive(&mut browser)["action"], "get-databasehash");
     app.join().unwrap();
-    // The host notices the app has gone once it tries to reach it.
-    let mut reply = Value::Null;
-    for _ in 0..50 {
+    // The host notices the app has gone once it tries to reach it, and ends.
+    let reply = loop {
         send(&mut browser, &json!({"action": "test-associate"}));
-        reply = receive(&mut browser);
+        let reply = receive(&mut browser);
         if reply["errorCode"] == "5" {
-            break;
+            break reply;
         }
-    }
+    };
 
-    assert_eq!(reply["errorCode"], "5");
-    drop(browser);
+    assert_eq!(reply["action"], "test-associate");
     host.join().unwrap().unwrap();
 }
 
-#[test]
-fn the_host_connects_once_so_a_restarted_app_never_sees_a_session_it_has_no_keys_for() {
-    let mut connects = 0;
-    let (mut browser, host) = host(move || {
-        connects += 1;
-        assert_eq!(connects, 1, "connected again");
-        Err(io::ErrorKind::ConnectionRefused.into())
-    });
+mod server {
+    use std::sync::mpsc;
+    use std::time::Duration;
 
-    for _ in 0..3 {
-        send(&mut browser, &json!({"action": "get-databasehash"}));
-        assert_eq!(receive(&mut browser)["errorCode"], "5");
+    use interprocess::local_socket::traits::Stream as _;
+    use keefast_native_host::ipc::{self, Server, ServerEvent};
+
+    use super::*;
+
+    #[test]
+    fn the_app_hears_hosts_and_answers_them_until_it_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keefast").join("browser.sock");
+        let (events, heard) = mpsc::channel();
+        let server = Server::start(path.clone(), move |event| events.send(event).is_ok()).unwrap();
+
+        let (mut from_app, mut to_app) = ipc::connect(&path).unwrap().split();
+        write_frame(&mut to_app, b"{\"action\":\"get-databasehash\"}").unwrap();
+        let wait = Duration::from_secs(5);
+        let ServerEvent::Opened(id, replies) = heard.recv_timeout(wait).unwrap() else {
+            panic!("expected the host to be opened");
+        };
+        let Ok(ServerEvent::Message(from, message)) = heard.recv_timeout(wait) else {
+            panic!("expected a message");
+        };
+        assert_eq!(from, id);
+        assert_eq!(message, b"{\"action\":\"get-databasehash\"}");
+        replies.send("{\"hash\":\"h\"}");
+        assert_eq!(
+            read_frame(&mut from_app).unwrap().unwrap(),
+            b"{\"hash\":\"h\"}"
+        );
+
+        drop(server);
+        assert!(!path.exists(), "the socket is removed");
+        assert!(ipc::connect(&path).is_err());
+        assert!(
+            Server::start(path.clone(), |_| true).is_ok(),
+            "it can listen there again"
+        );
     }
 
-    drop(browser);
-    host.join().unwrap().unwrap();
+    #[test]
+    fn a_second_app_cannot_take_over_the_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("browser.sock");
+        let _first = Server::start(path.clone(), |_| true).unwrap();
+
+        let second = Server::start(path, |_| true);
+
+        assert_eq!(second.err().unwrap().kind(), io::ErrorKind::AddrInUse);
+    }
 }

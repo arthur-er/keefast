@@ -3,6 +3,10 @@
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread;
 
 use interprocess::local_socket::{
     GenericFilePath, Listener, ListenerOptions, Name, Stream, ToFsName, prelude::*,
@@ -89,4 +93,99 @@ pub fn write_frame(writer: &mut impl Write, message: &[u8]) -> io::Result<()> {
     writer.write_all(&length.to_ne_bytes())?;
     writer.write_all(message)?;
     writer.flush()
+}
+
+/// What the app hears from the native hosts connected to it. Each host is numbered.
+pub enum ServerEvent {
+    /// A host connected; send it replies through `Replies`.
+    Opened(u64, Replies),
+    Message(u64, Vec<u8>),
+    Closed(u64),
+}
+
+/// Where to send a connected host its replies. They are written on a thread of their own.
+pub struct Replies(mpsc::Sender<Vec<u8>>);
+
+impl Replies {
+    /// Queues a reply. One for a host that has gone is dropped: its connection closes soon.
+    pub fn send(&self, message: impl Into<Vec<u8>>) {
+        let _ = self.0.send(message.into());
+    }
+}
+
+/// The app's end: accepts native hosts at a socket until dropped.
+pub struct Server {
+    path: PathBuf,
+    stopped: Arc<AtomicBool>,
+    accepting: Option<thread::JoinHandle<()>>,
+}
+
+impl Server {
+    /// Listens at `path`, and hands every host's events to `events`, from other threads,
+    /// until `events` returns false or the server is dropped. Fails while another keefast
+    /// listens there.
+    pub fn start(
+        path: PathBuf,
+        events: impl Fn(ServerEvent) -> bool + Send + Sync + 'static,
+    ) -> io::Result<Self> {
+        let listener = listen(&path)?;
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&stopped);
+        let accepting = thread::spawn(move || accept(listener, &stop, Arc::new(events)));
+        Ok(Self {
+            path,
+            stopped,
+            accepting: Some(accepting),
+        })
+    }
+}
+
+impl Drop for Server {
+    /// Stops accepting hosts, and removes the socket. Hosts already connected stay connected.
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        // Wakes the accepting thread so it sees it should stop, and waits for it to let go of
+        // the socket.
+        if connect(&self.path).is_ok()
+            && let Some(accepting) = self.accepting.take()
+        {
+            let _ = accepting.join();
+        }
+    }
+}
+
+fn accept(
+    listener: Listener,
+    stopped: &AtomicBool,
+    events: Arc<dyn Fn(ServerEvent) -> bool + Send + Sync>,
+) {
+    for (id, stream) in (0..).zip(listener.incoming()) {
+        if stopped.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(stream) = stream else {
+            continue;
+        };
+        let (mut from_host, mut to_host) = stream.split();
+        let (replies, outgoing) = mpsc::channel::<Vec<u8>>();
+        if !events(ServerEvent::Opened(id, Replies(replies))) {
+            return;
+        }
+        thread::spawn(move || {
+            for reply in outgoing {
+                if write_frame(&mut to_host, &reply).is_err() {
+                    break;
+                }
+            }
+        });
+        let events = Arc::clone(&events);
+        thread::spawn(move || {
+            while let Ok(Some(message)) = read_frame(&mut from_host) {
+                if !events(ServerEvent::Message(id, message)) {
+                    return;
+                }
+            }
+            events(ServerEvent::Closed(id));
+        });
+    }
 }

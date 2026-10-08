@@ -1,11 +1,12 @@
-//! The browser request handler: the KeePassXC-Browser protocol (ADR 0003) spoken with one
-//! browser extension, on top of the Workspace.
+//! The browser request handler: the KeePassXC-Browser protocol (ADR 0003) spoken with the
+//! browser extensions, on top of the Workspace.
 //!
-//! Each connection from the native host gets a [`BrowserSession`], which holds that
+//! Each connection from a native host gets a [`BrowserSession`], which holds that
 //! connection's encryption keys. Requests are JSON text; replies are JSON text to send back.
-//! Pairing needs the user's approval, so an `associate` request is handed back as a
-//! [`PairingRequest`] to answer later with [`BrowserSession::approve_pairing`] or
-//! [`BrowserSession::deny_pairing`].
+//! Pairing needs the user's approval, so `associate` requests wait in a queue, one put to the
+//! user at a time, until approved with a name or denied.
+
+use std::collections::{HashMap, VecDeque};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -30,6 +31,8 @@ pub enum ProtocolError {
     DatabaseHashNotReceived = 2,
     ClientPublicKeyNotReceived = 3,
     CannotDecryptMessage = 4,
+    /// keefast can't be reached: answered while browser integration is off.
+    NotRunning = 5,
     ActionCancelledOrDenied = 6,
     AssociationFailed = 8,
     KeyChangeFailed = 9,
@@ -44,6 +47,9 @@ impl ProtocolError {
             ProtocolError::DatabaseHashNotReceived => "Database hash not available",
             ProtocolError::ClientPublicKeyNotReceived => "Client public key not received",
             ProtocolError::CannotDecryptMessage => "Cannot decrypt message",
+            ProtocolError::NotRunning => {
+                "keefast is not running, or its browser integration is off"
+            }
             ProtocolError::ActionCancelledOrDenied => "Action cancelled or denied",
             ProtocolError::AssociationFailed => "Association failed",
             ProtocolError::KeyChangeFailed => "Key change was not successful",
@@ -183,9 +189,7 @@ impl BrowserSession {
         let mut reply = success(increment(nonce));
         reply.insert("action".into(), "change-public-keys".into());
         reply.insert("publicKey".into(), host_key.into());
-        if let Some(id) = request.get("requestID") {
-            reply.insert("requestID".into(), id.clone());
-        }
+        with_request_id(&mut reply, request.get("requestID").cloned());
         Ok(BrowserReply::Send(Value::Object(reply).to_string()))
     }
 
@@ -249,6 +253,10 @@ impl BrowserSession {
             return Err(ProtocolError::IncorrectAction);
         }
         let (id, key) = (text(&message, "id"), text(&message, "key"));
+        // KeePassXC answers a request without both as if no database were open.
+        if id.is_empty() || key.is_empty() {
+            return Err(ProtocolError::DatabaseNotOpened);
+        }
         let vault = workspace
             .paired_vault(id, key, &self.connected_ids)
             .ok_or(ProtocolError::AssociationFailed)?;
@@ -304,9 +312,7 @@ impl BrowserSession {
         reply.insert("action".into(), request.action.clone().into());
         reply.insert("message".into(), BASE64.encode(sealed).into());
         reply.insert("nonce".into(), BASE64.encode(nonce).into());
-        if let Some(id) = &request.request_id {
-            reply.insert("requestID".into(), id.clone());
-        }
+        with_request_id(&mut reply, request.request_id.clone());
         Value::Object(reply).to_string()
     }
 
@@ -315,11 +321,147 @@ impl BrowserSession {
     }
 }
 
+/// A native host connected to keefast: one browser extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PairingId(u64);
+
+/// A Pairing request waiting for the user's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingPairing {
+    pub id: PairingId,
+    /// The Vault the extension would be paired with.
+    pub vault: VaultId,
+}
+
+/// A reply for one extension.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outgoing {
+    pub connection: ConnectionId,
+    pub message: String,
+}
+
+/// Every extension's session, and the Pairing requests waiting for the user, oldest first.
+#[derive(Default)]
+pub(crate) struct BrowserConnections {
+    sessions: HashMap<ConnectionId, BrowserSession>,
+    pairings: VecDeque<(PairingId, ConnectionId, PairingRequest)>,
+    next_pairing: u64,
+}
+
 impl Workspace {
-    /// Tells the Workspace which Vault the user is looking at, if one, so the browser pairs
-    /// with that Vault.
-    pub fn focus_vault(&mut self, vault: Option<VaultId>) {
-        self.focused_vault = vault;
+    /// Handles a request from the extension on `connection`, and returns the reply to send
+    /// now, if any. While browser integration is off, every request is answered that keefast
+    /// is not running.
+    pub fn handle_browser_request(
+        &mut self,
+        connection: ConnectionId,
+        request: &str,
+    ) -> Option<String> {
+        if !self.browser_integration() {
+            return Some(not_running_reply(request));
+        }
+        let mut session = self
+            .browser
+            .sessions
+            .remove(&connection)
+            .unwrap_or_default();
+        let reply = session.handle(self, request);
+        self.browser.sessions.insert(connection, session);
+        match reply {
+            BrowserReply::Send(reply) => Some(reply),
+            BrowserReply::AskPairing(request) => {
+                let id = PairingId(self.browser.next_pairing);
+                self.browser.next_pairing += 1;
+                self.browser.pairings.push_back((id, connection, request));
+                None
+            }
+        }
+    }
+
+    /// Forgets an extension that has gone, and its Pairing requests.
+    pub fn disconnect_browser(&mut self, connection: ConnectionId) {
+        self.browser.sessions.remove(&connection);
+        self.browser
+            .pairings
+            .retain(|(_, from, _)| *from != connection);
+    }
+
+    /// The Pairing request to put to the user now.
+    pub fn pending_pairing(&self) -> Option<PendingPairing> {
+        self.browser
+            .pairings
+            .front()
+            .map(|(id, _, request)| PendingPairing {
+                id: *id,
+                vault: request.vault(),
+            })
+    }
+
+    /// Pairs the extension behind the pending request `id` with its Vault, as `name`, and
+    /// returns the reply for it. A name the Vault can't take is refused, and the request stays
+    /// pending.
+    pub fn approve_pairing(
+        &mut self,
+        id: PairingId,
+        name: &str,
+    ) -> Result<Option<Outgoing>, EditVaultError> {
+        let Some((connection, request)) = self.pending(id) else {
+            return Ok(None);
+        };
+        let session = self
+            .browser
+            .sessions
+            .remove(&connection)
+            .unwrap_or_default();
+        let reply = session.approve_pairing(self, &request, name);
+        self.browser.sessions.insert(connection, session);
+        let message = reply?;
+        self.browser.pairings.pop_front();
+        Ok(Some(Outgoing {
+            connection,
+            message,
+        }))
+    }
+
+    /// Turns the pending request `id` down, and returns the reply for its extension.
+    pub fn deny_pairing(&mut self, id: PairingId) -> Option<Outgoing> {
+        let (connection, request) = self.pending(id)?;
+        self.browser.pairings.pop_front();
+        let message = self
+            .browser
+            .sessions
+            .get(&connection)
+            .map(|session| session.deny_pairing(&request))?;
+        Some(Outgoing {
+            connection,
+            message,
+        })
+    }
+
+    /// The pending request `id`, if it is the one put to the user now.
+    fn pending(&self, id: PairingId) -> Option<(ConnectionId, PairingRequest)> {
+        let (pending, connection, request) = self.browser.pairings.front()?;
+        (*pending == id).then(|| (*connection, request.clone()))
+    }
+
+    /// Ends every session and turns every pending Pairing down, for browser integration
+    /// turned off.
+    pub(crate) fn end_browser_sessions(&mut self) -> Vec<Outgoing> {
+        let browser = std::mem::take(&mut self.browser);
+        browser
+            .pairings
+            .into_iter()
+            .filter_map(|(_, connection, request)| {
+                let session = browser.sessions.get(&connection)?;
+                Some(Outgoing {
+                    connection,
+                    message: session.deny_pairing(&request),
+                })
+            })
+            .collect()
     }
 
     /// The Vault the browser deals with, as KeePassXC's active database: the focused Vault, or
@@ -342,9 +484,6 @@ impl Workspace {
     /// An open Vault paired with the extension known as `id` by `key`, preferring the Vault
     /// the browser deals with.
     fn paired_vault(&self, id: &str, key: &str, connected_ids: &[String]) -> Option<VaultId> {
-        if id.is_empty() || key.is_empty() {
-            return None;
-        }
         let paired = |vault: VaultId| {
             self.vault(vault)
                 .is_some_and(|open| open.vault.is_paired_with(id, key))
@@ -392,10 +531,25 @@ fn error_reply(action: &str, request_id: Option<Value>, error: ProtocolError) ->
     reply.insert("action".into(), action.into());
     reply.insert("errorCode".into(), (error as u8).to_string().into());
     reply.insert("error".into(), error.message().into());
+    with_request_id(&mut reply, request_id);
+    Value::Object(reply).to_string()
+}
+
+/// Echoes the request's `requestID`, which the extension matches replies by, if it sent one.
+fn with_request_id(reply: &mut Map<String, Value>, request_id: Option<Value>) {
     if let Some(id) = request_id {
         reply.insert("requestID".into(), id);
     }
-    Value::Object(reply).to_string()
+}
+
+/// The reply to a request keefast won't answer because browser integration is off.
+pub(crate) fn not_running_reply(request: &str) -> String {
+    let request: Map<String, Value> = serde_json::from_str(request).unwrap_or_default();
+    error_reply(
+        text(&request, "action"),
+        request.get("requestID").cloned(),
+        ProtocolError::NotRunning,
+    )
 }
 
 fn text<'a>(object: &'a Map<String, Value>, key: &str) -> &'a str {

@@ -36,15 +36,50 @@ impl Timestamp {
         BASE64.encode(self.0.to_le_bytes())
     }
 
+    /// `2026-10-07T23:15:22Z`: UTC in ISO 8601, as KeePassXC reads its Pairing dates.
+    pub(crate) fn to_iso_8601(self) -> String {
+        let seconds = self.unix_seconds();
+        let (days, of_day) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+        let (year, month, day) = civil_from_days(days);
+        format!(
+            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+            of_day / 3600,
+            of_day / 60 % 60,
+            of_day % 60
+        )
+    }
+
     pub(crate) fn decode(text: &str) -> Option<Self> {
         let bytes = BASE64.decode(text.trim()).ok()?;
         Some(Self(i64::from_le_bytes(bytes.try_into().ok()?)))
     }
 }
 
+/// The Gregorian date `days` after 1970-01-01 (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_iso_8601() {
+        let iso = |seconds| Timestamp::from_unix_seconds(seconds).to_iso_8601();
+        assert_eq!(iso(1_791_414_922), "2026-10-07T23:15:22Z");
+        assert_eq!(iso(951_825_600), "2000-02-29T12:00:00Z");
+        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+    }
 
     #[test]
     fn encodes_as_keepass_does() {

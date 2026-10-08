@@ -74,15 +74,32 @@ impl Browser {
         }
     }
 
-    /// The registry key, under `HKEY_CURRENT_USER`, the browser looks up native hosts in on
-    /// Windows.
+    /// The browser's own registry key under `HKEY_CURRENT_USER` on Windows, which exists once
+    /// it has run.
     pub fn windows_registry_key(self) -> &'static str {
         match self {
-            Browser::Chrome => r"Software\Google\Chrome\NativeMessagingHosts",
-            Browser::Chromium => r"Software\Chromium\NativeMessagingHosts",
-            Browser::Brave => r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
-            Browser::Edge => r"Software\Microsoft\Edge\NativeMessagingHosts",
-            Browser::Vivaldi => r"Software\Vivaldi\NativeMessagingHosts",
+            Browser::Chrome => r"Software\Google\Chrome",
+            Browser::Chromium => r"Software\Chromium",
+            Browser::Brave => r"Software\BraveSoftware\Brave-Browser",
+            Browser::Edge => r"Software\Microsoft\Edge",
+            Browser::Vivaldi => r"Software\Vivaldi",
+        }
+    }
+
+    /// The registry keys, under `HKEY_CURRENT_USER`, the browser may look up native hosts in on
+    /// Windows. Brave and Vivaldi have read Chrome's, so keefast registers in both, as KeePassXC
+    /// registers them in Chrome's.
+    pub fn windows_host_keys(self) -> Vec<String> {
+        let own = format!(r"{}\NativeMessagingHosts", self.windows_registry_key());
+        match self {
+            Browser::Brave | Browser::Vivaldi => vec![
+                own,
+                format!(
+                    r"{}\NativeMessagingHosts",
+                    Browser::Chrome.windows_registry_key()
+                ),
+            ],
+            _ => vec![own],
         }
     }
 }
@@ -179,7 +196,8 @@ impl BrowserHosts for NativeMessagingHosts {
 
 #[cfg(windows)]
 impl BrowserHosts for NativeMessagingHosts {
-    /// Writes the manifest once and points every browser's registry key to it.
+    /// Writes the manifest once and points the registry keys of every browser that has run
+    /// to it.
     fn install(&self) -> io::Result<Vec<Browser>> {
         use winreg::RegKey;
         use winreg::enums::HKEY_CURRENT_USER;
@@ -188,12 +206,17 @@ impl BrowserHosts for NativeMessagingHosts {
         fs::create_dir_all(&self.dir)?;
         atomic_file::replace(&path, self.manifest().as_bytes())?;
         let user = RegKey::predef(HKEY_CURRENT_USER);
-        for browser in Browser::ALL {
-            let key = format!(r"{}\{HOST_NAME}", browser.windows_registry_key());
-            let (key, _) = user.create_subkey(key)?;
-            key.set_value("", &path.as_os_str())?;
+        let installed: Vec<Browser> = Browser::ALL
+            .into_iter()
+            .filter(|browser| user.open_subkey(browser.windows_registry_key()).is_ok())
+            .collect();
+        for browser in &installed {
+            for key in browser.windows_host_keys() {
+                let (key, _) = user.create_subkey(format!(r"{key}\{HOST_NAME}"))?;
+                key.set_value("", &path.as_os_str())?;
+            }
         }
-        Ok(Browser::ALL.to_vec())
+        Ok(installed)
     }
 
     fn uninstall(&self) -> io::Result<()> {
@@ -201,8 +224,11 @@ impl BrowserHosts for NativeMessagingHosts {
         use winreg::enums::HKEY_CURRENT_USER;
 
         let user = RegKey::predef(HKEY_CURRENT_USER);
-        for browser in Browser::ALL {
-            let key = format!(r"{}\{HOST_NAME}", browser.windows_registry_key());
+        for key in Browser::ALL
+            .iter()
+            .flat_map(|browser| browser.windows_host_keys())
+        {
+            let key = format!(r"{key}\{HOST_NAME}");
             let Ok(registered) = user.open_subkey(&key) else {
                 continue;
             };
