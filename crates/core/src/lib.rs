@@ -28,4 +28,4 @@ pub use save::SaveError;
 pub use site::Site;
 pub use time::Timestamp;
 pub use totp::{Totp, TotpAlgorithm, TotpCode, TotpError};
-pub use vault::{Entry, EntryId, Group, GroupId, Vault};
+pub use vault::{CustomField, Entry, EntryId, Group, GroupId, Vault};

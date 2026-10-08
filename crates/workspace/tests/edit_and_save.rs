@@ -6,7 +6,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use keefast_core::{CompositeKey, EntryFields, Timestamp, Vault};
+use keefast_core::{CompositeKey, CustomField, EditError, EntryFields, Timestamp, Vault};
 use keefast_workspace::{
     EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError, StorageProvider,
     UnlockSecrets, VaultId, VaultLocation, Workspace,
@@ -49,6 +49,7 @@ fn fields(title: &str, password: &str) -> EntryFields {
         password: SecretString::from(password),
         url: "https://bank.example".into(),
         notes: String::new(),
+        custom_fields: Vec::new(),
     }
 }
 
@@ -152,6 +153,48 @@ fn an_edited_entry_keeps_its_previous_version_in_history_after_reopening() {
         .map(|old| old.password().expose_secret())
         .collect();
     assert_eq!(history, ["first"]);
+}
+
+#[test]
+fn custom_fields_survive_saving_and_reopening_with_their_protection() {
+    let mut h = harness();
+    let root = h.root();
+    let custom = |name: &str, value: &str, protected| CustomField {
+        name: name.into(),
+        value: SecretString::from(value),
+        protected,
+    };
+    let mut bank = fields("Bank", "pw");
+    bank.custom_fields = vec![
+        custom("PIN", "1234", true),
+        custom("Branch", "Main St", false),
+    ];
+    let id = h.workspace.create_entry(h.vault, root, &bank).unwrap();
+
+    bank.custom_fields = vec![custom("PIN", "5678", true)];
+    h.workspace.update_entry(h.vault, id, &bank).unwrap();
+    h.workspace.save_vault(h.vault).unwrap();
+
+    let reopened = h.reopen();
+    let fields = reopened.entry(id).unwrap().custom_fields();
+    assert_eq!(fields, [custom("PIN", "5678", true)]);
+}
+
+#[test]
+fn a_custom_field_without_a_name_is_refused_and_changes_nothing() {
+    let mut h = harness();
+    let root = h.root();
+    let mut bank = fields("Bank", "pw");
+    bank.custom_fields = vec![CustomField {
+        name: String::new(),
+        value: SecretString::from("1234"),
+        protected: true,
+    }];
+
+    let result = h.workspace.create_entry(h.vault, root, &bank);
+
+    assert_eq!(result, Err(EditVaultError::Edit(EditError::FieldNameEmpty)));
+    assert!(!h.unsaved());
 }
 
 #[test]

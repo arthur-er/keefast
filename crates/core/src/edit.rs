@@ -11,7 +11,7 @@ use crate::kdbx::random;
 use crate::totp::{self, TOTP_FIELDS};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node, Secret};
-use crate::{Entry, EntryId, GroupId, Timestamp, Totp, Vault};
+use crate::{CustomField, Entry, EntryId, GroupId, Timestamp, Totp, Vault};
 
 /// The fields of an Entry that keefast edits.
 #[derive(Clone)]
@@ -21,6 +21,8 @@ pub struct EntryFields {
     pub password: SecretString,
     pub url: String,
     pub notes: String,
+    /// In order; fields the Entry has but these don't are removed.
+    pub custom_fields: Vec<CustomField>,
 }
 
 impl Default for EntryFields {
@@ -31,6 +33,7 @@ impl Default for EntryFields {
             password: SecretString::from(String::new()),
             url: String::new(),
             notes: String::new(),
+            custom_fields: Vec::new(),
         }
     }
 }
@@ -48,6 +51,10 @@ pub enum EditError {
     IntoItself,
     #[error("the Group is in the Recycle Bin")]
     InRecycleBin,
+    #[error("a custom field needs a name")]
+    FieldNameEmpty,
+    #[error("the Entry already has a field with this name")]
+    FieldNameTaken,
     #[error("a Pairing needs a name")]
     PairingNameEmpty,
     #[error("the Vault already has a Pairing with this name")]
@@ -79,6 +86,7 @@ impl From<&Entry> for EntryFields {
             password: entry.password().clone(),
             url: entry.url().to_owned(),
             notes: entry.notes().to_owned(),
+            custom_fields: entry.custom_fields().to_vec(),
         }
     }
 }
@@ -93,6 +101,25 @@ impl EntryFields {
             &self.notes,
         ]
     }
+
+    /// Every custom field needs a name, and no two fields of an Entry can share one.
+    fn check(&self) -> Result<(), EditError> {
+        for (index, field) in self.custom_fields.iter().enumerate() {
+            if field.name.trim().is_empty() {
+                return Err(EditError::FieldNameEmpty);
+            }
+            let earlier = &self.custom_fields[..index];
+            if is_standard_field(&field.name) || earlier.iter().any(|f| f.name == field.name) {
+                return Err(EditError::FieldNameTaken);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether `name` is one of the standard fields every Entry has, rather than a custom field.
+pub(crate) fn is_standard_field(name: &str) -> bool {
+    FIELDS.iter().any(|(key, _)| *key == name)
 }
 
 impl Vault {
@@ -117,6 +144,7 @@ impl Vault {
         now: Timestamp,
     ) -> Result<EntryId, EditError> {
         let path = self.path_to(Kind::Group, group.0)?;
+        fields.check()?;
         let id = new_uuid();
         let mut entry = Element::new("Entry");
         push(&mut entry, text_element("UUID", encode_uuid(id)));
@@ -127,6 +155,10 @@ impl Vault {
         push(&mut entry, times(now));
         for ((key, protect), value) in FIELDS.into_iter().zip(fields.values()) {
             push(&mut entry, new_string(key, value, self.protects(protect)));
+        }
+        for field in &fields.custom_fields {
+            let value = field.value.expose_secret();
+            push(&mut entry, new_string(&field.name, value, field.protected));
         }
         let mut auto_type = Element::new("AutoType");
         push(&mut auto_type, text_element("Enabled", "True"));
@@ -149,9 +181,11 @@ impl Vault {
         now: Timestamp,
     ) -> Result<(), EditError> {
         let path = self.path_to(Kind::Entry, entry.0)?;
-        let unchanged = self
-            .entry(entry)
-            .is_some_and(|current| EntryFields::from(current).values() == fields.values());
+        fields.check()?;
+        let unchanged = self.entry(entry).is_some_and(|current| {
+            let current = EntryFields::from(current);
+            current.values() == fields.values() && current.custom_fields == fields.custom_fields
+        });
         if unchanged {
             return Ok(());
         }
@@ -161,6 +195,7 @@ impl Vault {
         {
             set_string(element, key, value, protect);
         }
+        set_custom_fields(element, &fields.custom_fields);
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
         self.refresh();
@@ -569,15 +604,34 @@ fn set_value(element: &mut Element, value: &str, protect: bool) {
 /// Sets a standard field on an Entry element. A field that exists keeps its own protection
 /// if it is protected; otherwise the Vault's `MemoryProtection` decides.
 fn set_string(entry: &mut Element, key: &str, value: &str, protect: bool) {
-    let existing = entry.elements_mut().find(|string| {
-        string.name == "String" && string.child("Key").is_some_and(|k| k.text() == key)
-    });
-    match existing {
-        Some(string) => {
-            let value_element = child_or_insert(string, "Value", &["Key"]);
-            let protect = protect || value_element.is_protected();
-            set_value(value_element, value, protect);
+    let protect = protect || string_mut(entry, key).is_some_and(|v| v.is_protected());
+    set_field(entry, key, value, protect);
+}
+
+/// Makes an Entry element's custom fields `fields`: those it has keep their place, new ones go
+/// after its other fields, and those not in `fields` are removed.
+fn set_custom_fields(entry: &mut Element, fields: &[CustomField]) {
+    entry.children.retain(|node| match node {
+        Node::Element(string) if string.name == "String" => {
+            let key = string.child("Key").map(Element::text).unwrap_or_default();
+            is_standard_field(&key) || fields.iter().any(|field| field.name == key)
         }
+        _ => true,
+    });
+    for field in fields {
+        set_field(
+            entry,
+            &field.name,
+            field.value.expose_secret(),
+            field.protected,
+        );
+    }
+}
+
+/// Sets a field of an Entry element, protected or not, adding it if the Entry hasn't got it.
+fn set_field(entry: &mut Element, key: &str, value: &str, protect: bool) {
+    match string_mut(entry, key) {
+        Some(value_element) => set_value(value_element, value, protect),
         None => insert_after_last(
             entry,
             new_string(key, value, protect),
@@ -594,6 +648,14 @@ pub(crate) fn string_value(entry: &Element, key: &str) -> Option<Zeroizing<Strin
         .and_then(|string| string.child("Value"))
         .map(|value| Zeroizing::new(value.text()))
         .filter(|value| !value.trim().is_empty())
+}
+
+/// The `Value` element of an Entry element's field called `key`, if it has that field.
+fn string_mut<'a>(entry: &'a mut Element, key: &str) -> Option<&'a mut Element> {
+    let string = entry.elements_mut().find(|string| {
+        string.name == "String" && string.child("Key").is_some_and(|k| k.text() == key)
+    })?;
+    Some(child_or_insert(string, "Value", &["Key"]))
 }
 
 /// A `<String>` field of an Entry.

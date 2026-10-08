@@ -3,10 +3,10 @@ use std::fmt;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
-use crate::edit::string_value;
+use crate::edit::{is_standard_field, string_value};
 use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
 use crate::{OpenError, Timestamp, Totp, TotpError, totp};
@@ -45,6 +45,33 @@ impl EntryId {
 /// KeePassXC reads every field whose name starts with this as another URL for the Entry.
 const ADDITIONAL_URL_PREFIX: &str = "KP2A_URL";
 
+/// A field of an Entry besides its title, username, password, URL and notes.
+#[derive(Clone)]
+pub struct CustomField {
+    pub name: String,
+    pub value: SecretString,
+    /// Whether the value is stored encrypted in the Vault file and hidden until revealed.
+    pub protected: bool,
+}
+
+impl PartialEq for CustomField {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.protected == other.protected
+            && self.value.expose_secret() == other.value.expose_secret()
+    }
+}
+
+impl fmt::Debug for CustomField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomField")
+            .field("name", &self.name)
+            .field("value", &"[hidden]")
+            .field("protected", &self.protected)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Group {
     id: GroupId,
@@ -67,6 +94,8 @@ pub struct Entry {
     additional_urls: Vec<String>,
     /// The Entry's TOTP settings, from whichever client's fields hold them.
     totp: Option<Result<Totp, TotpError>>,
+    /// In Vault file order.
+    custom_fields: Vec<CustomField>,
     pub(crate) custom_data: BTreeMap<String, String>,
     last_modified: Option<Timestamp>,
     /// Earlier versions, oldest first.
@@ -159,6 +188,25 @@ fn custom_data(element: &Element) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The custom fields among an Entry's `String`s. Of fields sharing a name, which no client
+/// writes, the first is the one read, as for the standard fields.
+fn custom_fields<'a>(
+    strings: impl Iterator<Item = (String, Option<&'a Element>)>,
+) -> Vec<CustomField> {
+    let mut fields: Vec<CustomField> = Vec::new();
+    for (name, value) in strings {
+        if is_standard_field(&name) || fields.iter().any(|field| field.name == name) {
+            continue;
+        }
+        fields.push(CustomField {
+            value: SecretString::from(value.map(Element::text).unwrap_or_default()),
+            protected: value.is_some_and(Element::is_protected),
+            name,
+        });
+    }
+    fields
+}
+
 /// When an Entry or Group was last modified, from its `Times`.
 fn last_modified(element: &Element) -> Option<Timestamp> {
     let time = element.child("Times")?.child("LastModificationTime")?;
@@ -249,6 +297,7 @@ impl Entry {
                 .filter(|url| !url.is_empty())
                 .collect(),
             totp: totp::read(&|name| string_value(entry, name)),
+            custom_fields: custom_fields(strings()),
             custom_data: custom_data(entry),
             last_modified: last_modified(entry),
             history: entry
@@ -300,6 +349,12 @@ impl Entry {
             .map(|totp| totp.as_ref().map_err(|error| *error))
     }
 
+    /// The Entry's other fields, as KeePassXC lists them: everything but the standard fields,
+    /// including those other features keep their settings in, such as `KP2A_URL` and `otp`.
+    pub fn custom_fields(&self) -> &[CustomField] {
+        &self.custom_fields
+    }
+
     pub fn last_modified(&self) -> Option<Timestamp> {
         self.last_modified
     }
@@ -318,6 +373,7 @@ impl fmt::Debug for Entry {
             .field("username", &self.username)
             .field("password", &"[hidden]")
             .field("url", &self.url)
+            .field("custom_fields", &self.custom_fields)
             .field("history", &self.history)
             .finish_non_exhaustive()
     }

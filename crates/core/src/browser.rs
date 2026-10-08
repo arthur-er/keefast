@@ -281,6 +281,7 @@ impl Vault {
             password: login.password.clone(),
             url: login.url.clone(),
             notes: String::new(),
+            custom_fields: Vec::new(),
         };
         self.create_entry(group, &fields, now)
     }

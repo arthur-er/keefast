@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity, EventEmitter, FocusHandle, Focusable, Window, div, prelude::*};
-use keefast_core::EntryFields;
+use keefast_core::{CustomField, EntryFields};
 use keefast_workspace::Workspace;
 use secrecy::{ExposeSecret, SecretString};
 
@@ -25,6 +25,15 @@ pub struct EntryEditor {
     password_revealed: bool,
     /// The password generator, while it is open.
     generator: Option<Entity<PasswordGenerator>>,
+    custom_fields: Vec<CustomFieldRow>,
+}
+
+/// A custom field being edited.
+struct CustomFieldRow {
+    name: Entity<TextField>,
+    value: Entity<TextField>,
+    protected: bool,
+    revealed: bool,
 }
 
 impl EventEmitter<EntryEditorEvent> for EntryEditor {}
@@ -66,6 +75,11 @@ impl EntryEditor {
             TextField::multiline,
             cx,
         );
+        let custom_fields = fields
+            .custom_fields
+            .iter()
+            .map(|field| Self::custom_field_row(field, cx))
+            .collect();
         Self {
             workspace,
             title,
@@ -75,7 +89,75 @@ impl EntryEditor {
             notes,
             password_revealed: false,
             generator: None,
+            custom_fields,
         }
+    }
+
+    /// The fields to edit a custom field with; a protected value starts hidden.
+    fn custom_field_row(field: &CustomField, cx: &mut Context<Self>) -> CustomFieldRow {
+        let mut text_field = |placeholder: &'static str, text: &str, masked: bool| {
+            let field = cx.new(|cx| {
+                let mut field = TextField::new(placeholder, cx);
+                field.set_text(text, cx);
+                field.set_masked(masked, cx);
+                field
+            });
+            cx.subscribe(&field, Self::on_field_event).detach();
+            field
+        };
+        CustomFieldRow {
+            name: text_field(strings::FIELD_NAME_PLACEHOLDER, &field.name, false),
+            value: text_field(
+                strings::FIELD_VALUE_PLACEHOLDER,
+                field.value.expose_secret(),
+                field.protected,
+            ),
+            protected: field.protected,
+            revealed: false,
+        }
+    }
+
+    fn add_custom_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let empty = CustomField {
+            name: String::new(),
+            value: SecretString::from(String::new()),
+            protected: false,
+        };
+        let row = Self::custom_field_row(&empty, cx);
+        window.focus(&row.name.focus_handle(cx));
+        self.custom_fields.push(row);
+        cx.notify();
+    }
+
+    fn remove_custom_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.custom_fields.len() {
+            self.custom_fields.remove(index);
+        }
+        cx.notify();
+    }
+
+    /// Protecting a field hides its value, as a password is hidden.
+    fn toggle_protected(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.custom_fields.get_mut(index) else {
+            return;
+        };
+        row.protected = !row.protected;
+        row.revealed = false;
+        let masked = row.protected;
+        row.value
+            .update(cx, |field, cx| field.set_masked(masked, cx));
+        cx.notify();
+    }
+
+    fn toggle_custom_reveal(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.custom_fields.get_mut(index) else {
+            return;
+        };
+        row.revealed = !row.revealed;
+        let masked = row.protected && !row.revealed;
+        row.value
+            .update(cx, |field, cx| field.set_masked(masked, cx));
+        cx.notify();
     }
 
     fn toggle_generator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -125,6 +207,15 @@ impl EntryEditor {
             password: SecretString::from(text(&self.password)),
             url: text(&self.url),
             notes: text(&self.notes),
+            custom_fields: self
+                .custom_fields
+                .iter()
+                .map(|row| CustomField {
+                    name: text(&row.name),
+                    value: SecretString::from(text(&row.value)),
+                    protected: row.protected,
+                })
+                .collect(),
         };
         cx.emit(EntryEditorEvent::Save(fields));
     }
@@ -205,6 +296,7 @@ impl Render for EntryEditor {
             )
             .child(labelled(strings::DETAIL_URL, &self.url))
             .child(labelled(strings::DETAIL_NOTES, &self.notes))
+            .child(self.render_custom_fields(theme, cx))
             .child(
                 div()
                     .flex()
@@ -221,5 +313,98 @@ impl Render for EntryEditor {
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                     ),
             )
+    }
+}
+
+impl EntryEditor {
+    fn render_custom_fields(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.custom_fields.iter().enumerate().map(|(index, row)| {
+            let link = |id: &'static str, label: &'static str| {
+                div()
+                    .id((id, index))
+                    .cursor_pointer()
+                    .text_color(theme.accent)
+                    .child(label)
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(div().w_1_3().child(row.name.clone()))
+                        .child(div().flex_1().child(row.value.clone())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_3()
+                        .text_sm()
+                        .child(
+                            div()
+                                .id(("protect-field", index))
+                                .flex()
+                                .gap_1()
+                                .cursor_pointer()
+                                .text_color(theme.muted)
+                                .child(if row.protected {
+                                    strings::CHECKBOX_ON
+                                } else {
+                                    strings::CHECKBOX_OFF
+                                })
+                                .child(strings::FIELD_PROTECTED)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_protected(index, cx)
+                                })),
+                        )
+                        .when(row.protected, |this| {
+                            this.child(
+                                link(
+                                    "reveal-field",
+                                    if row.revealed {
+                                        strings::HIDE_PASSWORD
+                                    } else {
+                                        strings::REVEAL_PASSWORD
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.toggle_custom_reveal(index, cx),
+                                )),
+                            )
+                        })
+                        .child(link("remove-field", strings::REMOVE_FIELD).on_click(
+                            cx.listener(move |this, _, _, cx| this.remove_custom_field(index, cx)),
+                        )),
+                )
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::CUSTOM_FIELDS)
+                    .child(
+                        div()
+                            .id("add-field")
+                            .cursor_pointer()
+                            .text_color(theme.accent)
+                            .child(strings::ADD_FIELD)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.add_custom_field(window, cx)
+                                }),
+                            ),
+                    ),
+            )
+            .children(rows)
     }
 }

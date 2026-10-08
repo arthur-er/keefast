@@ -1,13 +1,15 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel,
-    ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
+    AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyDownEvent, PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px,
+    relative,
 };
 use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace,
 };
+use secrecy::ExposeSecret;
 
 use crate::actions::{
     self, CopyPassword, CopyTotp, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
@@ -45,6 +47,12 @@ pub struct VaultBrowser {
     entry_list_scroll: ScrollHandle,
     /// Clears what was last copied from the clipboard when its time comes.
     clipboard_clear: Option<Task<()>>,
+    /// One per custom field of the selected Entry, so each can be reached with Tab and copied.
+    custom_field_focus: Vec<FocusHandle>,
+    /// The selected Entry's protected custom fields being shown, by index.
+    revealed_fields: Vec<usize>,
+    /// The custom field of the selected Entry last copied, by index.
+    copied_field: Option<usize>,
 }
 
 /// What the detail pane shows besides the selected Entry.
@@ -128,6 +136,9 @@ impl VaultBrowser {
             notice: None,
             entry_list_scroll: ScrollHandle::new(),
             clipboard_clear: None,
+            custom_field_focus: Vec::new(),
+            revealed_fields: Vec::new(),
+            copied_field: None,
         };
         browser.select(EntryScope::Vault(vault), cx);
         browser
@@ -165,6 +176,8 @@ impl VaultBrowser {
         self.totp_copied = None;
         self.error = None;
         self.notice = None;
+        self.revealed_fields.clear();
+        self.copied_field = None;
         cx.notify();
     }
 
@@ -369,6 +382,69 @@ impl VaultBrowser {
         cx.notify();
     }
 
+    /// Copies a custom field of the selected Entry.
+    fn copy_custom_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let value = self
+            .selected_entry
+            .and_then(|(vault, id)| workspace.entry(vault, id))
+            .and_then(|entry| entry.custom_fields().get(index))
+            .map(|field| field.value.expose_secret().to_owned());
+        if let Some(value) = value {
+            cx.write_to_clipboard(ClipboardItem::new_string(value));
+            self.copied_field = Some(index);
+            cx.notify();
+        }
+    }
+
+    fn toggle_field_reveal(&mut self, index: usize, cx: &mut Context<Self>) {
+        match self
+            .revealed_fields
+            .iter()
+            .position(|&shown| shown == index)
+        {
+            Some(position) => {
+                self.revealed_fields.remove(position);
+            }
+            None => self.revealed_fields.push(index),
+        }
+        cx.notify();
+    }
+
+    /// Keys on a focused custom field: Enter or Ctrl+C copies it, Space shows or hides it, and
+    /// Escape goes back to the Entry list.
+    fn on_custom_field_key(
+        &mut self,
+        index: usize,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        match keystroke.key.as_str() {
+            "enter" if !modifiers.modified() => self.copy_custom_field(index, cx),
+            "c" if modifiers.secondary() => self.copy_custom_field(index, cx),
+            "space" if !modifiers.modified() => self.toggle_field_reveal(index, cx),
+            "escape" => window.focus(&self.focus),
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// Makes sure every custom field of the selected Entry has a focus handle.
+    fn ensure_custom_field_focus(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let count = self
+            .selected_entry
+            .and_then(|(vault, id)| workspace.entry(vault, id))
+            .map_or(0, |entry| entry.custom_fields().len());
+        while self.custom_field_focus.len() < count {
+            self.custom_field_focus
+                .push(cx.focus_handle().tab_stop(true));
+        }
+    }
+
     /// Runs an edit command, shows its error if it fails, and autosaves if it succeeds.
     fn edit<T>(
         &mut self,
@@ -436,11 +512,20 @@ impl VaultBrowser {
                 if let Some(selected) = saved {
                     self.selected_entry = Some(selected);
                     self.detail = Detail::Entry;
+                    self.revealed_fields.clear();
+                    self.copied_field = None;
                 }
             }
-            EntryEditorEvent::Cancel => self.detail = Detail::Entry,
+            EntryEditorEvent::Cancel => {
+                self.detail = Detail::Entry;
+                self.error = None;
+            }
         }
-        window.focus(&self.focus);
+        // A refused save leaves the form open to fix what the error says.
+        match &self.detail {
+            Detail::Editing { editor, .. } => window.focus(&editor.focus_handle(cx)),
+            _ => window.focus(&self.focus),
+        }
         cx.notify();
     }
 
@@ -574,6 +659,19 @@ impl VaultBrowser {
         self.integration.update(cx, |integration, cx| {
             integration.set_enabled(!integration.enabled(cx), cx)
         });
+    }
+
+    /// Tab moves between the Entry's custom fields and the other controls.
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.key == "tab" && !keystroke.modifiers.secondary() {
+            if keystroke.modifiers.shift {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
+            cx.stop_propagation();
+        }
     }
 
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1062,6 +1160,93 @@ impl VaultBrowser {
             strings::DETAIL_NOTES,
             entry.notes().to_owned().into(),
         ))
+        .children(
+            entry
+                .custom_fields()
+                .iter()
+                .zip(&self.custom_field_focus)
+                .enumerate()
+                .map(|(index, (custom, focus))| {
+                    let revealed = self.revealed_fields.contains(&index);
+                    let value: SharedString = if custom.protected && !revealed {
+                        strings::HIDDEN_PASSWORD.into()
+                    } else {
+                        custom.value.expose_secret().to_owned().into()
+                    };
+                    let link = |id: &'static str, label: &'static str| {
+                        div()
+                            .id((id, index))
+                            .cursor_pointer()
+                            .text_color(theme.accent)
+                            .child(label)
+                    };
+                    div()
+                        .id(("custom-field", index))
+                        .track_focus(focus)
+                        .on_key_down(cx.listener(move |this, event, window, cx| {
+                            this.on_custom_field_key(index, event, window, cx)
+                        }))
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .mx_neg_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(gpui::transparent_black())
+                        .focus(|style| style.border_color(theme.accent))
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .gap_2()
+                                .text_sm()
+                                .child(
+                                    div()
+                                        .text_color(theme.muted)
+                                        .truncate()
+                                        .child(custom.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_3()
+                                        .when(custom.protected, |this| {
+                                            this.child(
+                                                link(
+                                                    "reveal-custom-field",
+                                                    if revealed {
+                                                        strings::HIDE_PASSWORD
+                                                    } else {
+                                                        strings::REVEAL_PASSWORD
+                                                    },
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_field_reveal(index, cx)
+                                                })),
+                                            )
+                                        })
+                                        .child(
+                                            link(
+                                                "copy-custom-field",
+                                                if self.copied_field == Some(index) {
+                                                    strings::COPIED
+                                                } else {
+                                                    strings::COPY
+                                                },
+                                            )
+                                            .on_click(
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.copy_custom_field(index, cx)
+                                                }),
+                                            ),
+                                        ),
+                                ),
+                        )
+                        .child(div().child(value))
+                }),
+        )
         .into_any_element()
     }
 
@@ -1181,10 +1366,12 @@ impl VaultBrowser {
 impl Render for VaultBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        self.ensure_custom_field_focus(cx);
         div()
             .id("vault-browser")
             .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
@@ -1228,6 +1415,8 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::PairingNameTaken) => strings::ERROR_PAIRING_NAME_TAKEN,
         EditVaultError::NotPaired => strings::ERROR_NOT_PAIRED,
         EditVaultError::Edit(EditError::InRecycleBin) => strings::ERROR_IN_RECYCLE_BIN,
+        EditVaultError::Edit(EditError::FieldNameEmpty) => strings::ERROR_FIELD_NAME_EMPTY,
+        EditVaultError::Edit(EditError::FieldNameTaken) => strings::ERROR_FIELD_NAME_TAKEN,
     }
 }
 

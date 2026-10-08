@@ -57,6 +57,14 @@ pub const FIELD_TITLE: &str = "Title";
 pub const EDITOR_DONE: &str = "Done";
 pub const REVEAL_PASSWORD: &str = "Show";
 pub const HIDE_PASSWORD: &str = "Hide";
+pub const CUSTOM_FIELDS: &str = "Custom fields";
+pub const ADD_FIELD: &str = "+ Field";
+pub const FIELD_NAME_PLACEHOLDER: &str = "Name";
+pub const FIELD_VALUE_PLACEHOLDER: &str = "Value";
+pub const FIELD_PROTECTED: &str = "Protected";
+pub const REMOVE_FIELD: &str = "Remove";
+pub const COPY: &str = "Copy";
+pub const COPIED: &str = "Copied";
 
 pub const NEW_ENTRY: &str = "+ Entry";
 pub const NEW_GROUP: &str = "+ Group";
@@ -85,6 +93,9 @@ pub const CONFIRM_DELETE_DETAIL: &str = "This cannot be undone.";
 pub const ERROR_MOVE_INTO_ITSELF: &str = "A Group cannot be moved into itself or its subgroups.";
 pub const ERROR_ROOT_GROUP: &str = "The top Group of a Vault cannot be moved or deleted.";
 pub const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";
+pub const ERROR_FIELD_NAME_EMPTY: &str = "Give every custom field a name.";
+pub const ERROR_FIELD_NAME_TAKEN: &str =
+    "Each field needs a name of its own, other than Title, UserName, Password, URL or Notes.";
 
 pub const BROWSER_INTEGRATION: &str = "Browser integration";
 pub const BROWSER_HOSTS_FOR: &str = "Set up for ";
