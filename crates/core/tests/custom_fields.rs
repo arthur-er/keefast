@@ -48,8 +48,8 @@ fn with_fields(custom_fields: Vec<CustomField>) -> EntryFields {
         username: "alice".into(),
         password: SecretString::from("bank-pw"),
         url: "https://bank.example".into(),
-        notes: String::new(),
         custom_fields,
+        ..EntryFields::default()
     }
 }
 

@@ -16,15 +16,17 @@ mod storage;
 mod unlock_secrets;
 
 use std::io;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use secrecy::ExposeSecret;
 
 use keefast_core::{
-    EditError, Entry, EntryFields, EntryId, EntrySearch, EntrySort, GeneratorError, Group, GroupId,
-    KeyFileError, MergeSummary, OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
+    CustomIconId, EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort,
+    GeneratorError, Group, GroupId, KeyFileError, MergeSummary, OpenError, SaveError, Timestamp,
+    Totp, TotpCode, TotpError, Vault,
 };
 use secrecy::SecretString;
 
@@ -59,16 +61,31 @@ pub use unlock_secrets::UnlockSecrets;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VaultId(u64);
 
-/// What the Entry list shows: every open Vault, one Vault, or one Group of a Vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the Entry list shows: every open Vault, one Vault, one Group of a Vault, or the
+/// Entries of every open Vault with a tag or colour.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryScope {
     AllVaults,
     Vault(VaultId),
     Group(VaultId, GroupId),
+    /// Entries outside the Recycle Bin with this tag.
+    Tag(String),
+    /// Entries outside the Recycle Bin marked with this colour.
+    Color(EntryColor),
+}
+
+impl EntryScope {
+    /// The Vault the scope is in, if it is in one.
+    pub fn vault(&self) -> Option<VaultId> {
+        match self {
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(*vault),
+            EntryScope::AllVaults | EntryScope::Tag(_) | EntryScope::Color(_) => None,
+        }
+    }
 }
 
 /// Where the user is: what the Entry list shows, and the Entry selected in it, if one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct View {
     pub scope: EntryScope,
     pub entry: Option<(VaultId, EntryId)>,
@@ -83,10 +100,7 @@ impl From<EntryScope> for View {
 impl View {
     /// The Vault the Entry list is narrowed to, if it is.
     pub fn vault(&self) -> Option<VaultId> {
-        match self.scope {
-            EntryScope::AllVaults => None,
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
-        }
+        self.scope.vault()
     }
 }
 
@@ -121,6 +135,14 @@ pub enum EditVaultError {
     NotPaired,
     #[error(transparent)]
     Edit(#[from] EditError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ImportIconError {
+    #[error("could not read the image: {0}")]
+    Unreadable(#[source] io::Error),
+    #[error(transparent)]
+    Edit(#[from] EditVaultError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -551,7 +573,7 @@ impl Workspace {
 
     /// Where the user is, as last shown, without what locking took away.
     pub fn view(&self) -> View {
-        self.view
+        self.view.clone()
     }
 
     /// Vault files opened lately, most recent first, whether open now or not.
@@ -781,10 +803,12 @@ impl Workspace {
                 return self.group(vault, group).map(|_| (vault, group));
             }
             EntryScope::Vault(vault) => self.vault(vault),
-            EntryScope::AllVaults => match self.vaults.as_slice() {
-                [only] => Some(only),
-                _ => None,
-            },
+            EntryScope::AllVaults | EntryScope::Tag(_) | EntryScope::Color(_) => {
+                match self.vaults.as_slice() {
+                    [only] => Some(only),
+                    _ => None,
+                }
+            }
         }?;
         Some((open.id, open.vault.root().id()))
     }
@@ -833,28 +857,55 @@ impl Workspace {
         search: &EntrySearch,
         sort: EntrySort,
     ) -> Vec<ListedEntry<'_>> {
-        let groups: Vec<(VaultId, &Group)> = match scope {
-            EntryScope::AllVaults => self
-                .readable_vaults()
-                .map(|open| (open.id, open.vault.root()))
-                .collect(),
-            EntryScope::Vault(vault) => self
-                .readable_vault(vault)
-                .map(|open| (vault, open.vault.root()))
-                .into_iter()
-                .collect(),
-            EntryScope::Group(vault, group) => self
-                .group(vault, group)
-                .map(|group| (vault, group))
-                .into_iter()
-                .collect(),
+        let entries: Vec<ListedEntry<'_>> = match scope {
+            EntryScope::Tag(_) | EntryScope::Color(_) => {
+                let marked = |entry: &Entry| match &scope {
+                    EntryScope::Tag(tag) => entry.tags().contains(tag),
+                    EntryScope::Color(color) => entry.color() == Some(*color),
+                    _ => true,
+                };
+                self.readable_vaults()
+                    .flat_map(|open| {
+                        entries_outside_recycle_bin(&open.vault)
+                            .filter(|entry| marked(entry))
+                            .map(|entry| ListedEntry {
+                                vault: open.id,
+                                entry,
+                            })
+                    })
+                    .collect()
+            }
+            EntryScope::AllVaults => self.entries_under(
+                self.readable_vaults()
+                    .map(|open| (open.id, open.vault.root()))
+                    .collect(),
+            ),
+            EntryScope::Vault(vault) => self.entries_under(
+                self.readable_vault(vault)
+                    .map(|open| (vault, open.vault.root()))
+                    .into_iter()
+                    .collect(),
+            ),
+            EntryScope::Group(vault, group) => self.entries_under(
+                self.group(vault, group)
+                    .map(|group| (vault, group))
+                    .into_iter()
+                    .collect(),
+            ),
         };
-        let entries = groups.into_iter().flat_map(|(vault, group)| {
-            group
-                .all_entries()
-                .map(move |entry| ListedEntry { vault, entry })
-        });
         search.rank(entries, |listed| listed.entry, sort)
+    }
+
+    /// Every Entry in the Groups, including those in their subgroups.
+    fn entries_under<'a>(&'a self, groups: Vec<(VaultId, &'a Group)>) -> Vec<ListedEntry<'a>> {
+        groups
+            .into_iter()
+            .flat_map(|(vault, group)| {
+                group
+                    .all_entries()
+                    .map(move |entry| ListedEntry { vault, entry })
+            })
+            .collect()
     }
 
     pub fn create_entry(
@@ -940,6 +991,47 @@ impl Workspace {
         let totp = self.entry(vault, entry)?.totp()?;
         let now = self.now();
         Some(totp.map(|totp| totp.code(now)))
+    }
+
+    /// Every tag of the Entries outside the Recycle Bin in the open Vaults, sorted ignoring
+    /// case, each once.
+    pub fn tags(&self) -> Vec<&str> {
+        let mut tags: Vec<&str> = self
+            .vaults
+            .iter()
+            .flat_map(|open| entries_outside_recycle_bin(&open.vault))
+            .flat_map(|entry| entry.tags().iter().map(String::as_str))
+            .collect();
+        tags.sort_by_cached_key(|tag| (tag.to_lowercase(), tag.to_string()));
+        tags.dedup();
+        tags
+    }
+
+    /// Whether the Entry's expiry time has come.
+    pub fn is_expired(&self, entry: &Entry) -> bool {
+        entry.is_expired(self.now())
+    }
+
+    /// Adds the PNG image at `path` to the Vault's custom icons, for its Entries to use. An
+    /// image the Vault already has is not added again: its icon is returned.
+    pub fn import_custom_icon(
+        &mut self,
+        vault: VaultId,
+        path: &Path,
+    ) -> Result<CustomIconId, ImportIconError> {
+        if self.vault(vault).is_none() {
+            return Err(EditVaultError::VaultNotOpen.into());
+        }
+        let png = read_icon(path).map_err(ImportIconError::Unreadable)?;
+        if let Some(icon) = self.vault(vault).and_then(|open| {
+            open.vault
+                .custom_icons()
+                .iter()
+                .find(|icon| icon.data() == png)
+        }) {
+            return Ok(icon.id());
+        }
+        Ok(self.edit(vault, |vault, _| vault.add_custom_icon(&png))?)
     }
 
     /// The time at the Workspace's clock.
@@ -1095,4 +1187,30 @@ impl Workspace {
             autosave && open.has_unsaved_changes() && open.failed_save_at != Some(open.edits)
         })
     }
+}
+
+/// The Entries of a Vault, except those in its Recycle Bin.
+fn entries_outside_recycle_bin(vault: &Vault) -> impl Iterator<Item = &Entry> {
+    fn collect<'a>(group: &'a Group, bin: Option<GroupId>, out: &mut Vec<&'a Entry>) {
+        if Some(group.id()) == bin {
+            return;
+        }
+        out.extend(group.entries());
+        for child in group.groups() {
+            collect(child, bin, out);
+        }
+    }
+    let mut entries = Vec::new();
+    collect(vault.root(), vault.recycle_bin(), &mut entries);
+    entries.into_iter()
+}
+
+/// Reads an icon image, refusing one too large to be an icon before reading it all.
+fn read_icon(path: &Path) -> io::Result<Vec<u8>> {
+    let limit = keefast_core::MAX_CUSTOM_ICON_BYTES as u64 + 1;
+    let mut png = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit)
+        .read_to_end(&mut png)?;
+    Ok(png)
 }

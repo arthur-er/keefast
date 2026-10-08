@@ -91,6 +91,47 @@ pub const REMOVE_FIELD: &str = "Remove";
 pub const COPY: &str = "Copy";
 pub const COPIED: &str = "Copied";
 
+pub const FIELD_TAGS: &str = "Tags";
+pub const TAGS_PLACEHOLDER: &str = "Separate tags with commas";
+pub const FIELD_COLOR: &str = "Colour";
+pub const NO_COLOR: &str = "None";
+pub const FIELD_ICON: &str = "Icon";
+pub const CHOOSE_ICON: &str = "Change…";
+pub const STANDARD_ICONS: &str = "Standard icons";
+pub const CUSTOM_ICONS: &str = "This Vault's icons";
+pub const IMPORT_ICON: &str = "Import PNG…";
+pub const IMPORT_ICON_PROMPT: &str = "Choose an icon image (PNG)";
+pub const FIELD_EXPIRES: &str = "Expires";
+pub const EXPIRY_PLACEHOLDER: &str = "YYYY-MM-DD";
+pub const EXPIRY_NOTE: &str = "At the start of that day, UTC.";
+pub const DETAIL_TAGS: &str = "Tags";
+pub const DETAIL_EXPIRES: &str = "Expires";
+pub const EXPIRED_BADGE: &str = "Expired";
+pub const ERROR_EXPIRY_DATE: &str = "Type the expiry date as YYYY-MM-DD, such as 2027-01-31.";
+pub const ERROR_ICON_NOT_FOUND: &str = "That icon is no longer in this Vault.";
+pub const ERROR_ICON_NOT_PNG: &str = "An icon must be a PNG image.";
+pub const ERROR_ICON_TOO_LARGE: &str = "That image is too large for an icon (256 KB at most).";
+pub const ERROR_ICON_UNREADABLE: &str = "The image could not be read.";
+pub const ERROR_PICKER: &str = "The file picker could not be opened.";
+
+pub const SIDEBAR_TAGS: &str = "Tags";
+pub const SIDEBAR_COLORS: &str = "Colours";
+pub const TAG_HEADER: &str = "Tag: {tag}";
+pub const COLOR_HEADER: &str = "Colour: {color}";
+
+/// Each colour's name, as [`keefast_core::EntryColor`] lists them.
+pub fn color_name(color: keefast_core::EntryColor) -> &'static str {
+    use keefast_core::EntryColor;
+    match color {
+        EntryColor::Red => "Red",
+        EntryColor::Orange => "Orange",
+        EntryColor::Yellow => "Yellow",
+        EntryColor::Green => "Green",
+        EntryColor::Blue => "Blue",
+        EntryColor::Violet => "Violet",
+    }
+}
+
 pub const NEW_ENTRY: &str = "+ Entry";
 pub const NEW_GROUP: &str = "+ Group";
 pub const NEW_GROUP_NAME: &str = "New Group";

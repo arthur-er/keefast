@@ -238,7 +238,7 @@ fn unlocking_returns_to_the_selected_vault_group_and_entry() {
         scope: EntryScope::Group(h.personal, group),
         entry: Some((h.personal, github)),
     };
-    h.workspace.show(shown);
+    h.workspace.show(shown.clone());
 
     h.lock_all();
     h.unlock(&work_vault()).unwrap();
@@ -281,7 +281,7 @@ fn locking_a_vault_the_user_is_not_looking_at_leaves_the_view_alone() {
         scope: EntryScope::Vault(h.personal),
         entry: Some((h.personal, github)),
     };
-    h.workspace.show(shown);
+    h.workspace.show(shown.clone());
 
     h.lock(h.work);
     h.unlock(&work_vault()).unwrap();

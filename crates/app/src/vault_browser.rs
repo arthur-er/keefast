@@ -5,7 +5,8 @@ use gpui::{
     PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{
-    EditError, Entry, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
+    EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId,
+    TotpCode,
 };
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, VaultId, View,
@@ -21,6 +22,7 @@ use crate::actions::{
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
+use crate::icons;
 use crate::locking;
 use crate::merge_notice;
 use crate::saving;
@@ -700,6 +702,7 @@ impl VaultBrowser {
     }
 
     fn open_editor(&mut self, target: EditTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let (EditTarget::Existing(vault, _) | EditTarget::New(vault, _)) = target;
         let fields = match &target {
             EditTarget::Existing(vault, id) => self
                 .workspace
@@ -707,9 +710,23 @@ impl VaultBrowser {
                 .entry(*vault, *id)
                 .map(EntryFields::from)
                 .unwrap_or_default(),
-            EditTarget::New(..) => EntryFields::default(),
+            // An Entry made while a tag or colour is shown has it, so it shows up there.
+            EditTarget::New(..) => {
+                let scope = self.scope(cx);
+                EntryFields {
+                    tags: match &scope {
+                        EntryScope::Tag(tag) => vec![tag.clone()],
+                        _ => Vec::new(),
+                    },
+                    color: match scope {
+                        EntryScope::Color(color) => Some(color),
+                        _ => None,
+                    },
+                    ..EntryFields::default()
+                }
+            }
         };
-        let editor = cx.new(|cx| EntryEditor::new(&fields, self.workspace.clone(), cx));
+        let editor = cx.new(|cx| EntryEditor::new(&fields, vault, self.workspace.clone(), cx));
         cx.subscribe_in(&editor, window, Self::on_editor_event)
             .detach();
         window.focus(&editor.focus_handle(cx));
@@ -1043,6 +1060,52 @@ impl VaultBrowser {
         }
         let can_lock = workspace.vaults().next().is_some();
 
+        let shown = workspace.view().scope;
+        let tags = workspace.tags();
+        if !tags.is_empty() {
+            rows.push(sidebar_heading(strings::SIDEBAR_TAGS, theme));
+        }
+        for tag in tags {
+            let scope = EntryScope::Tag(tag.to_owned());
+            let selected = shown == scope;
+            rows.push(
+                sidebar_row(
+                    ("tag", rows.len()),
+                    tag.to_owned().into(),
+                    0,
+                    selected,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.select(scope.clone(), cx)))
+                .into_any_element(),
+            );
+        }
+        rows.push(sidebar_heading(strings::SIDEBAR_COLORS, theme));
+        let dots = EntryColor::ALL.into_iter().map(|color| {
+            let selected = shown == EntryScope::Color(color);
+            div()
+                .id(("color", color as usize))
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor_pointer()
+                .when(selected, |this| this.bg(theme.selection))
+                .child(icons::color_dot(color, px(12.)))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.select(EntryScope::Color(color), cx)),
+                )
+        });
+        rows.push(
+            div()
+                .flex()
+                .gap_1()
+                .px_2()
+                .children(dots)
+                .into_any_element(),
+        );
+
         div()
             .w(px(220.))
             .h_full()
@@ -1194,30 +1257,34 @@ impl VaultBrowser {
         } = workspace.view();
         let entries = self.listed_entries(workspace);
         let searching = !self.query.is_empty();
-        let locked = match scope {
-            EntryScope::Vault(vault) => workspace.locked_vault(vault),
+        let locked = match &scope {
+            EntryScope::Vault(vault) => workspace.locked_vault(*vault),
             _ => None,
         };
         // The Vault shown is waiting to lock, so the list has nothing in it.
-        let locking = match scope {
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => {
-                workspace.vault(vault).is_some_and(|open| open.is_locking())
-            }
+        let locking = match &scope {
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => workspace
+                .vault(*vault)
+                .is_some_and(|open| open.is_locking()),
             _ => false,
         };
-        let header = match scope {
+        let header = match &scope {
             EntryScope::AllVaults => Some(strings::SIDEBAR_ALL_VAULTS.to_owned()),
             EntryScope::Vault(vault) => workspace
-                .vault(vault)
+                .vault(*vault)
                 .map(|open| open.display_name())
                 .or_else(|| locked.map(|locked| locked.display_name())),
             EntryScope::Group(vault, group) => workspace
-                .group(vault, group)
+                .group(*vault, *group)
                 .map(|group| group.name().to_owned()),
+            EntryScope::Tag(tag) => Some(strings::TAG_HEADER.replace("{tag}", tag)),
+            EntryScope::Color(color) => {
+                Some(strings::COLOR_HEADER.replace("{color}", strings::color_name(*color)))
+            }
         }
         .unwrap_or_default();
         // Across several Vaults, each Entry says which Vault it is from.
-        let label_vaults = scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
+        let label_vaults = scope.vault().is_none() && workspace.vaults().nth(1).is_some();
 
         let rows: Vec<AnyElement> = entries
             .iter()
@@ -1226,30 +1293,78 @@ impl VaultBrowser {
                 let (vault, entry) = (listed.vault, listed.entry);
                 let id = entry.id();
                 let selected = selected_entry == Some((vault, id));
+                let open = workspace.vault(vault);
                 let vault_name = label_vaults
-                    .then(|| workspace.vault(vault).map(|open| open.display_name()))
+                    .then(|| open.map(|open| open.display_name()))
                     .flatten();
+                let expired = workspace.is_expired(entry);
+                let tags = (!entry.tags().is_empty()).then(|| entry.tags().join(", "));
                 div()
                     .id(("entry", ix))
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap_2()
                     .px_3()
                     .py_1p5()
                     .border_b_1()
                     .border_color(theme.border)
                     .cursor_pointer()
                     .when(selected, |this| this.bg(theme.selection))
-                    .child(div().truncate().child(title_of(entry)))
+                    .children(open.map(|open| {
+                        icons::entry_icon(entry.icon(), open.vault(), px(18.), theme.muted)
+                    }))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .flex()
-                            .gap_2()
-                            .text_sm()
-                            .text_color(theme.muted)
-                            .child(div().flex_1().truncate().child(entry.username().to_owned()))
-                            .when_some(vault_name, |this, name| {
-                                this.child(div().flex_none().text_xs().child(name))
-                            }),
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .truncate()
+                                            .when(expired, |this| {
+                                                this.line_through().text_color(theme.muted)
+                                            })
+                                            .child(title_of(entry)),
+                                    )
+                                    .when(expired, |this| this.child(expired_badge(theme)))
+                                    .when_some(entry.color(), |this, color| {
+                                        this.child(icons::color_dot(color, px(8.)))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .text_color(theme.muted)
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .truncate()
+                                            .child(entry.username().to_owned()),
+                                    )
+                                    .when_some(tags, |this, tags| {
+                                        this.child(
+                                            div()
+                                                .flex_none()
+                                                .max_w(px(120.))
+                                                .truncate()
+                                                .text_xs()
+                                                .text_color(theme.accent)
+                                                .child(tags),
+                                        )
+                                    })
+                                    .when_some(vault_name, |this, name| {
+                                        this.child(div().flex_none().text_xs().child(name))
+                                    }),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // So the keyboard shortcuts act on the Entry just picked.
@@ -1463,6 +1578,10 @@ impl VaultBrowser {
                 .child(div().text_sm().text_color(theme.muted).child(label))
                 .child(div().child(value))
         };
+        let expired = workspace.is_expired(entry);
+        let icon = workspace
+            .vault(vault)
+            .map(|open| icons::entry_icon(entry.icon(), open.vault(), px(24.), theme.text));
 
         pane.child(
             div()
@@ -1470,7 +1589,18 @@ impl VaultBrowser {
                 .items_center()
                 .justify_between()
                 .gap_2()
-                .child(div().text_xl().truncate().child(title_of(entry)))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .min_w_0()
+                        .children(icon)
+                        .child(div().text_xl().truncate().child(title_of(entry)))
+                        .when_some(entry.color(), |this, color| {
+                            this.child(icons::color_dot(color, px(10.)))
+                        }),
+                )
                 .child(
                     div()
                         .flex()
@@ -1537,6 +1667,56 @@ impl VaultBrowser {
             strings::DETAIL_NOTES,
             entry.notes().to_owned().into(),
         ))
+        .when(!entry.tags().is_empty(), |this| {
+            let tags = entry.tags().iter().enumerate().map(|(ix, tag)| {
+                let scope = EntryScope::Tag(tag.clone());
+                div()
+                    .id(("detail-tag", ix))
+                    .px_2()
+                    .rounded_full()
+                    .bg(theme.selection)
+                    .text_sm()
+                    .cursor_pointer()
+                    .child(tag.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| this.select(scope.clone(), cx)))
+            });
+            this.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::DETAIL_TAGS),
+                    )
+                    .child(div().flex().flex_wrap().gap_1().children(tags)),
+            )
+        })
+        .when_some(entry.expires(), |this, expires| {
+            this.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::DETAIL_EXPIRES),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(expired, |this| this.text_color(theme.error))
+                            .child(expires.to_date())
+                            .when(expired, |this| this.child(expired_badge(theme))),
+                    ),
+            )
+        })
         .children(
             entry
                 .custom_fields()
@@ -1821,7 +2001,34 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::InRecycleBin) => strings::ERROR_IN_RECYCLE_BIN,
         EditVaultError::Edit(EditError::FieldNameEmpty) => strings::ERROR_FIELD_NAME_EMPTY,
         EditVaultError::Edit(EditError::FieldNameTaken) => strings::ERROR_FIELD_NAME_TAKEN,
+        EditVaultError::Edit(EditError::IconNotFound) => strings::ERROR_ICON_NOT_FOUND,
+        EditVaultError::Edit(EditError::IconNotPng) => strings::ERROR_ICON_NOT_PNG,
+        EditVaultError::Edit(EditError::IconTooLarge) => strings::ERROR_ICON_TOO_LARGE,
     }
+}
+
+/// A heading above a section of the sidebar.
+fn sidebar_heading(label: &'static str, theme: Theme) -> AnyElement {
+    div()
+        .px_3()
+        .pt_3()
+        .pb_1()
+        .text_sm()
+        .text_color(theme.muted)
+        .child(label)
+        .into_any_element()
+}
+
+fn expired_badge(theme: Theme) -> impl IntoElement {
+    div()
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.error)
+        .text_xs()
+        .text_color(theme.error)
+        .child(strings::EXPIRED_BADGE)
 }
 
 fn sidebar_row(

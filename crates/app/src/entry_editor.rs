@@ -1,12 +1,19 @@
-use gpui::{App, Context, Entity, EventEmitter, FocusHandle, Focusable, Window, div, prelude::*};
-use keefast_core::{CustomField, EntryFields};
-use keefast_workspace::Workspace;
+use gpui::{
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, PathPromptOptions, SharedString,
+    Window, div, prelude::*, px,
+};
+use keefast_core::{
+    CustomField, EntryColor, EntryFields, EntryIcon, STANDARD_ICON_COUNT, Timestamp,
+};
+use keefast_workspace::{ImportIconError, VaultId, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 
+use crate::icons;
 use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::vault_browser::describe;
 use crate::widgets::button;
 
 pub enum EntryEditorEvent {
@@ -17,6 +24,8 @@ pub enum EntryEditorEvent {
 /// The form for creating or editing an Entry, shown in the detail pane.
 pub struct EntryEditor {
     workspace: Entity<Workspace>,
+    /// The Vault the Entry is in, whose custom icons it can use.
+    vault: VaultId,
     title: Entity<TextField>,
     username: Entity<TextField>,
     password: Entity<TextField>,
@@ -26,6 +35,17 @@ pub struct EntryEditor {
     /// The password generator, while it is open.
     generator: Option<Entity<PasswordGenerator>>,
     custom_fields: Vec<CustomFieldRow>,
+    tags: Entity<TextField>,
+    color: Option<EntryColor>,
+    icon: EntryIcon,
+    /// Whether the icons to choose from are shown.
+    choosing_icon: bool,
+    expires: bool,
+    expiry_date: Entity<TextField>,
+    /// The expiry the Entry had, kept to the second while its date isn't changed.
+    original_expiry: Option<Timestamp>,
+    /// Why the form can't be saved, or an icon imported.
+    error: Option<SharedString>,
 }
 
 /// A custom field being edited.
@@ -46,7 +66,12 @@ impl Focusable for EntryEditor {
 
 impl EntryEditor {
     /// A form filled with `fields`: an Entry's, or empty ones for a new Entry.
-    pub fn new(fields: &EntryFields, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        fields: &EntryFields,
+        vault: VaultId,
+        workspace: Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let field = |placeholder: &'static str,
                      value: &str,
                      style: fn(TextField) -> TextField,
@@ -80,8 +105,21 @@ impl EntryEditor {
             .iter()
             .map(|field| Self::custom_field_row(field, cx))
             .collect();
+        let tags = field(
+            strings::TAGS_PLACEHOLDER,
+            &fields.tags.join(", "),
+            plain,
+            cx,
+        );
+        let expiry_date = field(
+            strings::EXPIRY_PLACEHOLDER,
+            &fields.expires.map(Timestamp::to_date).unwrap_or_default(),
+            plain,
+            cx,
+        );
         Self {
             workspace,
+            vault,
             title,
             username,
             password,
@@ -90,7 +128,79 @@ impl EntryEditor {
             password_revealed: false,
             generator: None,
             custom_fields,
+            tags,
+            color: fields.color,
+            icon: fields.icon,
+            choosing_icon: false,
+            expires: fields.expires.is_some(),
+            expiry_date,
+            original_expiry: fields.expires,
+            error: None,
         }
+    }
+
+    fn set_color(&mut self, color: Option<EntryColor>, cx: &mut Context<Self>) {
+        self.color = color;
+        cx.notify();
+    }
+
+    fn set_icon(&mut self, icon: EntryIcon, cx: &mut Context<Self>) {
+        self.icon = icon;
+        self.choosing_icon = false;
+        self.error = None;
+        cx.notify();
+    }
+
+    /// Turns expiry on or off. Turned on without a date, it offers today's to change.
+    fn toggle_expires(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.expires = !self.expires;
+        if self.expires {
+            let today = Timestamp::from_system_time(std::time::SystemTime::now()).to_date();
+            self.expiry_date.update(cx, |field, cx| {
+                if field.text().trim().is_empty() {
+                    field.set_text(&today, cx);
+                }
+            });
+            window.focus(&self.expiry_date.focus_handle(cx));
+        }
+        cx.notify();
+    }
+
+    /// Asks for a PNG image and adds it to the Vault's icons, as the Entry's icon.
+    fn import_icon(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(strings::IMPORT_ICON_PROMPT.into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = paths.await;
+            this.update(cx, |this, cx| match picked {
+                Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
+                    let path = paths.swap_remove(0);
+                    let vault = this.vault;
+                    let imported = this.workspace.update(cx, |workspace, cx| {
+                        cx.notify();
+                        workspace.import_custom_icon(vault, &path)
+                    });
+                    match imported {
+                        Ok(icon) => this.set_icon(EntryIcon::Custom(icon), cx),
+                        Err(error) => {
+                            this.error = Some(describe_import(&error).into());
+                            cx.notify();
+                        }
+                    }
+                }
+                Ok(Ok(_)) | Err(_) => {}
+                Ok(Err(_)) => {
+                    this.error = Some(strings::ERROR_PICKER.into());
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The fields to edit a custom field with; a protected value starts hidden.
@@ -199,7 +309,25 @@ impl EntryEditor {
         }
     }
 
+    /// The expiry the form sets, or `Err` when its date can't be read.
+    fn expiry(&self, cx: &App) -> Result<Option<Timestamp>, ()> {
+        if !self.expires {
+            return Ok(None);
+        }
+        let date = self.expiry_date.read(cx).text().trim();
+        match self.original_expiry {
+            Some(original) if original.to_date() == date => Ok(Some(original)),
+            _ => Timestamp::parse_date(date).map(Some).ok_or(()),
+        }
+    }
+
     fn save(&mut self, cx: &mut Context<Self>) {
+        let Ok(expires) = self.expiry(cx) else {
+            self.error = Some(strings::ERROR_EXPIRY_DATE.into());
+            cx.notify();
+            return;
+        };
+        self.error = None;
         let text = |field: &Entity<TextField>| field.read(cx).text().to_owned();
         let fields = EntryFields {
             title: text(&self.title),
@@ -216,6 +344,10 @@ impl EntryEditor {
                     protected: row.protected,
                 })
                 .collect(),
+            tags: keefast_core::parse_tags(&text(&self.tags)),
+            color: self.color,
+            icon: self.icon,
+            expires,
         };
         cx.emit(EntryEditorEvent::Save(fields));
     }
@@ -296,7 +428,14 @@ impl Render for EntryEditor {
             )
             .child(labelled(strings::DETAIL_URL, &self.url))
             .child(labelled(strings::DETAIL_NOTES, &self.notes))
+            .child(labelled(strings::FIELD_TAGS, &self.tags))
+            .child(self.render_color(theme, cx))
+            .child(self.render_icon(theme, cx))
+            .child(self.render_expiry(theme, cx))
             .child(self.render_custom_fields(theme, cx))
+            .when_some(self.error.clone(), |this, error| {
+                this.child(div().text_sm().text_color(theme.error).child(error))
+            })
             .child(
                 div()
                     .flex()
@@ -317,6 +456,192 @@ impl Render for EntryEditor {
 }
 
 impl EntryEditor {
+    fn render_color(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let swatch = |id: usize, selected: bool| {
+            div()
+                .id(("color", id))
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    gpui::transparent_black().into()
+                })
+                .cursor_pointer()
+        };
+        let colors = EntryColor::ALL.into_iter().enumerate().map(|(ix, color)| {
+            swatch(ix + 1, self.color == Some(color))
+                .child(icons::color_dot(color, px(14.)))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_color(Some(color), cx)))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::FIELD_COLOR),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        swatch(0, self.color.is_none())
+                            .w_auto()
+                            .px_2()
+                            .text_sm()
+                            .child(strings::NO_COLOR)
+                            .on_click(cx.listener(|this, _, _, cx| this.set_color(None, cx))),
+                    )
+                    .children(colors),
+            )
+    }
+
+    fn render_icon(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.workspace.read(cx);
+        let vault = workspace.vault(self.vault).map(|open| open.vault());
+        let cell = |id: (&'static str, usize), selected: bool| {
+            div()
+                .id(id)
+                .size(px(30.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .border_1()
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    gpui::transparent_black().into()
+                })
+                .when(selected, |this| this.bg(theme.selection))
+                .hover(|this| this.bg(theme.selection))
+                .cursor_pointer()
+        };
+        let current = vault.map(|vault| icons::entry_icon(self.icon, vault, px(20.), theme.text));
+        let picker = self.choosing_icon.then(|| {
+            let standard = (0..STANDARD_ICON_COUNT).map(|number| {
+                let icon = EntryIcon::Standard(number);
+                cell(("standard-icon", number as usize), self.icon == icon)
+                    .child(icons::standard_icon(number, px(18.), theme.text))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_icon(icon, cx)))
+            });
+            let custom: Vec<_> = vault
+                .map(|vault| vault.custom_icons())
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .map(|(ix, custom)| {
+                    let icon = EntryIcon::Custom(custom.id());
+                    cell(("custom-icon", ix), self.icon == icon)
+                        .children(
+                            vault.map(|vault| icons::entry_icon(icon, vault, px(18.), theme.text)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_icon(icon, cx)))
+                })
+                .collect();
+            let heading =
+                |label: &'static str| div().text_xs().text_color(theme.muted).child(label);
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .child(heading(strings::STANDARD_ICONS))
+                .child(div().flex().flex_wrap().children(standard))
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(heading(strings::CUSTOM_ICONS))
+                        .child(
+                            div()
+                                .id("import-icon")
+                                .text_sm()
+                                .text_color(theme.accent)
+                                .cursor_pointer()
+                                .child(strings::IMPORT_ICON)
+                                .on_click(cx.listener(|this, _, _, cx| this.import_icon(cx))),
+                        ),
+                )
+                .child(div().flex().flex_wrap().children(custom))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::FIELD_ICON),
+            )
+            .child(
+                div().flex().items_center().gap_3().children(current).child(
+                    div()
+                        .id("choose-icon")
+                        .text_sm()
+                        .text_color(theme.accent)
+                        .cursor_pointer()
+                        .child(strings::CHOOSE_ICON)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.choosing_icon = !this.choosing_icon;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .children(picker)
+    }
+
+    fn render_expiry(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .id("expires")
+                    .flex()
+                    .gap_1()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .cursor_pointer()
+                    .child(if self.expires {
+                        strings::CHECKBOX_ON
+                    } else {
+                        strings::CHECKBOX_OFF
+                    })
+                    .child(strings::FIELD_EXPIRES)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_expires(window, cx))),
+            )
+            .when(self.expires, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().w(px(140.)).child(self.expiry_date.clone()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted)
+                                .child(strings::EXPIRY_NOTE),
+                        ),
+                )
+            })
+    }
+
     fn render_custom_fields(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.custom_fields.iter().enumerate().map(|(index, row)| {
             let link = |id: &'static str, label: &'static str| {
@@ -406,5 +731,12 @@ impl EntryEditor {
                     ),
             )
             .children(rows)
+    }
+}
+
+fn describe_import(error: &ImportIconError) -> &'static str {
+    match error {
+        ImportIconError::Unreadable(_) => strings::ERROR_ICON_UNREADABLE,
+        ImportIconError::Edit(error) => describe(error),
     }
 }

@@ -49,6 +49,16 @@ Ctrl+B copies the selected Entry's username, Ctrl+C its password and Ctrl+T its 
 keefast clears what it copied from the clipboard after 30 seconds, unless you have copied something else since; set
 `clipboard_clear_seconds` in `keefast/config.toml` to change the wait (0 never clears).
 
+## Tags, colours, icons and expiry
+
+Edit an Entry to give it tags (separated by commas), a colour, an icon and an expiry date. The
+sidebar lists every tag and colour; click one to list the Entries with it across the open
+Vaults. Expired Entries are struck through and flagged in the Entry list. Icons are KeePass's
+standard icons, drawn with [Lucide](https://lucide.dev) pictures (ISC, see
+`crates/app/assets/icons/standard/LICENSE`; `scripts/make-standard-icons.mjs` regenerates
+them), or PNG images imported into the Vault as custom icons. All of these are stored as
+KeePassXC, KeePass and KeeWeb store them, so those clients show them too.
+
 ## Browser integration
 
 keefast speaks the KeePassXC-Browser protocol (ADR 0003) with its Companion extension, and the

@@ -48,8 +48,7 @@ fn fields(title: &str, password: &str) -> EntryFields {
         username: "alice".into(),
         password: SecretString::from(password),
         url: "https://bank.example".into(),
-        notes: String::new(),
-        custom_fields: Vec::new(),
+        ..EntryFields::default()
     }
 }
 

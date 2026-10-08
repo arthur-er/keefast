@@ -245,7 +245,7 @@ impl Workspace {
     /// Takes what the user is shown of a Vault that is locking out of the view, and returns
     /// the view as it was if it showed any of it.
     fn leave_vault(&mut self, id: VaultId) -> Option<View> {
-        let before = self.view;
+        let before = self.view.clone();
         if let EntryScope::Group(vault, _) = self.view.scope
             && vault == id
         {

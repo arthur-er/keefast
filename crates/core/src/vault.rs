@@ -6,10 +6,11 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
+use crate::appearance::{CustomIcon, custom_icons, parse_tags};
 use crate::edit::{is_standard_field, string_value};
 use crate::kdbx::{Key, VaultFile};
 use crate::xml::Element;
-use crate::{OpenError, Timestamp, Totp, TotpError, totp};
+use crate::{EntryColor, EntryIcon, OpenError, Timestamp, Totp, TotpError, totp};
 
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
 ///
@@ -19,6 +20,7 @@ use crate::{OpenError, Timestamp, Totp, TotpError, totp};
 #[derive(Clone)]
 pub struct Vault {
     root: Group,
+    pub(crate) custom_icons: Vec<CustomIcon>,
     pub(crate) file: VaultFile,
     /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
     pub(crate) key: Key,
@@ -99,6 +101,10 @@ pub struct Entry {
     pub(crate) custom_data: BTreeMap<String, String>,
     tags: Vec<String>,
     created: Option<Timestamp>,
+    color: Option<EntryColor>,
+    icon: EntryIcon,
+    /// When the Entry expires, if it does.
+    expires: Option<Timestamp>,
     last_modified: Option<Timestamp>,
     /// Earlier versions, oldest first.
     history: Vec<Entry>,
@@ -113,14 +119,16 @@ impl Vault {
             .ok_or_else(|| OpenError::Corrupt("the Vault has no root Group".into()))?;
         Ok(Self {
             root: Group::from_element(group)?,
+            custom_icons: custom_icons(&file.document),
             file,
             key,
         })
     }
 
-    /// Reads the Groups and Entries back from the document after an edit.
+    /// Reads the Groups, Entries and custom icons back from the document after an edit.
     pub(crate) fn refresh(&mut self) {
         self.root = Group::from_element(self.root_group()).expect("edits keep every UUID valid");
+        self.custom_icons = custom_icons(&self.file.document);
     }
 
     /// The root Group's element in the document.
@@ -219,14 +227,14 @@ fn time(element: &Element, name: &str) -> Option<Timestamp> {
     Timestamp::decode(&element.child("Times")?.child(name)?.text())
 }
 
-/// An Entry's tags. KeePass separates them with `;`, KeeWeb and KeePassXC also with `,`.
-fn tags(entry: &Element) -> Vec<String> {
-    let text = entry.child("Tags").map(Element::text).unwrap_or_default();
-    text.split([';', ','])
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .map(str::to_owned)
-        .collect()
+/// When an Entry or Group expires, if its `Times` say it does.
+fn expires(element: &Element) -> Option<Timestamp> {
+    let times = element.child("Times")?;
+    let expires = times.child("Expires")?.text();
+    if !expires.trim().eq_ignore_ascii_case("true") {
+        return None;
+    }
+    Timestamp::decode(&times.child("ExpiryTime")?.text())
 }
 
 impl Group {
@@ -315,8 +323,15 @@ impl Entry {
             totp: totp::read(&|name| string_value(entry, name)),
             custom_fields: custom_fields(strings()),
             custom_data: custom_data(entry),
-            tags: tags(entry),
+            tags: parse_tags(&entry.child("Tags").map(Element::text).unwrap_or_default()),
             created: time(entry, "CreationTime"),
+            // KeePassXC draws the background colour behind the row, the foreground one as the
+            // text; KeeWeb marks an Entry by either.
+            color: ["BackgroundColor", "ForegroundColor"]
+                .into_iter()
+                .find_map(|name| EntryColor::nearest(&entry.child(name)?.text())),
+            icon: EntryIcon::read(entry),
+            expires: expires(entry),
             last_modified: last_modified(entry),
             history: entry
                 .child("History")
@@ -373,16 +388,36 @@ impl Entry {
         &self.custom_fields
     }
 
-    pub fn tags(&self) -> &[String] {
-        &self.tags
-    }
-
     pub fn created(&self) -> Option<Timestamp> {
         self.created
     }
 
     pub fn last_modified(&self) -> Option<Timestamp> {
         self.last_modified
+    }
+
+    /// The Entry's tags, in Vault file order.
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// The colour the Entry is marked with, if it is.
+    pub fn color(&self) -> Option<EntryColor> {
+        self.color
+    }
+
+    pub fn icon(&self) -> EntryIcon {
+        self.icon
+    }
+
+    /// When the Entry expires, if it does.
+    pub fn expires(&self) -> Option<Timestamp> {
+        self.expires
+    }
+
+    /// Whether the Entry's expiry time has come by `now`.
+    pub fn is_expired(&self, now: Timestamp) -> bool {
+        self.expires.is_some_and(|expires| expires <= now)
     }
 
     /// The Entry's earlier versions, oldest first.
@@ -401,7 +436,67 @@ impl fmt::Debug for Entry {
             .field("url", &self.url)
             .field("custom_fields", &self.custom_fields)
             .field("tags", &self.tags)
+            .field("color", &self.color)
+            .field("icon", &self.icon)
+            .field("expires", &self.expires)
             .field("history", &self.history)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xml;
+
+    fn entry(marks: &str) -> Entry {
+        let xml = format!(
+            "<Entry><UUID>AAAAAAAAAAAAAAAAAAAAAA==</UUID>{marks}<Times>\
+             <ExpiryTime>islY4g4AAAA=</ExpiryTime><Expires>False</Expires></Times></Entry>"
+        );
+        Entry::from_element(&xml::parse(&xml).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_text_colour_marks_an_entry_without_a_background_colour() {
+        let coloured = |marks| entry(marks).color();
+        assert_eq!(
+            coloured("<ForegroundColor>#0000FF</ForegroundColor><BackgroundColor/>"),
+            Some(EntryColor::Blue)
+        );
+        assert_eq!(
+            coloured(
+                "<ForegroundColor>#0000FF</ForegroundColor>\
+                 <BackgroundColor>#FF0000</BackgroundColor>"
+            ),
+            Some(EntryColor::Red)
+        );
+        assert_eq!(coloured("<ForegroundColor>#000000</ForegroundColor>"), None);
+    }
+
+    #[test]
+    fn an_entry_expires_only_when_it_says_so() {
+        assert_eq!(entry("").expires(), None);
+        let expiring = Entry::from_element(
+            &xml::parse(
+                "<Entry><UUID>AAAAAAAAAAAAAAAAAAAAAA==</UUID><Times>\
+                 <ExpiryTime>islY4g4AAAA=</ExpiryTime><Expires>True</Expires></Times></Entry>",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            expiring.expires(),
+            Some(Timestamp::from_unix_seconds(1_791_414_922))
+        );
+    }
+
+    #[test]
+    fn an_unknown_standard_icon_reads_as_the_key() {
+        assert_eq!(entry("<IconID>68</IconID>").icon(), EntryIcon::Standard(68));
+        assert_eq!(entry("<IconID>69</IconID>").icon(), EntryIcon::Standard(0));
+        assert_eq!(entry("<IconID>x</IconID>").icon(), EntryIcon::Standard(0));
+        let nil = "<IconID>2</IconID><CustomIconUUID>AAAAAAAAAAAAAAAAAAAAAA==</CustomIconUUID>";
+        assert_eq!(entry(nil).icon(), EntryIcon::Standard(2));
     }
 }

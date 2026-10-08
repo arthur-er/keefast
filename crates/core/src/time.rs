@@ -49,10 +49,41 @@ impl Timestamp {
         )
     }
 
+    /// The UTC date, as `2026-10-07`.
+    pub fn to_date(self) -> String {
+        let (year, month, day) = civil_from_days(self.unix_seconds().div_euclid(86_400));
+        format!("{year:04}-{month:02}-{day:02}")
+    }
+
+    /// The start of a UTC date written as `2026-10-07`, if there is such a date.
+    pub fn parse_date(text: &str) -> Option<Self> {
+        let mut parts = text.trim().splitn(3, '-');
+        let mut part = |digits: usize| {
+            let part = parts.next()?;
+            let valid = part.len() == digits && part.bytes().all(|byte| byte.is_ascii_digit());
+            valid.then(|| part.parse::<i64>().ok()).flatten()
+        };
+        let (year, month, day) = (part(4)?, part(2)?, part(2)?);
+        let days = days_from_civil(year, month, day);
+        // Rejects days a month hasn't got, such as 2026-02-30.
+        (civil_from_days(days) == (year, month, day))
+            .then(|| Self::from_unix_seconds(days * 86_400))
+    }
+
     pub(crate) fn decode(text: &str) -> Option<Self> {
         let bytes = BASE64.decode(text.trim()).ok()?;
         Some(Self(i64::from_le_bytes(bytes.try_into().ok()?)))
     }
+}
+
+/// Days from 1970-01-01 to a Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// The Gregorian date `days` after 1970-01-01 (Howard Hinnant's algorithm).
@@ -88,6 +119,32 @@ mod tests {
         assert_eq!(time.unix_seconds(), 1_791_414_922);
         assert_eq!(time.encode(), "islY4g4AAAA=");
         assert_eq!(Timestamp::from_unix_seconds(0).0, UNIX_EPOCH_SECONDS);
+    }
+
+    #[test]
+    fn reads_and_writes_dates() {
+        let date = Timestamp::parse_date("2026-10-07").unwrap();
+        assert_eq!(date.to_iso_8601(), "2026-10-07T00:00:00Z");
+        assert_eq!(date.to_date(), "2026-10-07");
+        assert_eq!(
+            Timestamp::from_unix_seconds(1_791_414_922).to_date(),
+            "2026-10-07"
+        );
+        let leap = Timestamp::parse_date(" 2000-02-29 ").unwrap();
+        assert_eq!(leap.to_date(), "2000-02-29");
+        for invalid in [
+            "",
+            "2026-02-30",
+            "2026-13-01",
+            "2026-00-10",
+            "26-10-07",
+            "2026-1-07",
+            "2026-10-07x",
+            "2026/10/07",
+            "+026-10-07",
+        ] {
+            assert_eq!(Timestamp::parse_date(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

@@ -7,11 +7,12 @@ use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use crate::appearance::{STANDARD_ICON_COUNT, join_tags, parse_tags};
 use crate::kdbx::random;
 use crate::totp::{self, TOTP_FIELDS};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node, Secret};
-use crate::{CustomField, Entry, EntryId, GroupId, Timestamp, Totp, Vault};
+use crate::{CustomField, Entry, EntryColor, EntryIcon, EntryId, GroupId, Timestamp, Totp, Vault};
 
 /// The fields of an Entry that keefast edits.
 #[derive(Clone)]
@@ -23,6 +24,12 @@ pub struct EntryFields {
     pub notes: String,
     /// In order; fields the Entry has but these don't are removed.
     pub custom_fields: Vec<CustomField>,
+    /// Each split further as [`parse_tags`] splits text, so no tag holds a separator.
+    pub tags: Vec<String>,
+    pub color: Option<EntryColor>,
+    pub icon: EntryIcon,
+    /// When the Entry expires, if it does.
+    pub expires: Option<Timestamp>,
 }
 
 impl Default for EntryFields {
@@ -34,6 +41,10 @@ impl Default for EntryFields {
             url: String::new(),
             notes: String::new(),
             custom_fields: Vec::new(),
+            tags: Vec::new(),
+            color: None,
+            icon: EntryIcon::default(),
+            expires: None,
         }
     }
 }
@@ -59,6 +70,12 @@ pub enum EditError {
     PairingNameEmpty,
     #[error("the Vault already has a Pairing with this name")]
     PairingNameTaken,
+    #[error("the icon is not in this Vault")]
+    IconNotFound,
+    #[error("an icon must be a PNG image")]
+    IconNotPng,
+    #[error("the icon image is too large")]
+    IconTooLarge,
 }
 
 /// The standard Entry fields as KeePass names them, with the `MemoryProtection` setting that
@@ -87,6 +104,10 @@ impl From<&Entry> for EntryFields {
             url: entry.url().to_owned(),
             notes: entry.notes().to_owned(),
             custom_fields: entry.custom_fields().to_vec(),
+            tags: entry.tags().to_vec(),
+            color: entry.color(),
+            icon: entry.icon(),
+            expires: entry.expires(),
         }
     }
 }
@@ -102,9 +123,35 @@ impl EntryFields {
         ]
     }
 
+    /// The tags as they are written: each split as typed tags are, without repeats.
+    fn tags(&self) -> Vec<String> {
+        parse_tags(&join_tags(&self.tags))
+    }
+
+    /// Whether these fields are the Entry's, as far as keefast edits them.
+    fn are_those_of(&self, entry: &Entry) -> bool {
+        let current = EntryFields::from(entry);
+        current.values() == self.values()
+            && current.custom_fields == self.custom_fields
+            && current.tags == self.tags()
+            && current.color == self.color
+            && current.icon == self.icon
+            && current.expires == self.expires
+    }
+
     /// Every custom field needs a name, and no two fields of an Entry can share one, even
-    /// told apart only by spaces around it, which KeePassXC trims away.
-    fn check(&self) -> Result<(), EditError> {
+    /// told apart only by spaces around it, which KeePassXC trims away. The icon must be one
+    /// the Vault has.
+    fn check(&self, vault: &Vault) -> Result<(), EditError> {
+        match self.icon {
+            EntryIcon::Standard(id) if id >= STANDARD_ICON_COUNT => {
+                return Err(EditError::IconNotFound);
+            }
+            EntryIcon::Custom(id) if vault.custom_icon(id).is_none() => {
+                return Err(EditError::IconNotFound);
+            }
+            _ => {}
+        }
         for (index, field) in self.custom_fields.iter().enumerate() {
             let name = field.name.trim();
             if name.is_empty() {
@@ -146,7 +193,7 @@ impl Vault {
         now: Timestamp,
     ) -> Result<EntryId, EditError> {
         let path = self.path_to(Kind::Group, group.0)?;
-        fields.check()?;
+        fields.check(self)?;
         let id = new_uuid();
         let mut entry = Element::new("Entry");
         push(&mut entry, text_element("UUID", encode_uuid(id)));
@@ -167,6 +214,8 @@ impl Vault {
         push(&mut auto_type, text_element("DataTransferObfuscation", "0"));
         push(&mut entry, auto_type);
         push(&mut entry, Element::new("History"));
+        // The new Entry has no tags or colour, the default icon, and doesn't expire.
+        update_appearance(&mut entry, &EntryFields::default(), fields);
 
         insert_entry(self.at_mut(&path), entry);
         self.refresh();
@@ -183,14 +232,12 @@ impl Vault {
         now: Timestamp,
     ) -> Result<(), EditError> {
         let path = self.path_to(Kind::Entry, entry.0)?;
-        fields.check()?;
-        let unchanged = self.entry(entry).is_some_and(|current| {
-            let current = EntryFields::from(current);
-            current.values() == fields.values() && current.custom_fields == fields.custom_fields
-        });
-        if unchanged {
+        fields.check(self)?;
+        let current = self.entry(entry).expect("the path leads to it");
+        if fields.are_those_of(current) {
             return Ok(());
         }
+        let current = EntryFields::from(current);
         let protection = FIELDS.map(|(_, protect)| self.protects(protect));
         let element = self.archive(&path);
         for (((key, _), protect), value) in FIELDS.into_iter().zip(protection).zip(fields.values())
@@ -198,6 +245,7 @@ impl Vault {
             set_string(element, key, value, protect);
         }
         set_custom_fields(element, &fields.custom_fields);
+        update_appearance(element, &current, fields);
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
         self.refresh();
@@ -570,7 +618,7 @@ fn collect_uuids(element: &Element, out: &mut Vec<String>) {
     }
 }
 
-fn new_uuid() -> Uuid {
+pub(crate) fn new_uuid() -> Uuid {
     uuid::Builder::from_random_bytes(random()).into_uuid()
 }
 
@@ -590,7 +638,7 @@ pub(crate) fn text_element(name: &str, text: impl Into<String>) -> Element {
 
 /// Sets an element's content, protected or not. An empty unprotected value has no content at
 /// all, as when read back from `<Value/>`.
-fn set_value(element: &mut Element, value: &str, protect: bool) {
+pub(crate) fn set_value(element: &mut Element, value: &str, protect: bool) {
     element.attributes.retain(|(name, _)| name != "Protected");
     element.children.clear();
     if protect {
@@ -600,6 +648,71 @@ fn set_value(element: &mut Element, value: &str, protect: bool) {
             .push(Node::Protected(Secret::new(value.as_bytes().to_vec())));
     } else if !value.is_empty() {
         element.children.push(Node::Text(value.into()));
+    }
+}
+
+/// Changes an Entry element's tags, colour, icon and expiry from `current` to `new`, leaving
+/// alone those that don't change, so they stay as the client that wrote them put them.
+fn update_appearance(entry: &mut Element, current: &EntryFields, new: &EntryFields) {
+    let tags = new.tags();
+    if current.tags != tags {
+        set_value(
+            child_or_insert(
+                entry,
+                "Tags",
+                &[
+                    "OverrideURL",
+                    "BackgroundColor",
+                    "ForegroundColor",
+                    "Times",
+                    "IconID",
+                    "UUID",
+                ],
+            ),
+            &join_tags(&tags),
+            false,
+        );
+    }
+    if current.color != new.color {
+        let background = new.color.map_or("", EntryColor::hex);
+        set_value(
+            child_or_insert(
+                entry,
+                "BackgroundColor",
+                &["ForegroundColor", "CustomIconUUID", "IconID", "UUID"],
+            ),
+            background,
+            false,
+        );
+        // A foreground colour would mark the Entry when the background no longer does.
+        if new.color.is_none()
+            && let Some(foreground) = entry.child_mut("ForegroundColor")
+        {
+            set_value(foreground, "", false);
+        }
+    }
+    if current.icon != new.icon {
+        new.icon.write(entry);
+    }
+    if current.expires != new.expires {
+        let times = child_or_insert(entry, "Times", &["Tags", "IconID", "Name", "UUID"]);
+        if let Some(expires) = new.expires {
+            set_value(
+                child_or_insert(times, "ExpiryTime", &["LastAccessTime"]),
+                &expires.encode(),
+                false,
+            );
+        }
+        let flag = if new.expires.is_some() {
+            "True"
+        } else {
+            "False"
+        };
+        set_value(
+            child_or_insert(times, "Expires", &["ExpiryTime"]),
+            flag,
+            false,
+        );
     }
 }
 

@@ -50,7 +50,7 @@ impl Theme {
     };
 }
 
-const fn rgb_const(hex: u32) -> Rgba {
+pub const fn rgb_const(hex: u32) -> Rgba {
     Rgba {
         r: ((hex >> 16) & 0xff) as f32 / 255.0,
         g: ((hex >> 8) & 0xff) as f32 / 255.0,

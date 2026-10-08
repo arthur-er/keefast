@@ -1,0 +1,253 @@
+//! Marking Entries with tags, colours and icons, and setting when they expire, through the
+//! Workspace: the sidebar's tag and colour filters list the marked Entries of every open Vault,
+//! and the Entry list flags expired Entries by the Workspace's clock.
+
+mod support;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use keefast_core::{
+    CompositeKey, EditError, EntryColor, EntryFields, EntryIcon, EntryId, Timestamp, Vault,
+};
+use keefast_workspace::{
+    EditVaultError, EntryScope, ImportIconError, UnlockSecrets, VaultId, Workspace,
+};
+use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
+
+const START: u64 = 1_800_000_000;
+
+/// A 1x1 opaque red PNG.
+const RED_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+    0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+    0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+struct Harness {
+    storage: Arc<FakeStorage>,
+    clock: Arc<FakeClock>,
+    workspace: Workspace,
+    personal: VaultId,
+    work: VaultId,
+}
+
+fn harness() -> Harness {
+    let storage = Arc::new(
+        FakeStorage::default()
+            .with_file(&personal_vault(), KEEPASSXC_KDBX4)
+            .with_file(&work_vault(), KEEPASSXC_KDBX4),
+    );
+    let clock = Arc::new(FakeClock::at_unix_seconds(START));
+    let mut workspace = Workspace::with_clock(storage.clone(), clock.clone());
+    let key = UnlockSecrets::password(PASSWORD);
+    let personal = workspace.open_vault(&personal_vault(), &key).unwrap();
+    let work = workspace.open_vault(&work_vault(), &key).unwrap();
+    Harness {
+        storage,
+        clock,
+        workspace,
+        personal,
+        work,
+    }
+}
+
+impl Harness {
+    fn entry(&self, vault: VaultId, title: &str) -> EntryId {
+        self.workspace
+            .visible_entries(EntryScope::Vault(vault))
+            .iter()
+            .find(|listed| listed.entry.title() == title)
+            .unwrap_or_else(|| panic!("no Entry {title}"))
+            .entry
+            .id()
+    }
+
+    /// Changes an Entry's fields with `change`.
+    fn mark(&mut self, vault: VaultId, title: &str, change: impl FnOnce(&mut EntryFields)) {
+        let id = self.entry(vault, title);
+        let mut fields = EntryFields::from(self.workspace.entry(vault, id).unwrap());
+        change(&mut fields);
+        self.workspace.update_entry(vault, id, &fields).unwrap();
+    }
+
+    fn listed(&self, scope: EntryScope) -> Vec<(VaultId, String)> {
+        self.workspace
+            .visible_entries(scope)
+            .iter()
+            .map(|listed| (listed.vault, listed.entry.title().to_owned()))
+            .collect()
+    }
+
+    fn reopen(&self, vault: VaultId) -> Vault {
+        let location = self.workspace.vault(vault).unwrap().location().clone();
+        let bytes = self.storage.file(&location).unwrap();
+        Vault::open(&bytes, &CompositeKey::password(PASSWORD)).unwrap()
+    }
+}
+
+fn tagged(tags: &[&str]) -> impl FnOnce(&mut EntryFields) {
+    let tags = tags.iter().map(|tag| tag.to_string()).collect();
+    move |fields| fields.tags = tags
+}
+
+#[test]
+fn the_sidebar_lists_every_tag_and_each_lists_its_entries_across_vaults() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    h.mark(personal, "GitHub", tagged(&["dev", "Shared"]));
+    h.mark(work, "Prod DB", tagged(&["dev"]));
+    h.mark(work, "Email", tagged(&["alerts"]));
+
+    assert_eq!(h.workspace.tags(), ["alerts", "dev", "Shared"]);
+    assert_eq!(
+        h.listed(EntryScope::Tag("dev".into())),
+        [(personal, "GitHub".into()), (work, "Prod DB".into())]
+    );
+    assert_eq!(
+        h.listed(EntryScope::Tag("Shared".into())),
+        [(personal, "GitHub".into())]
+    );
+    // Tags are told apart by case, as other clients do.
+    assert!(h.listed(EntryScope::Tag("shared".into())).is_empty());
+}
+
+#[test]
+fn the_colour_filter_lists_entries_marked_with_it() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    h.mark(personal, "Email", |fields| {
+        fields.color = Some(EntryColor::Red)
+    });
+    h.mark(work, "Root Entry", |fields| {
+        fields.color = Some(EntryColor::Red)
+    });
+    h.mark(work, "GitHub", |fields| {
+        fields.color = Some(EntryColor::Blue)
+    });
+
+    assert_eq!(
+        h.listed(EntryScope::Color(EntryColor::Red)),
+        [(personal, "Email".into()), (work, "Root Entry".into())]
+    );
+    assert_eq!(
+        h.listed(EntryScope::Color(EntryColor::Blue)),
+        [(work, "GitHub".into())]
+    );
+    assert!(h.listed(EntryScope::Color(EntryColor::Green)).is_empty());
+}
+
+#[test]
+fn deleted_entries_drop_out_of_tags_and_colours() {
+    let mut h = harness();
+    let personal = h.personal;
+    h.mark(personal, "GitHub", |fields| {
+        fields.tags = vec!["dev".into()];
+        fields.color = Some(EntryColor::Green);
+    });
+    let github = h.entry(personal, "GitHub");
+    h.workspace.delete_entry(personal, github).unwrap();
+
+    // The Entry is in the Recycle Bin, where it keeps its marks.
+    let bin = h.workspace.vault(personal).unwrap().vault().recycle_bin();
+    assert!(bin.is_some());
+    assert_eq!(h.workspace.entry(personal, github).unwrap().tags(), ["dev"]);
+    assert!(h.workspace.tags().is_empty());
+    assert!(h.listed(EntryScope::Tag("dev".into())).is_empty());
+    assert!(h.listed(EntryScope::Color(EntryColor::Green)).is_empty());
+}
+
+#[test]
+fn tags_and_colours_have_no_vault_to_add_to_unless_one_is_open() {
+    let h = harness();
+    assert_eq!(
+        h.workspace
+            .group_for_new_items(EntryScope::Tag("dev".into())),
+        None
+    );
+    assert_eq!(EntryScope::Color(EntryColor::Red).vault(), None);
+    assert_eq!(EntryScope::Vault(h.work).vault(), Some(h.work));
+}
+
+#[test]
+fn an_entry_is_flagged_expired_once_its_expiry_time_passes() {
+    let mut h = harness();
+    let personal = h.personal;
+    let in_a_day = Timestamp::from_unix_seconds(START as i64 + 86_400);
+    h.mark(personal, "GitHub", |fields| fields.expires = Some(in_a_day));
+    let github = h.entry(personal, "GitHub");
+
+    let expired = |h: &Harness| {
+        let entry = h.workspace.entry(personal, github).unwrap();
+        h.workspace.is_expired(entry)
+    };
+    assert!(!expired(&h));
+    h.clock.advance(Duration::from_secs(86_400));
+    assert!(expired(&h));
+
+    // Saved, the expiry is in the Vault file.
+    h.workspace.save_vault(personal).unwrap();
+    let saved = h.reopen(personal);
+    assert_eq!(saved.entry(github).unwrap().expires(), Some(in_a_day));
+}
+
+#[test]
+fn an_imported_icon_is_added_once_and_saved_with_the_entry_using_it() {
+    let mut h = harness();
+    let personal = h.personal;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("red.png");
+    std::fs::write(&path, RED_PNG).unwrap();
+
+    let icon = h.workspace.import_custom_icon(personal, &path).unwrap();
+    assert!(h.workspace.vault(personal).unwrap().has_unsaved_changes());
+    h.workspace.save_vault(personal).unwrap();
+    // The same image again is the icon the Vault has, and changes nothing.
+    assert_eq!(
+        h.workspace.import_custom_icon(personal, &path).unwrap(),
+        icon
+    );
+    assert!(!h.workspace.vault(personal).unwrap().has_unsaved_changes());
+
+    h.mark(personal, "Email", |fields| {
+        fields.icon = EntryIcon::Custom(icon)
+    });
+    h.workspace.save_vault(personal).unwrap();
+    let saved = h.reopen(personal);
+    let email = h.entry(personal, "Email");
+    assert_eq!(saved.entry(email).unwrap().icon(), EntryIcon::Custom(icon));
+    assert_eq!(saved.custom_icon(icon).unwrap().data(), RED_PNG);
+}
+
+#[test]
+fn an_icon_that_is_not_a_png_image_is_refused() {
+    let mut h = harness();
+    let dir = tempfile::tempdir().unwrap();
+    let text = dir.path().join("notes.txt");
+    std::fs::write(&text, "not an image").unwrap();
+    let missing = dir.path().join("missing.png");
+
+    assert!(matches!(
+        h.workspace.import_custom_icon(h.personal, &text),
+        Err(ImportIconError::Edit(EditVaultError::Edit(
+            EditError::IconNotPng
+        )))
+    ));
+    assert!(matches!(
+        h.workspace.import_custom_icon(h.personal, &missing),
+        Err(ImportIconError::Unreadable(_))
+    ));
+    let huge = dir.path().join("huge.png");
+    let mut png = RED_PNG.to_vec();
+    png.resize(keefast_core::MAX_CUSTOM_ICON_BYTES * 2, 0);
+    std::fs::write(&huge, png).unwrap();
+    assert!(matches!(
+        h.workspace.import_custom_icon(h.personal, &huge),
+        Err(ImportIconError::Edit(EditVaultError::Edit(
+            EditError::IconTooLarge
+        )))
+    ));
+    assert!(!h.workspace.vault(h.personal).unwrap().has_unsaved_changes());
+}

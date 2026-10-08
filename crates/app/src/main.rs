@@ -7,6 +7,7 @@ mod clipboard;
 mod command_palette;
 mod dropbox_panel;
 mod entry_editor;
+mod icons;
 mod locking;
 mod login_dialog;
 mod merge_notice;
@@ -600,23 +601,25 @@ impl Args {
 
 fn main() {
     let args = Args::parse(std::env::args_os().skip(1));
-    Application::new().run(move |cx: &mut App| {
-        actions::bind_keys(cx);
-        let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(strings::APP_NAME.into()),
+    Application::new()
+        .with_assets(icons::Assets)
+        .run(move |cx: &mut App| {
+            actions::bind_keys(cx);
+            let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(strings::APP_NAME.into()),
+                        ..Default::default()
+                    }),
+                    app_id: Some(strings::APP_NAME.into()),
                     ..Default::default()
-                }),
-                app_id: Some(strings::APP_NAME.into()),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| KeefastWindow::new(args, window, cx)),
-        )
-        .expect("failed to open the main window");
-        cx.on_window_closed(|cx| cx.quit()).detach();
-        cx.activate(true);
-    });
+                },
+                |window, cx| cx.new(|cx| KeefastWindow::new(args, window, cx)),
+            )
+            .expect("failed to open the main window");
+            cx.on_window_closed(|cx| cx.quit()).detach();
+            cx.activate(true);
+        });
 }
