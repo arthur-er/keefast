@@ -9,10 +9,10 @@ mod support;
 
 use std::sync::Arc;
 
-use keefast_core::{CompositeKey, DEFAULT_BROWSER_GROUP, EditError, EntryId, GroupId};
+use keefast_core::{DEFAULT_BROWSER_GROUP, EditError, EntryId, GroupId};
 use keefast_workspace::{
-    AppConfig, ConnectionId, EditVaultError, LoginTarget, Outgoing, PendingLogin, VaultId,
-    VaultLocation, Workspace,
+    AppConfig, ConnectionId, EditVaultError, LoginTarget, Outgoing, PendingLogin, UnlockSecrets,
+    VaultId, VaultLocation, Workspace,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -49,7 +49,7 @@ impl Browser {
         );
         let config = Arc::new(FakeConfigStore::holding(config));
         let mut workspace = Workspace::new(storage).with_config(config.clone());
-        let key = CompositeKey::password(PASSWORD);
+        let key = UnlockSecrets::password(PASSWORD);
         let vaults = vec![
             workspace.open_vault(&personal_vault(), &key).unwrap(),
             workspace.open_vault(&work_vault(), &key).unwrap(),

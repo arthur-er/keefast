@@ -6,9 +6,10 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use keefast_core::{CompositeKey, EntryFields, EntryId, Totp, TotpAlgorithm};
+use keefast_core::{EntryFields, EntryId, Totp, TotpAlgorithm};
 use keefast_workspace::{
-    AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, VaultId, Workspace,
+    AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, UnlockSecrets,
+    VaultId, Workspace,
 };
 use support::{
     FakeClipboard, FakeClock, FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD,
@@ -29,7 +30,7 @@ fn harness_with(config: AppConfig) -> Harness {
     let mut workspace = Workspace::with_clock(storage, clock.clone())
         .with_config(Arc::new(FakeConfigStore::holding(config)));
     let vault = workspace
-        .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .expect("fixture opens");
     let github = workspace
         .visible_entries(EntryScope::Vault(vault))

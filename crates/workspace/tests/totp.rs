@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_core::{CompositeKey, EntryId, Totp, TotpAlgorithm, TotpError, Vault};
-use keefast_workspace::{EditVaultError, VaultId, Workspace};
+use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 use support::{FakeClock, FakeStorage, PASSWORD, TOTP_KDBX, personal_vault};
 
 /// RFC 6238's SHA-1 test secret, Base32-encoded.
@@ -27,7 +27,7 @@ fn harness() -> Harness {
     let clock = Arc::new(FakeClock::at_unix_seconds(RFC_TIME));
     let mut workspace = Workspace::with_clock(storage.clone(), clock.clone());
     let vault = workspace
-        .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
+        .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
         .expect("fixture opens");
     Harness {
         storage,
