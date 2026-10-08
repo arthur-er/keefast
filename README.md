@@ -16,6 +16,8 @@ The Cargo workspace lives in `crates/`:
 - `native-host`: the native-messaging host Chromium starts for the browser extension
   (`keefast-native-host`). It relays messages to the running app over a local socket.
 
+The Companion extension, a Chromium MV3 extension in TypeScript, lives in `extension/`.
+
 On NixOS (or anywhere with Nix), `nix develop` gives you the Rust toolchain and the system
 libraries GPUI needs. Elsewhere, install stable Rust; on Linux also install the libraries listed
 in `.github/workflows/ci.yml`.
@@ -36,13 +38,28 @@ nix develop .#corpus -c scripts/check-interop.sh
 
 ## Browser integration
 
-keefast speaks the KeePassXC-Browser protocol (ADR 0003), so the stock KeePassXC-Browser
-extension works with it. Turn on "Browser integration" in keefast: it registers
-`keefast-native-host`, installed next to the `keefast` binary, with Chrome, Chromium, Brave, Edge
-and Vivaldi. It registers under KeePassXC's host name, so it takes over from a KeePassXC
-registered for the same browsers; turning it off removes only keefast's registrations. Then
-click "Connect" in the extension and name the browser in keefast to pair it with the Vault you
-are looking at.
+keefast speaks the KeePassXC-Browser protocol (ADR 0003) with its Companion extension, and the
+stock KeePassXC-Browser extension works with it too. Turn on "Browser integration" in keefast:
+it registers `keefast-native-host`, installed next to the `keefast` binary, with Chrome,
+Chromium, Brave, Edge and Vivaldi. It registers under KeePassXC's host name, so it takes over
+from a KeePassXC registered for the same browsers; turning it off removes only keefast's
+registrations. Then click "Connect" in the extension and name the browser in keefast to pair it
+with the Vault you are looking at.
+
+To try the Companion extension, build it and load `extension/dist` as an unpacked extension in
+`chrome://extensions` (with "Developer mode" on):
+
+```sh
+cd extension
+npm ci
+npm test
+npm run build
+```
+
+Click its toolbar button, then "Connect", and name the browser in keefast. On a login page, the
+popup lists the site's logins: click one to fill it, or press Alt+Shift+K to fill the only one.
+Nothing is filled until you ask. The extension never asks for a master password: when keefast
+is locked or not running, it says so, and you unlock keefast itself.
 
 To try the protocol without a browser, run keefast with browser integration on and:
 

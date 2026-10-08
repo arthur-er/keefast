@@ -1,9 +1,9 @@
 //! Registering keefast's native-messaging host with Chromium-family browsers, so the browser
 //! extension can start it.
 //!
-//! keefast registers under the KeePassXC-Browser extension's host name, so the stock
-//! KeePassXC-Browser extension talks to keefast (ADR 0003). That takes the place of a
-//! KeePassXC host registered for the same browsers.
+//! keefast registers under the KeePassXC-Browser extension's host name, so both keefast's own
+//! Companion extension and the stock KeePassXC-Browser extension talk to keefast (ADR 0003).
+//! That takes the place of a KeePassXC host registered for the same browsers.
 
 use std::fs;
 use std::io;
@@ -16,8 +16,11 @@ use crate::atomic_file;
 /// The native-messaging host name the KeePassXC-Browser extension connects to.
 pub const HOST_NAME: &str = "org.keepassxc.keepassxc_browser";
 
-/// The KeePassXC-Browser extension, from the Chrome Web Store and from Microsoft Edge Add-ons.
-pub const ALLOWED_ORIGINS: [&str; 2] = [
+/// The extensions that may start the host: the Companion extension, whose ID comes from the
+/// `key` in `extension/static/manifest.json`, and the KeePassXC-Browser extension, from the
+/// Chrome Web Store and from Microsoft Edge Add-ons.
+pub const ALLOWED_ORIGINS: [&str; 3] = [
+    "chrome-extension://bkiokobpjgbpobldhnlmkdcncioighof/",
     "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/",
     "chrome-extension://pdffhmdngciaglkoonimfcmckehcpafo/",
 ];

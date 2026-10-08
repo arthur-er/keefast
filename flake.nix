@@ -47,6 +47,8 @@
               zstd
               alsa-lib
               libxext
+              # The Companion extension (extension/).
+              nodejs
             ] ++ runtimeLibs;
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
