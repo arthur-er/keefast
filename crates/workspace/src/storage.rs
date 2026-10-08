@@ -42,6 +42,12 @@ pub enum StorageError {
 pub trait StorageProvider: Send + Sync {
     fn read(&self, location: &VaultLocation) -> Result<Vec<u8>, StorageError>;
 
+    /// The one location to know a Vault file by, so a Vault file reached two ways (a symlink,
+    /// `..` in a path) is still recognised as the same Vault file.
+    fn canonical(&self, location: &VaultLocation) -> VaultLocation {
+        location.clone()
+    }
+
     /// Replaces the Vault file with `bytes`, all or nothing: if writing fails, the Vault file
     /// is left as it was.
     fn write(&self, location: &VaultLocation, bytes: &[u8]) -> Result<(), StorageError>;
@@ -57,6 +63,12 @@ impl StorageProvider for LocalStorage {
             io::ErrorKind::NotFound => StorageError::NotFound(location.clone()),
             _ => StorageError::Io(error),
         })
+    }
+
+    /// The absolute path with symlinks resolved, when the Vault file exists.
+    fn canonical(&self, location: &VaultLocation) -> VaultLocation {
+        let VaultLocation::Local(path) = location;
+        fs::canonicalize(path).map_or_else(|_| location.clone(), VaultLocation::Local)
     }
 
     /// Saves through a temporary file and a rename, so a crash mid-save never leaves a

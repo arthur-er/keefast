@@ -28,23 +28,6 @@ pub enum EntryScope {
     Group(VaultId, GroupId),
 }
 
-impl EntryScope {
-    /// The one Vault the scope is narrowed to, if it is.
-    pub fn vault(self) -> Option<VaultId> {
-        match self {
-            EntryScope::AllVaults => None,
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
-        }
-    }
-
-    pub fn group(self) -> Option<GroupId> {
-        match self {
-            EntryScope::Group(_, group) => Some(group),
-            EntryScope::AllVaults | EntryScope::Vault(_) => None,
-        }
-    }
-}
-
 /// An Entry in the Entry list, with the Vault it belongs to.
 #[derive(Clone, Copy)]
 pub struct ListedEntry<'a> {
@@ -54,7 +37,7 @@ pub struct ListedEntry<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenVaultError {
-    #[error("the Vault file is already open")]
+    #[error("a Vault from this Vault file is already open")]
     AlreadyOpen(VaultId),
     #[error(transparent)]
     Storage(#[from] StorageError),
@@ -258,6 +241,14 @@ impl Workspace {
         &self.config.recent_vaults
     }
 
+    /// The recent Vault files that aren't open now: those offered for reopening.
+    pub fn closed_recent_vaults(&self) -> impl Iterator<Item = &VaultLocation> {
+        self.config
+            .recent_vaults
+            .iter()
+            .filter(|location| self.open_vault_at(location).is_none())
+    }
+
     pub fn forget_recent(&mut self, location: &VaultLocation) {
         self.config
             .recent_vaults
@@ -284,12 +275,14 @@ impl Workspace {
     }
 
     /// Starts opening a Vault file. Run the returned open off the UI thread, then hand the
-    /// unlocked Vault to [`Self::add_unlocked`]. A Vault file that is already open is refused.
+    /// unlocked Vault to [`Self::add_unlocked`]. A Vault file that is already open, under
+    /// whatever path, is refused.
     pub fn begin_open(
         &self,
         location: VaultLocation,
         key: CompositeKey,
     ) -> Result<PendingOpen, OpenVaultError> {
+        let location = self.storage.canonical(&location);
         if let Some(open) = self.open_vault_at(&location) {
             return Err(OpenVaultError::AlreadyOpen(open));
         }
@@ -325,12 +318,30 @@ impl Workspace {
         self.vaults.iter()
     }
 
-    /// The open Vault read from the Vault file at `location`, if there is one.
+    /// The open Vault read from the Vault file at `location`, if there is one. Open Vaults are
+    /// known by their Storage provider's canonical location.
     pub fn open_vault_at(&self, location: &VaultLocation) -> Option<VaultId> {
         self.vaults
             .iter()
             .find(|open| &open.location == location)
             .map(|open| open.id)
+    }
+
+    /// Where new Entries and Groups go for what the Entry list shows: the shown Group, or the
+    /// top Group of the shown Vault. With all Vaults shown there is none, unless only one
+    /// Vault is open.
+    pub fn group_for_new_items(&self, scope: EntryScope) -> Option<(VaultId, GroupId)> {
+        let open = match scope {
+            EntryScope::Group(vault, group) => {
+                return self.group(vault, group).map(|_| (vault, group));
+            }
+            EntryScope::Vault(vault) => self.vault(vault),
+            EntryScope::AllVaults => match self.vaults.as_slice() {
+                [only] => Some(only),
+                _ => None,
+            },
+        }?;
+        Some((open.id, open.vault.root().id()))
     }
 
     pub fn vault(&self, id: VaultId) -> Option<&OpenVault> {

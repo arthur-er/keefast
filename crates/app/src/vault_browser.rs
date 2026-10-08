@@ -84,21 +84,9 @@ impl VaultBrowser {
         self.select(EntryScope::Vault(vault), cx);
     }
 
-    /// The Group new Entries and Groups go into: the selected one, or the top of the selected
-    /// Vault. With all Vaults shown there is none, unless only one Vault is open.
+    /// The Group new Entries and Groups go into, if there is one for what the list shows.
     fn target_group(&self, cx: &App) -> Option<(VaultId, GroupId)> {
-        if let EntryScope::Group(vault, group) = self.scope {
-            return Some((vault, group));
-        }
-        let workspace = self.workspace.read(cx);
-        let vault = match self.scope.vault() {
-            Some(vault) => workspace.vault(vault),
-            None => {
-                let mut open = workspace.vaults();
-                open.next().filter(|_| open.next().is_none())
-            }
-        }?;
-        Some((vault.id(), vault.vault().root().id()))
+        self.workspace.read(cx).group_for_new_items(self.scope)
     }
 
     fn select(&mut self, scope: EntryScope, cx: &mut Context<Self>) {
@@ -474,6 +462,7 @@ impl VaultBrowser {
             SaveStatus::Saved => strings::STATUS_SAVED,
         };
         let autosave = workspace.autosave();
+        let config_error = workspace.config_error().is_some();
 
         div()
             .flex()
@@ -489,6 +478,14 @@ impl VaultBrowser {
                     .text_color(if failed { theme.error } else { theme.muted })
                     .child(status),
             )
+            .when(config_error, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted)
+                        .child(strings::CONFIG_ERROR),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -528,7 +525,8 @@ impl VaultBrowser {
         }
         .unwrap_or_default();
         // Across several Vaults, each Entry says which Vault it is from.
-        let show_vault = self.scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
+        let label_vaults =
+            self.scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
 
         let rows: Vec<AnyElement> = entries
             .iter()
@@ -537,7 +535,7 @@ impl VaultBrowser {
                 let (vault, entry) = (listed.vault, listed.entry);
                 let id = entry.id();
                 let selected = self.selected_entry == Some((vault, id));
-                let vault_name = show_vault
+                let vault_name = label_vaults
                     .then(|| workspace.vault(vault).map(|open| open.display_name()))
                     .flatten();
                 div()

@@ -80,11 +80,13 @@ impl ConfigStore for FileConfigStore {
 }
 
 /// The config file's layout, kept apart from [`AppConfig`] so the file format stays stable.
+/// Recent Vault files are read one by one, so one this version doesn't understand (a Storage
+/// provider from a newer version, say) is skipped rather than failing the whole file.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct ConfigFile {
     autosave: bool,
-    recent_vaults: Vec<RecentVault>,
+    recent_vaults: Vec<toml::Value>,
 }
 
 /// A recent Vault file, tagged with its Storage provider:
@@ -101,8 +103,8 @@ impl From<ConfigFile> for AppConfig {
             recent_vaults: file
                 .recent_vaults
                 .into_iter()
-                .map(|recent| match recent {
-                    RecentVault::Local { path } => VaultLocation::Local(path.into()),
+                .filter_map(|recent| match recent.try_into().ok()? {
+                    RecentVault::Local { path } => Some(VaultLocation::Local(path.into())),
                 })
                 .collect(),
             autosave: file.autosave,
@@ -118,10 +120,13 @@ impl From<&AppConfig> for ConfigFile {
             recent_vaults: config
                 .recent_vaults
                 .iter()
-                .filter_map(|location| match location {
-                    VaultLocation::Local(path) => Some(RecentVault::Local {
-                        path: path.to_str()?.to_owned(),
-                    }),
+                .filter_map(|location| {
+                    let recent = match location {
+                        VaultLocation::Local(path) => RecentVault::Local {
+                            path: path.to_str()?.to_owned(),
+                        },
+                    };
+                    toml::Value::try_from(recent).ok()
                 })
                 .collect(),
         }

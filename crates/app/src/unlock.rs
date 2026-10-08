@@ -57,7 +57,7 @@ impl UnlockView {
             unlocking: None,
         };
         if view.location.is_none() {
-            view.location = view.closed_recents(cx).into_iter().next();
+            view.location = view.most_recent_closed(cx);
         }
         view
     }
@@ -65,21 +65,22 @@ impl UnlockView {
     /// Readies the dialog to open another Vault: no password, and the most recent Vault file
     /// that isn't open yet.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
-        self.password.update(cx, |field, cx| field.set_text("", cx));
+        self.clear_password(cx);
         self.error = None;
-        self.location = self.closed_recents(cx).into_iter().next();
+        self.location = self.most_recent_closed(cx);
         cx.notify();
     }
 
-    /// The recent Vault files that aren't open now, most recent first.
-    fn closed_recents(&self, cx: &App) -> Vec<VaultLocation> {
-        let workspace = self.workspace.read(cx);
-        workspace
-            .recent_vaults()
-            .iter()
-            .filter(|location| workspace.open_vault_at(location).is_none())
+    fn most_recent_closed(&self, cx: &App) -> Option<VaultLocation> {
+        self.workspace
+            .read(cx)
+            .closed_recent_vaults()
+            .next()
             .cloned()
-            .collect()
+    }
+
+    fn clear_password(&mut self, cx: &mut Context<Self>) {
+        self.password.update(cx, |field, cx| field.set_text("", cx));
     }
 
     fn can_cancel(&self, cx: &App) -> bool {
@@ -146,7 +147,7 @@ impl UnlockView {
         let pending = match self.workspace.read(cx).begin_open(location, key) {
             Ok(pending) => pending,
             Err(OpenVaultError::AlreadyOpen(vault)) => {
-                self.password.update(cx, |field, cx| field.set_text("", cx));
+                self.clear_password(cx);
                 cx.emit(UnlockEvent::Unlocked(vault));
                 return;
             }
@@ -166,7 +167,7 @@ impl UnlockView {
                 this.unlocking = None;
                 match result {
                     Ok(unlocked) => {
-                        this.password.update(cx, |field, cx| field.set_text("", cx));
+                        this.clear_password(cx);
                         let vault = this.workspace.update(cx, |workspace, cx| {
                             cx.notify();
                             workspace.add_unlocked(unlocked)
@@ -183,7 +184,12 @@ impl UnlockView {
     }
 
     fn render_recents(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let recents = self.closed_recents(cx);
+        let recents: Vec<VaultLocation> = self
+            .workspace
+            .read(cx)
+            .closed_recent_vaults()
+            .cloned()
+            .collect();
         if recents.is_empty() {
             return None;
         }

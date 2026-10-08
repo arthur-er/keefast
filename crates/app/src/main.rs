@@ -26,7 +26,7 @@ struct KeefastWindow {
     workspace: Entity<Workspace>,
     unlock: Entity<UnlockView>,
     browser: Option<Entity<VaultBrowser>>,
-    unlocking: bool,
+    showing_unlock: bool,
 }
 
 impl KeefastWindow {
@@ -47,7 +47,7 @@ impl KeefastWindow {
             workspace,
             unlock,
             browser: None,
-            unlocking: true,
+            showing_unlock: true,
         }
     }
 
@@ -75,7 +75,7 @@ impl KeefastWindow {
             }
         };
         window.focus(&browser.focus_handle(cx));
-        self.unlocking = false;
+        self.showing_unlock = false;
         cx.notify();
     }
 
@@ -88,14 +88,14 @@ impl KeefastWindow {
     ) {
         self.unlock.update(cx, |unlock, cx| unlock.reset(cx));
         window.focus(&self.unlock.focus_handle(cx));
-        self.unlocking = true;
+        self.showing_unlock = true;
         cx.notify();
     }
 }
 
 impl Render for KeefastWindow {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let screen = match (&self.browser, self.unlocking) {
+        let screen = match (&self.browser, self.showing_unlock) {
             (Some(browser), false) => browser.clone().into_any_element(),
             _ => self.unlock.clone().into_any_element(),
         };

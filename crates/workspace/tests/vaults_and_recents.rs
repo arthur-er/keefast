@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use keefast_core::CompositeKey;
 use keefast_workspace::{
-    AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, OpenVaultError, VaultId,
-    VaultLocation, Workspace,
+    AppConfig, ConfigError, ConfigStore, EntryScope, FileConfigStore, LocalStorage, OpenVaultError,
+    VaultId, VaultLocation, Workspace,
 };
 use support::{
     FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault,
@@ -271,4 +271,91 @@ fn the_config_file_lives_in_the_os_config_directory() {
     };
 
     assert!(store.path().ends_with("keefast/config.toml"));
+}
+
+#[test]
+fn recent_vault_files_already_open_are_not_offered_for_reopening() {
+    let config = Arc::new(FakeConfigStore::holding(AppConfig {
+        recent_vaults: vec![work_vault(), personal_vault()],
+        ..AppConfig::default()
+    }));
+    let mut workspace = workspace_with(config);
+
+    open(&mut workspace, &personal_vault());
+
+    let offered: Vec<&VaultLocation> = workspace.closed_recent_vaults().collect();
+    assert_eq!(offered, [&work_vault()]);
+}
+
+#[test]
+fn new_entries_go_to_the_shown_vault_or_the_only_open_one() {
+    let mut workspace = Workspace::new(storage());
+    let personal = open(&mut workspace, &personal_vault());
+    let root = |workspace: &Workspace, id| workspace.vault(id).unwrap().vault().root().id();
+    let personal_root = root(&workspace, personal);
+
+    assert_eq!(
+        workspace.group_for_new_items(EntryScope::AllVaults),
+        Some((personal, personal_root)),
+        "with one Vault open, showing all Vaults still has a place for new Entries"
+    );
+
+    let work = open(&mut workspace, &work_vault());
+    let work_group = workspace.vault(work).unwrap().vault().root().groups()[0].id();
+    assert_eq!(workspace.group_for_new_items(EntryScope::AllVaults), None);
+    assert_eq!(
+        workspace.group_for_new_items(EntryScope::Vault(work)),
+        Some((work, root(&workspace, work)))
+    );
+    assert_eq!(
+        workspace.group_for_new_items(EntryScope::Group(work, work_group)),
+        Some((work, work_group))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_vault_file_reached_through_another_path_is_the_same_vault_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("personal.kdbx");
+    std::fs::write(&real, KEEPASSXC_KDBX4).unwrap();
+    let link = dir.path().join("link.kdbx");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let mut workspace =
+        Workspace::new(Arc::new(LocalStorage)).with_config(Arc::new(FakeConfigStore::default()));
+
+    let first = open(&mut workspace, &VaultLocation::Local(real.clone()));
+    let through_link = workspace.open_vault(&VaultLocation::Local(link), &key());
+    let dotted = dir.path().join(".").join("personal.kdbx");
+    let through_dots = workspace.open_vault(&VaultLocation::Local(dotted), &key());
+
+    assert!(matches!(through_link, Err(OpenVaultError::AlreadyOpen(id)) if id == first));
+    assert!(matches!(through_dots, Err(OpenVaultError::AlreadyOpen(id)) if id == first));
+    assert_eq!(workspace.recent_vaults().len(), 1);
+}
+
+#[test]
+fn a_recent_vault_file_this_version_does_not_understand_is_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+autosave = true
+
+[[recent_vaults]]
+provider = "dropbox"
+id = "id:abc123"
+
+[[recent_vaults]]
+provider = "local"
+path = "/vaults/personal.kdbx"
+"#,
+    )
+    .unwrap();
+
+    let config = FileConfigStore::new(path).load().unwrap();
+
+    assert!(config.autosave);
+    assert_eq!(config.recent_vaults, [personal_vault()]);
 }
