@@ -17,7 +17,7 @@ mod totp;
 mod vault;
 mod xml;
 
-pub use browser::{AccessDecision, Pairing, SiteEntry};
+pub use browser::{AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, Pairing, SiteEntry};
 pub use edit::{EditError, EntryFields};
 pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,

@@ -35,6 +35,11 @@ impl EntryId {
     pub fn to_hex(self) -> String {
         self.0.simple().to_string()
     }
+
+    /// The Entry a browser names by its UUID in hex, as [`Self::to_hex`] writes it.
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        Uuid::try_parse(hex.trim()).ok().map(Self)
+    }
 }
 
 /// KeePassXC reads every field whose name starts with this as another URL for the Entry.

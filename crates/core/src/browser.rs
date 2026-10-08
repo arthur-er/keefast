@@ -1,16 +1,18 @@
 //! The Vault's side of browser integration: its identity in the KeePassXC-Browser protocol, the
-//! Pairings stored in it, the Entries it offers a site, and the Access decisions remembered on
-//! them.
+//! Pairings stored in it, the Entries it offers a site, the Access decisions remembered on
+//! them, and the Browser group captured logins are saved to.
 //!
-//! All of it lives in custom data under KeePassXC's keys (ADR 0005), so a Vault paired or
-//! decided on in KeePassXC works in keefast and the other way round.
+//! All of it lives in custom data (ADR 0005), under KeePassXC's keys where KeePassXC has them,
+//! so a Vault paired or decided on in KeePassXC works in keefast and the other way round.
 
+use secrecy::SecretString;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::edit::{Kind, child_or_insert, push, set_time, text_element};
+use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::Element;
-use crate::{EditError, Entry, EntryId, Group, Site, Timestamp, Vault};
+use crate::{EditError, Entry, EntryFields, EntryId, Group, GroupId, Site, Timestamp, Vault};
 
 /// KeePassXC stores each Pairing's identification key under this prefix plus the Pairing's name.
 const PAIRING_KEY_PREFIX: &str = "KPXC_BROWSER_";
@@ -22,6 +24,21 @@ const ACCESS_KEY: &str = "KeePassXC-Browser Settings";
 /// An Entry, or a Group's Entries and subgroups, are hidden from browsers when their custom data
 /// has this key set to `true`. A Group with it set to anything else shows its subgroups again.
 const HIDE_KEY: &str = "BrowserHideEntry";
+/// The Browser group chosen for the Vault, as its UUID in the Vault's custom data. KeePassXC
+/// has no such setting, so the key is keefast's own.
+const BROWSER_GROUP_KEY: &str = "keefast_BROWSER_GROUP";
+/// The name of the Browser group when none was chosen: a top Group of this name, created when
+/// the first login is saved.
+pub const DEFAULT_BROWSER_GROUP: &str = "Browser";
+
+/// A login the user submitted in the browser, to save to a Vault.
+#[derive(Debug, Clone)]
+pub struct CapturedLogin {
+    /// The page the login was submitted on.
+    pub url: String,
+    pub username: String,
+    pub password: SecretString,
+}
 
 /// A remembered answer to a site asking for an Entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +210,95 @@ impl Vault {
         set_time(element, "LastModificationTime", now);
         self.refresh();
         Ok(())
+    }
+}
+
+impl Vault {
+    /// The Group captured logins are saved to: the Group chosen for it, or else a top Group
+    /// named [`DEFAULT_BROWSER_GROUP`]. None when there is neither, or the one chosen is in the
+    /// Recycle Bin; saving a login then makes one.
+    pub fn browser_group(&self) -> Option<GroupId> {
+        let usable = |group: GroupId| {
+            let path = self.path_to(Kind::Group, group.0).ok()?;
+            let binned = self.in_recycle_bin(&path)
+                || self.recycle_bin_path().is_some_and(|bin| bin == path);
+            (!binned).then_some(group)
+        };
+        let chosen = self
+            .custom_data()
+            .find(|(key, _)| key == BROWSER_GROUP_KEY)
+            .and_then(|(_, value)| decode_uuid(&value))
+            .map(GroupId);
+        match chosen.and_then(usable) {
+            Some(group) => Some(group),
+            None => self
+                .root()
+                .groups()
+                .iter()
+                .find(|group| group.name() == DEFAULT_BROWSER_GROUP)
+                .and_then(|group| usable(group.id())),
+        }
+    }
+
+    /// Makes `group` the Browser group. It stays so when renamed or moved.
+    pub fn set_browser_group(&mut self, group: GroupId) -> Result<(), EditError> {
+        self.path_to(Kind::Group, group.0)?;
+        set_custom_data(
+            self.custom_data_mut(),
+            BROWSER_GROUP_KEY,
+            &encode_uuid(group.0),
+        );
+        Ok(())
+    }
+
+    /// Saves a captured login as a new Entry in `group`, or else in the Browser group, made
+    /// if the Vault has none. The Entry is titled with the site's host.
+    pub fn add_login(
+        &mut self,
+        group: Option<GroupId>,
+        login: &CapturedLogin,
+        now: Timestamp,
+    ) -> Result<EntryId, EditError> {
+        let group = match group {
+            Some(group) => group,
+            None => self.ensure_browser_group(now)?,
+        };
+        let title = Site::parse(&login.url).map_or_else(|| login.url.clone(), |site| site.host());
+        let fields = EntryFields {
+            title,
+            username: login.username.clone(),
+            password: login.password.clone(),
+            url: login.url.clone(),
+            notes: String::new(),
+        };
+        self.create_entry(group, &fields, now)
+    }
+
+    /// Updates an Entry with a captured login's username and password, keeping the version it
+    /// replaces in the Entry's history.
+    pub fn update_login(
+        &mut self,
+        entry: EntryId,
+        login: &CapturedLogin,
+        now: Timestamp,
+    ) -> Result<(), EditError> {
+        let current = self.entry(entry).ok_or(EditError::EntryNotFound)?;
+        let fields = EntryFields {
+            username: login.username.clone(),
+            password: login.password.clone(),
+            ..EntryFields::from(current)
+        };
+        self.update_entry(entry, &fields, now)
+    }
+
+    /// The Browser group, made at the top of the Vault and chosen if there is none.
+    fn ensure_browser_group(&mut self, now: Timestamp) -> Result<GroupId, EditError> {
+        if let Some(group) = self.browser_group() {
+            return Ok(group);
+        }
+        let group = self.create_group(self.root().id(), DEFAULT_BROWSER_GROUP, now)?;
+        self.set_browser_group(group)?;
+        Ok(group)
     }
 }
 

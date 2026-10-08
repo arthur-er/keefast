@@ -21,6 +21,8 @@ pub struct AppConfig {
     /// Whether browser extensions may reach keefast through its native-messaging host.
     pub browser_integration: bool,
     pub generator: GeneratorSettings,
+    /// The Vault file the user last saved a captured login to, offered first next time.
+    pub last_login_vault: Option<VaultLocation>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,13 +99,14 @@ struct ConfigFile {
     browser_integration: bool,
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
+    last_login_vault: Option<toml::Value>,
 }
 
-/// A recent Vault file, tagged with its Storage provider:
+/// A Vault file's location, tagged with its Storage provider:
 /// `{ provider = "local", path = "/home/me/personal.kdbx" }`.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "provider", rename_all = "lowercase")]
-enum RecentVault {
+enum StoredLocation {
     Local { path: String },
 }
 
@@ -113,9 +116,7 @@ impl From<ConfigFile> for AppConfig {
             recent_vaults: file
                 .recent_vaults
                 .into_iter()
-                .filter_map(|recent| match recent.try_into().ok()? {
-                    RecentVault::Local { path } => Some(VaultLocation::Local(path.into())),
-                })
+                .filter_map(read_location)
                 .collect(),
             autosave: file.autosave,
             browser_integration: file.browser_integration,
@@ -124,6 +125,7 @@ impl From<ConfigFile> for AppConfig {
                 .and_then(|generator| generator.try_into::<GeneratorFile>().ok())
                 .map(GeneratorSettings::from)
                 .unwrap_or_default(),
+            last_login_vault: file.last_login_vault.and_then(read_location),
         }
     }
 }
@@ -133,20 +135,13 @@ impl From<&AppConfig> for ConfigFile {
         Self {
             autosave: config.autosave,
             browser_integration: config.browser_integration,
-            // TOML only holds Unicode, so a path that isn't valid Unicode is not remembered.
             recent_vaults: config
                 .recent_vaults
                 .iter()
-                .filter_map(|location| {
-                    let recent = match location {
-                        VaultLocation::Local(path) => RecentVault::Local {
-                            path: path.to_str()?.to_owned(),
-                        },
-                    };
-                    toml::Value::try_from(recent).ok()
-                })
+                .filter_map(write_location)
                 .collect(),
             generator: toml::Value::try_from(GeneratorFile::from(&config.generator)).ok(),
+            last_login_vault: config.last_login_vault.as_ref().and_then(write_location),
         }
     }
 }
@@ -228,4 +223,20 @@ impl From<&GeneratorSettings> for GeneratorFile {
             separator: settings.passphrase.separator.clone(),
         }
     }
+}
+
+fn read_location(value: toml::Value) -> Option<VaultLocation> {
+    match value.try_into().ok()? {
+        StoredLocation::Local { path } => Some(VaultLocation::Local(path.into())),
+    }
+}
+
+/// TOML only holds Unicode, so a path that isn't valid Unicode is not remembered.
+fn write_location(location: &VaultLocation) -> Option<toml::Value> {
+    let recent = match location {
+        VaultLocation::Local(path) => StoredLocation::Local {
+            path: path.to_str()?.to_owned(),
+        },
+    };
+    toml::Value::try_from(recent).ok()
 }

@@ -5,7 +5,8 @@
 //! connection's encryption keys. Requests are JSON text; replies are JSON text to send back.
 //! Pairing needs the user's approval, so `associate` requests wait in a queue, one put to the
 //! user at a time, until approved with a name or denied. Likewise a `get-logins` request for
-//! Entries the user hasn't decided on for that site waits for an Access decision.
+//! Entries the user hasn't decided on for that site waits for an Access decision, and a
+//! `set-login` request waits for the user to say where the login goes.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -13,8 +14,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
-use keefast_core::{AccessDecision, EntryId, Site, SiteEntry};
-use secrecy::ExposeSecret;
+use keefast_core::{AccessDecision, CapturedLogin, EntryId, GroupId, Site, SiteEntry};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
 use zeroize::Zeroize;
 
@@ -76,6 +77,8 @@ pub enum BrowserReply {
     AskPairing(PairingRequest),
     /// Ask the user whether the site may have Entries, then answer the request.
     AskAccess(AccessRequest),
+    /// Ask the user where a captured login goes, then answer the request.
+    AskLogin(LoginRequest),
 }
 
 /// An extension asking to be paired with a Vault, waiting for the user's answer.
@@ -122,6 +125,30 @@ pub struct AccessAnswer {
     pub decision: AccessDecision,
     /// Whether to remember the decision on the Entries, for this site.
     pub remember: bool,
+}
+
+/// A login the browser captured, waiting for the user to say where it goes.
+#[derive(Debug, Clone)]
+pub struct LoginRequest {
+    login: CapturedLogin,
+    /// The Pairings the extension proved, as name and key: the login may go to the open
+    /// Vaults paired with one of them.
+    pairings: Vec<(String, String)>,
+    /// The Entry the extension picked to update, if it did.
+    picked: Option<EntryId>,
+    request: Request,
+}
+
+/// Where the user saves a captured login.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginTarget {
+    /// A new Entry in `group`, or in the Vault's Browser group, made if the Vault has none.
+    NewEntry {
+        vault: VaultId,
+        group: Option<GroupId>,
+    },
+    /// The Entry, given the login's username and password; its old version goes to history.
+    Update { vault: VaultId, entry: EntryId },
 }
 
 /// What a `get-logins` request asks for: the Entries for a site.
@@ -187,6 +214,8 @@ pub struct BrowserSession {
     keys: Option<SessionKeys>,
     /// The Pairing names the extension last said it holds keys for.
     connected_ids: Vec<String>,
+    /// The Pairings the extension proved it holds, as name and key.
+    proven: Vec<(String, String)>,
 }
 
 struct SessionKeys {
@@ -223,6 +252,7 @@ impl BrowserSession {
             "associate" => self.associate(workspace, &request),
             "test-associate" => self.test_associate(workspace, &request),
             "get-logins" => self.get_logins(workspace, &request),
+            "set-login" => self.set_login(workspace, &request),
             _ => Err(ProtocolError::IncorrectAction),
         };
         reply.unwrap_or_else(fail)
@@ -374,6 +404,10 @@ impl BrowserSession {
         let vault = workspace
             .paired_vault(id, key, &self.connected_ids)
             .ok_or(ProtocolError::AssociationFailed)?;
+        let pairing = (id.to_owned(), key.to_owned());
+        if !self.proven.contains(&pairing) {
+            self.proven.push(pairing);
+        }
         Ok(BrowserReply::Send(self.encrypted_reply(
             &request,
             json!({ "hash": browser_hash(workspace, vault), "id": id }),
@@ -438,6 +472,60 @@ impl BrowserSession {
             undecided,
             request,
         }))
+    }
+
+    /// Takes a login the user submitted, to ask the user where it goes. The extension must have
+    /// proven a Pairing with an open Vault, as KeePassXC requires a successful
+    /// `test-associate` first. The Group it asks for is ignored: the user decides.
+    fn set_login(
+        &mut self,
+        workspace: &Workspace,
+        request: &Map<String, Value>,
+    ) -> Result<BrowserReply, ProtocolError> {
+        let (request, mut message) = self.decrypt(request)?;
+        let password = SecretString::from(text(&message, "password").to_owned());
+        if let Some(Value::String(sent)) = message.get_mut("password") {
+            sent.zeroize();
+        }
+        if text(&message, "action") != "set-login" {
+            return Err(ProtocolError::IncorrectAction);
+        }
+        let url = text(&message, "url");
+        if url.is_empty() {
+            return Err(ProtocolError::NoUrlProvided);
+        }
+        let login = LoginRequest {
+            login: CapturedLogin {
+                url: url.to_owned(),
+                username: text(&message, "login").to_owned(),
+                password,
+            },
+            pairings: self.proven.clone(),
+            picked: EntryId::from_hex(text(&message, "uuid")),
+            request,
+        };
+        if workspace.login_vaults(&login).is_empty() {
+            return Err(ProtocolError::AssociationFailed);
+        }
+        Ok(BrowserReply::AskLogin(login))
+    }
+
+    /// The reply to a saved login, which KeePassXC sends without Entries.
+    fn login_saved_reply(
+        &self,
+        workspace: &Workspace,
+        login: &LoginRequest,
+        vault: VaultId,
+    ) -> String {
+        self.encrypted_reply(
+            &login.request,
+            json!({
+                "count": null,
+                "entries": null,
+                "error": "success",
+                "hash": browser_hash(workspace, vault),
+            }),
+        )
     }
 
     /// The reply with the Entries the site is allowed, with `decided` standing in for those
@@ -604,6 +692,26 @@ pub struct PendingAccess {
     pub entries: Vec<(VaultId, EntryId)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoginId(u64);
+
+/// A captured login waiting for the user to say where it goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingLogin {
+    pub id: LoginId,
+    /// The host of the site the login was submitted on.
+    pub site: String,
+    pub username: String,
+    /// The open Vaults the login may go to: those the extension is paired with.
+    pub vaults: Vec<VaultId>,
+    /// The Entries the login could update: the one the extension picked, and those for the
+    /// site with the same username.
+    pub entries: Vec<(VaultId, EntryId)>,
+    /// Where to offer to save it: updating the first of `entries`, or else a new Entry in the
+    /// Browser group of the Vault last saved to, or of the Vault the browser deals with.
+    pub suggested: LoginTarget,
+}
+
 /// A reply for one extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
@@ -620,6 +728,8 @@ pub(crate) struct BrowserConnections {
     next_pairing: u64,
     accesses: VecDeque<(AccessId, ConnectionId, AccessRequest)>,
     next_access: u64,
+    logins: VecDeque<(LoginId, ConnectionId, LoginRequest)>,
+    next_login: u64,
 }
 
 impl Workspace {
@@ -655,10 +765,16 @@ impl Workspace {
                 self.browser.accesses.push_back((id, connection, request));
                 None
             }
+            BrowserReply::AskLogin(request) => {
+                let id = LoginId(self.browser.next_login);
+                self.browser.next_login += 1;
+                self.browser.logins.push_back((id, connection, request));
+                None
+            }
         }
     }
 
-    /// Forgets an extension that has gone, and its Pairing and Access requests.
+    /// Forgets an extension that has gone, and its Pairing, Access and login requests.
     pub fn disconnect_browser(&mut self, connection: ConnectionId) {
         self.browser.sessions.remove(&connection);
         self.browser
@@ -666,6 +782,9 @@ impl Workspace {
             .retain(|(_, from, _)| *from != connection);
         self.browser
             .accesses
+            .retain(|(_, from, _)| *from != connection);
+        self.browser
+            .logins
             .retain(|(_, from, _)| *from != connection);
     }
 
@@ -733,6 +852,157 @@ impl Workspace {
         replies
     }
 
+    /// The captured login to put to the user now.
+    pub fn pending_login(&self) -> Option<PendingLogin> {
+        let (id, _, request) = self.browser.logins.front()?;
+        let vaults = self.login_vaults(request);
+        let entries = self.login_entries(request, &vaults);
+        let suggested = match entries.first() {
+            Some(&(vault, entry)) => LoginTarget::Update { vault, entry },
+            None => {
+                let last = self
+                    .config
+                    .last_login_vault
+                    .as_ref()
+                    .and_then(|location| self.open_vault_at(location));
+                let browser = self.browser_vault(&[]);
+                let vault = [last, browser]
+                    .into_iter()
+                    .flatten()
+                    .find(|vault| vaults.contains(vault))
+                    .or_else(|| vaults.first().copied())?;
+                LoginTarget::NewEntry {
+                    vault,
+                    group: self.browser_group(vault),
+                }
+            }
+        };
+        Some(PendingLogin {
+            id: *id,
+            site: Site::parse(&request.login.url)
+                .map_or_else(|| request.login.url.clone(), |site| site.host()),
+            username: request.login.username.clone(),
+            vaults,
+            entries,
+            suggested,
+        })
+    }
+
+    /// Saves the pending login `id` where the user chose, remembers the Vault for next time,
+    /// and returns the reply for its extension. A target the login can't go to is refused,
+    /// and the login stays pending.
+    pub fn save_login(
+        &mut self,
+        id: LoginId,
+        target: LoginTarget,
+    ) -> Result<Option<Outgoing>, EditVaultError> {
+        let Some((pending, connection, request)) = self.browser.logins.front() else {
+            return Ok(None);
+        };
+        if *pending != id {
+            return Ok(None);
+        }
+        let (connection, request) = (*connection, request.clone());
+        let vault = match target {
+            LoginTarget::NewEntry { vault, .. } | LoginTarget::Update { vault, .. } => vault,
+        };
+        if !self.login_vaults(&request).contains(&vault) {
+            return Err(EditVaultError::NotPaired);
+        }
+        let login = &request.login;
+        match target {
+            LoginTarget::NewEntry { group, .. } => {
+                self.edit(vault, |open, now| open.add_login(group, login, now))?;
+            }
+            LoginTarget::Update { entry, .. } => {
+                self.edit(vault, |open, now| open.update_login(entry, login, now))?;
+            }
+        }
+        self.browser.logins.pop_front();
+        self.config.last_login_vault = self.vault(vault).map(|open| open.location.clone());
+        self.save_config();
+        let message = self
+            .browser
+            .sessions
+            .get(&connection)
+            .map(|session| session.login_saved_reply(self, &request, vault));
+        Ok(message.map(|message| Outgoing {
+            connection,
+            message,
+        }))
+    }
+
+    /// Turns the pending login `id` down, and returns the reply for its extension.
+    pub fn cancel_login(&mut self, id: LoginId) -> Option<Outgoing> {
+        let (pending, ..) = self.browser.logins.front()?;
+        if *pending != id {
+            return None;
+        }
+        let (_, connection, request) = self.browser.logins.pop_front()?;
+        let session = self.browser.sessions.get(&connection)?;
+        Some(Outgoing {
+            connection,
+            message: session.error(&request.request, ProtocolError::ActionCancelledOrDenied),
+        })
+    }
+
+    /// The open Vaults a captured login may go to: those paired with a Pairing the extension
+    /// proved.
+    fn login_vaults(&self, request: &LoginRequest) -> Vec<VaultId> {
+        self.vaults
+            .iter()
+            .filter(|open| {
+                request
+                    .pairings
+                    .iter()
+                    .any(|(name, key)| open.vault.is_paired_with(name, key))
+            })
+            .map(|open| open.id)
+            .collect()
+    }
+
+    /// The Entries in `vaults` a captured login could update: the one the extension picked,
+    /// then those for the site with the login's username.
+    fn login_entries(&self, request: &LoginRequest, vaults: &[VaultId]) -> Vec<(VaultId, EntryId)> {
+        let open = || vaults.iter().filter_map(|&vault| self.vault(vault));
+        let picked = request.picked.and_then(|entry| {
+            open()
+                .find(|open| open.vault.entry(entry).is_some())
+                .map(|open| (open.id, entry))
+        });
+        let site = Site::parse(&request.login.url);
+        let same_username = site.iter().flat_map(|site| {
+            open().flat_map(move |open| {
+                open.vault
+                    .entries_for_site(site)
+                    .into_iter()
+                    .filter(|found| found.entry.username() == request.login.username)
+                    .map(move |found| (open.id, found.entry.id()))
+            })
+        });
+        let mut entries: Vec<(VaultId, EntryId)> = picked.into_iter().collect();
+        for entry in same_username {
+            if !entries.contains(&entry) {
+                entries.push(entry);
+            }
+        }
+        entries
+    }
+
+    /// The Group captured logins are saved to in the Vault, if it has one yet.
+    pub fn browser_group(&self, vault: VaultId) -> Option<GroupId> {
+        self.vault(vault)?.vault.browser_group()
+    }
+
+    /// Makes `group` the Vault's Browser group.
+    pub fn set_browser_group(
+        &mut self,
+        vault: VaultId,
+        group: GroupId,
+    ) -> Result<(), EditVaultError> {
+        self.edit(vault, |open, _| open.set_browser_group(group))
+    }
+
     /// The Pairing request to put to the user now.
     pub fn pending_pairing(&self) -> Option<PendingPairing> {
         self.browser
@@ -791,7 +1061,7 @@ impl Workspace {
         (*pending == id).then(|| (*connection, request.clone()))
     }
 
-    /// Ends every session and turns every pending Pairing and Access request down, for
+    /// Ends every session and turns every pending Pairing, Access and login request down, for
     /// browser integration turned off.
     pub(crate) fn end_browser_sessions(&mut self) -> Vec<Outgoing> {
         let browser = std::mem::take(&mut self.browser);
@@ -803,8 +1073,13 @@ impl Workspace {
             .accesses
             .into_iter()
             .map(|(_, connection, request)| (connection, request.request));
+        let logins = browser
+            .logins
+            .into_iter()
+            .map(|(_, connection, request)| (connection, request.request));
         pairings
             .chain(accesses)
+            .chain(logins)
             .filter_map(|(connection, request)| {
                 let session = browser.sessions.get(&connection)?;
                 Some(Outgoing {

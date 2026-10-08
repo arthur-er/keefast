@@ -718,6 +718,7 @@ impl VaultBrowser {
         }
         if let EntryScope::Group(vault, group) = self.scope {
             let subject = Subject::Group(vault, group);
+            let is_browser_group = workspace.browser_group(vault) == Some(group);
             toolbar = toolbar
                 .child(
                     tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
@@ -736,7 +737,21 @@ impl VaultBrowser {
                     tool_button("delete-group", strings::DELETE, theme).on_click(
                         cx.listener(move |this, _, window, cx| this.delete(subject, window, cx)),
                     ),
-                );
+                )
+                .child(match is_browser_group {
+                    true => div()
+                        .px_2()
+                        .py_0p5()
+                        .text_sm()
+                        .text_color(theme.muted)
+                        .child(strings::BROWSER_GROUP_MARK)
+                        .into_any_element(),
+                    false => tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.edit(cx, |workspace| workspace.set_browser_group(vault, group));
+                        }))
+                        .into_any_element(),
+                });
         }
 
         div()
@@ -1061,6 +1076,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         | EditVaultError::VaultNotOpen => strings::ERROR_NOT_FOUND,
         EditVaultError::Edit(EditError::PairingNameEmpty) => strings::ERROR_PAIRING_NAME_EMPTY,
         EditVaultError::Edit(EditError::PairingNameTaken) => strings::ERROR_PAIRING_NAME_TAKEN,
+        EditVaultError::NotPaired => strings::ERROR_NOT_PAIRED,
     }
 }
 
@@ -1082,7 +1098,7 @@ fn sidebar_row(
         .child(label)
 }
 
-fn flatten_groups<'a>(groups: &'a [Group], depth: usize, out: &mut Vec<(&'a Group, usize)>) {
+pub fn flatten_groups<'a>(groups: &'a [Group], depth: usize, out: &mut Vec<(&'a Group, usize)>) {
     for group in groups {
         out.push((group, depth));
         flatten_groups(group.groups(), depth + 1, out);

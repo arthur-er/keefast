@@ -414,11 +414,11 @@ impl Vault {
         decode_uuid(&self.meta_text("RecycleBinUUID")?).filter(|id| *id != NO_UUID)
     }
 
-    fn recycle_bin_path(&self) -> Option<Vec<usize>> {
+    pub(crate) fn recycle_bin_path(&self) -> Option<Vec<usize>> {
         self.path_to(Kind::Group, self.recycle_bin_uuid()?).ok()
     }
 
-    fn in_recycle_bin(&self, path: &[usize]) -> bool {
+    pub(crate) fn in_recycle_bin(&self, path: &[usize]) -> bool {
         self.recycle_bin_path()
             .is_some_and(|bin| path.len() > bin.len() && path.starts_with(&bin))
     }

@@ -118,6 +118,35 @@ impl FakeExtension {
         self.encrypted("get-logins", message)
     }
 
+    /// Submits a login captured on the page at `url`, as the stock extension does: `uuid` is
+    /// the Entry the user picked to update, if one, and `group` the Group it would like a new
+    /// Entry in (name and UUID), which keefast ignores.
+    pub fn set_login(
+        &self,
+        url: &str,
+        login: &str,
+        password: &str,
+        uuid: Option<&str>,
+        group: Option<(&str, &str)>,
+    ) -> Sent {
+        let mut message = json!({
+            "action": "set-login",
+            "id": "Home",
+            "login": login,
+            "password": password,
+            "url": url,
+            "submitUrl": url,
+        });
+        if let Some(uuid) = uuid {
+            message["uuid"] = uuid.into();
+        }
+        if let Some((name, uuid)) = group {
+            message["group"] = name.into();
+            message["groupUuid"] = uuid.into();
+        }
+        self.encrypted("set-login", message)
+    }
+
     /// Opens an encrypted reply, checking it answers `sent`, and returns its message.
     pub fn open(&self, sent: &Sent, reply: &str) -> Value {
         let reply: Value = serde_json::from_str(reply).unwrap();

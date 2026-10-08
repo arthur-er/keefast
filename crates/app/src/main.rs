@@ -3,6 +3,7 @@
 mod access_dialog;
 mod browser_integration;
 mod entry_editor;
+mod login_dialog;
 mod pairing_dialog;
 mod password_generator;
 mod saving;
@@ -27,13 +28,14 @@ use keefast_workspace::{
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
 use crate::browser_integration::BrowserIntegration;
+use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::unlock::{UnlockEvent, UnlockView};
 use crate::vault_browser::{OpenAnotherVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
-/// unlock dialog shown again to open another Vault. Pairing and Access requests from browsers
-/// are asked over whatever is showing, Pairings first.
+/// unlock dialog shown again to open another Vault. Pairing and Access requests and captured
+/// logins from browsers are asked over whatever is showing, in that order.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -42,6 +44,7 @@ struct KeefastWindow {
     showing_unlock: bool,
     pairing: Option<Entity<PairingDialog>>,
     access: Option<Entity<AccessDialog>>,
+    login: Option<Entity<LoginDialog>>,
 }
 
 impl KeefastWindow {
@@ -72,11 +75,12 @@ impl KeefastWindow {
             showing_unlock: true,
             pairing: None,
             access: None,
+            login: None,
         }
     }
 
     /// Shows the dialog for the browser request to answer now, if there is one: a Pairing
-    /// request, or else an Access request.
+    /// request, or else an Access request, or else a captured login.
     fn show_pending_requests(
         &mut self,
         integration: Entity<BrowserIntegration>,
@@ -84,7 +88,8 @@ impl KeefastWindow {
         cx: &mut Context<Self>,
     ) {
         let changed = self.show_pending_pairing(&integration, window, cx)
-            | self.show_pending_access(&integration, window, cx);
+            | self.show_pending_access(&integration, window, cx)
+            | self.show_pending_login(&integration, window, cx);
         if !changed {
             return;
         }
@@ -100,12 +105,13 @@ impl KeefastWindow {
     }
 
     /// The browser request dialog showing, and its focus: a Pairing request's over an Access
-    /// request's.
+    /// request's over a captured login's.
     fn dialog(&self, cx: &App) -> Option<(AnyView, FocusHandle)> {
-        match (&self.pairing, &self.access) {
-            (Some(pairing), _) => Some((pairing.clone().into(), pairing.focus_handle(cx))),
-            (None, Some(access)) => Some((access.clone().into(), access.focus_handle(cx))),
-            (None, None) => None,
+        match (&self.pairing, &self.access, &self.login) {
+            (Some(pairing), ..) => Some((pairing.clone().into(), pairing.focus_handle(cx))),
+            (None, Some(access), _) => Some((access.clone().into(), access.focus_handle(cx))),
+            (None, None, Some(login)) => Some((login.clone().into(), login.focus_handle(cx))),
+            (None, None, None) => None,
         }
     }
 
@@ -174,6 +180,63 @@ impl KeefastWindow {
             dialog
         });
         true
+    }
+
+    /// Shows the dialog for the captured login to save now, if there is one, and returns
+    /// whether that changed.
+    fn show_pending_login(
+        &mut self,
+        integration: &Entity<BrowserIntegration>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let pending = integration.read(cx).pending_login(cx);
+        let showing = self.login.as_ref().map(|dialog| dialog.read(cx).login());
+        if pending.as_ref().map(|pending| pending.id) == showing {
+            return false;
+        }
+        self.login = pending.map(|pending| {
+            let rows = login_dialog::rows_for(self.workspace.read(cx), &pending);
+            let dialog = cx.new(|cx| {
+                LoginDialog::new(
+                    pending.id,
+                    pending.site,
+                    pending.username,
+                    rows,
+                    pending.suggested,
+                    cx,
+                )
+            });
+            cx.subscribe_in(&dialog, window, Self::on_login_event)
+                .detach();
+            dialog
+        });
+        true
+    }
+
+    fn on_login_event(
+        &mut self,
+        dialog: &Entity<LoginDialog>,
+        event: &LoginDialogEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let login = dialog.read(cx).login();
+        match event {
+            &LoginDialogEvent::Save(target) => {
+                let result = self.integration.update(cx, |integration, cx| {
+                    integration.save_login(login, target, cx)
+                });
+                if let Err(error) = result {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.set_error(vault_browser::describe(&error), cx)
+                    });
+                }
+            }
+            LoginDialogEvent::Cancel => self
+                .integration
+                .update(cx, |integration, cx| integration.cancel_login(login, cx)),
+        }
     }
 
     fn on_access_event(

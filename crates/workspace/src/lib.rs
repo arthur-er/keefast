@@ -20,8 +20,8 @@ use secrecy::SecretString;
 
 pub use browser::{
     AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId,
-    KEEPASSXC_VERSION, Outgoing, PairingId, PairingRequest, PendingAccess, PendingPairing,
-    ProtocolError,
+    KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId, PairingRequest,
+    PendingAccess, PendingLogin, PendingPairing, ProtocolError,
 };
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,
@@ -63,6 +63,8 @@ pub enum OpenVaultError {
 pub enum EditVaultError {
     #[error("the Vault is not open")]
     VaultNotOpen,
+    #[error("the browser is not paired with the Vault")]
+    NotPaired,
     #[error(transparent)]
     Edit(#[from] EditError),
 }

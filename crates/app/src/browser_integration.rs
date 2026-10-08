@@ -7,8 +7,8 @@ use std::io;
 use gpui::{Context, Entity, Task};
 use keefast_native_host::ipc::{self, Replies, Server, ServerEvent};
 use keefast_workspace::{
-    AccessAnswer, AccessId, ConnectionId, EditVaultError, Outgoing, PairingId, PendingAccess,
-    PendingPairing, Workspace,
+    AccessAnswer, AccessId, ConnectionId, EditVaultError, LoginId, LoginTarget, Outgoing,
+    PairingId, PendingAccess, PendingLogin, PendingPairing, Workspace,
 };
 
 use crate::saving;
@@ -111,6 +111,37 @@ impl BrowserIntegration {
         if answer.remember {
             saving::autosave(&self.workspace, cx);
         }
+        cx.notify();
+    }
+
+    /// The captured login to put to the user now.
+    pub fn pending_login(&self, cx: &gpui::App) -> Option<PendingLogin> {
+        self.workspace.read(cx).pending_login()
+    }
+
+    /// Saves the captured login where the user chose. A place it can't go is refused, and the
+    /// login stays pending.
+    pub fn save_login(
+        &mut self,
+        login: LoginId,
+        target: LoginTarget,
+        cx: &mut Context<Self>,
+    ) -> Result<(), EditVaultError> {
+        let reply = self.workspace.update(cx, |workspace, cx| {
+            cx.notify();
+            workspace.save_login(login, target)
+        })?;
+        self.send(reply);
+        saving::autosave(&self.workspace, cx);
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn cancel_login(&mut self, login: LoginId, cx: &mut Context<Self>) {
+        let reply = self
+            .workspace
+            .update(cx, |workspace, _| workspace.cancel_login(login));
+        self.send(reply);
         cx.notify();
     }
 

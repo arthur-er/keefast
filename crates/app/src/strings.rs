@@ -136,3 +136,14 @@ pub const TOTP_ERROR_INVALID_SECRET: &str =
 pub const TOTP_ERROR_DIGITS: &str = "A code has 1 to 10 digits.";
 pub const TOTP_ERROR_PERIOD: &str = "The period is 1 to 86400 seconds.";
 pub const TOTP_ERROR_NOT_TOTP: &str = "This isn't an otpauth://totp/ URI.";
+
+pub const LOGIN_TITLE: &str = "Save login?";
+pub const LOGIN_PROMPT: &str = "You signed in to {site} as “{username}”. Choose where keefast \
+saves this login.";
+pub const LOGIN_UPDATE: &str = "Update an existing Entry";
+pub const LOGIN_NEW: &str = "Save as a new Entry in";
+pub const LOGIN_NEW_BROWSER_GROUP: &str = "{name} (new Group)";
+pub const LOGIN_SAVE: &str = "Save";
+pub const BROWSER_GROUP_MARK: &str = "Browser group";
+pub const USE_AS_BROWSER_GROUP: &str = "Save browser logins here";
+pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
