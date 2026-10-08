@@ -146,5 +146,5 @@ fn a_site_is_known_by_its_host() {
         site("https://Login.Example.com:8443/x").host(),
         "login.example.com"
     );
-    assert_eq!(site("http://[::1]:8080/").host(), "[::1]");
+    assert_eq!(site("http://[::1]:8080/").host(), "::1");
 }

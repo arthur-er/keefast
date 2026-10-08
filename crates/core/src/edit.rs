@@ -493,7 +493,7 @@ pub(crate) fn text_element(name: &str, text: impl Into<String>) -> Element {
 
 /// Sets an element's content, protected or not. An empty unprotected value has no content at
 /// all, as when read back from `<Value/>`.
-pub(crate) fn set_value(element: &mut Element, value: &str, protect: bool) {
+fn set_value(element: &mut Element, value: &str, protect: bool) {
     element.attributes.retain(|(name, _)| name != "Protected");
     element.children.clear();
     if protect {

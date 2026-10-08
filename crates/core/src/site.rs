@@ -28,9 +28,13 @@ impl Site {
         })
     }
 
-    /// The page's host, which Access decisions are remembered for.
+    /// The page's host, which Access decisions are remembered for: written as KeePassXC
+    /// writes it, so IPv6 addresses go without brackets.
     pub fn host(&self) -> String {
-        self.host.to_string()
+        match &self.host {
+            Host::Ipv6(address) => address.to_string(),
+            host => host.to_string(),
+        }
     }
 
     /// Whether the Entry URL `entry_url` is for this page. An Entry URL without a scheme is

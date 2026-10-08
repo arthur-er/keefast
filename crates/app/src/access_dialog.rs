@@ -20,7 +20,8 @@ pub struct AskedEntry {
 }
 
 /// Asks the user whether a site may have Entries: Allow or Deny, remembered on the Entries if
-/// the user wants. Enter allows and Escape denies.
+/// the user wants. Escape denies; nothing on the keyboard allows, so a keystroke meant for
+/// something else never gives a site access.
 pub struct AccessDialog {
     access: AccessId,
     site: SharedString,
@@ -71,11 +72,10 @@ impl AccessDialog {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        match event.keystroke.key.as_str() {
-            "enter" => self.answer(AccessDecision::Allow, cx),
-            "escape" => self.answer(AccessDecision::Deny, cx),
-            _ => return,
+        if event.keystroke.key != "escape" {
+            return;
         }
+        self.answer(AccessDecision::Deny, cx);
         cx.stop_propagation();
     }
 }

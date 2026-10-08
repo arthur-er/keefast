@@ -106,9 +106,9 @@ impl Browser {
         self.workspace.pending_access().expect("asks the user")
     }
 
-    /// Sends the request and expects the titles of the logins keefast answers with at once.
+    /// Sends the request and expects the titles of the Entries keefast answers with at once.
     #[track_caller]
-    fn logins_now(&mut self, sent: &Sent) -> Vec<String> {
+    fn entries_now(&mut self, sent: &Sent) -> Vec<String> {
         let reply = self.request(sent).expect("answered without asking");
         titles(&self.extension.open(sent, &reply))
     }
@@ -131,9 +131,9 @@ impl Browser {
         self.workspace.answer_access(pending.id, answer)
     }
 
-    /// Answers the pending request and returns the titles of the logins sent back for it.
+    /// Answers the pending request and returns the titles of the Entries sent back for it.
     #[track_caller]
-    fn answer_logins(&mut self, sent: &Sent, answer: AccessAnswer) -> Vec<String> {
+    fn answer_entries(&mut self, sent: &Sent, answer: AccessAnswer) -> Vec<String> {
         let pending = self.workspace.pending_access().unwrap();
         let replies = self.answer(&pending, answer);
         assert_eq!(replies.len(), 1);
@@ -165,7 +165,7 @@ fn the_first_access_asks_the_user_about_the_undecided_entries() {
 }
 
 #[test]
-fn allowed_logins_carry_what_the_extension_fills() {
+fn allowed_entries_carry_what_the_extension_fills() {
     let (mut browser, vault) = Browser::paired(storage());
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
@@ -198,9 +198,9 @@ fn allowing_once_is_not_remembered() {
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
 
-    let logins = browser.answer_logins(&sent, ALLOW);
+    let entries = browser.answer_entries(&sent, ALLOW);
 
-    assert_eq!(logins, ["Example", "Remembered", "Shown again"]);
+    assert_eq!(entries, ["Example", "Remembered", "Shown again"]);
     let open = browser.workspace.vault(vault).unwrap().vault();
     let example = open
         .root()
@@ -220,9 +220,9 @@ fn a_remembered_allow_is_stored_on_the_entries_and_not_asked_again() {
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
 
-    let logins = browser.answer_logins(&sent, REMEMBER_ALLOW);
+    let entries = browser.answer_entries(&sent, REMEMBER_ALLOW);
 
-    assert_eq!(logins, ["Example", "Remembered", "Shown again"]);
+    assert_eq!(entries, ["Example", "Remembered", "Shown again"]);
     let open = browser.workspace.vault(vault).unwrap();
     assert!(open.has_unsaved_changes());
     let example = open
@@ -237,7 +237,7 @@ fn a_remembered_allow_is_stored_on_the_entries_and_not_asked_again() {
     );
     let again = browser.get_logins(EXAMPLE);
     assert_eq!(
-        browser.logins_now(&again),
+        browser.entries_now(&again),
         ["Example", "Remembered", "Shown again"]
     );
 
@@ -267,7 +267,7 @@ fn denying_once_leaves_out_the_entries_and_asks_again_next_time() {
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
 
-    assert_eq!(browser.answer_logins(&sent, DENY), ["Remembered"]);
+    assert_eq!(browser.answer_entries(&sent, DENY), ["Remembered"]);
 
     let again = browser.get_logins(EXAMPLE);
     assert_eq!(browser.ask(&again).entries.len(), 2);
@@ -279,10 +279,10 @@ fn a_remembered_deny_leaves_out_the_entries_without_asking_again() {
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
 
-    assert_eq!(browser.answer_logins(&sent, REMEMBER_DENY), ["Remembered"]);
+    assert_eq!(browser.answer_entries(&sent, REMEMBER_DENY), ["Remembered"]);
 
     let again = browser.get_logins(EXAMPLE);
-    assert_eq!(browser.logins_now(&again), ["Remembered"]);
+    assert_eq!(browser.entries_now(&again), ["Remembered"]);
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn a_decision_is_per_site() {
     let (mut browser, _) = Browser::paired(storage());
     let sent = browser.get_logins(EXAMPLE);
     browser.ask(&sent);
-    browser.answer_logins(&sent, REMEMBER_ALLOW);
+    browser.answer_entries(&sent, REMEMBER_ALLOW);
 
     // A subdomain is another site, and is asked about; there "Remembered" was denied.
     let elsewhere = browser.get_logins("https://evil.example.com/");
@@ -315,7 +315,7 @@ fn a_form_submitting_to_another_host_needs_that_host_allowed_too() {
         browser.titles_of(&pending),
         ["Example", "Remembered", "Shown again"]
     );
-    browser.answer_logins(&sent, REMEMBER_ALLOW);
+    browser.answer_entries(&sent, REMEMBER_ALLOW);
 
     let open = browser.workspace.vault(vault).unwrap().vault();
     let example = open
@@ -339,7 +339,7 @@ fn an_unpaired_vault_is_invisible() {
     let sent = browser.get_logins(EXAMPLE);
     let pending = browser.ask(&sent);
     assert!(pending.entries.iter().all(|&(vault, _)| vault == personal));
-    assert_eq!(browser.answer_logins(&sent, ALLOW).len(), 3);
+    assert_eq!(browser.answer_entries(&sent, ALLOW).len(), 3);
 
     // Without a Pairing key that a Vault knows, there is nothing to find.
     let other = FakeExtension::new();
@@ -377,14 +377,17 @@ fn sites_without_entries_get_no_logins_found_without_asking() {
 }
 
 #[test]
-fn a_site_denied_every_entry_gets_no_logins_found() {
+fn a_site_turned_down_for_every_entry_gets_an_empty_list_then_no_logins_found() {
     let (mut browser, _) = Browser::paired(storage());
 
-    // Only "Other site" matches other.test; deny it for good.
+    // Only "Other site" is for other.test. As in KeePassXC, the answer to the request the
+    // user turned down is an empty list, and a later request finds nothing.
     let sent = browser.get_logins("https://other.test/");
-    let pending = browser.ask(&sent);
-    let replies = browser.answer(&pending, REMEMBER_DENY);
-    assert_eq!(parse(&replies[0].message)["errorCode"], "15");
+    browser.ask(&sent);
+    assert_eq!(
+        browser.answer_entries(&sent, REMEMBER_DENY),
+        [] as [&str; 0]
+    );
 
     let again = browser.get_logins("https://other.test/");
     assert_eq!(parse(&browser.request(&again).unwrap())["errorCode"], "15");
@@ -429,7 +432,7 @@ fn waiting_requests_are_still_asked_after_allowing_once() {
 
     let next = browser.workspace.pending_access().unwrap();
     assert_ne!(next.id, pending.id);
-    assert_eq!(browser.answer_logins(&reload, DENY), ["Remembered"]);
+    assert_eq!(browser.answer_entries(&reload, DENY), ["Remembered"]);
 }
 
 #[test]

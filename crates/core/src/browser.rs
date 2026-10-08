@@ -30,6 +30,23 @@ pub enum AccessDecision {
     Deny,
 }
 
+impl AccessDecision {
+    /// The list of hosts KeePassXC keeps this decision in.
+    fn list(self) -> &'static str {
+        match self {
+            AccessDecision::Allow => "Allow",
+            AccessDecision::Deny => "Deny",
+        }
+    }
+
+    fn opposite(self) -> Self {
+        match self {
+            AccessDecision::Allow => AccessDecision::Deny,
+            AccessDecision::Deny => AccessDecision::Allow,
+        }
+    }
+}
+
 /// An Entry offered to a site, with the Group it is in.
 #[derive(Debug, Clone, Copy)]
 pub struct SiteEntry<'a> {
@@ -162,13 +179,9 @@ impl Vault {
             .entry(entry)
             .map(Entry::access_settings)
             .unwrap_or_default();
-        let (add, remove) = match decision {
-            AccessDecision::Allow => ("Allow", "Deny"),
-            AccessDecision::Deny => ("Deny", "Allow"),
-        };
         for host in hosts {
-            settings.insert_host(add, host);
-            settings.remove_host(remove, host);
+            settings.insert_host(decision, host);
+            settings.remove_host(decision.opposite(), host);
         }
         let element = self.at_mut(&path);
         let custom_data = child_or_insert(
@@ -201,9 +214,10 @@ impl Entry {
     /// none.
     pub fn access_decision(&self, hosts: &[String]) -> Option<AccessDecision> {
         let settings = self.access_settings();
-        if !hosts.is_empty() && hosts.iter().all(|host| settings.has_host("Allow", host)) {
+        let listed = |decision, host: &String| settings.has_host(decision, host);
+        if !hosts.is_empty() && hosts.iter().all(|host| listed(AccessDecision::Allow, host)) {
             Some(AccessDecision::Allow)
-        } else if hosts.iter().any(|host| settings.has_host("Deny", host)) {
+        } else if hosts.iter().any(|host| listed(AccessDecision::Deny, host)) {
             Some(AccessDecision::Deny)
         } else {
             None
@@ -226,43 +240,47 @@ impl Entry {
 struct AccessSettings(Map<String, Value>);
 
 impl AccessSettings {
-    fn hosts(&self, list: &str) -> impl Iterator<Item = &str> {
+    fn hosts(&self, decision: AccessDecision) -> impl Iterator<Item = &str> {
         self.0
-            .get(list)
+            .get(decision.list())
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
     }
 
-    fn has_host(&self, list: &str, host: &str) -> bool {
-        self.hosts(list).any(|listed| listed == host)
+    fn has_host(&self, decision: AccessDecision, host: &str) -> bool {
+        self.hosts(decision).any(|listed| listed == host)
     }
 
-    fn insert_host(&mut self, list: &str, host: &str) {
-        if !self.has_host(list, host) {
-            let mut hosts: Vec<&str> = self.hosts(list).collect();
-            hosts.push(host);
-            let hosts = hosts.into_iter().map(Value::from).collect();
-            self.0.insert(list.to_owned(), Value::Array(hosts));
+    fn insert_host(&mut self, decision: AccessDecision, host: &str) {
+        if !self.has_host(decision, host) {
+            let mut hosts: Vec<Value> = self.hosts(decision).map(Value::from).collect();
+            hosts.push(host.into());
+            self.set_hosts(decision, hosts);
         }
     }
 
-    fn remove_host(&mut self, list: &str, host: &str) {
+    fn remove_host(&mut self, decision: AccessDecision, host: &str) {
         let hosts = self
-            .hosts(list)
+            .hosts(decision)
             .filter(|listed| *listed != host)
             .map(Value::from)
             .collect();
-        self.0.insert(list.to_owned(), Value::Array(hosts));
+        self.set_hosts(decision, hosts);
+    }
+
+    fn set_hosts(&mut self, decision: AccessDecision, hosts: Vec<Value>) {
+        self.0
+            .insert(decision.list().to_owned(), Value::Array(hosts));
     }
 
     /// The settings as KeePassXC writes them: compact JSON with every one of its keys.
     fn into_json(mut self) -> String {
-        for list in ["Allow", "Deny"] {
-            self.0
-                .entry(list)
-                .or_insert_with(|| Value::Array(Vec::new()));
+        for decision in [AccessDecision::Allow, AccessDecision::Deny] {
+            if !self.0.contains_key(decision.list()) {
+                self.set_hosts(decision, Vec::new());
+            }
         }
         self.0.entry("Realm").or_insert_with(|| Value::from(""));
         Value::Object(self.0).to_string()

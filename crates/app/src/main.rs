@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    App, Application, Bounds, Context, Entity, Focusable, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, rgba, size,
+    AnyView, App, Application, Bounds, Context, Entity, FocusHandle, Focusable, TitlebarOptions,
+    Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba, size,
 };
 use keefast_workspace::{
     FileConfigStore, LocalStorage, NativeMessagingHosts, VaultLocation, Workspace,
@@ -86,17 +86,25 @@ impl KeefastWindow {
         if !changed {
             return;
         }
-        // The user is in the browser when it asks, so keefast comes to the front.
-        if let Some(dialog) = &self.pairing {
-            window.focus(&dialog.focus_handle(cx));
-            window.activate_window();
-        } else if let Some(dialog) = &self.access {
-            window.focus(&dialog.focus_handle(cx));
-            window.activate_window();
-        } else {
-            self.focus_screen(window, cx);
+        match self.dialog(cx) {
+            Some((_, focus)) => {
+                window.focus(&focus);
+                // The user is in the browser when it asks, so keefast comes to the front.
+                window.activate_window();
+            }
+            None => self.focus_screen(window, cx),
         }
         cx.notify();
+    }
+
+    /// The browser request dialog showing, and its focus: a Pairing request's over an Access
+    /// request's.
+    fn dialog(&self, cx: &App) -> Option<(AnyView, FocusHandle)> {
+        match (&self.pairing, &self.access) {
+            (Some(pairing), _) => Some((pairing.clone().into(), pairing.focus_handle(cx))),
+            (None, Some(access)) => Some((access.clone().into(), access.focus_handle(cx))),
+            (None, None) => None,
+        }
     }
 
     /// Shows the dialog for the Pairing request to answer now, if there is one, and returns
@@ -255,16 +263,12 @@ impl KeefastWindow {
 }
 
 impl Render for KeefastWindow {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let screen = match (&self.browser, self.showing_unlock) {
             (Some(browser), false) => browser.clone().into_any_element(),
             _ => self.unlock.clone().into_any_element(),
         };
-        let dialog = match (&self.pairing, &self.access) {
-            (Some(pairing), _) => Some(pairing.clone().into_any_element()),
-            (None, Some(access)) => Some(access.clone().into_any_element()),
-            (None, None) => None,
-        };
+        let dialog = self.dialog(cx).map(|(view, _)| view);
         div()
             .size_full()
             .relative()

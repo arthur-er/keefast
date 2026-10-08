@@ -98,7 +98,7 @@ impl PairingRequest {
 /// answer.
 #[derive(Debug, Clone)]
 pub struct AccessRequest {
-    logins: LoginsQuery,
+    query: SiteQuery,
     /// The Entries to decide on.
     undecided: Vec<(VaultId, EntryId)>,
     request: Request,
@@ -107,7 +107,7 @@ pub struct AccessRequest {
 impl AccessRequest {
     /// The host of the site asking.
     pub fn site(&self) -> &str {
-        &self.logins.hosts[0]
+        &self.query.site_host
     }
 
     /// The Entries to decide on.
@@ -124,17 +124,27 @@ pub struct AccessAnswer {
     pub remember: bool,
 }
 
-/// What a `get-logins` request asks for.
+/// What a `get-logins` request asks for: the Entries for a site.
 #[derive(Debug, Clone)]
-struct LoginsQuery {
+struct SiteQuery {
     site: Site,
-    /// The site's host, and the host its form submits to if that differs: the hosts Access
-    /// decisions are made for.
-    hosts: Vec<String>,
+    /// The site's host, which Access decisions are made for.
+    site_host: String,
+    /// The host the site's form submits to, if that differs: it needs the decision too.
+    form_host: Option<String>,
     /// The Pairings the extension holds keys for, as name and key.
     keys: Vec<(String, String)>,
     /// The `id` the extension sent, echoed back.
     id: String,
+}
+
+impl SiteQuery {
+    /// The hosts an Access decision is for.
+    fn hosts(&self) -> Vec<String> {
+        std::iter::once(self.site_host.clone())
+            .chain(self.form_host.clone())
+            .collect()
+    }
 }
 
 /// An Entry offered to a site, with its Access decision for the site.
@@ -150,7 +160,7 @@ impl Candidate<'_> {
     }
 
     /// The Entry as the extension receives it.
-    fn login(&self) -> Value {
+    fn to_protocol(&self) -> Value {
         let SiteEntry { entry, group } = self.found;
         json!({
             "login": entry.username(),
@@ -256,10 +266,11 @@ impl BrowserSession {
         answer: AccessAnswer,
     ) -> String {
         if answer.remember {
+            let hosts = access.query.hosts();
             for &(vault, entry) in &access.undecided {
                 // An Entry gone meanwhile has nothing to remember a decision on.
                 let _ = workspace.edit(vault, |vault, now| {
-                    vault.remember_access(entry, &access.logins.hosts, answer.decision, now)
+                    vault.remember_access(entry, &hosts, answer.decision, now)
                 });
             }
         }
@@ -267,7 +278,7 @@ impl BrowserSession {
             (answer.decision == AccessDecision::Allow && access.undecided.contains(&(vault, entry)))
                 .then_some(AccessDecision::Allow)
         };
-        self.logins_reply(workspace, &access.request, &access.logins, decided)
+        self.entries_reply(workspace, &access.request, &access.query, decided)
     }
 
     /// Starts the session's encryption: the extension sends its public key, keefast answers
@@ -369,8 +380,9 @@ impl BrowserSession {
         )))
     }
 
-    /// Finds the logins for a site in the Vaults the extension is paired with, and answers
+    /// Finds the Entries for a site in the Vaults the extension is paired with, and answers
     /// with those the user has allowed the site, or asks the user about the others first.
+    /// Without any Entry for the site that isn't denied it, there are no logins found.
     fn get_logins(
         &mut self,
         workspace: &Workspace,
@@ -385,12 +397,10 @@ impl BrowserSession {
             return Err(ProtocolError::NoUrlProvided);
         }
         let site = Site::parse(url).ok_or(ProtocolError::NoLoginsFound)?;
-        let mut hosts = vec![site.host()];
-        if let Some(form) = Site::parse(text(&message, "submitUrl"))
-            && form.host() != hosts[0]
-        {
-            hosts.push(form.host());
-        }
+        let site_host = site.host();
+        let form_host = Site::parse(text(&message, "submitUrl"))
+            .map(|form| form.host())
+            .filter(|form| *form != site_host);
         let keys = match message.get("keys") {
             Some(Value::Array(keys)) => keys
                 .iter()
@@ -399,57 +409,59 @@ impl BrowserSession {
                 .collect(),
             _ => Vec::new(),
         };
-        let logins = LoginsQuery {
+        let query = SiteQuery {
             site,
-            hosts,
+            site_host,
+            form_host,
             keys,
             id: text(&message, "id").to_owned(),
         };
-        let candidates = candidates(workspace, &logins);
+        let candidates = candidates(workspace, &query);
+        if candidates.is_empty() {
+            return Err(ProtocolError::NoLoginsFound);
+        }
         let undecided: Vec<(VaultId, EntryId)> = candidates
             .iter()
             .filter(|candidate| candidate.decision.is_none())
             .map(Candidate::id)
             .collect();
         if undecided.is_empty() {
-            return Ok(BrowserReply::Send(self.logins_reply(
+            return Ok(BrowserReply::Send(self.entries_reply(
                 workspace,
                 &request,
-                &logins,
+                &query,
                 |_, _| None,
             )));
         }
         Ok(BrowserReply::AskAccess(AccessRequest {
-            logins,
+            query,
             undecided,
             request,
         }))
     }
 
-    /// The reply with the logins for a site: those allowed it, with `decided` standing in for
-    /// the Entries without a remembered decision. Without any, there are no logins found.
-    fn logins_reply(
+    /// The reply with the Entries the site is allowed, with `decided` standing in for those
+    /// without a remembered decision. There may be none, once the user has turned the site
+    /// down, which KeePassXC answers with an empty list too.
+    fn entries_reply(
         &self,
         workspace: &Workspace,
         request: &Request,
-        logins: &LoginsQuery,
+        query: &SiteQuery,
         decided: impl Fn(VaultId, EntryId) -> Option<AccessDecision>,
     ) -> String {
         if workspace.vaults.is_empty() {
             return self.error(request, ProtocolError::DatabaseNotOpened);
         }
-        let entries: Vec<Value> = candidates(workspace, logins)
+        let entries: Vec<Value> = candidates(workspace, query)
             .iter()
             .filter(|candidate| {
                 let (vault, entry) = candidate.id();
                 let decision = candidate.decision.or_else(|| decided(vault, entry));
                 decision == Some(AccessDecision::Allow)
             })
-            .map(Candidate::login)
+            .map(Candidate::to_protocol)
             .collect();
-        if entries.is_empty() {
-            return self.error(request, ProtocolError::NoLoginsFound);
-        }
         let vault = workspace
             .browser_vault(&self.connected_ids)
             .expect("a Vault is open");
@@ -459,7 +471,7 @@ impl BrowserSession {
                 "count": entries.len(),
                 "entries": entries,
                 "hash": browser_hash(workspace, vault),
-                "id": logins.id,
+                "id": query.id,
             }),
         )
     }
@@ -525,25 +537,26 @@ impl BrowserSession {
 
 /// Every Entry offered to the site in the open Vaults the extension is paired with, each with
 /// its remembered Access decision unless that is to deny the site.
-fn candidates<'a>(workspace: &'a Workspace, logins: &LoginsQuery) -> Vec<Candidate<'a>> {
+fn candidates<'a>(workspace: &'a Workspace, query: &SiteQuery) -> Vec<Candidate<'a>> {
     let paired = |open: &&crate::OpenVault| {
-        logins
+        query
             .keys
             .iter()
             .any(|(name, key)| open.vault.is_paired_with(name, key))
     };
+    let hosts = query.hosts();
     workspace
         .vaults
         .iter()
         .filter(paired)
         .flat_map(|open| {
             open.vault
-                .entries_for_site(&logins.site)
+                .entries_for_site(&query.site)
                 .into_iter()
                 .map(move |found| (open.id, found))
         })
         .filter_map(|(vault, found)| {
-            let decision = found.entry.access_decision(&logins.hosts);
+            let decision = found.entry.access_decision(&hosts);
             (decision != Some(AccessDecision::Deny)).then_some(Candidate {
                 vault,
                 found,
@@ -697,7 +710,7 @@ impl Workspace {
         let mut replies = Vec::new();
         let mut index = 0;
         while let Some((_, connection, request)) = self.browser.accesses.get(index) {
-            let still_undecided = candidates(self, &request.logins).iter().any(|candidate| {
+            let still_undecided = candidates(self, &request.query).iter().any(|candidate| {
                 candidate.decision.is_none() && request.undecided.contains(&candidate.id())
             });
             if still_undecided {
@@ -707,10 +720,10 @@ impl Workspace {
             if let Some(session) = self.browser.sessions.get(connection) {
                 replies.push(Outgoing {
                     connection: *connection,
-                    message: session.logins_reply(
+                    message: session.entries_reply(
                         self,
                         &request.request,
-                        &request.logins,
+                        &request.query,
                         |_, _| None,
                     ),
                 });
