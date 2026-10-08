@@ -1,8 +1,5 @@
-use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window, div,
-    prelude::*,
-};
-use keefast_core::{CharacterRecipe, GeneratorError, PassphraseRecipe};
+use gpui::{Context, Entity, EventEmitter, SharedString, Window, div, prelude::*};
+use keefast_core::{CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe};
 use keefast_workspace::{GeneratorMode, GeneratorSettings, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 
@@ -26,12 +23,6 @@ pub struct PasswordGenerator {
 }
 
 impl EventEmitter<PasswordGeneratorEvent> for PasswordGenerator {}
-
-impl Focusable for PasswordGenerator {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.separator.focus_handle(cx)
-    }
-}
 
 impl PasswordGenerator {
     pub fn new(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
@@ -68,12 +59,11 @@ impl PasswordGenerator {
     /// changed.
     fn change(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut GeneratorSettings)) {
         let mut settings = self.workspace.read(cx).generator_settings().clone();
-        let before = settings.clone();
         edit(&mut settings);
-        if settings != before {
-            self.workspace.update(cx, |workspace, _| {
-                workspace.set_generator_settings(settings)
-            });
+        let changed = self.workspace.update(cx, |workspace, _| {
+            workspace.set_generator_settings(settings)
+        });
+        if changed {
             self.regenerate(cx);
         }
     }
@@ -124,7 +114,7 @@ fn stepper(
 
 fn checkbox(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     on: bool,
     cx: &Context<PasswordGenerator>,
     toggle: fn(&mut CharacterRecipe),
@@ -140,7 +130,7 @@ fn checkbox(
         } else {
             strings::CHECKBOX_OFF
         })
-        .child(label)
+        .child(label.into())
         .on_click(cx.listener(move |this, _, _, cx| {
             this.change(cx, |settings| toggle(&mut settings.characters))
         }))
@@ -189,13 +179,6 @@ impl Render for PasswordGenerator {
         let options = match settings.mode {
             GeneratorMode::Characters => {
                 let recipe = &settings.characters;
-                let classes = [
-                    recipe.lowercase,
-                    recipe.uppercase,
-                    recipe.digits,
-                    recipe.symbols,
-                ];
-                let min = classes.iter().filter(|&&on| on).count().max(1) as u32;
                 div()
                     .flex()
                     .flex_col()
@@ -204,7 +187,7 @@ impl Render for PasswordGenerator {
                         "generator-length",
                         strings::GENERATOR_LENGTH,
                         recipe.length,
-                        (min, CharacterRecipe::MAX_LENGTH),
+                        (recipe.min_length(), CharacterRecipe::MAX_LENGTH),
                         theme,
                         cx,
                         |settings, length| settings.characters.length = length,
@@ -245,7 +228,14 @@ impl Render for PasswordGenerator {
                     )
                     .child(checkbox(
                         "generator-lookalikes",
-                        strings::GENERATOR_EXCLUDE_LOOKALIKES,
+                        strings::GENERATOR_EXCLUDE_LOOKALIKES.replace(
+                            "{lookalikes}",
+                            &LOOKALIKES
+                                .chars()
+                                .map(String::from)
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
                         recipe.exclude_lookalikes,
                         cx,
                         |recipe| recipe.exclude_lookalikes = !recipe.exclude_lookalikes,

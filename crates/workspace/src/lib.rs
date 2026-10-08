@@ -307,12 +307,15 @@ impl Workspace {
         &self.config.generator
     }
 
-    /// Changes how passwords are generated, and remembers it in the app config.
-    pub fn set_generator_settings(&mut self, settings: GeneratorSettings) {
-        if self.config.generator != settings {
-            self.config.generator = settings;
-            self.save_config();
+    /// Changes how passwords are generated, and remembers it in the app config. Returns
+    /// whether anything changed.
+    pub fn set_generator_settings(&mut self, settings: GeneratorSettings) -> bool {
+        if self.config.generator == settings {
+            return false;
         }
+        self.config.generator = settings;
+        self.save_config();
+        true
     }
 
     /// A new password or passphrase made with the user's generator settings.

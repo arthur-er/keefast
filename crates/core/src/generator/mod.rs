@@ -48,6 +48,15 @@ pub struct CharacterRecipe {
 
 impl CharacterRecipe {
     pub const MAX_LENGTH: u32 = 256;
+
+    /// The shortest password this recipe can make: one character from each chosen class.
+    pub fn min_length(&self) -> u32 {
+        [self.lowercase, self.uppercase, self.digits, self.symbols]
+            .into_iter()
+            .filter(|&chosen| chosen)
+            .count()
+            .max(1) as u32
+    }
 }
 
 impl Default for CharacterRecipe {
@@ -129,7 +138,7 @@ impl CharacterRecipe {
         if classes.is_empty() {
             return Err(GeneratorError::NoCharacterClasses);
         }
-        let min = classes.len() as u32;
+        let min = self.min_length();
         if !(min..=Self::MAX_LENGTH).contains(&self.length) {
             return Err(GeneratorError::LengthOutOfRange {
                 min,
@@ -161,7 +170,10 @@ impl PassphraseRecipe {
             });
         }
         let words: Vec<&str> = WORD_LIST.lines().collect();
-        let mut passphrase = Zeroizing::new(String::new());
+        // Room for the longest passphrase up front, so growing it leaves no copies behind.
+        let longest = words.iter().map(|word| word.len()).max().unwrap_or(0);
+        let capacity = self.words as usize * (longest + self.separator.len());
+        let mut passphrase = Zeroizing::new(String::with_capacity(capacity));
         for i in 0..self.words {
             if i > 0 {
                 passphrase.push_str(&self.separator);

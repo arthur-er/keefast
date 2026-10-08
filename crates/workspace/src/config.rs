@@ -88,7 +88,8 @@ impl ConfigStore for FileConfigStore {
 /// The config file's layout, kept apart from [`AppConfig`] so the file format stays stable.
 /// Recent Vault files are read one by one, so one this version doesn't understand (a Storage
 /// provider from a newer version, say) is skipped rather than failing the whole file. Generator
-/// settings this version doesn't understand fall back to the defaults the same way.
+/// settings this version doesn't understand (a new mode, say) don't fail the file either: the
+/// generator goes back to its defaults.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct ConfigFile {
