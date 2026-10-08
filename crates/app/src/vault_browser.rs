@@ -275,7 +275,7 @@ impl VaultBrowser {
             } => Some(*vault),
             Detail::Moving(subject) => Some(subject.vault()),
             Detail::Totp { vault, .. } => Some(*vault),
-            Detail::History(history) => Some(history.read(cx).vault()),
+            Detail::History { vault, .. } => Some(*vault),
         };
         if detail_vault.is_some_and(locked) {
             self.detail = Detail::Entry;
