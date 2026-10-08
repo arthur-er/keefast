@@ -2,6 +2,7 @@
 
 mod access_dialog;
 mod actions;
+mod attachments;
 mod browser_integration;
 mod clipboard;
 mod command_palette;

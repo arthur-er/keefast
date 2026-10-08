@@ -90,6 +90,22 @@ pub const FIELD_PROTECTED: &str = "Protected";
 pub const REMOVE_FIELD: &str = "Remove";
 pub const COPY: &str = "Copy";
 pub const COPIED: &str = "Copied";
+pub const ATTACHMENTS: &str = "Attachments";
+pub const ADD_ATTACHMENT: &str = "+ File";
+pub const ADD_ATTACHMENT_PROMPT: &str = "Attach files";
+pub const REMOVE_ATTACHMENT: &str = "Remove";
+pub const PREVIEW_ATTACHMENT: &str = "Preview";
+pub const HIDE_PREVIEW: &str = "Hide preview";
+pub const SAVE_ATTACHMENT: &str = "Save…";
+pub const ATTACHMENT_SAVED: &str = "Saved {name} to {path}.";
+pub const ATTACHMENT_PREVIEW_CUT: &str = "Only the start is shown.";
+/// A size in bytes, then in KB and MB with one decimal.
+pub const SIZE_BYTES: &str = "{n} B";
+pub const SIZE_KB: &str = "{n} KB";
+pub const SIZE_MB: &str = "{n} MB";
+pub const ERROR_ATTACHMENT_READ: &str = "{name} could not be read: {reason}";
+pub const ERROR_ATTACHMENT_SAVE: &str = "{name} could not be saved: {reason}";
+pub const ERROR_FILE_PICKER: &str = "The file picker could not be opened.";
 
 pub const FIELD_TAGS: &str = "Tags";
 pub const TAGS_PLACEHOLDER: &str = "Separate tags with commas";
@@ -180,6 +196,9 @@ pub const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";
 pub const ERROR_FIELD_NAME_EMPTY: &str = "Give every custom field a name.";
 pub const ERROR_FIELD_NAME_TAKEN: &str =
     "Each field needs a name of its own, other than Title, UserName, Password, URL or Notes.";
+pub const ERROR_ATTACHMENT_NAME_EMPTY: &str = "Give every attachment a name.";
+pub const ERROR_ATTACHMENT_NAME_TAKEN: &str =
+    "Each attachment of an Entry needs a name of its own.";
 
 pub const BROWSER_HOSTS_FOR: &str = "Set up for ";
 pub const BROWSER_HOSTS_NONE: &str =

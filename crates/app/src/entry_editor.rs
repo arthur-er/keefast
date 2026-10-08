@@ -3,11 +3,12 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use keefast_core::{
-    CustomField, EntryColor, EntryFields, EntryIcon, STANDARD_ICON_COUNT, Timestamp,
+    Attachment, CustomField, EntryColor, EntryFields, EntryIcon, STANDARD_ICON_COUNT, Timestamp,
 };
 use keefast_workspace::{ImportIconError, VaultId, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 
+use crate::attachments;
 use crate::icons;
 use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::strings;
@@ -44,7 +45,8 @@ pub struct EntryEditor {
     expiry_date: Entity<TextField>,
     /// The expiry the Entry had, kept to the second while its date isn't changed.
     original_expiry: Option<Timestamp>,
-    /// Why the form can't be saved, or an icon imported.
+    attachments: Vec<Attachment>,
+    /// Why the form can't be saved, an icon imported, or files picked to attach read.
     error: Option<SharedString>,
 }
 
@@ -135,6 +137,7 @@ impl EntryEditor {
             expires: fields.expires.is_some(),
             expiry_date,
             original_expiry: fields.expires,
+            attachments: fields.attachments.clone(),
             error: None,
         }
     }
@@ -246,6 +249,38 @@ impl EntryEditor {
         cx.notify();
     }
 
+    /// Asks for files and attaches them, a name another attachment has getting a number.
+    fn add_attachments(&mut self, cx: &mut Context<Self>) {
+        let picked = attachments::pick_and_read(cx);
+        cx.spawn(async move |this, cx| {
+            let Some(read) = picked.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                let mut errors = Vec::new();
+                for result in read {
+                    match result {
+                        Ok(attachment) => {
+                            attachment.add_to(&mut this.attachments);
+                        }
+                        Err(error) => errors.push(error),
+                    }
+                }
+                this.error = (!errors.is_empty()).then(|| errors.join("\n").into());
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.attachments.len() {
+            self.attachments.remove(index);
+        }
+        cx.notify();
+    }
+
     /// Protecting a field hides its value, as a password is hidden.
     fn toggle_protected(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(row) = self.custom_fields.get_mut(index) else {
@@ -347,6 +382,7 @@ impl EntryEditor {
             color: self.color,
             icon: self.icon,
             expires,
+            attachments: self.attachments.clone(),
         };
         cx.emit(EntryEditorEvent::Save(fields));
     }
@@ -432,6 +468,7 @@ impl Render for EntryEditor {
             .child(self.render_icon(theme, cx))
             .child(self.render_expiry(theme, cx))
             .child(self.render_custom_fields(theme, cx))
+            .child(self.render_attachments(theme, cx))
             .when_some(self.error.clone(), |this, error| {
                 this.child(div().text_sm().text_color(theme.error).child(error))
             })
@@ -639,6 +676,70 @@ impl EntryEditor {
                         ),
                 )
             })
+    }
+
+    fn render_attachments(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(attachment.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .text_sm()
+                            .child(
+                                div()
+                                    .text_color(theme.muted)
+                                    .child(attachments::size_label(attachment.size())),
+                            )
+                            .child(
+                                div()
+                                    .id(("remove-attachment", index))
+                                    .cursor_pointer()
+                                    .text_color(theme.accent)
+                                    .child(strings::REMOVE_ATTACHMENT)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_attachment(index, cx)
+                                    })),
+                            ),
+                    )
+            });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::ATTACHMENTS)
+                    .child(
+                        div()
+                            .id("add-attachment")
+                            .cursor_pointer()
+                            .text_color(theme.accent)
+                            .child(strings::ADD_ATTACHMENT)
+                            .on_click(cx.listener(|this, _, _, cx| this.add_attachments(cx))),
+                    ),
+            )
+            .children(rows)
     }
 
     fn render_custom_fields(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {

@@ -20,6 +20,7 @@ use crate::actions::{
     SelectNextEntry, SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified,
     SortByTitle, SortByUrl, SortByUsername,
 };
+use crate::attachments::{self, Preview};
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
@@ -71,6 +72,8 @@ pub struct VaultBrowser {
     revealed_fields: Vec<usize>,
     /// The custom field of the selected Entry last copied, by index.
     copied_field: Option<usize>,
+    /// The attachment of the selected Entry being previewed.
+    attachment_preview: Option<Preview>,
     /// What the latest Merges of changes made elsewhere changed, until dismissed or timed out.
     merge_notice: Option<SharedString>,
     /// Counts the notices shown, so a timeout only hides the one it was set for.
@@ -185,6 +188,7 @@ impl VaultBrowser {
             custom_field_focus: Vec::new(),
             revealed_fields: Vec::new(),
             copied_field: None,
+            attachment_preview: None,
             merge_notice: None,
             merge_notice_generation: 0,
         }
@@ -432,6 +436,7 @@ impl VaultBrowser {
         self.notice = None;
         self.revealed_fields.clear();
         self.copied_field = None;
+        self.attachment_preview = None;
         cx.notify();
     }
 
@@ -770,6 +775,56 @@ impl VaultBrowser {
         cx.notify();
     }
 
+    /// An attachment of the selected Entry, by index.
+    fn selected_attachment(&self, index: usize, cx: &App) -> Option<keefast_core::Attachment> {
+        let workspace = self.workspace.read(cx);
+        let (vault, id) = self.selected_entry(cx)?;
+        workspace
+            .entry(vault, id)?
+            .attachments()
+            .get(index)
+            .cloned()
+    }
+
+    /// Shows a preview of an attachment of the selected Entry, or hides the one shown.
+    fn toggle_attachment_preview(&mut self, index: usize, cx: &mut Context<Self>) {
+        let attachment = self.selected_attachment(index, cx);
+        let shown = self
+            .attachment_preview
+            .as_ref()
+            .zip(attachment.as_ref())
+            .is_some_and(|(preview, attachment)| preview.shows(index, attachment));
+        self.attachment_preview = attachment
+            .filter(|_| !shown)
+            .map(|attachment| Preview::new(index, &attachment));
+        cx.notify();
+    }
+
+    /// Asks where to save an attachment of the selected Entry, and saves it there.
+    fn save_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(attachment) = self.selected_attachment(index, cx) else {
+            return;
+        };
+        let saving = attachments::save_to_disk(attachment, cx);
+        cx.spawn(async move |this, cx| {
+            let Some(result) = saving.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(notice) => {
+                        this.notice = Some(notice.into());
+                        this.error = None;
+                    }
+                    Err(error) => this.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Keys on a focused custom field besides the actions bound to it (Enter and Ctrl+C copy
     /// it): Space shows or hides it, and Escape goes back to the Entry list.
     fn on_custom_field_key(
@@ -893,6 +948,7 @@ impl VaultBrowser {
                     self.detail = Detail::Entry;
                     self.revealed_fields.clear();
                     self.copied_field = None;
+                    self.attachment_preview = None;
                 }
             }
             EntryEditorEvent::Cancel => {
@@ -1919,6 +1975,9 @@ impl VaultBrowser {
             self.render_access(vault, entry, theme, cx),
             |this, access| this.child(access),
         )
+        .when(!entry.attachments().is_empty(), |this| {
+            this.child(self.render_attachments(entry, theme, cx))
+        })
         .into_any_element()
     }
 
@@ -1988,6 +2047,93 @@ impl VaultBrowser {
                 .children(rows)
                 .into_any_element(),
         )
+    }
+
+    /// The selected Entry's attachments, each with its size, a preview when it is text or an
+    /// image, and a way to save it to disk.
+    fn render_attachments(&self, entry: &Entry, theme: Theme, cx: &Context<Self>) -> AnyElement {
+        let rows =
+            entry
+                .attachments()
+                .iter()
+                .enumerate()
+                .map(|(index, attachment)| {
+                    let preview = self
+                        .attachment_preview
+                        .as_ref()
+                        .filter(|preview| preview.shows(index, attachment));
+                    let link = |id: &'static str, label: &'static str| {
+                        div()
+                            .id((id, index))
+                            .cursor_pointer()
+                            .text_color(theme.accent)
+                            .child(label)
+                    };
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(attachment.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_3()
+                                        .text_sm()
+                                        .child(
+                                            div()
+                                                .text_color(theme.muted)
+                                                .child(attachments::size_label(attachment.size())),
+                                        )
+                                        .when(attachments::can_preview(attachment), |this| {
+                                            this.child(
+                                                link(
+                                                    "preview-attachment",
+                                                    if preview.is_some() {
+                                                        strings::HIDE_PREVIEW
+                                                    } else {
+                                                        strings::PREVIEW_ATTACHMENT
+                                                    },
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_attachment_preview(index, cx)
+                                                })),
+                                            )
+                                        })
+                                        .child(
+                                            link("save-attachment", strings::SAVE_ATTACHMENT)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.save_attachment(index, cx)
+                                                })),
+                                        ),
+                                ),
+                        )
+                        .when_some(preview, |this, preview| {
+                            this.child(preview.render(attachment, theme))
+                        })
+                });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::ATTACHMENTS),
+            )
+            .children(rows)
+            .into_any_element()
     }
 
     /// The current TOTP code with its countdown, copied when clicked.
@@ -2174,6 +2320,12 @@ pub fn describe(error: &EditVaultError) -> &'static str {
         EditVaultError::Edit(EditError::IconNotPng) => strings::ERROR_ICON_NOT_PNG,
         EditVaultError::Edit(EditError::IconTooLarge) => strings::ERROR_ICON_TOO_LARGE,
         EditVaultError::Edit(EditError::VersionNotFound) => strings::ERROR_VERSION_NOT_FOUND,
+        EditVaultError::Edit(EditError::AttachmentNameEmpty) => {
+            strings::ERROR_ATTACHMENT_NAME_EMPTY
+        }
+        EditVaultError::Edit(EditError::AttachmentNameTaken) => {
+            strings::ERROR_ATTACHMENT_NAME_TAKEN
+        }
     }
 }
 

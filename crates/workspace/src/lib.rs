@@ -2,6 +2,7 @@
 //! No GPUI here; the app renders this state and sends it commands.
 
 mod atomic_file;
+mod attachments;
 mod browser;
 mod browser_hosts;
 mod clipboard;
@@ -31,6 +32,7 @@ use keefast_core::{
 };
 use secrecy::SecretString;
 
+pub use attachments::{read_attachment, write_attachment};
 pub use browser::{
     AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId,
     KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId, PairingRequest,

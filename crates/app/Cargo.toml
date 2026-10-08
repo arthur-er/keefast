@@ -12,6 +12,7 @@ keefast-native-host.workspace = true
 keefast-core.workspace = true
 keefast-workspace.workspace = true
 gpui.workspace = true
+dirs.workspace = true
 secrecy.workspace = true
 zeroize = "1"
 

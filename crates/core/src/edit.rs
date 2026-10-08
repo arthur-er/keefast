@@ -8,11 +8,14 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::appearance::{STANDARD_ICON_COUNT, join_tags, parse_tags};
+use crate::attachment;
 use crate::kdbx::random;
 use crate::totp::{self, TOTP_FIELDS};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node, Secret};
-use crate::{CustomField, Entry, EntryColor, EntryIcon, EntryId, GroupId, Timestamp, Totp, Vault};
+use crate::{
+    Attachment, CustomField, Entry, EntryColor, EntryIcon, EntryId, GroupId, Timestamp, Totp, Vault,
+};
 
 /// The fields of an Entry that keefast edits.
 #[derive(Clone)]
@@ -30,6 +33,8 @@ pub struct EntryFields {
     pub icon: EntryIcon,
     /// When the Entry expires, if it does.
     pub expires: Option<Timestamp>,
+    /// In order; attachments the Entry has but these don't are removed.
+    pub attachments: Vec<Attachment>,
 }
 
 impl Default for EntryFields {
@@ -45,6 +50,7 @@ impl Default for EntryFields {
             color: None,
             icon: EntryIcon::default(),
             expires: None,
+            attachments: Vec::new(),
         }
     }
 }
@@ -68,6 +74,10 @@ pub enum EditError {
     FieldNameTaken,
     #[error("the Entry has no such version in its history")]
     VersionNotFound,
+    #[error("an attachment needs a name")]
+    AttachmentNameEmpty,
+    #[error("the Entry already has an attachment with this name")]
+    AttachmentNameTaken,
     #[error("a Pairing needs a name")]
     PairingNameEmpty,
     #[error("the Vault already has a Pairing with this name")]
@@ -115,6 +125,7 @@ impl From<&Entry> for EntryFields {
             color: entry.color(),
             icon: entry.icon(),
             expires: entry.expires(),
+            attachments: entry.attachments().to_vec(),
         }
     }
 }
@@ -169,6 +180,17 @@ impl EntryFields {
                 return Err(EditError::FieldNameTaken);
             }
         }
+        for (index, attachment) in self.attachments.iter().enumerate() {
+            if attachment.name.trim().is_empty() {
+                return Err(EditError::AttachmentNameEmpty);
+            }
+            if self.attachments[..index]
+                .iter()
+                .any(|earlier| earlier.name == attachment.name)
+            {
+                return Err(EditError::AttachmentNameTaken);
+            }
+        }
         Ok(())
     }
 }
@@ -216,6 +238,7 @@ impl Vault {
             let value = field.value.expose_secret();
             push(&mut entry, new_string(&field.name, value, field.protected));
         }
+        attachment::write(&mut entry, &fields.attachments, &mut self.file.binaries);
         let mut auto_type = Element::new("AutoType");
         push(&mut auto_type, text_element("Enabled", "True"));
         push(&mut auto_type, text_element("DataTransferObfuscation", "0"));
@@ -241,20 +264,30 @@ impl Vault {
         let path = self.path_to(Kind::Entry, entry.0)?;
         fields.check(self)?;
         let current = self.entry(entry).expect("the path leads to it");
-        if fields.match_entry(current) {
+        let attachments_changed = current.attachments() != fields.attachments.as_slice();
+        if fields.match_entry(current) && !attachments_changed {
             return Ok(());
         }
         let current = EntryFields::from(current);
         let protection = FIELDS.map(|(_, protect)| self.protects(protect));
-        let element = self.archive(&path);
+        // The history is trimmed by what its attachments weigh, so archive before the pool of
+        // attachment contents is taken out to be written to.
+        self.archive(&path);
+        let mut pool = std::mem::take(&mut self.file.binaries);
+        let element = self.at_mut(&path);
         for (((key, _), protect), value) in FIELDS.into_iter().zip(protection).zip(fields.values())
         {
             set_string(element, key, value, protect);
         }
         set_custom_fields(element, &fields.custom_fields);
         update_marks_and_expiry(element, &current, fields);
+        if attachments_changed {
+            attachment::write(element, &fields.attachments, &mut pool);
+        }
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
+        self.file.binaries = pool;
+        self.drop_unused_attachments();
         self.refresh();
         Ok(())
     }
@@ -298,6 +331,7 @@ impl Vault {
         }
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
+        self.drop_unused_attachments();
         self.refresh();
         Ok(())
     }
@@ -334,8 +368,15 @@ impl Vault {
         }
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
+        self.drop_unused_attachments();
         self.refresh();
         Ok(())
+    }
+
+    /// Drops attachment contents that no Entry or history version refers to any more, as
+    /// KeePass does, so removed attachments don't stay in the Vault file.
+    fn drop_unused_attachments(&mut self) {
+        attachment::drop_unused(&mut self.file.document, &mut self.file.binaries);
     }
 
     /// Adds the Entry at `path`, as it is now, to its history, which is trimmed to the Vault's
@@ -384,6 +425,7 @@ impl Vault {
         let path = self.path_to(Kind::Entry, entry.0)?;
         let element = self.take(&path);
         self.record_deletion(&element, now);
+        self.drop_unused_attachments();
         self.refresh();
         Ok(())
     }
@@ -463,6 +505,7 @@ impl Vault {
         let path = self.path_to(Kind::Group, group.0)?;
         let element = self.take(&path);
         self.record_deletion(&element, now);
+        self.drop_unused_attachments();
         self.refresh();
         Ok(())
     }

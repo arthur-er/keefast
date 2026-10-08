@@ -5,6 +5,7 @@
 //! attributes, plugin data, comments) is written back exactly as it was read.
 
 use std::fmt;
+use std::sync::Arc;
 
 use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesStart, Event};
@@ -29,13 +30,14 @@ pub(crate) enum Node {
     Comment(String),
 }
 
-/// Decrypted bytes that are wiped on drop and never printed.
+/// Decrypted bytes that are wiped on drop and never printed. Clones share the bytes, so an
+/// attachment read by every Entry and history version that refers to it is held once.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct Secret(Zeroizing<Vec<u8>>);
+pub(crate) struct Secret(Arc<Zeroizing<Vec<u8>>>);
 
 impl Secret {
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
-        Self(Zeroizing::new(bytes))
+        Self(Arc::new(Zeroizing::new(bytes)))
     }
 
     pub(crate) fn bytes(&self) -> &[u8] {
@@ -45,7 +47,7 @@ impl Secret {
 
 impl From<Zeroizing<Vec<u8>>> for Secret {
     fn from(bytes: Zeroizing<Vec<u8>>) -> Self {
-        Self(bytes)
+        Self(Arc::new(bytes))
     }
 }
 

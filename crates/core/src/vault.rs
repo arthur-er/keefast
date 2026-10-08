@@ -7,8 +7,9 @@ use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
 use crate::appearance::{CustomIcon, custom_icons, parse_tags};
+use crate::attachment::{self, Attachment};
 use crate::edit::{is_standard_field, string_value};
-use crate::kdbx::{Key, VaultFile};
+use crate::kdbx::{Binary, Key, VaultFile};
 use crate::xml::Element;
 use crate::{EntryColor, EntryIcon, OpenError, Timestamp, Totp, TotpError, totp};
 
@@ -98,6 +99,8 @@ pub struct Entry {
     totp: Option<Result<Totp, TotpError>>,
     /// In Vault file order.
     custom_fields: Vec<CustomField>,
+    /// In Vault file order.
+    attachments: Vec<Attachment>,
     pub(crate) custom_data: BTreeMap<String, String>,
     tags: Vec<String>,
     created: Option<Timestamp>,
@@ -118,7 +121,7 @@ impl Vault {
             .and_then(|root| root.child("Group"))
             .ok_or_else(|| OpenError::Corrupt("the Vault has no root Group".into()))?;
         Ok(Self {
-            root: Group::from_element(group)?,
+            root: Group::from_element(group, &file.binaries)?,
             custom_icons: custom_icons(&file.document),
             file,
             key,
@@ -127,7 +130,8 @@ impl Vault {
 
     /// Reads the Groups, Entries and custom icons back from the document after an edit.
     pub(crate) fn refresh(&mut self) {
-        self.root = Group::from_element(self.root_group()).expect("edits keep every UUID valid");
+        self.root = Group::from_element(self.root_group(), &self.file.binaries)
+            .expect("edits keep every UUID valid");
         self.custom_icons = custom_icons(&self.file.document);
     }
 
@@ -238,7 +242,7 @@ fn expires(element: &Element) -> Option<Timestamp> {
 }
 
 impl Group {
-    fn from_element(group: &Element) -> Result<Self, OpenError> {
+    fn from_element(group: &Element, pool: &[Binary]) -> Result<Self, OpenError> {
         Ok(Self {
             id: GroupId(uuid(group)?),
             name: group.child("Name").map(Element::text).unwrap_or_default(),
@@ -246,11 +250,11 @@ impl Group {
             custom_data: custom_data(group),
             groups: group
                 .children_named("Group")
-                .map(Group::from_element)
+                .map(|group| Group::from_element(group, pool))
                 .collect::<Result<_, _>>()?,
             entries: group
                 .children_named("Entry")
-                .map(Entry::from_element)
+                .map(|entry| Entry::from_element(entry, pool))
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -293,7 +297,7 @@ impl Group {
 }
 
 impl Entry {
-    fn from_element(entry: &Element) -> Result<Self, OpenError> {
+    fn from_element(entry: &Element, pool: &[Binary]) -> Result<Self, OpenError> {
         // Each field's name and value element, the value read only when wanted.
         let strings = || {
             entry.children_named("String").map(|string| {
@@ -322,6 +326,7 @@ impl Entry {
                 .collect(),
             totp: totp::read(&|name| string_value(entry, name)),
             custom_fields: custom_fields(strings()),
+            attachments: attachment::read(entry, pool),
             custom_data: custom_data(entry),
             tags: parse_tags(&entry.child("Tags").map(Element::text).unwrap_or_default()),
             created: time(entry, "CreationTime"),
@@ -338,7 +343,7 @@ impl Entry {
                 .map(|history| {
                     history
                         .children_named("Entry")
-                        .map(Entry::from_element)
+                        .map(|entry| Entry::from_element(entry, pool))
                         .collect::<Result<_, _>>()
                 })
                 .transpose()?
@@ -386,6 +391,11 @@ impl Entry {
     /// including those other features keep their settings in, such as `KP2A_URL` and `otp`.
     pub fn custom_fields(&self) -> &[CustomField] {
         &self.custom_fields
+    }
+
+    /// The files kept with the Entry, in Vault file order.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
     }
 
     pub fn created(&self) -> Option<Timestamp> {
@@ -436,6 +446,7 @@ impl fmt::Debug for Entry {
             .field("password", &"[hidden]")
             .field("url", &self.url)
             .field("custom_fields", &self.custom_fields)
+            .field("attachments", &self.attachments)
             .field("tags", &self.tags)
             .field("color", &self.color)
             .field("icon", &self.icon)
@@ -455,7 +466,7 @@ mod tests {
             "<Entry><UUID>AAAAAAAAAAAAAAAAAAAAAA==</UUID>{marks}<Times>\
              <ExpiryTime>islY4g4AAAA=</ExpiryTime><Expires>False</Expires></Times></Entry>"
         );
-        Entry::from_element(&xml::parse(&xml).unwrap()).unwrap()
+        Entry::from_element(&xml::parse(&xml).unwrap(), &[]).unwrap()
     }
 
     #[test]
@@ -484,6 +495,7 @@ mod tests {
                  <ExpiryTime>islY4g4AAAA=</ExpiryTime><Expires>True</Expires></Times></Entry>",
             )
             .unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(

@@ -5,6 +5,7 @@
 //! ADR 0002), so that a save keeps everything in the Vault file.
 
 mod appearance;
+mod attachment;
 mod browser;
 mod edit;
 mod fuzzy;
@@ -25,6 +26,7 @@ pub use appearance::{
     CustomIcon, CustomIconId, EntryColor, EntryIcon, MAX_CUSTOM_ICON_BYTES, STANDARD_ICON_COUNT,
     parse_tags,
 };
+pub use attachment::{Attachment, AttachmentPreview, ImageFormat};
 pub use browser::{
     AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, DefaultAccessPolicy, Pairing,
     RememberedAccess, SiteEntry,
