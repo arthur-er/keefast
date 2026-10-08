@@ -323,6 +323,37 @@ fn locked_vaults_have_nothing_downloaded() {
 }
 
 #[test]
+fn a_vault_waiting_to_lock_has_nothing_downloaded() {
+    let mut h = harness();
+    // An unsaved change keeps the Vault waiting to lock, hidden, rather than locking it.
+    let github = h
+        .workspace
+        .visible_entries(EntryScope::Vault(h.personal))
+        .into_iter()
+        .find(|listed| listed.entry.title() == "GitHub")
+        .unwrap()
+        .entry
+        .id();
+    h.workspace
+        .update_entry(
+            h.personal,
+            github,
+            &EntryFields {
+                title: "GitHub".into(),
+                url: "https://github.com/login".into(),
+                ..EntryFields::default()
+            },
+        )
+        .unwrap();
+    h.workspace
+        .lock_vault(h.personal, &mut FakeClipboard::default());
+    assert!(h.workspace.vault(h.personal).unwrap().is_locking());
+
+    assert!(h.workspace.begin_favicon_downloads().is_empty());
+    assert!(h.source.asked().is_empty());
+}
+
+#[test]
 fn without_a_favicon_source_nothing_is_downloaded() {
     let storage = Arc::new(FakeStorage::default().with_file(&personal_vault(), KEEPASSXC_KDBX4));
     let config = AppConfig {

@@ -159,10 +159,10 @@ impl Workspace {
             .retain(|origin, _| used.contains(origin));
     }
 
-    /// The sites of the unlocked Vaults' Entries, with repeats.
+    /// The sites of the unlocked Vaults' Entries, with repeats, leaving out Vaults waiting to lock.
     fn entry_sites(&self) -> impl Iterator<Item = Site> + '_ {
-        self.vaults
-            .iter()
+        // A Vault waiting to lock is hidden like a locked one: no site of it is looked up.
+        self.readable_vaults()
             .flat_map(|open| open.vault.root().all_entries())
             .filter_map(|entry| Site::of_entry_url(entry.url()))
     }
