@@ -5,7 +5,9 @@ use gpui::{
     ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
-use keefast_workspace::{CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace};
+use keefast_workspace::{
+    CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace,
+};
 
 use crate::actions::{
     self, CopyPassword, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
@@ -226,15 +228,23 @@ impl VaultBrowser {
         let Some((vault, entry)) = self.selected_entry else {
             return;
         };
-        let copied = self.workspace.update(cx, |workspace, cx| {
+        let result = self.workspace.update(cx, |workspace, cx| {
             workspace
                 .copy_field(&mut AppClipboard(cx), vault, entry, field)
                 .map(|()| workspace.clipboard_clears_in())
         });
-        let Ok(clears_in) = copied else {
-            self.error = Some(strings::ERROR_NOT_FOUND.into());
-            cx.notify();
-            return;
+        let clears_in = match result {
+            Ok(clears_in) => clears_in,
+            Err(CopyError::Empty) => {
+                self.notice = Some(strings::NOTHING_TO_COPY.into());
+                cx.notify();
+                return;
+            }
+            Err(CopyError::NotFound) => {
+                self.error = Some(strings::ERROR_NOT_FOUND.into());
+                cx.notify();
+                return;
+            }
         };
         let copied = match field {
             CopyField::Username => strings::COPIED_USERNAME,
@@ -252,19 +262,27 @@ impl VaultBrowser {
         self.error = None;
         // A new copy replaces the clear waiting for the last one.
         let workspace = self.workspace.clone();
-        self.clipboard_clear = Some(cx.spawn(async move |_, cx| {
-            while let Ok(Some(wait)) =
-                workspace.read_with(cx, |workspace, _| workspace.clipboard_clears_in())
-            {
-                cx.background_executor().timer(wait).await;
-                let cleared = workspace.update(cx, |workspace, cx| {
-                    workspace.clear_clipboard_if_due(&mut AppClipboard(cx))
-                });
-                if cleared.is_err() {
-                    break;
+        self.clipboard_clear = clears_in.map(|_| {
+            cx.spawn(async move |this, cx| {
+                while let Ok(Some(wait)) =
+                    workspace.read_with(cx, |workspace, _| workspace.clipboard_clears_in())
+                {
+                    cx.background_executor().timer(wait).await;
+                    let cleared = workspace.update(cx, |workspace, cx| {
+                        workspace.clear_clipboard_if_due(&mut AppClipboard(cx))
+                    });
+                    if cleared.is_err() {
+                        return;
+                    }
                 }
-            }
-        }));
+                // The notice about the copy is out of date now.
+                this.update(cx, |this, cx| {
+                    this.notice = None;
+                    cx.notify();
+                })
+                .ok();
+            })
+        });
         cx.notify();
     }
 

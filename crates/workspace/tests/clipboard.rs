@@ -6,9 +6,9 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use keefast_core::{CompositeKey, EntryId};
+use keefast_core::{CompositeKey, EntryFields, EntryId};
 use keefast_workspace::{
-    AppConfig, CopyError, CopyField, EntryScope, FileConfigStore, VaultId, Workspace,
+    AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, VaultId, Workspace,
 };
 use support::{
     FakeClipboard, FakeClock, FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD,
@@ -175,6 +175,7 @@ fn clearing_can_be_turned_off() {
 fn copying_from_an_entry_that_is_gone_fails_and_leaves_the_clipboard_alone() {
     let mut h = harness();
     h.clipboard.copy_elsewhere("a shopping list");
+    // Into the Recycle Bin, then out of it for good.
     h.workspace.delete_entry(h.vault, h.github).unwrap();
     h.workspace.delete_entry(h.vault, h.github).unwrap();
 
@@ -188,30 +189,62 @@ fn copying_from_an_entry_that_is_gone_fails_and_leaves_the_clipboard_alone() {
 }
 
 #[test]
+fn an_empty_field_is_not_copied() {
+    let mut h = harness();
+    let mut fields = EntryFields::from(h.workspace.entry(h.vault, h.github).unwrap());
+    fields.username = String::new();
+    h.workspace
+        .update_entry(h.vault, h.github, &fields)
+        .unwrap();
+    h.clipboard.copy_elsewhere("a shopping list");
+
+    let result = h
+        .workspace
+        .copy_field(&mut h.clipboard, h.vault, h.github, CopyField::Username);
+
+    assert_eq!(result, Err(CopyError::Empty));
+    assert_eq!(h.clipboard.text(), Some("a shopping list"));
+    assert_eq!(h.workspace.clipboard_clears_in(), None);
+}
+
+#[test]
+fn quitting_clears_a_copied_password_at_once() {
+    let mut h = harness();
+    h.copy(CopyField::Password);
+
+    h.workspace.clear_clipboard_now(&mut h.clipboard);
+
+    assert_eq!(h.clipboard.text(), Some(""));
+    assert_eq!(h.workspace.clipboard_clears_in(), None);
+}
+
+#[test]
+fn quitting_leaves_what_the_user_copied_since_alone() {
+    let mut h = harness();
+    h.copy(CopyField::Password);
+    h.clipboard.copy_elsewhere("a shopping list");
+
+    h.workspace.clear_clipboard_now(&mut h.clipboard);
+
+    assert_eq!(h.clipboard.text(), Some("a shopping list"));
+}
+
+#[test]
 fn the_clipboard_wait_is_kept_in_the_config_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    std::fs::write(&path, "clipboard_clear_seconds = 12\n").unwrap();
-    assert_eq!(
-        keefast_workspace::ConfigStore::load(&FileConfigStore::new(path.clone()))
+    let wait_in_file = |text: &str| {
+        std::fs::write(&path, text).unwrap();
+        FileConfigStore::new(path.clone())
+            .load()
             .unwrap()
-            .clipboard_clear_after,
+            .clipboard_clear_after
+    };
+
+    assert_eq!(
+        wait_in_file("clipboard_clear_seconds = 12\n"),
         Some(Duration::from_secs(12))
     );
-
-    std::fs::write(&path, "clipboard_clear_seconds = 0\n").unwrap();
-    assert_eq!(
-        keefast_workspace::ConfigStore::load(&FileConfigStore::new(path.clone()))
-            .unwrap()
-            .clipboard_clear_after,
-        None
-    );
-
-    std::fs::write(&path, "").unwrap();
-    assert_eq!(
-        keefast_workspace::ConfigStore::load(&FileConfigStore::new(path))
-            .unwrap()
-            .clipboard_clear_after,
-        Some(Duration::from_secs(30))
-    );
+    assert_eq!(wait_in_file("clipboard_clear_seconds = 0\n"), None);
+    assert_eq!(wait_in_file(""), Some(Duration::from_secs(30)));
 }

@@ -216,7 +216,7 @@ pub struct Workspace {
     browser_hosts: Option<Arc<dyn BrowserHosts>>,
     /// Where the native host was last registered, or why it couldn't be.
     browser_hosts_status: Option<io::Result<Vec<Browser>>>,
-    clipboard: clipboard::PendingClear,
+    pending_clear: clipboard::PendingClear,
 }
 
 impl Workspace {
@@ -240,7 +240,7 @@ impl Workspace {
             browser: Default::default(),
             browser_hosts: None,
             browser_hosts_status: None,
-            clipboard: Default::default(),
+            pending_clear: Default::default(),
         }
     }
 
@@ -367,7 +367,8 @@ impl Workspace {
     }
 
     /// Copies an Entry's username or password to the clipboard, to be cleared after the
-    /// configured wait (see [`Self::clear_clipboard_if_due`]).
+    /// configured wait (see [`Self::clear_clipboard_if_due`]). An empty field is not copied, so
+    /// the clipboard keeps what it holds.
     pub fn copy_field(
         &mut self,
         clipboard: &mut dyn Clipboard,
@@ -389,19 +390,28 @@ impl Workspace {
             CopyField::Username => entry.username(),
             CopyField::Password => entry.password().expose_secret(),
         };
-        self.clipboard.copy(clipboard, text, clear_at);
+        if text.is_empty() {
+            return Err(CopyError::Empty);
+        }
+        self.pending_clear.copy(clipboard, text, clear_at);
         Ok(())
     }
 
     /// How long until what keefast last copied is cleared from the clipboard, if it will be.
     pub fn clipboard_clears_in(&self) -> Option<Duration> {
-        self.clipboard.clears_in(self.clock.now())
+        self.pending_clear.clears_in(self.clock.now())
     }
 
     /// Clears what keefast last copied from the clipboard once its wait is over, unless
     /// something else has been copied since. Call it when [`Self::clipboard_clears_in`] says.
     pub fn clear_clipboard_if_due(&mut self, clipboard: &mut dyn Clipboard) {
-        self.clipboard.clear_if_due(clipboard, self.clock.now());
+        self.pending_clear.clear_if_due(clipboard, self.clock.now());
+    }
+
+    /// Clears what keefast last copied from the clipboard without waiting, unless something
+    /// else has been copied since. Call it when quitting, so nothing copied outlives the app.
+    pub fn clear_clipboard_now(&mut self, clipboard: &mut dyn Clipboard) {
+        self.pending_clear.clear_now(clipboard);
     }
 
     /// Reads, decrypts and adds a Vault in one blocking call.

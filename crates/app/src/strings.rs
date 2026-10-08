@@ -35,6 +35,7 @@ pub const DETAIL_NOTES: &str = "Notes";
 pub const UNTITLED: &str = "(untitled)";
 pub const COPIED_USERNAME: &str = "Username copied.";
 pub const COPIED_PASSWORD: &str = "Password copied.";
+pub const NOTHING_TO_COPY: &str = "That field is empty, so nothing was copied.";
 pub const COPIED_CLEARS_IN: &str = "The clipboard clears in {seconds} s.";
 pub const HIDDEN_PASSWORD: &str = "••••••••";
 pub const PASSWORD_MASK_CHAR: &str = "•";

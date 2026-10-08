@@ -26,7 +26,8 @@ pub const CONTEXT: &str = "VaultBrowser";
 pub const TEXT_FIELD_CONTEXT: &str = "TextField";
 
 pub fn bind_keys(cx: &mut App) {
-    let list = Some("VaultBrowser && !TextField");
+    let list = format!("{CONTEXT} && !{TEXT_FIELD_CONTEXT}");
+    let list = Some(list.as_str());
     let anywhere = Some(CONTEXT);
     cx.bind_keys([
         KeyBinding::new("down", SelectNextEntry, list),

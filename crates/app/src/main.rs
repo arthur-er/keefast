@@ -30,6 +30,7 @@ use keefast_workspace::{
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
 use crate::browser_integration::BrowserIntegration;
+use crate::clipboard::AppClipboard;
 use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::unlock::{UnlockEvent, UnlockView};
@@ -61,6 +62,15 @@ impl KeefastWindow {
             }
             workspace
         });
+        // Nothing keefast copied outlives it.
+        let quitting = workspace.clone();
+        App::on_app_quit(cx, move |cx| {
+            quitting.update(cx, |workspace, cx| {
+                workspace.clear_clipboard_now(&mut AppClipboard(cx))
+            });
+            async {}
+        })
+        .detach();
         let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
         cx.observe_in(&integration, window, Self::show_pending_requests)
             .detach();

@@ -24,6 +24,8 @@ pub enum CopyField {
 pub enum CopyError {
     #[error("that Entry no longer exists")]
     NotFound,
+    #[error("that field of the Entry is empty")]
+    Empty,
 }
 
 /// What keefast last put on the clipboard and when to clear it, until it is cleared.
@@ -50,12 +52,19 @@ impl PendingClear {
     /// Clears the clipboard once it is time, but only if it still holds what keefast put
     /// there: whatever the user copied since is theirs.
     pub fn clear_if_due(&mut self, clipboard: &mut dyn Clipboard, now: SystemTime) {
-        let Some((copied, at)) = &self.0 else {
+        let Some((_, at)) = &self.0 else {
             return;
         };
-        if now < *at {
-            return;
+        if now >= *at {
+            self.clear_now(clipboard);
         }
+    }
+
+    /// Clears the clipboard now if it still holds what keefast put there, as when quitting.
+    pub fn clear_now(&mut self, clipboard: &mut dyn Clipboard) {
+        let Some((copied, _)) = &self.0 else {
+            return;
+        };
         let current = clipboard.read_text().map(Zeroizing::new);
         if current.as_deref().map(String::as_str) == Some(copied.expose_secret()) {
             clipboard.write_text("");
