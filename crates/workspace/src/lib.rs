@@ -373,7 +373,7 @@ impl Workspace {
         &mut self,
         clipboard: &mut dyn Clipboard,
         vault: VaultId,
-        entry: EntryId,
+        entry_id: EntryId,
         field: CopyField,
     ) -> Result<(), CopyError> {
         let clear_at = self
@@ -384,11 +384,20 @@ impl Workspace {
             .vaults
             .iter()
             .find(|open| open.id == vault)
-            .and_then(|open| open.vault.entry(entry))
+            .and_then(|open| open.vault.entry(entry_id))
             .ok_or(CopyError::NotFound)?;
+        let totp_code;
         let text = match field {
             CopyField::Username => entry.username(),
             CopyField::Password => entry.password().expose_secret(),
+            CopyField::TotpCode => {
+                totp_code = self
+                    .totp_code(vault, entry_id)
+                    .and_then(Result::ok)
+                    .map(|code| code.code().to_owned())
+                    .unwrap_or_default();
+                &totp_code
+            }
         };
         if text.is_empty() {
             return Err(CopyError::Empty);

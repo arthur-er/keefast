@@ -15,6 +15,7 @@ actions!(
         OpenEntry,
         CopyUsername,
         CopyPassword,
+        CopyTotp,
         SaveAll,
         OpenVault,
     ]
@@ -37,6 +38,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", OpenEntry, list),
         KeyBinding::new("secondary-b", CopyUsername, list),
         KeyBinding::new("secondary-c", CopyPassword, list),
+        KeyBinding::new("secondary-t", CopyTotp, list),
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
     ]);

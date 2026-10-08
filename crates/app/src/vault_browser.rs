@@ -10,7 +10,7 @@ use keefast_workspace::{
 };
 
 use crate::actions::{
-    self, CopyPassword, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
+    self, CopyPassword, CopyTotp, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
     SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
 };
 use crate::browser_integration::BrowserIntegration;
@@ -222,11 +222,16 @@ impl VaultBrowser {
         self.copy(CopyField::Password, cx);
     }
 
+    fn copy_totp_code(&mut self, _: &CopyTotp, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy_totp(cx);
+    }
+
     /// Copies a field of the selected Entry, and clears it from the clipboard when its time
     /// comes.
-    fn copy(&mut self, field: CopyField, cx: &mut Context<Self>) {
+    /// Returns whether something was copied.
+    fn copy(&mut self, field: CopyField, cx: &mut Context<Self>) -> bool {
         let Some((vault, entry)) = self.selected_entry else {
-            return;
+            return false;
         };
         let result = self.workspace.update(cx, |workspace, cx| {
             workspace
@@ -238,17 +243,18 @@ impl VaultBrowser {
             Err(CopyError::Empty) => {
                 self.notice = Some(strings::NOTHING_TO_COPY.into());
                 cx.notify();
-                return;
+                return false;
             }
             Err(CopyError::NotFound) => {
                 self.error = Some(strings::ERROR_NOT_FOUND.into());
                 cx.notify();
-                return;
+                return false;
             }
         };
         let copied = match field {
             CopyField::Username => strings::COPIED_USERNAME,
             CopyField::Password => strings::COPIED_PASSWORD,
+            CopyField::TotpCode => strings::COPIED_TOTP,
         };
         self.notice = Some(match clears_in {
             Some(wait) => {
@@ -284,6 +290,7 @@ impl VaultBrowser {
             })
         });
         cx.notify();
+        true
     }
 
     /// Whether the selected Entry has TOTP, whose countdown needs redrawing.
@@ -299,14 +306,15 @@ impl VaultBrowser {
         self.workspace.read(cx).totp_code(vault, entry)?.ok()
     }
 
-    /// Copies the selected Entry's current TOTP code.
+    /// Copies the selected Entry's current TOTP code, to be cleared from the clipboard like a
+    /// copied password.
     fn copy_totp(&mut self, cx: &mut Context<Self>) {
-        let Some(code) = self.selected_totp(cx) else {
+        if self.selected_totp(cx).is_none() {
             return;
-        };
-        cx.write_to_clipboard(ClipboardItem::new_string(code.code().to_owned()));
-        self.totp_copied = self.selected_entry;
-        cx.notify();
+        }
+        if self.copy(CopyField::TotpCode, cx) {
+            self.totp_copied = self.selected_entry;
+        }
     }
 
     fn open_totp_setup(
@@ -1184,6 +1192,7 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(Self::open_selected))
             .on_action(cx.listener(Self::copy_username))
             .on_action(cx.listener(Self::copy_password))
+            .on_action(cx.listener(Self::copy_totp_code))
             .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
             .size_full()

@@ -6,7 +6,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use keefast_core::{CompositeKey, EntryFields, EntryId};
+use keefast_core::{CompositeKey, EntryFields, EntryId, Totp, TotpAlgorithm};
 use keefast_workspace::{
     AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, VaultId, Workspace,
 };
@@ -247,4 +247,43 @@ fn the_clipboard_wait_is_kept_in_the_config_file() {
     );
     assert_eq!(wait_in_file("clipboard_clear_seconds = 0\n"), None);
     assert_eq!(wait_in_file(""), Some(Duration::from_secs(30)));
+}
+
+#[test]
+fn a_copied_totp_code_is_cleared_like_a_password() {
+    let mut h = harness();
+    let totp = Totp::new("JBSWY3DPEHPK3PXP", TotpAlgorithm::Sha1, 6, 30).unwrap();
+    h.workspace
+        .set_totp(h.vault, h.github, Some(&totp))
+        .unwrap();
+    let code = h
+        .workspace
+        .totp_code(h.vault, h.github)
+        .unwrap()
+        .unwrap()
+        .code()
+        .to_owned();
+
+    h.copy(CopyField::TotpCode);
+    assert_eq!(h.clipboard.text(), Some(code.as_str()));
+    assert_eq!(
+        h.workspace.clipboard_clears_in(),
+        Some(Duration::from_secs(30))
+    );
+
+    h.wait(30);
+
+    assert_eq!(h.clipboard.text(), Some(""));
+}
+
+#[test]
+fn an_entry_without_totp_has_no_code_to_copy() {
+    let mut h = harness();
+
+    let result = h
+        .workspace
+        .copy_field(&mut h.clipboard, h.vault, h.github, CopyField::TotpCode);
+
+    assert_eq!(result, Err(CopyError::Empty));
+    assert_eq!(h.clipboard.text(), None);
 }
