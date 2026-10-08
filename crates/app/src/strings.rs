@@ -46,6 +46,7 @@ pub const UNTITLED: &str = "(untitled)";
 pub const COPIED_USERNAME: &str = "Username copied.";
 pub const COPIED_PASSWORD: &str = "Password copied.";
 pub const COPIED_TOTP: &str = "TOTP code copied.";
+pub const COPIED_FIELD: &str = "Field copied.";
 pub const NOTHING_TO_COPY: &str = "That field is empty, so nothing was copied.";
 pub const COPIED_CLEARS_IN: &str = "The clipboard clears in {seconds} s.";
 pub const HIDDEN_PASSWORD: &str = "••••••••";

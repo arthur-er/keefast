@@ -406,6 +406,10 @@ impl Workspace {
         let text = match field {
             CopyField::Username => entry.username(),
             CopyField::Password => entry.password().expose_secret(),
+            CopyField::CustomField(index) => entry
+                .custom_fields()
+                .get(index)
+                .map_or("", |field| field.value.expose_secret()),
             CopyField::TotpCode => {
                 totp_code = self
                     .totp_code(vault, entry_id)

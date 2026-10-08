@@ -6,7 +6,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use keefast_core::{EntryFields, EntryId, Totp, TotpAlgorithm};
+use keefast_core::{CustomField, EntryFields, EntryId, Totp, TotpAlgorithm};
 use keefast_workspace::{
     AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, UnlockSecrets,
     VaultId, Workspace,
@@ -284,6 +284,46 @@ fn an_entry_without_totp_has_no_code_to_copy() {
     let result = h
         .workspace
         .copy_field(&mut h.clipboard, h.vault, h.github, CopyField::TotpCode);
+
+    assert_eq!(result, Err(CopyError::Empty));
+    assert_eq!(h.clipboard.text(), None);
+}
+
+#[test]
+fn a_copied_custom_field_is_cleared_like_a_password() {
+    let mut h = harness();
+    let mut fields = EntryFields::from(h.workspace.entry(h.vault, h.github).unwrap());
+    fields.custom_fields = vec![CustomField {
+        name: "Recovery code".to_owned(),
+        value: "7391-2210".to_owned().into(),
+        protected: true,
+    }];
+    h.workspace
+        .update_entry(h.vault, h.github, &fields)
+        .unwrap();
+
+    h.copy(CopyField::CustomField(0));
+    assert_eq!(h.clipboard.text(), Some("7391-2210"));
+    assert_eq!(
+        h.workspace.clipboard_clears_in(),
+        Some(Duration::from_secs(30))
+    );
+
+    h.wait(30);
+
+    assert_eq!(h.clipboard.text(), Some(""));
+}
+
+#[test]
+fn a_custom_field_the_entry_does_not_have_is_not_copied() {
+    let mut h = harness();
+
+    let result = h.workspace.copy_field(
+        &mut h.clipboard,
+        h.vault,
+        h.github,
+        CopyField::CustomField(9),
+    );
 
     assert_eq!(result, Err(CopyError::Empty));
     assert_eq!(h.clipboard.text(), None);

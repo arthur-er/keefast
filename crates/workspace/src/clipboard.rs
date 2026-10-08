@@ -21,6 +21,8 @@ pub enum CopyField {
     /// The Entry's TOTP code now. Empty when the Entry has no TOTP, or its settings can't be
     /// read.
     TotpCode,
+    /// One of the Entry's custom fields, by its position in `Entry::custom_fields`.
+    CustomField(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
