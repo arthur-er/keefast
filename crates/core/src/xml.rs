@@ -298,7 +298,7 @@ fn write_element(
             Node::Protected(secret) => out.push_str(&protect(secret.bytes())),
             Node::Comment(comment) => {
                 out.push_str("<!--");
-                out.push_str(comment);
+                out.extend(comment.chars().filter(|&ch| is_xml_char(ch)));
                 out.push_str("-->");
             }
         }
@@ -312,9 +312,21 @@ fn write_element(
     out.push('>');
 }
 
+/// Whether XML 1.0 allows the character in a document at all (its `Char` production): `#x9`,
+/// `#xA`, `#xD`, `#x20-#xD7FF`, `#xE000-#xFFFD` and `#x10000-#x10FFFF`. Other control
+/// characters can't be written even as character references.
+fn is_xml_char(ch: char) -> bool {
+    matches!(ch, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
 /// Escapes markup, and the characters an XML processor would otherwise normalise away.
+///
+/// Characters XML 1.0 doesn't allow (an escape character pasted from a terminal, say) are
+/// dropped, as KeePassXC and KeePass2 drop them when they write: KeePassXC's and KeePass2's
+/// XML readers reject a document that holds one as corrupt, which would make the Vault file
+/// unreadable to them (ADR 0002).
 fn escape(out: &mut String, text: &str, attribute: bool) {
-    for ch in text.chars() {
+    for ch in text.chars().filter(|&ch| is_xml_char(ch)) {
         match ch {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
@@ -414,6 +426,48 @@ mod tests {
         assert!(written.contains("<v Protected=\"True\">enc1</v>"));
         assert!(written.contains("<v Protected=\"True\">enc2</v>"));
         assert!(!format!("{root:?}").contains("one"));
+    }
+
+    /// A strict reader's view of a document: every character is one XML 1.0 allows.
+    fn is_valid_document(written: &str) -> bool {
+        written.chars().all(is_xml_char)
+    }
+
+    #[test]
+    fn characters_xml_does_not_allow_are_not_written() {
+        let mut root = Element::new("a");
+        root.attributes
+            .push(("k".into(), "a\u{1b}b\u{0}c\u{c}d".into()));
+        root.children = vec![
+            Node::Text("note\u{c}\u{1b}[0m\u{b} \u{FFFE}\u{FFFF}kept\tq \u{1F600}\r\n".into()),
+            Node::Comment("c\u{1}d".into()),
+        ];
+
+        let written = write(&root, &mut no_protection);
+
+        assert!(is_valid_document(&written), "written as:\n{written:?}");
+        let reparsed = parse(&written).expect("reparses");
+        assert_eq!(reparsed.attribute("k"), Some("abcd"));
+        assert_eq!(reparsed.text(), "note[0m kept\tq \u{1F600}\r\n");
+        assert_eq!(reparsed.children[1], Node::Comment("cd".into()));
+    }
+
+    #[test]
+    fn every_character_xml_allows_is_written_as_it_was() {
+        let all = "\t\n\r \u{D7FF}\u{E000}\u{FFFD}\u{10000}\u{10FFFF}é✓ & < > \"";
+        let mut root = Element::new("a");
+        root.attributes.push(("k".into(), all.replace('\n', "")));
+        root.children = vec![Node::Text(all.into())];
+
+        let written = write(&root, &mut no_protection);
+
+        assert!(is_valid_document(&written));
+        let reparsed = parse(&written).expect("reparses");
+        assert_eq!(reparsed.text(), all);
+        assert_eq!(
+            reparsed.attribute("k"),
+            Some(all.replace('\n', "").as_str())
+        );
     }
 
     #[test]
