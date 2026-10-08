@@ -719,6 +719,9 @@ impl VaultBrowser {
         if let EntryScope::Group(vault, group) = self.scope {
             let subject = Subject::Group(vault, group);
             let is_browser_group = workspace.browser_group(vault) == Some(group);
+            let in_bin = workspace
+                .vault(vault)
+                .is_none_or(|open| open.vault().is_group_in_recycle_bin(group) != Ok(false));
             toolbar = toolbar
                 .child(
                     tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
@@ -738,19 +741,23 @@ impl VaultBrowser {
                         cx.listener(move |this, _, window, cx| this.delete(subject, window, cx)),
                     ),
                 )
-                .child(match is_browser_group {
-                    true => div()
-                        .px_2()
-                        .py_0p5()
-                        .text_sm()
-                        .text_color(theme.muted)
-                        .child(strings::BROWSER_GROUP_MARK)
-                        .into_any_element(),
-                    false => tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.edit(cx, |workspace| workspace.set_browser_group(vault, group));
-                        }))
-                        .into_any_element(),
+                .when(!in_bin, |toolbar| {
+                    toolbar.child(match is_browser_group {
+                        true => div()
+                            .px_2()
+                            .py_0p5()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(strings::BROWSER_GROUP_MARK)
+                            .into_any_element(),
+                        false => tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.edit(cx, |workspace| {
+                                    workspace.set_browser_group(vault, group)
+                                });
+                            }))
+                            .into_any_element(),
+                    })
                 });
         }
 

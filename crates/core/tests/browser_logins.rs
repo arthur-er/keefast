@@ -118,6 +118,7 @@ fn a_browser_group_that_was_deleted_is_made_again() {
     vault.delete_group(chosen, now()).unwrap();
 
     // In the Recycle Bin it is no place for new logins.
+    assert_eq!(vault.is_group_in_recycle_bin(chosen), Ok(true));
     assert_eq!(vault.browser_group(), None);
     vault
         .add_login(None, &login("https://shop.test/", "carol", "s3cret"), now())

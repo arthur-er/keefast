@@ -219,9 +219,7 @@ impl Vault {
     /// Recycle Bin; saving a login then makes one.
     pub fn browser_group(&self) -> Option<GroupId> {
         let usable = |group: GroupId| {
-            let path = self.path_to(Kind::Group, group.0).ok()?;
-            let binned = self.in_recycle_bin(&path)
-                || self.recycle_bin_path().is_some_and(|bin| bin == path);
+            let binned = self.is_group_in_recycle_bin(group).ok()?;
             (!binned).then_some(group)
         };
         let chosen = self

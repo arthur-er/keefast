@@ -100,6 +100,14 @@ impl Vault {
         self.group(GroupId(id)).map(|group| group.id())
     }
 
+    /// Whether the Group is the Recycle Bin or in it.
+    pub fn is_group_in_recycle_bin(&self, group: GroupId) -> Result<bool, EditError> {
+        let path = self.path_to(Kind::Group, group.0)?;
+        Ok(self
+            .recycle_bin_path()
+            .is_some_and(|bin| path.starts_with(&bin)))
+    }
+
     pub fn create_entry(
         &mut self,
         group: GroupId,
@@ -414,11 +422,11 @@ impl Vault {
         decode_uuid(&self.meta_text("RecycleBinUUID")?).filter(|id| *id != NO_UUID)
     }
 
-    pub(crate) fn recycle_bin_path(&self) -> Option<Vec<usize>> {
+    fn recycle_bin_path(&self) -> Option<Vec<usize>> {
         self.path_to(Kind::Group, self.recycle_bin_uuid()?).ok()
     }
 
-    pub(crate) fn in_recycle_bin(&self, path: &[usize]) -> bool {
+    fn in_recycle_bin(&self, path: &[usize]) -> bool {
         self.recycle_bin_path()
             .is_some_and(|bin| path.len() > bin.len() && path.starts_with(&bin))
     }

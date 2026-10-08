@@ -84,6 +84,9 @@ pub fn rows_for(workspace: &Workspace, pending: &PendingLogin) -> Vec<LoginRow> 
         let mut groups = Vec::new();
         flatten_groups(root.groups(), 2, &mut groups);
         for (group, depth) in groups {
+            if open.vault().is_group_in_recycle_bin(group.id()) != Ok(false) {
+                continue;
+            }
             rows.push(LoginRow {
                 target: new_entry(Some(group.id())),
                 label: group.name().to_owned().into(),
@@ -196,8 +199,10 @@ impl Render for LoginDialog {
                     .font_weight(gpui::FontWeight::SEMIBOLD),
                 Some(target) => line
                     .cursor_pointer()
-                    .when(target == self.chosen, |this| this.bg(theme.selection))
-                    .hover(|this| this.bg(theme.selection))
+                    .map(|this| match target == self.chosen {
+                        true => this.bg(theme.selection),
+                        false => this.hover(|this| this.bg(theme.sidebar)),
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| this.choose(target, cx))),
             }
         });
