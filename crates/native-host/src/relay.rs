@@ -21,7 +21,7 @@ struct App<W> {
 
 /// Relays messages from the browser to the app, and the app's messages back, until the browser
 /// closes `browser_in`. The app is connected to when the first message arrives. If it can't be
-/// reached, or has gone, the request is answered with the protocol's "not running" error and
+/// reached, has gone, or has said it isn't serving the browser, the request is answered with the protocol's "not running" error and
 /// the relay ends: the browser sees the host disconnect, and the extension starts a new host
 /// to reconnect, with a new key exchange, rather than keep asking an app that isn't there.
 pub fn run<R, W>(
@@ -67,10 +67,20 @@ fn relay_replies(
             if write_frame(&mut *browser_out.lock().unwrap(), &message).is_err() {
                 break;
             }
+            // The app answers "not running" while its browser integration is off: treat it as
+            // gone, so the host ends at the next request and the extension reconnects later.
+            if is_not_running(&message) {
+                break;
+            }
         }
         flag.store(false, Ordering::Release);
     });
     open
+}
+
+fn is_not_running(reply: &[u8]) -> bool {
+    serde_json::from_slice::<Map<String, Value>>(reply)
+        .is_ok_and(|reply| reply.get("errorCode").and_then(Value::as_str) == Some(NOT_RUNNING_CODE))
 }
 
 /// The protocol's error reply to `request`, for when the app can't be reached.

@@ -1,5 +1,5 @@
 //! Browser integration in the app: bridges the native hosts' socket to the Workspace, which
-//! answers them, and serves the socket only while browser integration is on.
+//! answers them. The socket is served from when browser integration is first turned on.
 
 use std::collections::HashMap;
 use std::io;
@@ -38,17 +38,17 @@ impl BrowserIntegration {
         self.workspace.read(cx).browser_integration()
     }
 
-    /// Turns browser integration on or off. Turned on, it serves the native hosts again, even
-    /// after failing to.
+    /// Turns browser integration on or off. Turned on, it serves the native hosts, trying again
+    /// if it failed to before. Turned off, the socket stays served and the Workspace answers
+    /// every host that keefast is not running, which makes the hosts end.
     pub fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         let replies = self.workspace.update(cx, |workspace, cx| {
             cx.notify();
             workspace.set_browser_integration(enabled)
         });
         self.send(replies);
-        self.serving = None;
-        self.serve_error = None;
-        if enabled {
+        if enabled && self.serving.is_none() {
+            self.serve_error = None;
             self.serve(cx);
         }
         cx.notify();

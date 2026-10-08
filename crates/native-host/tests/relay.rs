@@ -133,6 +133,34 @@ fn when_the_app_goes_away_requests_get_the_not_running_error() {
     host.join().unwrap().unwrap();
 }
 
+#[test]
+fn an_app_with_integration_off_is_treated_as_gone() {
+    let (app, app_end) = UnixStream::pair().unwrap();
+    let (mut browser, host) = host(move || Ok((app_end.try_clone()?, app_end)));
+    thread::spawn(move || {
+        let mut app = app;
+        while let Some(frame) = read_frame(&mut app).unwrap() {
+            let request: Value = serde_json::from_slice(&frame).unwrap();
+            let reply = json!({ "action": request["action"], "errorCode": "5", "error": "off" });
+            write_frame(&mut app, reply.to_string().as_bytes()).unwrap();
+        }
+    });
+
+    send(&mut browser, &json!({"action": "get-databasehash"}));
+    assert_eq!(receive(&mut browser)["error"], "off");
+    send(&mut browser, &json!({"action": "get-databasehash"}));
+    let reply = receive(&mut browser);
+
+    assert_eq!(reply["errorCode"], "5");
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("keefast is not running")
+    );
+    host.join().unwrap().unwrap();
+}
+
 mod server {
     use std::sync::mpsc;
     use std::time::Duration;
