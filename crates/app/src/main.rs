@@ -4,6 +4,7 @@ mod access_dialog;
 mod browser_integration;
 mod entry_editor;
 mod pairing_dialog;
+mod password_generator;
 mod saving;
 mod strings;
 mod text_field;

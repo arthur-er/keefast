@@ -66,3 +66,8 @@ To try the protocol without a browser, run keefast with browser integration on a
 ```sh
 cargo run -p keefast-native-host --example fake_extension -- target/debug/keefast-native-host
 ```
+
+## Credits
+
+Passphrases are made from the [EFF large word list](https://www.eff.org/dice) by the Electronic
+Frontier Foundation, licensed under [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/).

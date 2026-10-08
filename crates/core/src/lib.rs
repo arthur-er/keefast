@@ -6,6 +6,7 @@
 
 mod browser;
 mod edit;
+mod generator;
 mod kdbx;
 mod key;
 mod open;
@@ -17,6 +18,9 @@ mod xml;
 
 pub use browser::{AccessDecision, Pairing, SiteEntry};
 pub use edit::{EditError, EntryFields};
+pub use generator::{
+    CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
+};
 pub use key::CompositeKey;
 pub use open::OpenError;
 pub use save::SaveError;

@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use keefast_core::{CharacterRecipe, PassphraseRecipe};
+
 use crate::atomic_file;
+use crate::generator::{GeneratorMode, GeneratorSettings};
 use crate::storage::VaultLocation;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +20,7 @@ pub struct AppConfig {
     pub autosave: bool,
     /// Whether browser extensions may reach keefast through its native-messaging host.
     pub browser_integration: bool,
+    pub generator: GeneratorSettings,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,13 +87,15 @@ impl ConfigStore for FileConfigStore {
 
 /// The config file's layout, kept apart from [`AppConfig`] so the file format stays stable.
 /// Recent Vault files are read one by one, so one this version doesn't understand (a Storage
-/// provider from a newer version, say) is skipped rather than failing the whole file.
+/// provider from a newer version, say) is skipped rather than failing the whole file. Generator
+/// settings this version doesn't understand fall back to the defaults the same way.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct ConfigFile {
     autosave: bool,
     browser_integration: bool,
     recent_vaults: Vec<toml::Value>,
+    generator: Option<toml::Value>,
 }
 
 /// A recent Vault file, tagged with its Storage provider:
@@ -112,6 +118,11 @@ impl From<ConfigFile> for AppConfig {
                 .collect(),
             autosave: file.autosave,
             browser_integration: file.browser_integration,
+            generator: file
+                .generator
+                .and_then(|generator| generator.try_into::<GeneratorFile>().ok())
+                .map(GeneratorSettings::from)
+                .unwrap_or_default(),
         }
     }
 }
@@ -134,6 +145,86 @@ impl From<&AppConfig> for ConfigFile {
                     toml::Value::try_from(recent).ok()
                 })
                 .collect(),
+            generator: toml::Value::try_from(GeneratorFile::from(&config.generator)).ok(),
+        }
+    }
+}
+
+/// The generator settings: `[generator]` with `mode = "characters"` or `"passphrase"` and the
+/// settings of both modes. A setting left out is the default.
+#[derive(Serialize, Deserialize)]
+#[serde(default)]
+struct GeneratorFile {
+    mode: GeneratorModeFile,
+    length: u32,
+    lowercase: bool,
+    uppercase: bool,
+    digits: bool,
+    symbols: bool,
+    exclude_lookalikes: bool,
+    words: u32,
+    separator: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum GeneratorModeFile {
+    Characters,
+    Passphrase,
+}
+
+impl Default for GeneratorFile {
+    fn default() -> Self {
+        Self::from(&GeneratorSettings::default())
+    }
+}
+
+impl From<GeneratorFile> for GeneratorSettings {
+    fn from(file: GeneratorFile) -> Self {
+        Self {
+            mode: match file.mode {
+                GeneratorModeFile::Characters => GeneratorMode::Characters,
+                GeneratorModeFile::Passphrase => GeneratorMode::Passphrase,
+            },
+            characters: CharacterRecipe {
+                length: file.length,
+                lowercase: file.lowercase,
+                uppercase: file.uppercase,
+                digits: file.digits,
+                symbols: file.symbols,
+                exclude_lookalikes: file.exclude_lookalikes,
+            },
+            passphrase: PassphraseRecipe {
+                words: file.words,
+                separator: file.separator,
+            },
+        }
+    }
+}
+
+impl From<&GeneratorSettings> for GeneratorFile {
+    fn from(settings: &GeneratorSettings) -> Self {
+        let CharacterRecipe {
+            length,
+            lowercase,
+            uppercase,
+            digits,
+            symbols,
+            exclude_lookalikes,
+        } = settings.characters;
+        Self {
+            mode: match settings.mode {
+                GeneratorMode::Characters => GeneratorModeFile::Characters,
+                GeneratorMode::Passphrase => GeneratorModeFile::Passphrase,
+            },
+            length,
+            lowercase,
+            uppercase,
+            digits,
+            symbols,
+            exclude_lookalikes,
+            words: settings.passphrase.words,
+            separator: settings.passphrase.separator.clone(),
         }
     }
 }

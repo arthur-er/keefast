@@ -6,15 +6,17 @@ mod browser;
 mod browser_hosts;
 mod clock;
 mod config;
+mod generator;
 mod storage;
 
 use std::io;
 use std::sync::Arc;
 
 use keefast_core::{
-    CompositeKey, EditError, Entry, EntryFields, EntryId, Group, GroupId, OpenError, SaveError,
-    Timestamp, Vault,
+    CompositeKey, EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId,
+    OpenError, SaveError, Timestamp, Vault,
 };
+use secrecy::SecretString;
 
 pub use browser::{
     AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId,
@@ -26,6 +28,7 @@ pub use browser_hosts::{
 };
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
+pub use generator::{GeneratorMode, GeneratorSettings};
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,6 +301,23 @@ impl Workspace {
         if let Some(store) = &self.config_store {
             self.config_error = store.save(&self.config).err();
         }
+    }
+
+    pub fn generator_settings(&self) -> &GeneratorSettings {
+        &self.config.generator
+    }
+
+    /// Changes how passwords are generated, and remembers it in the app config.
+    pub fn set_generator_settings(&mut self, settings: GeneratorSettings) {
+        if self.config.generator != settings {
+            self.config.generator = settings;
+            self.save_config();
+        }
+    }
+
+    /// A new password or passphrase made with the user's generator settings.
+    pub fn generate_password(&self) -> Result<SecretString, GeneratorError> {
+        self.config.generator.recipe().generate()
     }
 
     /// Tells the Workspace which Vault the user is looking at, if one. The browser pairs with

@@ -195,6 +195,7 @@ fn a_config_that_cannot_be_loaded_starts_empty_and_is_not_overwritten() {
         recent_vaults: vec![work_vault()],
         autosave: true,
         browser_integration: true,
+        ..AppConfig::default()
     }));
     config.fail(true);
     let mut workspace = workspace_with(config.clone());

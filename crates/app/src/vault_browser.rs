@@ -158,7 +158,7 @@ impl VaultBrowser {
                 .unwrap_or_default(),
             EditTarget::New(..) => EntryFields::default(),
         };
-        let editor = cx.new(|cx| EntryEditor::new(&fields, cx));
+        let editor = cx.new(|cx| EntryEditor::new(&fields, self.workspace.clone(), cx));
         cx.subscribe_in(&editor, window, Self::on_editor_event)
             .detach();
         window.focus(&editor.focus_handle(cx));

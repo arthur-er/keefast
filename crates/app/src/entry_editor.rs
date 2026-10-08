@@ -1,7 +1,9 @@
 use gpui::{App, Context, Entity, EventEmitter, FocusHandle, Focusable, Window, div, prelude::*};
 use keefast_core::EntryFields;
+use keefast_workspace::Workspace;
 use secrecy::{ExposeSecret, SecretString};
 
+use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
@@ -14,12 +16,15 @@ pub enum EntryEditorEvent {
 
 /// The form for creating or editing an Entry, shown in the detail pane.
 pub struct EntryEditor {
+    workspace: Entity<Workspace>,
     title: Entity<TextField>,
     username: Entity<TextField>,
     password: Entity<TextField>,
     url: Entity<TextField>,
     notes: Entity<TextField>,
     password_revealed: bool,
+    /// The password generator, while it is open.
+    generator: Option<Entity<PasswordGenerator>>,
 }
 
 impl EventEmitter<EntryEditorEvent> for EntryEditor {}
@@ -32,7 +37,7 @@ impl Focusable for EntryEditor {
 
 impl EntryEditor {
     /// A form filled with `fields`: an Entry's, or empty ones for a new Entry.
-    pub fn new(fields: &EntryFields, cx: &mut Context<Self>) -> Self {
+    pub fn new(fields: &EntryFields, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
         let field = |placeholder: &'static str,
                      value: &str,
                      style: fn(TextField) -> TextField,
@@ -62,13 +67,42 @@ impl EntryEditor {
             cx,
         );
         Self {
+            workspace,
             title,
             username,
             password,
             url,
             notes,
             password_revealed: false,
+            generator: None,
         }
+    }
+
+    fn toggle_generator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.generator.take().is_none() {
+            let workspace = self.workspace.clone();
+            let generator = cx.new(|cx| PasswordGenerator::new(workspace, cx));
+            cx.subscribe_in(&generator, window, Self::on_generator_event)
+                .detach();
+            self.generator = Some(generator);
+        }
+        cx.notify();
+    }
+
+    fn on_generator_event(
+        &mut self,
+        _: &Entity<PasswordGenerator>,
+        event: &PasswordGeneratorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let PasswordGeneratorEvent::Use(password) = event {
+            self.password
+                .update(cx, |field, cx| field.set_text(password.expose_secret(), cx));
+        }
+        self.generator = None;
+        window.focus(&self.password.focus_handle(cx));
+        cx.notify();
     }
 
     fn on_field_event(
@@ -137,18 +171,37 @@ impl Render for EntryEditor {
                             .child(strings::DETAIL_PASSWORD)
                             .child(
                                 div()
-                                    .id("reveal-password")
-                                    .cursor_pointer()
+                                    .flex()
+                                    .gap_3()
                                     .text_color(theme.accent)
-                                    .child(if self.password_revealed {
-                                        strings::HIDE_PASSWORD
-                                    } else {
-                                        strings::REVEAL_PASSWORD
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_reveal(cx))),
+                                    .child(
+                                        div()
+                                            .id("generate-password")
+                                            .cursor_pointer()
+                                            .child(strings::GENERATE_PASSWORD)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.toggle_generator(window, cx)
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("reveal-password")
+                                            .cursor_pointer()
+                                            .child(if self.password_revealed {
+                                                strings::HIDE_PASSWORD
+                                            } else {
+                                                strings::REVEAL_PASSWORD
+                                            })
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.toggle_reveal(cx)
+                                                }),
+                                            ),
+                                    ),
                             ),
                     )
-                    .child(self.password.clone()),
+                    .child(self.password.clone())
+                    .children(self.generator.clone()),
             )
             .child(labelled(strings::DETAIL_URL, &self.url))
             .child(labelled(strings::DETAIL_NOTES, &self.notes))
