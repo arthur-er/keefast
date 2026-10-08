@@ -4,7 +4,7 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keefast_core::{EntryFields, EntryId, GroupId, OpenError, Vault};
@@ -579,4 +579,33 @@ fn a_vault_that_is_not_open_has_nothing_to_lock() {
 
     assert!(saves.is_empty());
     assert!(h.is_locked(h.personal));
+}
+
+#[test]
+fn a_locked_vault_is_not_watched_or_merged_and_unlocking_watches_it_again() {
+    let storage = Arc::new(FakeStorage::default().with_file(&personal_vault(), KEEPASSXC_KDBX4));
+    let clock = Arc::new(FakeClock::at_unix_seconds(1_800_000_000));
+    let mut workspace = Workspace::with_clock(storage.clone(), clock);
+    let changed = Arc::new(Mutex::new(Vec::new()));
+    let sink = changed.clone();
+    workspace.watch_vault_files(move |vault| sink.lock().unwrap().push(vault));
+    let vault = workspace.open_vault(&personal_vault(), &key()).unwrap();
+    assert_eq!(storage.watching(&personal_vault()), 1);
+
+    let saves = workspace.lock_vault(vault, &mut FakeClipboard::default());
+    assert!(saves.is_empty());
+    assert_eq!(storage.watching(&personal_vault()), 0);
+
+    // Another device changes the Vault file while it is locked.
+    storage.change_elsewhere(&personal_vault(), KEEPASSXC_KDBX4);
+    for vault in changed.lock().unwrap().drain(..) {
+        workspace.vault_file_changed(vault);
+    }
+    assert!(workspace.begin_autosaves().is_empty());
+    assert!(workspace.begin_saves().is_empty());
+    assert!(workspace.take_merges().is_empty());
+
+    let unlocked = workspace.open_vault(&personal_vault(), &key()).unwrap();
+    assert_eq!(unlocked, vault);
+    assert_eq!(storage.watching(&personal_vault()), 1);
 }

@@ -389,6 +389,7 @@ mod tests {
             command_name("vault_browser::CopyCustomField"),
             "Copy Custom Field"
         );
+        assert_eq!(command_name("vault_browser::LockAll"), "Lock All Vaults");
     }
 
     #[test]

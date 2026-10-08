@@ -169,9 +169,15 @@ impl VaultBrowser {
         let lines: Vec<String> = earlier
             .map(str::to_owned)
             .chain(merges.iter().map(|merge| {
+                // The Vault may have locked since it was Merged.
                 let name = workspace
                     .vault(merge.vault)
                     .map(|open| open.display_name())
+                    .or_else(|| {
+                        workspace
+                            .locked_vault(merge.vault)
+                            .map(|locked| locked.display_name())
+                    })
                     .unwrap_or_default();
                 merge_notice::describe(&name, &merge.summary)
             }))
