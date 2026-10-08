@@ -71,7 +71,11 @@ impl Vault {
     /// the module docs). Merging the same version again changes nothing.
     pub fn merge(&mut self, other: &Vault) -> MergeSummary {
         let before = (self.file.document.clone(), self.file.binaries.len());
-        let root = id(self.root_group()).expect("the root Group has a valid UUID");
+        // A Vault that was opened has a root Group with a valid UUID; with none there is
+        // nothing to Merge into.
+        let Some(root) = id(self.root_group()) else {
+            return MergeSummary::default();
+        };
         let mut merge = Merge {
             target: self,
             source: other,
@@ -139,17 +143,22 @@ impl Merge<'_> {
             return;
         };
         let Ok(mut path) = self.target.path_to(Kind::Entry, id) else {
+            let Some(group) = self.group_path(parent) else {
+                return;
+            };
             let entry = self.import(source);
-            let group = self.group_path(parent);
             insert_entry(self.target.at_mut(&group), entry);
             self.added.insert(id);
             self.summary.entries_added += 1;
             return;
         };
 
-        if self.moved_later(source, &path, parent) {
+        if self.moved_later(source, &path, parent)
+            && let Some(group) = self.group_path(parent)
+        {
             let entry = self.target.take(&path);
-            let group = self.group_path(parent);
+            // Taking the Entry out shifted what came after it.
+            let group = self.group_path(parent).unwrap_or(group);
             insert_entry(self.target.at_mut(&group), entry);
             path = self.target.path_to(Kind::Entry, id).expect("just moved");
             self.summary.entries_moved += 1;
@@ -205,18 +214,20 @@ impl Merge<'_> {
         let Ok(path) = self.target.path_to(Kind::Group, id) else {
             let mut group = source.clone();
             group.children.retain(|node| !is_item(node));
-            let to = self.group_path(parent);
+            let to = self.group_path(parent)?;
             push(self.target.at_mut(&to), group);
             self.added.insert(id);
             self.summary.groups_added += 1;
             return Some(id);
         };
-        if !path.is_empty() && self.moved_later(source, &path, parent) {
-            let to = self.group_path(parent);
+        if !path.is_empty()
+            && self.moved_later(source, &path, parent)
+            && let Some(to) = self.group_path(parent)
             // Moved into itself by the target meanwhile: the Group stays where it is.
-            if !to.starts_with(&path) {
-                let group = self.target.take(&path);
-                let to = self.group_path(parent);
+            && !to.starts_with(&path)
+        {
+            let group = self.target.take(&path);
+            if let Some(to) = self.group_path(parent) {
                 push(self.target.at_mut(&to), group);
                 self.summary.groups_moved += 1;
             }
@@ -228,17 +239,28 @@ impl Merge<'_> {
     /// Takes the source Group's name, icon and other properties if it was modified later,
     /// keeping what the target Group holds.
     fn group_properties(&mut self, source: &Element, id: Uuid) {
-        let path = self.group_path(id);
+        let Some(path) = self.group_path(id) else {
+            return;
+        };
         let target = self.target.at(&path);
         let location = time(source, "LocationChanged").max(time(target, "LocationChanged"));
         if modified(source) > modified(target) {
             let target = self.target.at_mut(&path);
+            // The Group stays the Group it is. A Group matched by UUID has the same one in
+            // both versions; only the root Group of an unrelated Vault differs, and taking
+            // the other's UUID would lose it for everything that looks it up afterwards.
+            let uuid = target.child("UUID").cloned();
             let items: Vec<Node> = target.children.drain(..).filter(is_item).collect();
             target.children = source
                 .children
                 .iter()
                 .filter(|node| !is_item(node))
-                .cloned()
+                .map(|node| match (node, &uuid) {
+                    (Node::Element(element), Some(uuid)) if element.name == "UUID" => {
+                        Node::Element(uuid.clone())
+                    }
+                    _ => node.clone(),
+                })
                 .chain(items)
                 .collect();
             if !path.is_empty() {
@@ -255,10 +277,11 @@ impl Merge<'_> {
             && time(source, "LocationChanged") > time(self.target.at(path), "LocationChanged")
     }
 
-    fn group_path(&self, id: Uuid) -> Vec<usize> {
-        self.target
-            .path_to(Kind::Group, id)
-            .expect("Groups are merged before what they hold")
+    /// Where the target's Group `id` is. Groups are merged before what they hold, so it is
+    /// there; if it somehow isn't, whatever was to go in it is left out of the Merge rather
+    /// than the Merge failing.
+    fn group_path(&self, id: Uuid) -> Option<Vec<usize>> {
+        self.target.path_to(Kind::Group, id).ok()
     }
 
     /// A copy of a source element for the target, its attachments added to the target's pool.
@@ -329,7 +352,10 @@ impl Merge<'_> {
         // Subgroups first, so a Group whose subgroups all go is empty by its turn.
         groups.sort_by_key(|&(depth, ..)| std::cmp::Reverse(depth));
         for (_, id, record) in groups {
-            let path = self.group_path(id);
+            let Some(path) = self.group_path(id) else {
+                kept.push(record);
+                continue;
+            };
             let group = self.target.at(&path);
             if modified(group) > deleted_at(&record) || group.children.iter().any(is_item) {
                 continue;
