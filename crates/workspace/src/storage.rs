@@ -9,11 +9,14 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 
 use crate::atomic_file;
+use crate::dropbox::DropboxError;
 
 /// Where a Vault file lives, in terms a Storage provider understands.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VaultLocation {
     Local(PathBuf),
+    /// A path in the connected Dropbox account, as Dropbox displays it: `/Vaults/Personal.kdbx`.
+    Dropbox(String),
 }
 
 impl VaultLocation {
@@ -25,6 +28,13 @@ impl VaultLocation {
                 .unwrap_or(path.as_os_str())
                 .to_string_lossy()
                 .into_owned(),
+            VaultLocation::Dropbox(path) => {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                match name.rsplit_once('.') {
+                    Some((stem, _)) if !stem.is_empty() => stem.to_owned(),
+                    _ => name.to_owned(),
+                }
+            }
         }
     }
 
@@ -32,6 +42,7 @@ impl VaultLocation {
     pub fn description(&self) -> String {
         match self {
             VaultLocation::Local(path) => path.display().to_string(),
+            VaultLocation::Dropbox(path) => path.clone(),
         }
     }
 }
@@ -44,6 +55,10 @@ pub struct Revision(String);
 impl Revision {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -71,6 +86,10 @@ pub enum StorageError {
     Conflict,
     #[error("could not access the Vault file: {0}")]
     Io(#[from] io::Error),
+    #[error("no Storage provider can reach {0:?}")]
+    Unavailable(VaultLocation),
+    #[error(transparent)]
+    Dropbox(#[from] DropboxError),
 }
 
 /// Reads and writes Vault files wherever they live. Injected into the Workspace.
@@ -111,7 +130,7 @@ pub struct LocalStorage;
 
 impl StorageProvider for LocalStorage {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
-        let VaultLocation::Local(path) = location;
+        let path = local_path(location)?;
         let bytes = fs::read(path).map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => StorageError::NotFound(location.clone()),
             _ => StorageError::Io(error),
@@ -122,7 +141,9 @@ impl StorageProvider for LocalStorage {
 
     /// The absolute path with symlinks resolved, when the Vault file exists.
     fn canonical(&self, location: &VaultLocation) -> VaultLocation {
-        let VaultLocation::Local(path) = location;
+        let VaultLocation::Local(path) = location else {
+            return location.clone();
+        };
         fs::canonicalize(path).map_or_else(|_| location.clone(), VaultLocation::Local)
     }
 
@@ -136,7 +157,7 @@ impl StorageProvider for LocalStorage {
         bytes: &[u8],
         expected: Option<&Revision>,
     ) -> Result<Revision, StorageError> {
-        let VaultLocation::Local(path) = location;
+        let path = local_path(location)?;
         let unchanged = |path: &std::path::Path| match (expected, fs::read(path)) {
             (None, _) => Ok(true),
             (Some(expected), Ok(current)) => Ok(content_revision(&current) == *expected),
@@ -156,8 +177,7 @@ impl StorageProvider for LocalStorage {
         location: &VaultLocation,
         on_change: Arc<dyn Fn() + Send + Sync>,
     ) -> Option<Watch> {
-        let VaultLocation::Local(path) = location;
-        let path = fs::canonicalize(path).ok()?;
+        let path = fs::canonicalize(local_path(location).ok()?).ok()?;
         let name = path.file_name()?.to_owned();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -190,6 +210,13 @@ impl StorageProvider for LocalStorage {
             .watch(path.parent()?, RecursiveMode::NonRecursive)
             .ok()?;
         Some(Watch::new(watcher))
+    }
+}
+
+fn local_path(location: &VaultLocation) -> Result<&PathBuf, StorageError> {
+    match location {
+        VaultLocation::Local(path) => Ok(path),
+        _ => Err(StorageError::Unavailable(location.clone())),
     }
 }
 

@@ -85,6 +85,44 @@ To try the protocol without a browser, run keefast with browser integration on a
 cargo run -p keefast-native-host --example fake_extension -- target/debug/keefast-native-host
 ```
 
+## Dropbox
+
+"From Dropbox…" in the Open a Vault dialog connects a Dropbox account and browses the whole
+Dropbox for a Vault file. Dropbox asks for permission in your browser (OAuth with PKCE, so keefast
+holds no client secret), then sends the browser back to keefast on
+`http://localhost:47826/dropbox`. keefast keeps the account's tokens in the OS secret store
+(Windows Credential Manager, or the Secret Service on Linux), never in `config.toml`; recent
+Vault files remember only the Dropbox path. "Disconnect" revokes the tokens and removes them.
+Saving a Dropbox Vault replaces only the revision keefast read, so a change made on another
+device is never overwritten.
+
+keefast needs a Dropbox app to connect as. To set one up:
+
+1. In the [Dropbox App Console](https://www.dropbox.com/developers/apps), create an app with
+   **Scoped access** and **Full Dropbox** access.
+2. On its Permissions tab, enable `account_info.read`, `files.metadata.read`,
+   `files.content.read` and `files.content.write`.
+3. On its Settings tab, add the redirect URI `http://localhost:47826/dropbox`, and allow public
+   clients (PKCE). No app secret is needed.
+4. Give keefast the app key, either when building (`KEEFAST_DROPBOX_APP_KEY=<key> cargo build`),
+   at run time (`KEEFAST_DROPBOX_APP_KEY=<key> keefast`), or in `keefast/config.toml`:
+   `dropbox_app_key = "<key>"`. Without one, keefast doesn't offer Dropbox.
+
+To try it without a Dropbox account, run the fake Dropbox the tests use; it lets keefast in as
+soon as the browser opens its page, and holds a few Vault files (master password
+`fixture-password`):
+
+```sh
+cargo run -p keefast-workspace --example fake_dropbox   # prints the environment to start keefast with
+```
+
+The test against the real Dropbox is opt-in: it needs a sandbox account and someone to click
+"Allow" (see `crates/workspace/tests/dropbox_live.rs`):
+
+```sh
+KEEFAST_DROPBOX_TEST_APP_KEY=<key> cargo test -p keefast-workspace --test dropbox_live -- --ignored --nocapture
+```
+
 ## Credits
 
 Passphrases are made from the [EFF large word list](https://www.eff.org/dice) by the Electronic

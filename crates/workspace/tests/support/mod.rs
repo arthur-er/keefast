@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod extension;
+pub mod fake_dropbox;
 
 use std::collections::HashMap;
 use std::io;
@@ -12,8 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keefast_workspace::{
     AppConfig, Browser, BrowserHosts, Clipboard, Clock, ConfigError, ConfigStore, Revision,
-    StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
+    SecretStore, SecretStoreError, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
 };
+use secrecy::{ExposeSecret, SecretString};
 
 pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassxc-kdbx4.kdbx");
 pub const PASSWORD: &str = "fixture-password";
@@ -306,6 +308,57 @@ impl BrowserHosts for FakeBrowserHosts {
 
     fn uninstall(&self) -> io::Result<()> {
         *self.uninstalls.lock().unwrap() += 1;
+        Ok(())
+    }
+}
+
+/// An in-memory secret store, standing in for the OS one.
+#[derive(Default)]
+pub struct FakeSecretStore {
+    secrets: Mutex<HashMap<String, String>>,
+    failing: Mutex<bool>,
+}
+
+impl FakeSecretStore {
+    pub fn secret(&self, name: &str) -> Option<String> {
+        self.secrets.lock().unwrap().get(name).cloned()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.secrets.lock().unwrap().is_empty()
+    }
+
+    /// Makes every call fail, like a locked or missing OS secret store.
+    pub fn fail(&self, fail: bool) {
+        *self.failing.lock().unwrap() = fail;
+    }
+
+    fn check(&self) -> Result<(), SecretStoreError> {
+        match *self.failing.lock().unwrap() {
+            true => Err(SecretStoreError::Unavailable("no Secret Service".into())),
+            false => Ok(()),
+        }
+    }
+}
+
+impl SecretStore for FakeSecretStore {
+    fn get(&self, name: &str) -> Result<Option<SecretString>, SecretStoreError> {
+        self.check()?;
+        Ok(self.secret(name).map(SecretString::from))
+    }
+
+    fn set(&self, name: &str, secret: &SecretString) -> Result<(), SecretStoreError> {
+        self.check()?;
+        self.secrets
+            .lock()
+            .unwrap()
+            .insert(name.to_owned(), secret.expose_secret().to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), SecretStoreError> {
+        self.check()?;
+        self.secrets.lock().unwrap().remove(name);
         Ok(())
     }
 }

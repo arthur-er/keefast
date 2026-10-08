@@ -388,7 +388,7 @@ fn a_recent_vault_file_this_version_does_not_understand_is_skipped() {
 autosave = true
 
 [[recent_vaults]]
-provider = "dropbox"
+provider = "onedrive"
 id = "id:abc123"
 
 [[recent_vaults]]
@@ -402,4 +402,36 @@ path = "/vaults/personal.kdbx"
 
     assert!(config.autosave);
     assert_eq!(config.recent_vaults, [personal_vault()]);
+}
+
+#[test]
+fn a_dropbox_vault_file_is_remembered_by_its_dropbox_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let store = FileConfigStore::new(path.clone());
+    let dropbox = VaultLocation::Dropbox("/Vaults/Personal.kdbx".into());
+    store
+        .save(&AppConfig {
+            recent_vaults: vec![dropbox.clone(), personal_vault()],
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains(r#"provider = "dropbox""#), "{text}");
+    assert_eq!(
+        store.load().unwrap().recent_vaults,
+        [dropbox, personal_vault()]
+    );
+}
+
+#[test]
+fn the_config_file_can_name_the_dropbox_app_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "dropbox_app_key = \"abc123\"\n").unwrap();
+
+    let workspace = workspace_with(Arc::new(FileConfigStore::new(path)));
+
+    assert_eq!(workspace.dropbox_app_key(), Some("abc123"));
 }

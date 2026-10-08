@@ -30,6 +30,9 @@ pub struct AppConfig {
     pub idle_lock_after: Option<Duration>,
     /// Whether every Vault locks when the OS screen locks or the machine suspends.
     pub lock_on_os_lock: bool,
+    /// The Dropbox app keefast connects as, overriding the one it was built with. Not a secret:
+    /// keefast connects with PKCE, which needs no client secret.
+    pub dropbox_app_key: Option<String>,
 }
 
 impl AppConfig {
@@ -48,6 +51,7 @@ impl Default for AppConfig {
             clipboard_clear_after: Some(Self::DEFAULT_CLIPBOARD_CLEAR_AFTER),
             idle_lock_after: Some(Self::DEFAULT_IDLE_LOCK_AFTER),
             lock_on_os_lock: true,
+            dropbox_app_key: None,
         }
     }
 }
@@ -132,6 +136,7 @@ struct ConfigFile {
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
+    dropbox_app_key: Option<String>,
 }
 
 impl Default for ConfigFile {
@@ -141,11 +146,13 @@ impl Default for ConfigFile {
 }
 
 /// A Vault file's location, tagged with its Storage provider:
-/// `{ provider = "local", path = "/home/me/personal.kdbx" }`.
+/// `{ provider = "local", path = "/home/me/personal.kdbx" }` or
+/// `{ provider = "dropbox", path = "/Vaults/Personal.kdbx" }`.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "provider", rename_all = "lowercase")]
 enum StoredLocation {
     Local { path: String },
+    Dropbox { path: String },
 }
 
 impl From<ConfigFile> for AppConfig {
@@ -167,6 +174,7 @@ impl From<ConfigFile> for AppConfig {
             clipboard_clear_after: wait_from_seconds(file.clipboard_clear_seconds),
             idle_lock_after: wait_from_seconds(file.idle_lock_seconds),
             lock_on_os_lock: file.lock_on_os_lock,
+            dropbox_app_key: file.dropbox_app_key.filter(|key| !key.is_empty()),
         }
     }
 }
@@ -186,6 +194,7 @@ impl From<&AppConfig> for ConfigFile {
                 .collect(),
             generator: toml::Value::try_from(GeneratorFile::from(&config.generator)).ok(),
             last_login_vault: config.last_login_vault.as_ref().and_then(write_location),
+            dropbox_app_key: config.dropbox_app_key.clone(),
         }
     }
 }
@@ -282,6 +291,7 @@ fn wait_to_seconds(wait: Option<Duration>) -> u64 {
 fn read_location(value: toml::Value) -> Option<VaultLocation> {
     match value.try_into().ok()? {
         StoredLocation::Local { path } => Some(VaultLocation::Local(path.into())),
+        StoredLocation::Dropbox { path } => Some(VaultLocation::Dropbox(path)),
     }
 }
 
@@ -291,6 +301,7 @@ fn write_location(location: &VaultLocation) -> Option<toml::Value> {
         VaultLocation::Local(path) => StoredLocation::Local {
             path: path.to_str()?.to_owned(),
         },
+        VaultLocation::Dropbox(path) => StoredLocation::Dropbox { path: path.clone() },
     };
     toml::Value::try_from(recent).ok()
 }

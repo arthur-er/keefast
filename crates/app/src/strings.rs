@@ -27,6 +27,9 @@ pub const UNLOCK_ERROR_KEY_FILE_CORRUPT: &str = "This key file is damaged.";
 pub const UNLOCK_ERROR_KEY_FILE_UNSUPPORTED: &str = "This key file format is not supported.";
 pub const UNLOCK_ERROR_PICKER: &str = "The file picker could not be opened.";
 pub const UNLOCK_ERROR_ALREADY_OPEN: &str = "A Vault from this Vault file is already open.";
+pub const UNLOCK_FROM_DROPBOX: &str = "From Dropbox…";
+pub const UNLOCK_ERROR_NO_PROVIDER: &str =
+    "This Vault file is in Dropbox, which this build of keefast can't reach.";
 pub const RECENT_VAULTS: &str = "Recent Vault files";
 pub const LOCKED_VAULTS: &str = "Locked Vaults";
 pub const RECENT_FORGET: &str = "×";
@@ -202,6 +205,37 @@ pub const TOTP_ERROR_INVALID_SECRET: &str =
 pub const TOTP_ERROR_DIGITS: &str = "A code has 1 to 10 digits.";
 pub const TOTP_ERROR_PERIOD: &str = "The period is 1 to 86400 seconds.";
 pub const TOTP_ERROR_NOT_TOTP: &str = "This isn't an otpauth://totp/ URI.";
+
+pub const DROPBOX_LOCATION: &str = "Dropbox: {path}";
+pub const DROPBOX_TITLE: &str = "Open from Dropbox";
+pub const DROPBOX_CHECKING: &str = "Looking for your Dropbox account…";
+pub const DROPBOX_CONNECT_PROMPT: &str = "Connect your Dropbox account to open Vault files stored \
+there. Dropbox asks you in your browser; keefast never sees your Dropbox password.";
+pub const DROPBOX_CONNECT: &str = "Connect Dropbox";
+pub const DROPBOX_CONNECTING: &str =
+    "Allow keefast in the Dropbox page that opened in your browser, then come back here.";
+pub const DROPBOX_OPEN_PAGE_AGAIN: &str = "Open the page again";
+pub const DROPBOX_STOP_CONNECTING: &str = "Stop";
+pub const DROPBOX_CONNECTED_AS: &str = "Connected as {account}";
+pub const DROPBOX_DISCONNECT: &str = "Disconnect";
+pub const DROPBOX_TOP: &str = "Dropbox";
+pub const DROPBOX_UP: &str = "↑ Up";
+pub const DROPBOX_FOLDER_ICON: &str = "▸";
+pub const DROPBOX_FILE_ICON: &str = "·";
+pub const DROPBOX_LOADING: &str = "Loading…";
+pub const DROPBOX_EMPTY_FOLDER: &str = "This folder is empty.";
+pub const DROPBOX_ERROR_NOT_CONFIGURED: &str = "This build of keefast has no Dropbox app key.";
+pub const DROPBOX_ERROR_NOT_CONNECTED: &str =
+    "Dropbox no longer lets keefast in. Connect your account again.";
+pub const DROPBOX_ERROR_REFUSED: &str = "Dropbox was not connected.";
+pub const DROPBOX_ERROR_CALLBACK: &str =
+    "keefast could not wait for Dropbox's answer. Is another keefast connecting Dropbox?";
+pub const DROPBOX_ERROR_NETWORK: &str = "Dropbox can't be reached. Check your connection.";
+pub const DROPBOX_ERROR_NOT_FOUND: &str = "That is no longer in Dropbox.";
+pub const DROPBOX_ERROR_CONFLICT: &str = "The Vault file changed in Dropbox since keefast read it.";
+pub const DROPBOX_ERROR_API: &str = "Dropbox reported an error.";
+pub const DROPBOX_ERROR_SECRET_STORE: &str =
+    "The OS secret store isn't available, so keefast can't keep your Dropbox account connected.";
 
 pub const LOGIN_TITLE: &str = "Save login?";
 pub const LOGIN_PROMPT: &str = "You signed in to {site} as “{username}”. Choose where keefast \

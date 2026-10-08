@@ -1,0 +1,459 @@
+//! Connecting a Dropbox account, browsing it, and opening Vault files from it, against a fake
+//! Dropbox served over HTTP.
+
+mod support;
+
+use std::sync::Arc;
+
+use keefast_workspace::{
+    Dropbox, DropboxAccount, DropboxConfig, DropboxError, DropboxItem, EntryScope, OpenVaultError,
+    StorageError, UnlockSecrets, VaultId, VaultLocation, Workspace,
+};
+use support::fake_dropbox::{ACCOUNT_EMAIL, ACCOUNT_NAME, APP_KEY, FakeDropbox};
+use support::{FakeConfigStore, FakeSecretStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD};
+
+fn config(fake: &FakeDropbox) -> DropboxConfig {
+    DropboxConfig {
+        app_key: APP_KEY.into(),
+        api_url: fake.url().into(),
+        content_url: fake.url().into(),
+        authorize_url: format!("{}/oauth2/authorize", fake.url()),
+        redirect_port: 0,
+    }
+}
+
+fn dropbox(fake: &FakeDropbox, secrets: &Arc<FakeSecretStore>) -> Arc<Dropbox> {
+    Arc::new(Dropbox::new(config(fake), secrets.clone()))
+}
+
+/// Connects the way the user does: keefast sends them to Dropbox's page, they allow it, and
+/// Dropbox sends the browser back to keefast.
+fn connect(dropbox: &Dropbox) -> DropboxAccount {
+    let authorization = dropbox.begin_connect().expect("connecting starts");
+    let browser = FakeDropbox::visit_in_browser(authorization.url());
+    let account = dropbox
+        .finish_connect(authorization)
+        .expect("Dropbox connects");
+    let page = browser.join().unwrap();
+    assert!(page.contains("Dropbox is connected"), "{page}");
+    account
+}
+
+fn connected(fake: &FakeDropbox) -> (Arc<Dropbox>, Arc<FakeSecretStore>) {
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(fake, &secrets);
+    connect(&dropbox);
+    (dropbox, secrets)
+}
+
+fn personal() -> VaultLocation {
+    VaultLocation::Dropbox("/Vaults/Personal.kdbx".into())
+}
+
+fn names(items: &[DropboxItem]) -> Vec<&str> {
+    items.iter().map(|item| item.name.as_str()).collect()
+}
+
+#[test]
+fn connecting_uses_pkce_without_a_client_secret_and_keeps_tokens_in_the_secret_store() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(&fake, &secrets);
+    assert_eq!(dropbox.account().unwrap(), None);
+
+    let authorization = dropbox.begin_connect().unwrap();
+    let url = authorization.url().to_owned();
+    assert!(url.starts_with(&format!("{}/oauth2/authorize?", fake.url())));
+    assert!(url.contains("code_challenge_method=S256"));
+    assert!(url.contains("token_access_type=offline"));
+    let browser = FakeDropbox::visit_in_browser(&url);
+    let account = dropbox.finish_connect(authorization).unwrap();
+    browser.join().unwrap();
+
+    assert_eq!(
+        account,
+        DropboxAccount {
+            name: ACCOUNT_NAME.into(),
+            email: ACCOUNT_EMAIL.into(),
+        }
+    );
+    assert_eq!(dropbox.account().unwrap(), Some(account));
+    assert!(!fake.saw_client_secret());
+    let stored = secrets
+        .secret("dropbox")
+        .expect("the tokens are in the secret store");
+    assert!(stored.contains("refresh-"), "{stored}");
+}
+
+#[test]
+fn tokens_never_reach_the_app_config() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, secrets) = connected(&fake);
+    let config = Arc::new(FakeConfigStore::default());
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default()))
+        .with_config(config.clone())
+        .with_dropbox(dropbox);
+    workspace
+        .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+
+    let saved = format!("{:?}", config.saved().unwrap());
+    let stored = secrets.secret("dropbox").unwrap();
+    let refresh_token = stored
+        .split('"')
+        .find(|part| part.starts_with("refresh-"))
+        .unwrap();
+    assert!(!saved.contains(refresh_token), "{saved}");
+    assert!(!saved.contains("access-"), "{saved}");
+}
+
+#[test]
+fn a_connected_account_is_remembered_through_the_secret_store() {
+    let fake = FakeDropbox::start();
+    fake.add_folder("/Vaults");
+    let (_, secrets) = connected(&fake);
+
+    // keefast starts again: only the secret store knows the account.
+    let dropbox = dropbox(&fake, &secrets);
+
+    assert_eq!(dropbox.account().unwrap().unwrap().email, ACCOUNT_EMAIL);
+    assert_eq!(names(&dropbox.list_folder("").unwrap()), ["Vaults"]);
+    assert_eq!(
+        fake.refreshes(),
+        1,
+        "the refresh token got a new access token"
+    );
+}
+
+#[test]
+fn an_expired_access_token_is_renewed_without_asking_the_user() {
+    let fake = FakeDropbox::start();
+    fake.add_folder("/Vaults");
+    let (dropbox, _) = connected(&fake);
+
+    fake.expire_access_tokens();
+
+    assert_eq!(names(&dropbox.list_folder("").unwrap()), ["Vaults"]);
+    assert_eq!(fake.refreshes(), 1);
+}
+
+#[test]
+fn the_user_refusing_on_dropbox_leaves_keefast_disconnected() {
+    let fake = FakeDropbox::start();
+    fake.deny_authorization();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(&fake, &secrets);
+
+    let authorization = dropbox.begin_connect().unwrap();
+    let browser = FakeDropbox::visit_in_browser(authorization.url());
+    let result = dropbox.finish_connect(authorization);
+    let page = browser.join().unwrap();
+
+    assert!(
+        matches!(&result, Err(DropboxError::Refused(reason)) if reason.contains("chose not to")),
+        "{result:?}"
+    );
+    assert!(page.contains("Dropbox was not connected"), "{page}");
+    assert_eq!(dropbox.account().unwrap(), None);
+    assert!(secrets.is_empty());
+}
+
+#[test]
+fn connecting_can_be_cancelled_while_waiting_for_the_browser() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(&fake, &secrets);
+    let authorization = dropbox.begin_connect().unwrap();
+
+    authorization.canceller().cancel();
+
+    assert!(matches!(
+        dropbox.finish_connect(authorization),
+        Err(DropboxError::Cancelled)
+    ));
+    assert!(secrets.is_empty());
+}
+
+#[test]
+fn connecting_again_right_after_cancelling_gets_the_port_back() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let mut config = config(&fake);
+    // The registered redirect URI has a fixed port; find one that's free.
+    config.redirect_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let dropbox = Arc::new(Dropbox::new(config, secrets));
+    let first = dropbox.begin_connect().unwrap();
+    first.canceller().cancel();
+    let waiting = {
+        let dropbox = dropbox.clone();
+        std::thread::spawn(move || dropbox.finish_connect(first))
+    };
+
+    let second = dropbox.begin_connect().expect("the port is free again");
+    let browser = FakeDropbox::visit_in_browser(second.url());
+    dropbox.finish_connect(second).unwrap();
+    browser.join().unwrap();
+
+    assert!(matches!(
+        waiting.join().unwrap(),
+        Err(DropboxError::Cancelled)
+    ));
+}
+
+#[test]
+fn a_redirect_without_the_authorizations_state_is_turned_away() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(&fake, &secrets);
+    let authorization = dropbox.begin_connect().unwrap();
+    let url = url::Url::parse(authorization.url()).unwrap();
+    let redirect = url
+        .query_pairs()
+        .find(|(key, _)| key == "redirect_uri")
+        .unwrap()
+        .1
+        .into_owned();
+    let canceller = authorization.canceller();
+
+    let forged = std::thread::spawn(move || {
+        let response = ureq::get(&format!("{redirect}?code=forged&state=guess")).call();
+        canceller.cancel();
+        response.map(|response| response.status().as_u16())
+    });
+    let result = dropbox.finish_connect(authorization);
+
+    assert!(matches!(result, Err(DropboxError::Cancelled)), "{result:?}");
+    assert!(matches!(
+        forged.join().unwrap(),
+        Err(ureq::Error::StatusCode(404))
+    ));
+    assert!(secrets.is_empty());
+}
+
+#[test]
+fn without_an_app_key_dropbox_cant_be_connected() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let mut config = config(&fake);
+    config.app_key = String::new();
+    let dropbox = Dropbox::new(config, secrets);
+
+    assert!(matches!(
+        dropbox.begin_connect(),
+        Err(DropboxError::NotConfigured)
+    ));
+}
+
+#[test]
+fn the_whole_dropbox_can_be_browsed_folders_first() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    fake.add_file("/Vaults/Work/work.kdbx", KEEPASSXC_KDBX4);
+    fake.add_file("/Vaults/notes.txt", b"hello");
+    fake.add_file("/top.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, _) = connected(&fake);
+
+    let top = dropbox.list_folder("").unwrap();
+    assert_eq!(names(&top), ["Vaults", "top.kdbx"]);
+    assert!(top[0].is_folder);
+
+    let vaults = dropbox.list_folder(&top[0].path).unwrap();
+    assert_eq!(
+        vaults,
+        [
+            DropboxItem {
+                name: "Work".into(),
+                path: "/Vaults/Work".into(),
+                is_folder: true,
+            },
+            DropboxItem {
+                name: "notes.txt".into(),
+                path: "/Vaults/notes.txt".into(),
+                is_folder: false,
+            },
+            DropboxItem {
+                name: "Personal.kdbx".into(),
+                path: "/Vaults/Personal.kdbx".into(),
+                is_folder: false,
+            },
+        ]
+    );
+    assert_eq!(vaults[2].location(), personal());
+}
+
+#[test]
+fn a_long_folder_is_listed_in_full_across_pages() {
+    let fake = FakeDropbox::start();
+    for n in 0..7 {
+        fake.add_file(&format!("/Many/vault{n}.kdbx"), b"x");
+    }
+    fake.page_size(3);
+    let (dropbox, _) = connected(&fake);
+
+    assert_eq!(dropbox.list_folder("/Many").unwrap().len(), 7);
+}
+
+#[test]
+fn a_folder_that_is_gone_is_reported() {
+    let fake = FakeDropbox::start();
+    let (dropbox, _) = connected(&fake);
+
+    assert!(matches!(
+        dropbox.list_folder("/Nowhere"),
+        Err(DropboxError::NotFound)
+    ));
+}
+
+#[test]
+fn a_vault_file_opens_from_dropbox_and_is_remembered_as_a_dropbox_reference() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, _) = connected(&fake);
+    let config = Arc::new(FakeConfigStore::default());
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default()))
+        .with_config(config.clone())
+        .with_dropbox(dropbox);
+
+    let vault = workspace
+        .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+
+    assert_eq!(workspace.vault(vault).unwrap().display_name(), "Personal");
+    assert_eq!(workspace.visible_entries(EntryScope::Vault(vault)).len(), 4);
+    assert_eq!(config.saved().unwrap().recent_vaults, [personal()]);
+}
+
+#[test]
+fn file_names_beyond_ascii_reach_dropbox_escaped() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Tresor/Persönlich 🔑.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, _) = connected(&fake);
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default())).with_dropbox(dropbox);
+    let location = VaultLocation::Dropbox("/Tresor/Persönlich 🔑.kdbx".into());
+
+    let vault = workspace
+        .open_vault(&location, &UnlockSecrets::password(PASSWORD))
+        .unwrap();
+
+    assert_eq!(
+        workspace.vault(vault).unwrap().display_name(),
+        "Persönlich 🔑"
+    );
+    assert!(fake.api_args().iter().all(|arg| arg.is_ascii()));
+}
+
+#[test]
+fn a_vault_file_missing_from_dropbox_is_not_found() {
+    let fake = FakeDropbox::start();
+    let (dropbox, _) = connected(&fake);
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default())).with_dropbox(dropbox);
+
+    let result = workspace.open_vault(&personal(), &UnlockSecrets::password(PASSWORD));
+
+    assert!(matches!(
+        result,
+        Err(OpenVaultError::Storage(StorageError::NotFound(_)))
+    ));
+}
+
+fn group_names(workspace: &Workspace, vault: VaultId) -> Vec<String> {
+    let root = workspace.vault(vault).unwrap().vault().root();
+    root.groups()
+        .iter()
+        .map(|group| group.name().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_change_saved_from_another_device_is_merged_not_overwritten() {
+    let fake = FakeDropbox::start();
+    fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    let (dropbox, _) = connected(&fake);
+    let open = |dropbox: &Arc<Dropbox>| {
+        let mut workspace =
+            Workspace::new(Arc::new(FakeStorage::default())).with_dropbox(dropbox.clone());
+        let vault = workspace
+            .open_vault(&personal(), &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+        (workspace, vault)
+    };
+    let (mut laptop, on_laptop) = open(&dropbox);
+    let (mut phone, on_phone) = open(&dropbox);
+
+    let root = phone.vault(on_phone).unwrap().vault().root().id();
+    phone
+        .create_group(on_phone, root, "From the phone")
+        .unwrap();
+    phone.save_vault(on_phone).unwrap();
+    let root = laptop.vault(on_laptop).unwrap().vault().root().id();
+    laptop
+        .create_group(on_laptop, root, "From the laptop")
+        .unwrap();
+    laptop.save_vault(on_laptop).unwrap();
+
+    let (reopened, vault) = open(&dropbox);
+    let groups = group_names(&reopened, vault);
+    assert!(groups.contains(&"From the phone".to_owned()), "{groups:?}");
+    assert!(groups.contains(&"From the laptop".to_owned()), "{groups:?}");
+}
+
+#[test]
+fn disconnecting_revokes_and_removes_the_tokens() {
+    let fake = FakeDropbox::start();
+    fake.add_folder("/Vaults");
+    let (dropbox, secrets) = connected(&fake);
+
+    dropbox.disconnect().unwrap();
+
+    assert_eq!(fake.revocations(), 1);
+    assert!(secrets.is_empty());
+    assert_eq!(dropbox.account().unwrap(), None);
+    assert!(matches!(
+        dropbox.list_folder(""),
+        Err(DropboxError::NotConnected)
+    ));
+}
+
+#[test]
+fn disconnecting_offline_still_removes_the_tokens() {
+    let fake = FakeDropbox::start();
+    let (dropbox, secrets) = connected(&fake);
+    let mut offline = config(&fake);
+    offline.api_url = "http://127.0.0.1:9".into();
+    let offline = Dropbox::new(offline, secrets.clone());
+
+    offline.disconnect().unwrap();
+
+    assert!(secrets.is_empty());
+    drop(dropbox);
+}
+
+#[test]
+fn a_secret_store_that_fails_is_reported() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    secrets.fail(true);
+    let dropbox = dropbox(&fake, &secrets);
+
+    assert!(matches!(
+        dropbox.account(),
+        Err(DropboxError::SecretStore(_))
+    ));
+}
+
+#[test]
+fn without_dropbox_a_dropbox_vault_file_is_unavailable() {
+    let mut workspace = Workspace::new(Arc::new(FakeStorage::default()));
+
+    let result = workspace.open_vault(&personal(), &UnlockSecrets::password(PASSWORD));
+
+    assert!(matches!(
+        result,
+        Err(OpenVaultError::Storage(StorageError::Unavailable(_)))
+    ));
+}

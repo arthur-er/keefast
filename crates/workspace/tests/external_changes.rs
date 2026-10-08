@@ -361,7 +361,9 @@ fn open_vaults_and_those_opened_later_are_watched() {
 fn the_local_storage_provider_refuses_to_overwrite_a_vault_file_changed_meanwhile() {
     let dir = tempfile::tempdir().unwrap();
     let location = VaultLocation::Local(dir.path().join("personal.kdbx"));
-    let VaultLocation::Local(path) = &location;
+    let VaultLocation::Local(path) = &location else {
+        unreachable!()
+    };
     std::fs::write(path, b"first").unwrap();
     let seen = LocalStorage.read(&location).unwrap().revision;
     std::fs::write(path, b"changed elsewhere").unwrap();
@@ -386,7 +388,9 @@ fn the_local_storage_provider_refuses_to_overwrite_a_vault_file_changed_meanwhil
 fn the_local_storage_provider_sees_a_vault_file_replaced_elsewhere_but_not_read() {
     let dir = tempfile::tempdir().unwrap();
     let location = VaultLocation::Local(dir.path().join("personal.kdbx"));
-    let VaultLocation::Local(path) = &location;
+    let VaultLocation::Local(path) = &location else {
+        unreachable!()
+    };
     std::fs::write(path, b"first").unwrap();
     std::fs::write(dir.path().join("unrelated.txt"), b"x").unwrap();
     let (sender, changes) = mpsc::channel();

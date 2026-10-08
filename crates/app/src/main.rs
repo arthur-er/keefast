@@ -5,6 +5,7 @@ mod actions;
 mod browser_integration;
 mod clipboard;
 mod command_palette;
+mod dropbox_panel;
 mod entry_editor;
 mod locking;
 mod login_dialog;
@@ -29,8 +30,8 @@ use gpui::{
     size,
 };
 use keefast_workspace::{
-    FileConfigStore, LocalStorage, NativeMessagingHosts, UnsavedLock, VaultId, VaultLocation,
-    Workspace,
+    Dropbox, DropboxConfig, FileConfigStore, LocalStorage, NativeMessagingHosts, OsSecretStore,
+    UnsavedLock, VaultId, VaultLocation, Workspace,
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
@@ -71,6 +72,10 @@ impl KeefastWindow {
             }
             if let Some(hosts) = NativeMessagingHosts::for_current_user() {
                 workspace = workspace.with_browser_hosts(Arc::new(hosts));
+            }
+            if let Some(config) = dropbox_config(&workspace) {
+                let dropbox = Dropbox::new(config, Arc::new(OsSecretStore));
+                workspace = workspace.with_dropbox(Arc::new(dropbox));
             }
             workspace
         });
@@ -540,6 +545,30 @@ impl Render for KeefastWindow {
                 )
             })
     }
+}
+
+/// Which Dropbox app keefast connects as: the app key from the `KEEFAST_DROPBOX_APP_KEY`
+/// environment variable, else the app config's `dropbox_app_key`, else the one keefast was built
+/// with (`KEEFAST_DROPBOX_APP_KEY` at build time). Without one, Dropbox isn't offered. The
+/// `KEEFAST_DROPBOX_*_URL` variables point keefast at another Dropbox, such as the fake one
+/// (`cargo run -p keefast-workspace --example fake_dropbox`).
+fn dropbox_config(workspace: &Workspace) -> Option<DropboxConfig> {
+    let env = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let app_key = env("KEEFAST_DROPBOX_APP_KEY")
+        .or_else(|| workspace.dropbox_app_key().map(str::to_owned))
+        .or_else(|| option_env!("KEEFAST_DROPBOX_APP_KEY").map(str::to_owned))
+        .filter(|key| !key.is_empty())?;
+    let mut config = DropboxConfig::new(app_key);
+    if let Some(url) = env("KEEFAST_DROPBOX_API_URL") {
+        config.api_url = url;
+    }
+    if let Some(url) = env("KEEFAST_DROPBOX_CONTENT_URL") {
+        config.content_url = url;
+    }
+    if let Some(url) = env("KEEFAST_DROPBOX_AUTHORIZE_URL") {
+        config.authorize_url = url;
+    }
+    Some(config)
 }
 
 /// The command line: `keefast [VAULT_FILE] [--key-file KEY_FILE]`.

@@ -7,9 +7,11 @@ mod browser_hosts;
 mod clipboard;
 mod clock;
 mod config;
+mod dropbox;
 mod generator;
 mod locking;
 mod os_lock;
+mod secret_store;
 mod storage;
 mod unlock_secrets;
 
@@ -37,11 +39,16 @@ pub use browser_hosts::{
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
+pub use dropbox::{
+    Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig, DropboxError,
+    DropboxItem,
+};
 pub use generator::{GeneratorMode, GeneratorSettings};
 pub use locking::{LockedVault, UnsavedLock};
 pub use os_lock::watch_os_lock;
 #[cfg(target_os = "linux")]
 pub use os_lock::watch_os_lock_on;
+pub use secret_store::{OsSecretStore, SecretStore, SecretStoreError};
 pub use storage::{
     LocalStorage, Revision, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
 };
@@ -357,7 +364,10 @@ pub struct FinishedSave {
 }
 
 pub struct Workspace {
+    /// The Storage provider for local Vault files.
     storage: Arc<dyn StorageProvider>,
+    /// The Storage provider for Vault files in Dropbox, when keefast has a Dropbox app key.
+    dropbox: Option<Arc<Dropbox>>,
     clock: Arc<dyn Clock>,
     /// The unlocked Vaults, in the order they were opened.
     vaults: Vec<OpenVault>,
@@ -394,6 +404,7 @@ impl Workspace {
         let last_activity = clock.now();
         Self {
             storage,
+            dropbox: None,
             clock,
             last_activity,
             vaults: Vec::new(),
@@ -435,6 +446,38 @@ impl Workspace {
             self.register_browser_hosts();
         }
         self
+    }
+
+    /// Reads and writes Vault files in Dropbox through `dropbox` from now on.
+    pub fn with_dropbox(mut self, dropbox: Arc<Dropbox>) -> Self {
+        self.dropbox = Some(dropbox);
+        self
+    }
+
+    /// The Dropbox Storage provider, to connect an account and browse it. `None` when keefast
+    /// has no Dropbox app key.
+    pub fn dropbox(&self) -> Option<&Arc<Dropbox>> {
+        self.dropbox.as_ref()
+    }
+
+    /// The Dropbox app key the app config names, if it names one.
+    pub fn dropbox_app_key(&self) -> Option<&str> {
+        self.config.dropbox_app_key.as_deref()
+    }
+
+    /// The Storage provider that reaches `location`.
+    fn storage_for(
+        &self,
+        location: &VaultLocation,
+    ) -> Result<Arc<dyn StorageProvider>, StorageError> {
+        match location {
+            VaultLocation::Local(_) => Ok(Arc::clone(&self.storage)),
+            VaultLocation::Dropbox(_) => self
+                .dropbox
+                .clone()
+                .map(|dropbox| dropbox as Arc<dyn StorageProvider>)
+                .ok_or_else(|| StorageError::Unavailable(location.clone())),
+        }
     }
 
     pub fn browser_integration(&self) -> bool {
@@ -620,12 +663,13 @@ impl Workspace {
         location: VaultLocation,
         secrets: UnlockSecrets,
     ) -> Result<PendingOpen, OpenVaultError> {
-        let location = self.storage.canonical(&location);
+        let storage = self.storage_for(&location)?;
+        let location = storage.canonical(&location);
         if let Some(open) = self.open_vault_at(&location) {
             return Err(OpenVaultError::AlreadyOpen(open));
         }
         Ok(PendingOpen {
-            storage: Arc::clone(&self.storage),
+            storage,
             location,
             secrets,
         })
@@ -697,7 +741,8 @@ impl Workspace {
 
     fn watch(&self, id: VaultId, location: &VaultLocation) -> Option<Watch> {
         let on_change = Arc::clone(self.on_file_change.as_ref()?);
-        self.storage
+        self.storage_for(location)
+            .ok()?
             .watch(location, Arc::new(move || on_change(id)))
     }
 
@@ -929,7 +974,8 @@ impl Workspace {
     /// Starts a save, or with `write` off only a check of the Vault file for changes made
     /// elsewhere.
     fn begin(&mut self, id: VaultId, write: bool) -> Result<PendingSave, SaveVaultError> {
-        let storage = Arc::clone(&self.storage);
+        let location = &self.vault(id).ok_or(SaveVaultError::VaultNotOpen)?.location;
+        let storage = self.storage_for(location)?;
         let open = self.vault_mut(id).ok_or(SaveVaultError::VaultNotOpen)?;
         if open.saving {
             return Err(SaveVaultError::InProgress);

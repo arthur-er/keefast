@@ -12,6 +12,7 @@ use keefast_workspace::{
 };
 use secrecy::SecretString;
 
+use crate::dropbox_panel::{self, DropboxPanel, DropboxPanelEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
@@ -34,6 +35,8 @@ pub struct UnlockView {
     key_file: Option<PathBuf>,
     error: Option<UnlockError>,
     unlocking: Option<Task<()>>,
+    /// Shown instead of the dialog while the user picks a Vault file in Dropbox.
+    dropbox: Option<Entity<DropboxPanel>>,
 }
 
 /// Why the last unlock failed: what the user should know, plus the technical reason, if any.
@@ -82,6 +85,7 @@ impl UnlockView {
             key_file,
             error: None,
             unlocking: None,
+            dropbox: None,
         };
         if view.location.is_none() {
             view.location = view.most_recent_closed(cx);
@@ -95,6 +99,7 @@ impl UnlockView {
         self.clear_password(cx);
         self.key_file = None;
         self.error = None;
+        self.dropbox = None;
         self.location = self.most_recent_closed(cx);
         cx.notify();
     }
@@ -154,6 +159,26 @@ impl UnlockView {
         self.pick_file(strings::UNLOCK_CHOOSE_FILE_PROMPT, cx, |this, path| {
             this.location = Some(VaultLocation::Local(path));
         });
+    }
+
+    fn choose_from_dropbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dropbox) = self.workspace.read(cx).dropbox().cloned() else {
+            return;
+        };
+        let panel = cx.new(|cx| DropboxPanel::new(dropbox, cx));
+        cx.subscribe_in(&panel, window, |this, _, event, window, cx| {
+            if let DropboxPanelEvent::Picked(location) = event {
+                this.location = Some(location.clone());
+                this.error = None;
+            }
+            this.dropbox = None;
+            window.focus(&this.password.focus_handle(cx));
+            cx.notify();
+        })
+        .detach();
+        window.focus(&panel.focus_handle(cx));
+        self.dropbox = Some(panel);
+        cx.notify();
     }
 
     fn choose_key_file(&mut self, cx: &mut Context<Self>) {
@@ -291,7 +316,7 @@ impl UnlockView {
             .map(|(ix, location)| {
                 let selected = self.location.as_ref() == Some(&location);
                 let name = location.display_name();
-                let description = location.description();
+                let description = describe_location(&location);
                 let forget = location.clone();
                 div()
                     .flex()
@@ -354,6 +379,14 @@ impl UnlockView {
     }
 }
 
+/// Where a Vault file is, in full, saying which Storage provider holds it when it isn't local.
+fn describe_location(location: &VaultLocation) -> String {
+    match location {
+        VaultLocation::Local(_) => location.description(),
+        VaultLocation::Dropbox(path) => strings::DROPBOX_LOCATION.replace("{path}", path),
+    }
+}
+
 /// Tells a wrong key, a damaged or unsupported Vault file and key file problems apart.
 fn describe(error: &OpenVaultError) -> UnlockError {
     let (message, detail) = match error {
@@ -370,6 +403,12 @@ fn describe(error: &OpenVaultError) -> UnlockError {
         }
         OpenVaultError::Storage(StorageError::Io(_) | StorageError::Conflict) => {
             (strings::UNLOCK_ERROR_READ, None)
+        }
+        OpenVaultError::Storage(StorageError::Unavailable(_)) => {
+            (strings::UNLOCK_ERROR_NO_PROVIDER, None)
+        }
+        OpenVaultError::Storage(StorageError::Dropbox(error)) => {
+            return UnlockError::new(dropbox_panel::describe(error));
         }
         OpenVaultError::KeyFileNotFound(_) => (strings::UNLOCK_ERROR_KEY_FILE_NOT_FOUND, None),
         OpenVaultError::KeyFileUnreadable(_) => (strings::UNLOCK_ERROR_KEY_FILE_READ, None),
@@ -418,7 +457,7 @@ impl Render for UnlockView {
         let can_cancel = self.can_cancel(cx);
         let config_error = self.workspace.read(cx).config_error().is_some();
         let file_label: SharedString = match &self.location {
-            Some(location) => location.description().into(),
+            Some(location) => describe_location(location).into(),
             None => strings::UNLOCK_NO_FILE.into(),
         };
         let key_file_label: SharedString = match &self.key_file {
@@ -430,6 +469,17 @@ impl Render for UnlockView {
                 .into(),
             None => strings::UNLOCK_NO_KEY_FILE.into(),
         };
+        if let Some(dropbox) = self.dropbox.clone() {
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme.background)
+                .text_color(theme.text)
+                .child(dropbox);
+        }
+        let has_dropbox = self.workspace.read(cx).dropbox().is_some();
         let locked = self.render_locked(theme, cx);
         let recents = self.render_recents(theme, cx);
         div()
@@ -455,17 +505,24 @@ impl Render for UnlockView {
                     .children(recents)
                     .child(
                         div()
+                            .truncate()
+                            .text_sm()
+                            .text_color(theme.muted)
+                            .child(file_label),
+                    )
+                    .child(
+                        div()
                             .flex()
-                            .items_center()
+                            .justify_end()
                             .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_sm()
-                                    .text_color(theme.muted)
-                                    .child(file_label),
-                            )
+                            .when(has_dropbox, |this| {
+                                this.child(
+                                    button("from-dropbox", strings::UNLOCK_FROM_DROPBOX, theme)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.choose_from_dropbox(window, cx)
+                                        })),
+                                )
+                            })
                             .child(
                                 button("choose-file", strings::UNLOCK_CHOOSE_FILE, theme)
                                     .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx))),
