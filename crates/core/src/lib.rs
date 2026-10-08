@@ -10,6 +10,7 @@ mod fuzzy;
 mod generator;
 mod kdbx;
 mod key;
+mod merge;
 mod open;
 mod save;
 mod site;
@@ -25,6 +26,7 @@ pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
 };
 pub use key::{CompositeKey, KeyFileError};
+pub use merge::MergeSummary;
 pub use open::OpenError;
 pub use save::SaveError;
 pub use site::Site;

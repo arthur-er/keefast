@@ -7,6 +7,7 @@ mod clipboard;
 mod command_palette;
 mod entry_editor;
 mod login_dialog;
+mod merge_notice;
 mod pairing_dialog;
 mod password_generator;
 mod saving;
@@ -76,6 +77,7 @@ impl KeefastWindow {
             async {}
         })
         .detach();
+        saving::watch_vault_files(&workspace, cx);
         let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
         cx.observe_in(&integration, window, Self::show_pending_requests)
             .detach();

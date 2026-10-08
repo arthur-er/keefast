@@ -7,12 +7,12 @@ pub mod extension;
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keefast_workspace::{
-    AppConfig, Browser, BrowserHosts, Clipboard, Clock, ConfigError, ConfigStore, StorageError,
-    StorageProvider, VaultLocation,
+    AppConfig, Browser, BrowserHosts, Clipboard, Clock, ConfigError, ConfigStore, Revision,
+    StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
 };
 
 pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassxc-kdbx4.kdbx");
@@ -22,25 +22,76 @@ pub const BROWSER_KDBX: &[u8] = include_bytes!("../../../../fixtures/keepassxc-b
 /// TOTP settings in every client's field format; see scripts/make-totp-fixture.sh.
 pub const TOTP_KDBX: &[u8] = include_bytes!("../../../../fixtures/totp.kdbx");
 
-/// An in-memory Storage provider holding Vault files by location.
+type OnChange = Arc<dyn Fn() + Send + Sync>;
+
+/// An in-memory Storage provider holding Vault files by location, each write a new numbered
+/// revision, as cloud storage keeps them.
 #[derive(Default)]
 pub struct FakeStorage {
-    files: Mutex<HashMap<VaultLocation, Vec<u8>>>,
+    files: Mutex<HashMap<VaultLocation, (Vec<u8>, u64)>>,
+    next_revision: Mutex<u64>,
     failing_writes: Mutex<bool>,
     writes: Mutex<usize>,
+    watchers: Arc<Mutex<Vec<(VaultLocation, OnChange)>>>,
+    /// Changes made elsewhere, landing just before the next write each.
+    races: Mutex<Vec<(VaultLocation, Vec<u8>)>>,
 }
 
 impl FakeStorage {
     pub fn with_file(self, location: &VaultLocation, bytes: &[u8]) -> Self {
-        self.files
-            .lock()
-            .unwrap()
-            .insert(location.clone(), bytes.to_vec());
+        self.put(location, bytes);
         self
     }
 
     pub fn file(&self, location: &VaultLocation) -> Option<Vec<u8>> {
-        self.files.lock().unwrap().get(location).cloned()
+        self.files
+            .lock()
+            .unwrap()
+            .get(location)
+            .map(|(bytes, _)| bytes.clone())
+    }
+
+    fn put(&self, location: &VaultLocation, bytes: &[u8]) -> Revision {
+        let mut next = self.next_revision.lock().unwrap();
+        *next += 1;
+        self.files
+            .lock()
+            .unwrap()
+            .insert(location.clone(), (bytes.to_vec(), *next));
+        Revision::new(next.to_string())
+    }
+
+    /// Replaces the Vault file as another device would, telling those watching it.
+    pub fn change_elsewhere(&self, location: &VaultLocation, bytes: &[u8]) {
+        self.put(location, bytes);
+        let watchers: Vec<OnChange> = self
+            .watchers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(watched, _)| watched == location)
+            .map(|(_, on_change)| Arc::clone(on_change))
+            .collect();
+        for on_change in watchers {
+            on_change();
+        }
+    }
+
+    /// Has another device replace the Vault file just before keefast's next write to it.
+    pub fn change_before_next_write(&self, location: &VaultLocation, bytes: &[u8]) {
+        self.races
+            .lock()
+            .unwrap()
+            .push((location.clone(), bytes.to_vec()));
+    }
+
+    pub fn watching(&self, location: &VaultLocation) -> usize {
+        self.watchers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(watched, _)| watched == location)
+            .count()
     }
 
     /// Makes every write fail, like a full disk, until turned off again.
@@ -54,21 +105,74 @@ impl FakeStorage {
 }
 
 impl StorageProvider for FakeStorage {
-    fn read(&self, location: &VaultLocation) -> Result<Vec<u8>, StorageError> {
-        self.file(location)
-            .ok_or_else(|| StorageError::NotFound(location.clone()))
+    fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
+        let files = self.files.lock().unwrap();
+        let (bytes, revision) = files
+            .get(location)
+            .ok_or_else(|| StorageError::NotFound(location.clone()))?;
+        Ok(StoredFile {
+            bytes: bytes.clone(),
+            revision: Revision::new(revision.to_string()),
+        })
     }
 
-    fn write(&self, location: &VaultLocation, bytes: &[u8]) -> Result<(), StorageError> {
+    fn write(
+        &self,
+        location: &VaultLocation,
+        bytes: &[u8],
+        expected: Option<&Revision>,
+    ) -> Result<Revision, StorageError> {
         if *self.failing_writes.lock().unwrap() {
             return Err(StorageError::Io(io::Error::other("disk full")));
         }
-        *self.writes.lock().unwrap() += 1;
-        self.files
+        let race = {
+            let mut races = self.races.lock().unwrap();
+            let index = races.iter().position(|(raced, _)| raced == location);
+            index.map(|index| races.remove(index))
+        };
+        if let Some((_, theirs)) = race {
+            self.change_elsewhere(location, &theirs);
+        }
+        let current = self
+            .files
             .lock()
             .unwrap()
-            .insert(location.clone(), bytes.to_vec());
-        Ok(())
+            .get(location)
+            .map(|(_, revision)| Revision::new(revision.to_string()));
+        if let (Some(expected), Some(current)) = (expected, current)
+            && *expected != current
+        {
+            return Err(StorageError::Conflict);
+        }
+        *self.writes.lock().unwrap() += 1;
+        Ok(self.put(location, bytes))
+    }
+
+    fn watch(&self, location: &VaultLocation, on_change: OnChange) -> Option<Watch> {
+        let id = Arc::as_ptr(&on_change) as *const () as usize;
+        self.watchers
+            .lock()
+            .unwrap()
+            .push((location.clone(), on_change));
+        Some(Watch::new(Unwatch {
+            watchers: Arc::clone(&self.watchers),
+            id,
+        }))
+    }
+}
+
+/// Stops a [`FakeStorage`] watch when dropped.
+struct Unwatch {
+    watchers: Arc<Mutex<Vec<(VaultLocation, OnChange)>>>,
+    id: usize,
+}
+
+impl Drop for Unwatch {
+    fn drop(&mut self) {
+        self.watchers
+            .lock()
+            .unwrap()
+            .retain(|(_, on_change)| Arc::as_ptr(on_change) as *const () as usize != self.id);
     }
 }
 

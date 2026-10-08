@@ -17,6 +17,7 @@ use crate::actions::{
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
+use crate::merge_notice;
 use crate::saving;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
@@ -52,7 +53,15 @@ pub struct VaultBrowser {
     revealed_fields: Vec<usize>,
     /// The custom field of the selected Entry last copied, by index.
     copied_field: Option<usize>,
+    /// What the latest Merges of changes made elsewhere changed, until dismissed or timed out.
+    merge_notice: Option<SharedString>,
+    /// Counts the notices shown, so a timeout only hides the one it was set for.
+    merge_notices: u64,
 }
+
+/// How long a Merge notice stays up, and how many Merges it lists at most.
+const MERGE_NOTICE_TIME: Duration = Duration::from_secs(15);
+const MERGE_NOTICE_LINES: usize = 3;
 
 /// What the detail pane shows besides the selected Entry.
 enum Detail {
@@ -105,7 +114,11 @@ impl VaultBrowser {
         vault: VaultId,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
+        cx.observe(&workspace, |this, workspace, cx| {
+            this.show_merges(&workspace, cx);
+            cx.notify();
+        })
+        .detach();
         cx.observe(&integration, |_, _, cx| cx.notify()).detach();
         // Keeps the shown TOTP code and its countdown current.
         cx.spawn(async move |this, cx| {
@@ -138,9 +151,81 @@ impl VaultBrowser {
             custom_field_focus: Vec::new(),
             revealed_fields: Vec::new(),
             copied_field: None,
+            merge_notice: None,
+            merge_notices: 0,
         };
         browser.select(EntryScope::Vault(vault), cx);
         browser
+    }
+
+    /// Tells the user about Merges of changes made elsewhere since last shown.
+    fn show_merges(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        let merges = workspace.update(cx, |workspace, _| workspace.take_merges());
+        if merges.is_empty() {
+            return;
+        }
+        let workspace = workspace.read(cx);
+        // Merges in quick succession are listed together, the latest few kept.
+        let earlier = self.merge_notice.iter().flat_map(|notice| notice.lines());
+        let lines: Vec<String> = earlier
+            .map(str::to_owned)
+            .chain(merges.iter().map(|merge| {
+                let name = workspace
+                    .vault(merge.vault)
+                    .map(|open| open.display_name())
+                    .unwrap_or_default();
+                merge_notice::describe(&name, &merge.summary)
+            }))
+            .collect();
+        let lines = &lines[lines.len().saturating_sub(MERGE_NOTICE_LINES)..];
+        self.merge_notice = Some(lines.join("\n").into());
+        self.merge_notices += 1;
+        let shown = self.merge_notices;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MERGE_NOTICE_TIME).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.merge_notices == shown {
+                    this.merge_notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn render_merge_notice(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let notice = self.merge_notice.clone()?;
+        Some(
+            div()
+                .id("merge-notice")
+                .absolute()
+                .bottom_4()
+                .right_4()
+                .w(px(400.))
+                .flex()
+                .items_start()
+                .gap_3()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.panel)
+                .text_sm()
+                .shadow_md()
+                .child(div().flex_1().min_w_0().child(notice))
+                .child(
+                    div()
+                        .id("dismiss-merge-notice")
+                        .cursor_pointer()
+                        .text_color(theme.muted)
+                        .child(strings::MERGE_NOTICE_DISMISS)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.merge_notice = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Shows a Vault's Entries, as after opening it.
@@ -1378,12 +1463,14 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
             .size_full()
+            .relative()
             .flex()
             .bg(theme.background)
             .text_color(theme.text)
             .child(self.render_sidebar(theme, cx))
             .child(self.render_entry_list(theme, cx))
             .child(self.render_detail(theme, cx))
+            .children(self.render_merge_notice(theme, cx))
     }
 }
 

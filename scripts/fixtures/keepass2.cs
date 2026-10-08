@@ -2,6 +2,7 @@
 // Usage: keepass2.exe write <out.kdbx> <password> kdbx3|kdbx4 [key file]
 //                                                              writes a fixture Vault file
 //        keepass2.exe export <in.kdbx> <password>              prints a Vault file as XML
+//        keepass2.exe merge <into.kdbx> <from.kdbx> <password>  synchronizes one into the other
 using System;
 using System.Reflection;
 using System.Text;
@@ -41,7 +42,19 @@ static class Fixture
     static void Main(string[] args)
     {
         if (args[0] == "export") Export(args[1], args[2]);
+        else if (args[0] == "merge") Merge(args[1], args[2], args[3]);
         else Write(args[1], args[2], args[3] == "kdbx4", args.Length > 4 ? args[4] : null);
+    }
+
+    // As KeePass2's File > Synchronize: newer wins, deletions are honoured.
+    static void Merge(string into, string from, string password)
+    {
+        var db = new PwDatabase();
+        db.Open(IOConnectionInfo.FromPath(into), Key(password), new NullStatusLogger());
+        var source = new PwDatabase();
+        source.Open(IOConnectionInfo.FromPath(from), Key(password), new NullStatusLogger());
+        db.MergeIn(source, PwMergeMethod.Synchronize, new NullStatusLogger());
+        db.Save(new NullStatusLogger());
     }
 
     static void Export(string path, string password)

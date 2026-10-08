@@ -410,7 +410,7 @@ fn the_local_storage_provider_keeps_the_vault_files_permissions() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
 
     LocalStorage
-        .write(&VaultLocation::Local(path.clone()), b"new")
+        .write(&VaultLocation::Local(path.clone()), b"new", None)
         .unwrap();
 
     assert_eq!(std::fs::read(&path).unwrap(), b"new");
@@ -426,7 +426,7 @@ fn a_failed_local_write_leaves_the_vault_file_and_no_temporary_file() {
     std::fs::create_dir(&path).unwrap();
     std::fs::write(path.join("inside"), b"untouched").unwrap();
 
-    let result = LocalStorage.write(&VaultLocation::Local(path.clone()), b"new");
+    let result = LocalStorage.write(&VaultLocation::Local(path.clone()), b"new", None);
 
     assert!(result.is_err());
     assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"untouched");
@@ -507,7 +507,7 @@ fn the_local_storage_provider_saves_through_a_symlink() {
     std::os::unix::fs::symlink(&target, &link).unwrap();
 
     LocalStorage
-        .write(&VaultLocation::Local(link.clone()), b"new")
+        .write(&VaultLocation::Local(link.clone()), b"new", None)
         .unwrap();
 
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());

@@ -414,7 +414,7 @@ impl Vault {
         element
     }
 
-    fn take(&mut self, path: &[usize]) -> Element {
+    pub(crate) fn take(&mut self, path: &[usize]) -> Element {
         let (&last, parent) = path.split_last().expect("the root Group is never taken");
         match self.at_mut(parent).children.remove(last) {
             Node::Element(element) => element,
@@ -422,7 +422,7 @@ impl Vault {
         }
     }
 
-    fn meta(&self) -> Option<&Element> {
+    pub(crate) fn meta(&self) -> Option<&Element> {
         self.file.document.child("Meta")
     }
 
@@ -444,7 +444,7 @@ impl Vault {
     }
 
     /// `None` when the history is unlimited.
-    fn history_max_items(&self) -> Option<usize> {
+    pub(crate) fn history_max_items(&self) -> Option<usize> {
         let max = self
             .meta_text("HistoryMaxItems")
             .and_then(|text| text.trim().parse::<i64>().ok())
@@ -457,7 +457,7 @@ impl Vault {
             .is_none_or(|text| is_true(&text))
     }
 
-    fn recycle_bin_uuid(&self) -> Option<Uuid> {
+    pub(crate) fn recycle_bin_uuid(&self) -> Option<Uuid> {
         decode_uuid(&self.meta_text("RecycleBinUUID")?).filter(|id| *id != NO_UUID)
     }
 
@@ -552,7 +552,7 @@ fn find(group: &Element, kind: Kind, id: Uuid, path: &mut Vec<usize>) -> bool {
     false
 }
 
-fn has_uuid(element: &Element, id: Uuid) -> bool {
+pub(crate) fn has_uuid(element: &Element, id: Uuid) -> bool {
     element
         .child("UUID")
         .and_then(|uuid| decode_uuid(&uuid.text()))
@@ -727,7 +727,7 @@ fn insertion_index(parent: &Element, after: &[&str]) -> usize {
 }
 
 /// KeePass lists a Group's Entries before its subgroups.
-fn insert_entry(group: &mut Element, entry: Element) {
+pub(crate) fn insert_entry(group: &mut Element, entry: Element) {
     let index = group
         .children
         .iter()

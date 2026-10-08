@@ -20,7 +20,7 @@ use secrecy::ExposeSecret;
 
 use keefast_core::{
     EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId, KeyFileError,
-    OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
+    MergeSummary, OpenError, SaveError, Timestamp, Totp, TotpCode, TotpError, Vault,
 };
 use secrecy::SecretString;
 
@@ -36,7 +36,9 @@ pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
 pub use generator::{GeneratorMode, GeneratorSettings};
-pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
+pub use storage::{
+    LocalStorage, Revision, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
+};
 pub use unlock_secrets::UnlockSecrets;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,8 +93,17 @@ pub enum SaveVaultError {
     InProgress,
     #[error(transparent)]
     Vault(#[from] SaveError),
+    #[error("the Vault file was changed elsewhere and can't be opened to Merge it: {0}")]
+    Merge(#[from] OpenError),
     #[error(transparent)]
     Storage(#[from] StorageError),
+}
+
+/// A Merge of changes made to a Vault file elsewhere into its open Vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeReport {
+    pub vault: VaultId,
+    pub summary: MergeSummary,
 }
 
 /// Where the open Vaults stand with their Vault files, most pressing first.
@@ -115,6 +126,11 @@ pub struct OpenVault {
     saving: bool,
     /// The edit count at which the last save failed, if it did.
     failed_save_at: Option<u64>,
+    /// The revision of the Vault file the Vault last caught up with.
+    revision: Option<Revision>,
+    /// Whether the Vault file may have changed since it was last checked.
+    file_changed: bool,
+    watch: Option<Watch>,
 }
 
 impl OpenVault {
@@ -159,10 +175,10 @@ pub struct PendingOpen {
 
 impl PendingOpen {
     pub fn unlock(self) -> Result<UnlockedVault, OpenVaultError> {
-        let bytes = self.storage.read(&self.location)?;
+        let stored = self.storage.read(&self.location)?;
         let mut opened = Err(OpenError::WrongKey);
         for key in self.secrets.composite_keys()? {
-            opened = Vault::open(&bytes, &key);
+            opened = Vault::open(&stored.bytes, &key);
             if !matches!(opened, Err(OpenError::WrongKey)) {
                 break;
             }
@@ -171,6 +187,7 @@ impl PendingOpen {
         Ok(UnlockedVault {
             location: self.location,
             vault,
+            revision: stored.revision,
         })
     }
 }
@@ -179,33 +196,101 @@ impl PendingOpen {
 pub struct UnlockedVault {
     location: VaultLocation,
     vault: Vault,
+    revision: Revision,
 }
 
 /// A save that has not run yet: a snapshot of the Vault, so the slow part (key derivation,
 /// encryption and writing) can run off the UI thread while editing goes on.
+///
+/// A save never overwrites changes made to the Vault file elsewhere: it Merges them in first,
+/// and writes only if the Vault file then lacks something. A save that is only a check for
+/// such changes writes only after a Merge.
 pub struct PendingSave {
     id: VaultId,
     edits: u64,
     storage: Arc<dyn StorageProvider>,
     location: VaultLocation,
     vault: Vault,
+    revision: Option<Revision>,
+    /// Whether the Vault has changes to write, or this only checks the Vault file.
+    write: bool,
 }
+
+/// How often a save Merges and tries again when the Vault file keeps changing under it.
+const SAVE_ATTEMPTS: usize = 3;
 
 impl PendingSave {
     pub fn vault_id(&self) -> VaultId {
         self.id
     }
 
-    pub fn run(self) -> FinishedSave {
-        let result = self
-            .vault
-            .save()
-            .map_err(SaveVaultError::from)
-            .and_then(|bytes| Ok(self.storage.write(&self.location, &bytes)?));
+    pub fn run(mut self) -> FinishedSave {
+        let mut merged = Vec::new();
+        let result = self.sync(&mut merged);
         FinishedSave {
             id: self.id,
             edits: self.edits,
+            merged,
             result,
+        }
+    }
+
+    fn sync(&mut self, merged: &mut Vec<Vault>) -> Result<Synced, SaveVaultError> {
+        let mut write = self.write;
+        for _ in 0..SAVE_ATTEMPTS {
+            if write {
+                let bytes = self.vault.save()?;
+                match self
+                    .storage
+                    .write(&self.location, &bytes, self.revision.as_ref())
+                {
+                    Ok(revision) => return Ok(Synced::saved(revision)),
+                    Err(StorageError::Conflict) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            let stored = match self.storage.read(&self.location) {
+                Ok(stored) => stored,
+                // Gone, perhaps for a moment while a sync tool replaces it: nothing to Merge.
+                Err(StorageError::NotFound(_)) if !write => return Ok(Synced::unchanged()),
+                Err(error) => return Err(error.into()),
+            };
+            if self.revision.as_ref() == Some(&stored.revision) && !write {
+                return Ok(Synced::unchanged());
+            }
+            let theirs = self.vault.open_version(&stored.bytes)?;
+            self.vault.merge(&theirs);
+            // The Vault file needs writing only if it lacks something the Vault has.
+            write = theirs.clone().merge(&self.vault).changed();
+            merged.push(theirs);
+            self.revision = Some(stored.revision.clone());
+            if !write {
+                return Ok(Synced::saved(stored.revision));
+            }
+        }
+        Err(StorageError::Conflict.into())
+    }
+}
+
+/// Where a save left the Vault file.
+struct Synced {
+    revision: Option<Revision>,
+    /// Whether the Vault file now holds everything the saved snapshot did.
+    caught_up: bool,
+}
+
+impl Synced {
+    fn saved(revision: Revision) -> Self {
+        Self {
+            revision: Some(revision),
+            caught_up: true,
+        }
+    }
+
+    fn unchanged() -> Self {
+        Self {
+            revision: None,
+            caught_up: false,
         }
     }
 }
@@ -214,7 +299,9 @@ impl PendingSave {
 pub struct FinishedSave {
     id: VaultId,
     edits: u64,
-    result: Result<(), SaveVaultError>,
+    /// The versions of the Vault file Merged, to Merge into the open Vault too.
+    merged: Vec<Vault>,
+    result: Result<Synced, SaveVaultError>,
 }
 
 pub struct Workspace {
@@ -233,6 +320,9 @@ pub struct Workspace {
     /// Where the native host was last registered, or why it couldn't be.
     browser_hosts_status: Option<io::Result<Vec<Browser>>>,
     pending_clear: clipboard::PendingClear,
+    /// Told which Vault's Vault file may have changed, from the Storage provider's thread.
+    on_file_change: Option<Arc<dyn Fn(VaultId) + Send + Sync>>,
+    merges: Vec<MergeReport>,
 }
 
 impl Workspace {
@@ -257,6 +347,8 @@ impl Workspace {
             browser_hosts: None,
             browser_hosts_status: None,
             pending_clear: Default::default(),
+            on_file_change: None,
+            merges: Vec::new(),
         }
     }
 
@@ -481,6 +573,7 @@ impl Workspace {
         }
         let id = VaultId(self.next_id);
         self.next_id += 1;
+        let watch = self.watch(id, &unlocked.location);
         self.vaults.push(OpenVault {
             id,
             location: unlocked.location,
@@ -489,8 +582,41 @@ impl Workspace {
             saved_edits: 0,
             saving: false,
             failed_save_at: None,
+            revision: Some(unlocked.revision),
+            file_changed: false,
+            watch,
         });
         id
+    }
+
+    /// Watches the Vault files of open Vaults, and of those opened later, calling `on_change`
+    /// with the Vault whenever its Vault file may have changed. It is called from another
+    /// thread; pass the Vault on to [`Self::vault_file_changed`].
+    pub fn watch_vault_files(&mut self, on_change: impl Fn(VaultId) + Send + Sync + 'static) {
+        self.on_file_change = Some(Arc::new(on_change));
+        for index in 0..self.vaults.len() {
+            let (id, location) = (self.vaults[index].id, self.vaults[index].location.clone());
+            self.vaults[index].watch = self.watch(id, &location);
+        }
+    }
+
+    fn watch(&self, id: VaultId, location: &VaultLocation) -> Option<Watch> {
+        let on_change = Arc::clone(self.on_file_change.as_ref()?);
+        self.storage
+            .watch(location, Arc::new(move || on_change(id)))
+    }
+
+    /// Notes that the Vault's Vault file may have changed elsewhere. The next autosave or
+    /// save checks it, and Merges the changes in.
+    pub fn vault_file_changed(&mut self, id: VaultId) {
+        if let Some(open) = self.vault_mut(id) {
+            open.file_changed = true;
+        }
+    }
+
+    /// The Merges of changes made elsewhere since last asked, oldest first.
+    pub fn take_merges(&mut self) -> Vec<MergeReport> {
+        std::mem::take(&mut self.merges)
     }
 
     pub fn vaults(&self) -> impl Iterator<Item = &OpenVault> {
@@ -682,48 +808,80 @@ impl Workspace {
     /// Starts saving a Vault. Run the returned save off the UI thread, then hand its outcome
     /// to [`Self::finish_save`]. Only one save per Vault runs at a time.
     pub fn begin_save(&mut self, id: VaultId) -> Result<PendingSave, SaveVaultError> {
+        self.begin(id, true)
+    }
+
+    /// Starts a save, or with `write` off only a check of the Vault file for changes made
+    /// elsewhere.
+    fn begin(&mut self, id: VaultId, write: bool) -> Result<PendingSave, SaveVaultError> {
         let storage = Arc::clone(&self.storage);
         let open = self.vault_mut(id).ok_or(SaveVaultError::VaultNotOpen)?;
         if open.saving {
             return Err(SaveVaultError::InProgress);
         }
         open.saving = true;
+        // This save reads the Vault file if it changed, so the change is taken care of.
+        open.file_changed = false;
         Ok(PendingSave {
             id,
             edits: open.edits,
             storage,
             location: open.location.clone(),
             vault: open.vault.clone(),
+            revision: open.revision.clone(),
+            write,
         })
     }
 
-    /// Records a save's outcome. Edits made while it ran stay unsaved.
+    /// Records a save's outcome, Merging into the Vault any changes made to its Vault file
+    /// elsewhere that the save found. Edits made while it ran stay unsaved.
     pub fn finish_save(&mut self, finished: FinishedSave) -> Result<(), SaveVaultError> {
-        let Some(open) = self.vault_mut(finished.id) else {
-            return finished.result;
+        let Some(open) = self.vaults.iter_mut().find(|open| open.id == finished.id) else {
+            return finished.result.map(|_| ());
         };
         open.saving = false;
-        match &finished.result {
-            Ok(()) => {
-                open.saved_edits = open.saved_edits.max(finished.edits);
-                open.failed_save_at = None;
-            }
-            Err(_) => open.failed_save_at = Some(finished.edits),
+        let mut summary = MergeSummary::default();
+        for theirs in &finished.merged {
+            summary += open.vault.merge(theirs);
         }
-        finished.result
+        if summary.changed() {
+            self.merges.push(MergeReport {
+                vault: open.id,
+                summary,
+            });
+        }
+        match finished.result {
+            Ok(synced) => {
+                if let Some(revision) = synced.revision {
+                    open.revision = Some(revision);
+                }
+                if synced.caught_up {
+                    open.saved_edits = open.saved_edits.max(finished.edits);
+                    open.failed_save_at = None;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                open.failed_save_at = Some(finished.edits);
+                Err(error)
+            }
+        }
     }
 
-    /// Starts saving every Vault with unsaved changes or a failed last save, except those
-    /// already being saved.
+    /// Starts saving every Vault with unsaved changes or a failed last save, and checking
+    /// every Vault whose Vault file may have changed, except those already being saved.
     pub fn begin_saves(&mut self) -> Vec<PendingSave> {
-        let due: Vec<VaultId> = self
+        let due: Vec<(VaultId, bool)> = self
             .vaults
             .iter()
-            .filter(|open| (open.has_unsaved_changes() || open.save_failed()) && !open.saving)
-            .map(|open| open.id)
+            .filter(|open| !open.saving)
+            .filter_map(|open| {
+                let write = open.has_unsaved_changes() || open.save_failed();
+                (write || open.file_changed).then_some((open.id, write))
+            })
             .collect();
         due.into_iter()
-            .filter_map(|id| self.begin_save(id).ok())
+            .filter_map(|(id, write)| self.begin(id, write).ok())
             .collect()
     }
 
@@ -752,24 +910,26 @@ impl Workspace {
     }
 
     /// With autosave on, starts saving every Vault with unsaved changes that isn't already
-    /// being saved. Call it after edits and after saves finish. A Vault whose last save failed
-    /// is not retried until it is edited again.
+    /// being saved. Call it after edits, after saves finish and after a Vault file changes. A
+    /// Vault whose last save failed is not retried until it is edited again.
+    ///
+    /// Autosave on or off, it also starts checking every Vault whose Vault file may have
+    /// changed elsewhere: changes found are Merged in, and the Merge saved.
     pub fn begin_autosaves(&mut self) -> Vec<PendingSave> {
-        if !self.config.autosave {
-            return Vec::new();
-        }
-        let due: Vec<VaultId> = self
+        let autosave = self.config.autosave;
+        let due: Vec<(VaultId, bool)> = self
             .vaults
             .iter()
-            .filter(|open| {
-                open.has_unsaved_changes()
-                    && !open.saving
-                    && open.failed_save_at != Some(open.edits)
+            .filter(|open| !open.saving)
+            .filter_map(|open| {
+                let write = autosave
+                    && open.has_unsaved_changes()
+                    && open.failed_save_at != Some(open.edits);
+                (write || open.file_changed).then_some((open.id, write))
             })
-            .map(|open| open.id)
             .collect();
         due.into_iter()
-            .filter_map(|id| self.begin_save(id).ok())
+            .filter_map(|(id, write)| self.begin(id, write).ok())
             .collect()
     }
 }

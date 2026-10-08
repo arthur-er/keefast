@@ -87,6 +87,24 @@ pub const STATUS_UNSAVED: &str = "Unsaved changes";
 pub const STATUS_SAVING: &str = "Saving…";
 pub const STATUS_SAVE_FAILED: &str = "Save failed";
 
+/// A Merge of changes made to a Vault file elsewhere, by another device or a sync tool.
+pub const MERGE_NOTICE: &str = "Merged changes made elsewhere into {vault}";
+pub const MERGE_NOTICE_DISMISS: &str = "×";
+/// What a Merge changed, as `{n}` items: singular, then plural.
+pub const MERGE_ENTRIES_ADDED: [&str; 2] = ["{n} Entry added", "{n} Entries added"];
+pub const MERGE_ENTRIES_UPDATED: [&str; 2] = ["{n} Entry updated", "{n} Entries updated"];
+pub const MERGE_ENTRIES_MOVED: [&str; 2] = ["{n} Entry moved", "{n} Entries moved"];
+pub const MERGE_ENTRIES_DELETED: [&str; 2] = ["{n} Entry deleted", "{n} Entries deleted"];
+pub const MERGE_GROUPS_ADDED: [&str; 2] = ["{n} Group added", "{n} Groups added"];
+pub const MERGE_GROUPS_UPDATED: [&str; 2] = [
+    "{n} Group renamed or changed",
+    "{n} Groups renamed or changed",
+];
+pub const MERGE_GROUPS_MOVED: [&str; 2] = ["{n} Group moved", "{n} Groups moved"];
+pub const MERGE_GROUPS_DELETED: [&str; 2] = ["{n} Group deleted", "{n} Groups deleted"];
+/// When a Merge changed only what the counts leave out, such as Entry history.
+pub const MERGE_OTHER_CHANGES: &str = "history and settings updated";
+
 pub const CONFIRM_DELETE_ENTRY: &str = "Delete this Entry for good?";
 pub const CONFIRM_DELETE_GROUP: &str = "Delete this Group and everything in it for good?";
 pub const CONFIRM_DELETE_DETAIL: &str = "This cannot be undone.";

@@ -331,7 +331,9 @@ fn describe(error: &OpenVaultError) -> UnlockError {
         OpenVaultError::Storage(StorageError::NotFound(_)) => {
             (strings::UNLOCK_ERROR_NOT_FOUND, None)
         }
-        OpenVaultError::Storage(StorageError::Io(_)) => (strings::UNLOCK_ERROR_READ, None),
+        OpenVaultError::Storage(StorageError::Io(_) | StorageError::Conflict) => {
+            (strings::UNLOCK_ERROR_READ, None)
+        }
         OpenVaultError::KeyFileNotFound(_) => (strings::UNLOCK_ERROR_KEY_FILE_NOT_FOUND, None),
         OpenVaultError::KeyFileUnreadable(_) => (strings::UNLOCK_ERROR_KEY_FILE_READ, None),
         OpenVaultError::KeyFile(KeyFileError::Corrupt(reason)) => {
