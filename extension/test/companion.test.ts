@@ -200,6 +200,14 @@ describe("a submitted login", () => {
     expect(keefast.saved).toEqual([expect.objectContaining({ login: "bob", uuid: "0022" })]);
   });
 
+  it("updates the site's only Entry from a password change it can't place otherwise", async () => {
+    await companion.entries(1);
+
+    await companion.submitted(1, loginPage, { username: "", password: "n3w", current: "typo" });
+
+    expect(keefast.saved).toEqual([expect.objectContaining({ login: "alice", uuid: "0011" })]);
+  });
+
   it("leaves the Entry to keefast for a password change on a page nothing was listed on", async () => {
     await companion.submitted(1, loginPage, { username: "", password: "n3w", current: "old" });
 

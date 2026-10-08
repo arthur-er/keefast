@@ -46,7 +46,7 @@ export function submittedLogin(scope: HTMLFormElement | Document): SubmittedLogi
 /**
  * The password to keep and the current one it replaces, from the typed password fields:
  * by their autocomplete marks, or else by their order (current, new, confirmation). None
- * when the new password and its confirmation differ.
+ * when the new password and its confirmation differ, or two unmarked passwords do.
  */
 function roles(
   passwords: HTMLInputElement[],
@@ -68,8 +68,9 @@ function roles(
     fresh = passwords.filter((input) => input !== current);
   } else if (passwords.length === 1) {
     fresh = passwords;
-  } else if (passwords.length === 2 && passwords[0]!.value === passwords[1]!.value) {
-    // A sign-up's password, typed twice.
+  } else if (passwords.length === 2) {
+    // A sign-up's password typed twice. Typed differently, it may be a mistyped sign-up or a
+    // change without confirmation: neither is safe to save.
     fresh = passwords;
   } else {
     [current, ...fresh] = passwords;

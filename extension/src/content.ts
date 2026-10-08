@@ -30,7 +30,15 @@ function tell(scope: HTMLFormElement | Document): void {
 }
 
 /**
- * Watches for logins being submitted: by a form, or, for pages that sign in by script, by a
+ * Whether the user just did this: the page's own scripts can submit forms and send events
+ * too, to get a password of their choosing offered as an Entry's.
+ */
+function byUser(event: Event): boolean {
+  return event.isTrusted && navigator.userActivation.isActive;
+}
+
+/**
+ * Watches for logins the user submits: by a form, or, for pages that sign in by script, by a
  * button that says it submits, or Enter in a password field. Telling the same login twice
  * is fine: the extension offers it once.
  */
@@ -39,14 +47,14 @@ function watchSubmissions(): void {
   window.addEventListener(
     "submit",
     (event) => {
-      if (event.target instanceof HTMLFormElement) tell(event.target);
+      if (byUser(event) && event.target instanceof HTMLFormElement) tell(event.target);
     },
     true,
   );
   window.addEventListener(
     "click",
     (event) => {
-      if (event.isTrusted && event.target instanceof Element && submitsLogin(event.target)) {
+      if (byUser(event) && event.target instanceof Element && submitsLogin(event.target)) {
         tell(scopeOf(event.target));
       }
     },
@@ -57,7 +65,7 @@ function watchSubmissions(): void {
     (event) => {
       const input = event.target;
       if (
-        event.isTrusted &&
+        byUser(event) &&
         event.key === "Enter" &&
         input instanceof HTMLInputElement &&
         input.type === "password"

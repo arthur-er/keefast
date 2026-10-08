@@ -158,13 +158,25 @@ describe("a password change", () => {
     });
   });
 
-  it("may have no confirmation", () => {
+  it("may have no confirmation, when its fields are marked", () => {
     page(
-      `<form id="form"><input id="current" type="password"><input id="new" type="password"></form>`,
+      `<form id="form">
+        <input id="current" type="password" autocomplete="current-password">
+        <input id="new" type="password">
+      </form>`,
       { current: "old-one", new: "fresh-one" },
     );
 
     expect(submittedLogin(form())).toMatchObject({ password: "fresh-one", current: "old-one" });
+  });
+
+  it("is nothing when two unmarked passwords differ: a mistyped sign-up, or a change?", () => {
+    page(
+      `<form id="form"><input id="one" type="password"><input id="two" type="password"></form>`,
+      { one: "fresh-one", two: "fresh-onw" },
+    );
+
+    expect(submittedLogin(form())).toBeUndefined();
   });
 
   it("follows the fields' autocomplete marks over their order", () => {
@@ -229,7 +241,7 @@ describe("a password change", () => {
   });
 });
 
-describe("submitsLogin", () => {
+describe("a click that submits a login", () => {
   const clicked = (html: string) => {
     document.body.innerHTML = `<form>${html}</form>`;
     return submitsLogin(document.getElementById("clicked")!);

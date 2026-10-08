@@ -83,7 +83,7 @@ async function answer(request: Request): Promise<Answers[Request["type"]]> {
 }
 
 /** Offers keefast a login submitted in a page the user filled. */
-function submitted(message: PageMessage, sender: chrome.runtime.MessageSender): void {
+function submitted(message: unknown, sender: chrome.runtime.MessageSender): void {
   const tab = sender.tab?.id;
   // Only the page the extension was injected into: the tab's top frame.
   if (tab === undefined || sender.frameId !== 0 || !sender.url || !isSubmitted(message)) return;
@@ -95,10 +95,11 @@ function submitted(message: PageMessage, sender: chrome.runtime.MessageSender): 
   companion.submitted(tab, page, message.login).catch(() => {});
 }
 
-function isSubmitted(message: PageMessage): boolean {
-  const { login, submitUrl } = message;
+function isSubmitted(message: unknown): message is PageMessage {
+  if (typeof message !== "object" || message === null) return false;
+  const { type, login, submitUrl } = message as Partial<PageMessage>;
   return (
-    message.type === "submitted" &&
+    type === "submitted" &&
     typeof login === "object" &&
     login !== null &&
     typeof login.username === "string" &&
@@ -108,10 +109,10 @@ function isSubmitted(message: PageMessage): boolean {
   );
 }
 
-chrome.runtime.onMessage.addListener((request: Request | PageMessage, sender, respond) => {
+chrome.runtime.onMessage.addListener((request: unknown, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return false;
   if (sender.tab) {
-    submitted(request as PageMessage, sender);
+    submitted(request, sender);
     return false;
   }
   answer(request as Request).then(

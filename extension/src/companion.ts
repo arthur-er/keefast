@@ -49,9 +49,9 @@ interface KnownEntry {
   uuid: string;
   username: string;
   /** The Entry's username and password, as {@link Companion.fingerprint} hashes them. */
-  login: string;
+  loginHash: string;
   /** Its password alone, hashed likewise, to match the password a password change replaces. */
-  password: string;
+  passwordHash: string;
 }
 
 /** What the extension knows of the site in a tab, to make sense of logins submitted there. */
@@ -148,22 +148,26 @@ export class Companion {
     const login = this.fingerprint(username, password);
     const alone = this.fingerprint("", password);
     return known.entries.some(
-      (entry) => entry.login === login || (username === "" && entry.password === alone),
+      (entry) => entry.loginHash === login || (username === "" && entry.passwordHash === alone),
     );
   }
 
   /**
    * The listed Entry a login updates: the one whose password a password change replaces, or
-   * else the one with its username, or, without a username, the one just filled.
+   * else the one with its username. Without a username, the one just filled, or else the
+   * site's only Entry on a password change.
    */
   private updatedEntry(known: Known, { username, current }: SubmittedLogin) {
-    const replaced = current === undefined ? undefined : this.fingerprint("", current);
-    return (
-      known.entries.find((entry) => entry.password === replaced) ??
-      known.entries.find((entry) =>
-        username === "" ? entry.uuid === known.filled : entry.username === username,
-      )
-    );
+    const { entries, filled } = known;
+    if (current !== undefined) {
+      const replaced = this.fingerprint("", current);
+      const entry = entries.find((entry) => entry.passwordHash === replaced);
+      if (entry) return entry;
+    }
+    if (username !== "") return entries.find((entry) => entry.username === username);
+    const entry = entries.find((entry) => entry.uuid === filled);
+    if (entry) return entry;
+    return current !== undefined && entries.length === 1 ? entries[0] : undefined;
   }
 
   private async entriesFor(tab: number): Promise<Entry[] | undefined> {
@@ -176,8 +180,8 @@ export class Companion {
     this.knownAt(tab, page.origin).entries = entries.map(({ uuid, username, password }) => ({
       uuid,
       username,
-      login: this.fingerprint(username, password),
-      password: this.fingerprint("", password),
+      loginHash: this.fingerprint(username, password),
+      passwordHash: this.fingerprint("", password),
     }));
     this.listed.set(tab, {
       origin: page.origin,
@@ -187,7 +191,10 @@ export class Companion {
     return entries;
   }
 
-  /** What the extension knows of the site at `origin` in `tab`: nothing, once it changed. */
+  /**
+   * What the extension knows of the site at `origin` in `tab`, kept a while longer: afresh
+   * when the tab has moved to another site.
+   */
   private knownAt(tab: number, origin: string): Known {
     const previous = this.known.get(tab);
     if (previous) clearTimeout(previous.expiry);

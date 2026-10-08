@@ -111,10 +111,7 @@ export class KeefastClient {
   async status(): Promise<Status> {
     try {
       await this.checkUnlocked();
-      for (const pairing of await this.store.load()) {
-        if (await this.isPaired(pairing)) return "paired";
-      }
-      return "unpaired";
+      return (await this.provenPairing()) ? "paired" : "unpaired";
     } catch (error) {
       if (error instanceof KeefastError && error.reason !== "failed" && error.reason !== "denied") {
         return error.reason;
@@ -172,13 +169,7 @@ export class KeefastClient {
    * that proved a Pairing on this connection, so this proves one first.
    */
   async saveLogin({ url, submitUrl, username, password, uuid }: CapturedLogin): Promise<boolean> {
-    let pairing: Pairing | undefined;
-    for (const candidate of await this.store.load()) {
-      if (await this.isPaired(candidate)) {
-        pairing = candidate;
-        break;
-      }
-    }
+    const pairing = await this.provenPairing();
     if (!pairing) {
       throw new KeefastError("failed", "The extension isn't paired with an open Vault");
     }
@@ -211,6 +202,14 @@ export class KeefastClient {
     await this.sendEncrypted("get-databasehash", {
       connectedKeys: pairings.map(({ id }) => id),
     });
+  }
+
+  /** The first stored Pairing keefast knows, proven on this connection. */
+  private async provenPairing(): Promise<Pairing | undefined> {
+    for (const pairing of await this.store.load()) {
+      if (await this.isPaired(pairing)) return pairing;
+    }
+    return undefined;
   }
 
   private async isPaired(pairing: Pairing): Promise<boolean> {
