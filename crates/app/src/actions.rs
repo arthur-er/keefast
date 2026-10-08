@@ -22,6 +22,10 @@ actions!(
         ShowEntryHistory,
         SaveAll,
         OpenVault,
+        /// Creates a new Vault file.
+        NewVault,
+        /// Changes the master key, cipher and key derivation of the Vault shown.
+        ChangeMasterKey,
         /// Locks every open Vault.
         LockAll,
         /// Checks every Dropbox Vault for changes made elsewhere now, and uploads saves made
@@ -117,6 +121,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", CloseHistory, Some(HISTORY_CONTEXT)),
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
+        KeyBinding::new("secondary-shift-n", NewVault, anywhere),
         KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),

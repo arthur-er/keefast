@@ -22,9 +22,9 @@ pub(crate) const TWOFISH: Uuid = Uuid::from_u128(0xad68f29f_576f_4bb9_a36a_d47af
 /// AES-KDF as KeePass names it, and as KDBX 3.1 implies it.
 pub(crate) const AES_KDF: Uuid = Uuid::from_u128(0xc9d9f39a_628a_4460_bf74_0d08c18a4fea);
 /// AES-KDF as KeePassXC names it in KDBX 4.
-const AES_KDF_KDBX4: Uuid = Uuid::from_u128(0x7c02bb82_79a7_4ac0_927d_114a00648238);
-const ARGON2D: Uuid = Uuid::from_u128(0xef636ddf_8c29_444b_91f7_a9a403e30a0c);
-const ARGON2ID: Uuid = Uuid::from_u128(0x9e298b19_56db_4773_b23d_fc3ec6f0a1e6);
+pub(crate) const AES_KDF_KDBX4: Uuid = Uuid::from_u128(0x7c02bb82_79a7_4ac0_927d_114a00648238);
+pub(crate) const ARGON2D: Uuid = Uuid::from_u128(0xef636ddf_8c29_444b_91f7_a9a403e30a0c);
+pub(crate) const ARGON2ID: Uuid = Uuid::from_u128(0x9e298b19_56db_4773_b23d_fc3ec6f0a1e6);
 
 pub(crate) type Key = Zeroizing<[u8; 32]>;
 
@@ -73,6 +73,14 @@ impl OuterCipher {
             CHACHA20 => Ok(Self::ChaCha20),
             TWOFISH => Ok(Self::Twofish),
             other => Err(OpenError::Unsupported(format!("cipher {other}"))),
+        }
+    }
+
+    pub(crate) fn uuid(self) -> Uuid {
+        match self {
+            Self::Aes256 => AES256,
+            Self::ChaCha20 => CHACHA20,
+            Self::Twofish => TWOFISH,
         }
     }
 

@@ -17,6 +17,7 @@ use crate::dropbox_panel::{self, DropboxPanel, DropboxPanelEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
 use crate::widgets::{button, tool_button};
 
 pub enum UnlockEvent {
@@ -38,6 +39,8 @@ pub struct UnlockView {
     unlocking: Option<Task<()>>,
     /// Shown instead of the dialog while the user picks a Vault file in Dropbox.
     dropbox: Option<Entity<DropboxPanel>>,
+    /// Shown instead of the dialog while the user creates a new Vault.
+    new_vault: Option<Entity<VaultKeyForm>>,
 }
 
 /// Why the last unlock failed: what the user should know, plus the technical reason, if any.
@@ -87,6 +90,7 @@ impl UnlockView {
             error: None,
             unlocking: None,
             dropbox: None,
+            new_vault: None,
         };
         if view.location.is_none() {
             view.location = view.most_recent_closed(cx);
@@ -101,7 +105,29 @@ impl UnlockView {
         self.key_file = None;
         self.error = None;
         self.dropbox = None;
+        self.new_vault = None;
         self.location = self.most_recent_closed(cx);
+        cx.notify();
+    }
+
+    /// Shows the form for a new Vault instead of the dialog.
+    pub fn new_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let form = cx.new(|cx| VaultKeyForm::new_vault(self.workspace.clone(), cx));
+        cx.subscribe_in(&form, window, |this, _, event, window, cx| {
+            this.new_vault = None;
+            match event {
+                VaultKeyEvent::Done => {
+                    this.clear_password(cx);
+                    cx.emit(UnlockEvent::Unlocked);
+                }
+                VaultKeyEvent::Cancelled => window.focus(&this.password.focus_handle(cx)),
+            }
+            cx.notify();
+        })
+        .detach();
+        window.focus(&form.focus_handle(cx));
+        self.dropbox = None;
+        self.new_vault = Some(form);
         cx.notify();
     }
 
@@ -473,6 +499,29 @@ impl Render for UnlockView {
                 .into(),
             None => strings::UNLOCK_NO_KEY_FILE.into(),
         };
+        if let Some(form) = self.new_vault.clone() {
+            return div()
+                .size_full()
+                .py_6()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme.background)
+                .text_color(theme.text)
+                .child(
+                    div()
+                        .id("new-vault-card")
+                        .w(px(560.))
+                        .max_h_full()
+                        .overflow_y_scroll()
+                        .p_6()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.panel)
+                        .child(form),
+                );
+        }
         if let Some(dropbox) = self.dropbox.clone() {
             return div()
                 .size_full()
@@ -527,6 +576,11 @@ impl Render for UnlockView {
                                         })),
                                 )
                             })
+                            .child(
+                                button("new-vault", strings::UNLOCK_NEW_VAULT, theme).on_click(
+                                    cx.listener(|this, _, window, cx| this.new_vault(window, cx)),
+                                ),
+                            )
                             .child(
                                 button("choose-file", strings::UNLOCK_CHOOSE_FILE, theme)
                                     .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx))),

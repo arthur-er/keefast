@@ -32,6 +32,7 @@ pub const UNLOCK_ERROR_NO_PROVIDER: &str =
     "This Vault file is in Dropbox, which this build of keefast can't reach.";
 pub const UNLOCK_ERROR_OFFLINE: &str =
     "Dropbox can't be reached, and this Vault file has not been opened on this machine before.";
+pub const UNLOCK_NEW_VAULT: &str = "New Vault…";
 pub const RECENT_VAULTS: &str = "Recent Vault files";
 pub const LOCKED_VAULTS: &str = "Locked Vaults";
 pub const RECENT_FORGET: &str = "×";
@@ -207,6 +208,59 @@ pub const ERROR_FIELD_NAME_TAKEN: &str =
 pub const ERROR_ATTACHMENT_NAME_EMPTY: &str = "Give every attachment a name.";
 pub const ERROR_ATTACHMENT_NAME_TAKEN: &str =
     "Each attachment of an Entry needs a name of its own.";
+
+pub const NEW_VAULT_TITLE: &str = "New Vault";
+pub const NEW_VAULT_PATH: &str = "Vault file";
+pub const NEW_VAULT_PATH_PLACEHOLDER: &str = "e.g. ~/Vaults/Personal.kdbx";
+pub const NEW_VAULT_BROWSE: &str = "Browse…";
+pub const NEW_VAULT_FILE_NAME: &str = "Vault.kdbx";
+pub const NEW_VAULT_NAME: &str = "Name";
+pub const NEW_VAULT_NAME_PLACEHOLDER: &str = "The Vault file's name if empty";
+pub const NEW_VAULT_CREATE: &str = "Create";
+pub const NEW_VAULT_IN_PROGRESS: &str = "Creating the Vault: deriving the key…";
+pub const NEW_VAULT_ERROR_NO_PATH: &str = "Choose where to save the Vault file.";
+pub const NEW_VAULT_ERROR_OPEN: &str =
+    "A Vault from this Vault file is open. Choose another file, or lock and reopen that Vault.";
+pub const NEW_VAULT_ERROR_WRITE: &str = "The Vault file could not be written there.";
+pub const NEW_VAULT_ERROR_ENCRYPT: &str = "The Vault could not be encrypted with these settings.";
+pub const CHANGE_KEY_TITLE: &str = "Master key and encryption of “{vault}”";
+pub const CHANGE_KEY_TOGGLE: &str = "Set a new master key";
+pub const CHANGE_KEY_APPLY: &str = "Save changes";
+pub const CHANGE_KEY_BUTTON: &str = "Key…";
+pub const MASTER_KEY: &str = "Master key";
+pub const KEY_CONFIRM_LABEL: &str = "Repeat the master password";
+pub const KEY_CONFIRM_PLACEHOLDER: &str = "Type it again";
+pub const KEY_FILE_CHOOSE: &str = "Choose…";
+pub const KEY_FILE_CREATE: &str = "Create new…";
+pub const NEW_KEY_FILE_NAME: &str = "Vault.keyx";
+pub const KEY_NOTE: &str = "Use a master password, a key file, or both. Keep a copy of the key \
+file somewhere safe: without it the Vault can't be opened.";
+pub const KEY_ERROR_MISMATCH: &str = "The two master passwords are different.";
+pub const KEY_ERROR_NONE: &str = "Set a master password, a key file, or both.";
+pub const NEW_KEY_FILE_ERROR_EXISTS: &str =
+    "A file is already there. keefast never replaces a file with a new key file.";
+pub const NEW_KEY_FILE_ERROR_WRITE: &str = "The key file could not be written there.";
+pub const ENCRYPTION: &str = "Encryption";
+pub const CIPHER: &str = "Cipher";
+pub const CIPHER_AES: &str = "AES-256";
+pub const CIPHER_CHACHA20: &str = "ChaCha20";
+pub const CIPHER_TWOFISH: &str = "Twofish";
+pub const KDF: &str = "Key derivation";
+pub const KDF_ARGON2ID: &str = "Argon2id";
+pub const KDF_ARGON2D: &str = "Argon2d";
+pub const KDF_AES: &str = "AES-KDF";
+pub const KDF_MEMORY: &str = "Memory (MiB)";
+pub const KDF_ITERATIONS: &str = "Iterations";
+pub const KDF_PARALLELISM: &str = "Parallelism";
+pub const KDF_ROUNDS: &str = "Rounds";
+pub const KDF_NOTE: &str = "Higher values make guessing the master password slower, and \
+unlocking and saving too.";
+pub const KDF_ERROR_NUMBER: &str = "Enter whole numbers for the key derivation settings.";
+pub const KDF_ERROR_ITERATIONS: &str = "Argon2 needs at least 1 iteration.";
+pub const KDF_ERROR_PARALLELISM: &str = "Argon2's parallelism must be between 1 and 16777215.";
+pub const KDF_ERROR_MEMORY: &str =
+    "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 TiB.";
+pub const KDF_ERROR_ROUNDS: &str = "AES-KDF needs at least 1 round.";
 
 pub const BROWSER_HOSTS_FOR: &str = "Set up for ";
 pub const BROWSER_HOSTS_NONE: &str =
@@ -418,6 +472,8 @@ pub fn command_name(action: &str) -> Option<&'static str> {
         "vault_browser::OpenVaultSettings" => "Vault Settings",
         "settings::OpenSettings" => "Open App Settings",
         "settings::CloseSettings" => "Close App Settings",
+        "vault_browser::NewVault" => "New Vault…",
+        "vault_browser::ChangeMasterKey" => "Change Master Key and Encryption…",
         _ => return None,
     })
 }

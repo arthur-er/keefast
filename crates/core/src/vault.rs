@@ -25,6 +25,8 @@ pub struct Vault {
     pub(crate) file: VaultFile,
     /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
     pub(crate) key: Key,
+    /// The key the Vault file had before the key was changed, until the change is saved.
+    pub(crate) previous_key: Option<Key>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,6 +127,7 @@ impl Vault {
             custom_icons: custom_icons(&file.document),
             file,
             key,
+            previous_key: None,
         })
     }
 

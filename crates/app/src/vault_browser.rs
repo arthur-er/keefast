@@ -15,10 +15,10 @@ use keefast_workspace::{
 use secrecy::ExposeSecret;
 
 use crate::actions::{
-    self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch, LockAll, OpenEntry,
-    OpenSettings, OpenVault, OpenVaultSettings, SaveAll, SelectFirstEntry, SelectLastEntry,
-    SelectNextEntry, SelectPreviousEntry, ShowEntryHistory, SortByCreated, SortByModified,
-    SortByTitle, SortByUrl, SortByUsername, SyncNow,
+    self, ChangeMasterKey, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch,
+    LockAll, NewVault, OpenEntry, OpenSettings, OpenVault, OpenVaultSettings, SaveAll,
+    SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry, ShowEntryHistory,
+    SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername, SyncNow,
 };
 use crate::attachments::{self, Preview};
 use crate::browser_integration::BrowserIntegration;
@@ -34,11 +34,15 @@ use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
+use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
 use crate::vault_settings::{VaultSettings, VaultSettingsClosed};
 use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
 pub struct OpenAnotherVault;
+
+/// Emitted when the user asks to create a new Vault.
+pub struct CreateVault;
 
 /// Emitted when the user asks to unlock a locked Vault.
 pub struct UnlockLockedVault(pub VaultId);
@@ -107,6 +111,11 @@ enum Detail {
     },
     /// A Vault's settings.
     Settings(Entity<VaultSettings>),
+    /// Changing a Vault's master key and encryption.
+    VaultKey {
+        form: Entity<VaultKeyForm>,
+        vault: VaultId,
+    },
 }
 
 enum EditTarget {
@@ -130,6 +139,7 @@ impl Subject {
 
 impl EventEmitter<OpenAnotherVault> for VaultBrowser {}
 impl EventEmitter<UnlockLockedVault> for VaultBrowser {}
+impl EventEmitter<CreateVault> for VaultBrowser {}
 
 impl Focusable for VaultBrowser {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -284,7 +294,7 @@ impl VaultBrowser {
                 ..
             } => Some(*vault),
             Detail::Moving(subject) => Some(subject.vault()),
-            Detail::Totp { vault, .. } => Some(*vault),
+            Detail::Totp { vault, .. } | Detail::VaultKey { vault, .. } => Some(*vault),
             Detail::History { vault, .. } => Some(*vault),
             Detail::Settings(settings) => Some(settings.read(cx).vault()),
         };
@@ -1085,6 +1095,30 @@ impl VaultBrowser {
         }
     }
 
+    /// Opens the form for the master key and encryption of `vault`, or else of the Vault
+    /// shown, in the detail pane.
+    fn open_vault_key(
+        &mut self,
+        vault: Option<VaultId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(vault) = vault.or_else(|| self.target_group(cx).map(|(vault, _)| vault)) else {
+            return;
+        };
+        let form = cx.new(|cx| VaultKeyForm::for_vault(self.workspace.clone(), vault, cx));
+        cx.subscribe_in(&form, window, |this, _, _: &VaultKeyEvent, window, cx| {
+            this.detail = Detail::Entry;
+            window.focus(&this.focus);
+            cx.notify();
+        })
+        .detach();
+        window.focus(&form.focus_handle(cx));
+        self.detail = Detail::VaultKey { form, vault };
+        self.error = None;
+        cx.notify();
+    }
+
     /// Saves every Vault with unsaved changes.
     fn save_all(&mut self, cx: &mut Context<Self>) {
         saving::save_all(&self.workspace, cx);
@@ -1213,6 +1247,15 @@ impl VaultBrowser {
                             .text_color(color)
                             .child(status)
                     }))
+                    .child(
+                        tool_button(("vault-key", rows.len()), strings::CHANGE_KEY_BUTTON, theme)
+                            .mr_1()
+                            .text_xs()
+                            .text_color(theme.muted)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_vault_key(Some(vault), window, cx)
+                            })),
+                    )
                     .child(
                         tool_button(("lock-vault", rows.len()), strings::LOCK, theme)
                             .text_xs()
@@ -1723,6 +1766,7 @@ impl VaultBrowser {
             Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
             Detail::History { view, .. } => pane.child(view.clone()).into_any_element(),
             Detail::Settings(settings) => pane.child(settings.clone()).into_any_element(),
+            Detail::VaultKey { form, .. } => pane.child(form.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
                 .into_any_element(),
@@ -2261,6 +2305,10 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(Self::show_history))
             .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
+            .on_action(cx.listener(|_, _: &NewVault, _, cx| cx.emit(CreateVault)))
+            .on_action(cx.listener(|this, _: &ChangeMasterKey, window, cx| {
+                this.open_vault_key(None, window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &LockAll, _, cx| locking::lock_all(&this.workspace, cx)),
             )

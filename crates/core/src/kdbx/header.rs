@@ -222,6 +222,10 @@ impl VariantDictionary {
         self.set(key, VARIANT_BYTES, value.to_vec());
     }
 
+    pub(crate) fn set_u32(&mut self, key: &str, value: u32) {
+        self.set(key, VARIANT_UINT32, value.to_le_bytes().to_vec());
+    }
+
     pub(crate) fn set_u64(&mut self, key: &str, value: u64) {
         self.set(key, VARIANT_UINT64, value.to_le_bytes().to_vec());
     }

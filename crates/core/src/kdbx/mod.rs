@@ -16,7 +16,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::xml::{self, Element, Node, Secret};
-use crate::{OpenError, SaveError};
+use crate::{Argon2, Cipher, Encryption, Kdf, OpenError, SaveError};
 use crypto::{InnerStream, OuterCipher};
 use header::{Field, VariantDictionary, Version, field, inner_field};
 
@@ -45,6 +45,92 @@ pub(crate) struct Settings {
     public_custom_data: Option<Vec<u8>>,
     other_fields: Vec<Field>,
     other_inner_fields: Vec<Field>,
+}
+
+impl Settings {
+    /// A new KDBX 4.0 Vault file's: gzip-compressed, with no settings yet beyond those. Set the
+    /// cipher and KDF with [`Self::set_encryption`].
+    pub(crate) fn new_kdbx4() -> Self {
+        Self {
+            minor_version: 0,
+            cipher: OuterCipher::Aes256,
+            cipher_uuid: crypto::AES256,
+            gzip: true,
+            kdf: VariantDictionary::new(),
+            public_custom_data: None,
+            other_fields: Vec::new(),
+            other_inner_fields: Vec::new(),
+        }
+    }
+
+    pub(crate) fn encryption(&self) -> Encryption {
+        let cipher = match self.cipher {
+            OuterCipher::Aes256 => Cipher::Aes256,
+            OuterCipher::ChaCha20 => Cipher::ChaCha20,
+            OuterCipher::Twofish => Cipher::Twofish,
+        };
+        let kdf = &self.kdf;
+        let argon2 = || Argon2 {
+            memory: kdf.u64("M").unwrap_or_default(),
+            iterations: kdf.u64("I").unwrap_or_default(),
+            parallelism: kdf.u32("P").unwrap_or_default(),
+        };
+        let kdf = match kdf_uuid(kdf) {
+            Some(crypto::ARGON2ID) => Kdf::Argon2id(argon2()),
+            Some(crypto::ARGON2D) => Kdf::Argon2d(argon2()),
+            _ => Kdf::AesKdf {
+                rounds: kdf.u64("R").unwrap_or_default(),
+            },
+        };
+        Encryption { cipher, kdf }
+    }
+
+    /// Sets the cipher and KDF. A KDF that stays the same keeps the parameters keefast doesn't
+    /// set, such as Argon2's version; a new one starts afresh. The seed is new on every save.
+    pub(crate) fn set_encryption(&mut self, encryption: &Encryption) {
+        let cipher = match encryption.cipher {
+            Cipher::Aes256 => OuterCipher::Aes256,
+            Cipher::ChaCha20 => OuterCipher::ChaCha20,
+            Cipher::Twofish => OuterCipher::Twofish,
+        };
+        if cipher != self.cipher {
+            self.cipher = cipher;
+            self.cipher_uuid = cipher.uuid();
+        }
+        let uuid = match encryption.kdf {
+            Kdf::Argon2id(_) => crypto::ARGON2ID,
+            Kdf::Argon2d(_) => crypto::ARGON2D,
+            Kdf::AesKdf { .. } => crypto::AES_KDF,
+        };
+        let same_kdf = match kdf_uuid(&self.kdf) {
+            Some(crypto::AES_KDF_KDBX4) => uuid == crypto::AES_KDF,
+            current => current == Some(uuid),
+        };
+        if !same_kdf {
+            self.kdf = VariantDictionary::new();
+            self.kdf.set_bytes("$UUID", uuid.as_bytes());
+            self.kdf.set_bytes("S", &crypto::random::<32>());
+        }
+        match encryption.kdf {
+            Kdf::Argon2id(argon2) | Kdf::Argon2d(argon2) => {
+                if !same_kdf {
+                    self.kdf.set_u32("V", ARGON2_VERSION);
+                }
+                self.kdf.set_u64("M", argon2.memory);
+                self.kdf.set_u64("I", argon2.iterations);
+                self.kdf.set_u32("P", argon2.parallelism);
+            }
+            Kdf::AesKdf { rounds } => self.kdf.set_u64("R", rounds),
+        }
+    }
+}
+
+/// Argon2 1.3, the version every client writes.
+const ARGON2_VERSION: u32 = 0x13;
+
+fn kdf_uuid(kdf: &VariantDictionary) -> Option<Uuid> {
+    kdf.bytes("$UUID")
+        .and_then(|bytes| Uuid::from_slice(bytes).ok())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

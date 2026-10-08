@@ -13,6 +13,7 @@ mod dropbox;
 mod favicons;
 mod generator;
 mod locking;
+mod master_key;
 mod os_lock;
 mod secret_store;
 mod storage;
@@ -53,6 +54,7 @@ pub use dropbox::{
 pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};
 pub use locking::{LockedVault, UnsavedLock};
+pub use master_key::{ChangeKeyError, CreateVaultError, NewVault, PendingCreate};
 pub use os_lock::watch_os_lock;
 #[cfg(target_os = "linux")]
 pub use os_lock::watch_os_lock_on;
@@ -60,7 +62,7 @@ pub use secret_store::{OsSecretStore, SecretStore, SecretStoreError};
 pub use storage::{
     LocalStorage, Revision, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
 };
-pub use unlock_secrets::UnlockSecrets;
+pub use unlock_secrets::{NewKeyError, UnlockSecrets, write_new_key_file};
 
 /// A Vault the Workspace has open, unlocked or locked. Vaults are numbered in the order they
 /// were opened, and keep their number while locked.
@@ -287,6 +289,8 @@ pub struct OpenVault {
     auto_lock: bool,
     /// `None` for a local Vault file.
     online: Option<OnlineSync>,
+    /// The edit that changed the master key, while the Vault file doesn't have the new key.
+    key_changed_at: Option<u64>,
 }
 
 impl OpenVault {
@@ -981,6 +985,7 @@ impl Workspace {
             lock_requested: false,
             auto_lock: false,
             online,
+            key_changed_at: None,
         };
         let at = self.vaults.partition_point(|open| open.id < id);
         self.vaults.insert(at, open);
@@ -1378,6 +1383,7 @@ impl Workspace {
                     if let Some(sync) = &mut open.online {
                         sync.upload_pending = problem == Some(SyncProblem::Offline);
                     }
+                    open.key_change_saved(finished.edits);
                 }
                 (Ok(()), problem)
             }

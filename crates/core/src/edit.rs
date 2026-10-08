@@ -107,10 +107,10 @@ const DEFAULT_HISTORY_MAX_ITEMS: i64 = 10;
 const DEFAULT_HISTORY_MAX_SIZE: i64 = 6 * 1024 * 1024;
 /// What KeePass counts for an Entry version besides its fields and attachments.
 const VERSION_BASE_SIZE: u64 = 128;
-const FOLDER_ICON: &str = "48";
+pub(crate) const FOLDER_ICON: &str = "48";
 const RECYCLE_BIN_ICON: &str = "43";
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
-const NO_UUID: Uuid = Uuid::nil();
+pub(crate) const NO_UUID: Uuid = Uuid::nil();
 
 impl From<&Entry> for EntryFields {
     fn from(entry: &Entry) -> Self {
@@ -1055,7 +1055,7 @@ fn times(now: Timestamp) -> Element {
     times
 }
 
-fn new_group(id: Uuid, name: &str, icon: &str, now: Timestamp) -> Element {
+pub(crate) fn new_group(id: Uuid, name: &str, icon: &str, now: Timestamp) -> Element {
     let mut group = Element::new("Group");
     push(&mut group, text_element("UUID", encode_uuid(id)));
     push(&mut group, text_element("Name", name));

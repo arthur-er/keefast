@@ -24,6 +24,7 @@ mod theme;
 mod totp_setup;
 mod unlock;
 mod vault_browser;
+mod vault_key;
 mod vault_settings;
 mod widgets;
 
@@ -49,7 +50,7 @@ use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::settings::{SettingsClosed, SettingsView};
 use crate::unlock::{UnlockEvent, UnlockView};
-use crate::vault_browser::{OpenAnotherVault, UnlockLockedVault, VaultBrowser};
+use crate::vault_browser::{CreateVault, OpenAnotherVault, UnlockLockedVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
 /// unlock dialog shown again to open another Vault, or to unlock one, and whenever every Vault
@@ -506,6 +507,8 @@ impl KeefastWindow {
                     .detach();
                 cx.subscribe_in(&browser, window, Self::on_unlock_locked)
                     .detach();
+                cx.subscribe_in(&browser, window, Self::on_create_vault)
+                    .detach();
                 self.browser = Some(browser);
             }
         }
@@ -524,6 +527,21 @@ impl KeefastWindow {
     ) {
         self.unlock.update(cx, |unlock, cx| unlock.reset(cx));
         window.focus(&self.unlock.focus_handle(cx));
+        self.showing_unlock = true;
+        cx.notify();
+    }
+
+    fn on_create_vault(
+        &mut self,
+        _: &Entity<VaultBrowser>,
+        _: &CreateVault,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.unlock.update(cx, |unlock, cx| {
+            unlock.reset(cx);
+            unlock.new_vault(window, cx);
+        });
         self.showing_unlock = true;
         cx.notify();
     }

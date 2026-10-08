@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::{ExposeSecret, SecretString};
@@ -55,6 +57,37 @@ impl CompositeKey {
         }
         Zeroizing::new(digest.finalize().into())
     }
+}
+
+/// The contents of a new key file holding a random 256-bit key, in KeePass's XML v2.0 format,
+/// as KeePassXC and KeePass 2 make them.
+pub fn new_key_file() -> Zeroizing<Vec<u8>> {
+    let key: Zeroizing<[u8; 32]> = Zeroizing::new(crate::kdbx::random());
+    let hex = |bytes: &[u8]| {
+        let mut digits = Zeroizing::new(String::with_capacity(bytes.len() * 2));
+        for byte in bytes {
+            write!(digits, "{byte:02X}").expect("writing to a String cannot fail");
+        }
+        digits
+    };
+    let digits = hex(&key[..]);
+    let hash = hex(&Sha256::digest(&key[..])[..4]);
+    // Allocated once, so growing leaves no copies of the key behind.
+    let mut contents = Zeroizing::new(String::with_capacity(512));
+    contents.push_str(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<KeyFile>\n\t<Meta>\n\t\t<Version>2.0</Version>\n\t</Meta>\n\t<Key>\n",
+    );
+    contents.push_str(&format!("\t\t<Data Hash=\"{}\">\n", *hash));
+    // Eight digits per group, four groups per line, as KeePass lays the key out.
+    for (index, group) in digits.as_bytes().chunks(8).enumerate() {
+        contents.push_str(if index % 4 == 0 { "\t\t\t" } else { " " });
+        contents.push_str(std::str::from_utf8(group).expect("hex digits"));
+        if index % 4 == 3 {
+            contents.push('\n');
+        }
+    }
+    contents.push_str("\t\t</Data>\n\t</Key>\n</KeyFile>\n");
+    Zeroizing::new(std::mem::take(&mut *contents).into_bytes())
 }
 
 fn password_component(password: &SecretString) -> Zeroizing<Vec<u8>> {

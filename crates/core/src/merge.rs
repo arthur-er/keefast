@@ -60,10 +60,13 @@ impl MergeSummary {
 
 impl Vault {
     /// Decrypts another version of this Vault's Vault file, such as one saved by another
-    /// device, with the key this Vault was opened with. Runs key derivation, so keep it off the
-    /// UI thread.
+    /// device, with the Vault's key, or with the key it had before a change of key not yet
+    /// saved. Runs key derivation, so keep it off the UI thread.
     pub fn open_version(&self, bytes: &[u8]) -> Result<Vault, OpenError> {
-        let file = kdbx::read(bytes, &self.key)?;
+        let file = match (kdbx::read(bytes, &self.key), &self.previous_key) {
+            (Err(OpenError::WrongKey), Some(previous)) => kdbx::read(bytes, previous)?,
+            (read, _) => read?,
+        };
         Vault::from_file(file, self.key.clone())
     }
 

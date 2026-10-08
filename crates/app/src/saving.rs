@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use gpui::{App, Entity};
-use keefast_workspace::{PendingSave, Workspace};
+use keefast_workspace::{PendingSave, VaultId, Workspace};
 
 /// How long a Vault file must stay unchanged before it is read: sync tools write in steps.
 const SETTLE: Duration = Duration::from_millis(500);
@@ -80,6 +80,12 @@ pub fn watch_vault_files(workspace: &Entity<Workspace>, cx: &mut App) {
 pub fn save_all(workspace: &Entity<Workspace>, cx: &mut App) {
     let saves = workspace.update(cx, |workspace, _| workspace.begin_saves());
     run(workspace, saves, cx);
+}
+
+/// Saves one Vault now, unless it is being saved already.
+pub fn save(workspace: &Entity<Workspace>, vault: VaultId, cx: &mut App) {
+    let save = workspace.update(cx, |workspace, _| workspace.begin_save(vault).ok());
+    run(workspace, save.into_iter().collect(), cx);
 }
 
 /// With autosave on, saves every Vault with unsaved changes, and Merges in changes made to
