@@ -331,6 +331,33 @@ fn a_save_made_offline_is_kept_in_the_cache_and_uploaded_when_back_online() {
 }
 
 #[test]
+fn a_key_change_saved_offline_keeps_the_old_key_until_it_is_uploaded() {
+    const NEW_PASSWORD: &str = "a brand new master password";
+    let h = harness();
+    let (mut laptop, vault) = h.open();
+    laptop
+        .workspace
+        .change_master_key(vault, &UnlockSecrets::password(NEW_PASSWORD))
+        .unwrap();
+    h.dropbox.go_offline(true);
+    laptop.workspace.save_vault(vault).unwrap();
+    assert_eq!(laptop.status(vault), Some(SyncStatus::Offline));
+
+    // The Vault file in Dropbox still has the old key, and another device adds to it.
+    h.dropbox.go_offline(false);
+    h.add_group_elsewhere("From the phone");
+    laptop.sync_when_due();
+
+    let uploaded = Vault::open(
+        &h.dropbox.file(&in_dropbox()).unwrap(),
+        &CompositeKey::password(NEW_PASSWORD),
+    )
+    .expect("the Vault file in Dropbox has the new key now");
+    assert!(has_group(&uploaded, "From the phone"));
+    assert_eq!(laptop.status(vault), Some(SyncStatus::Synced));
+}
+
+#[test]
 fn checks_while_offline_wait_longer_each_time() {
     let h = harness();
     let (mut laptop, _) = h.open();

@@ -1390,7 +1390,11 @@ impl Workspace {
                     if let Some(sync) = &mut open.online {
                         sync.upload_pending = problem == Some(SyncProblem::Offline);
                     }
-                    open.key_change_saved(finished.edits);
+                    // Only a Vault file with the new key lets the old one go: a save kept on this
+                    // machine still has to Merge what Dropbox holds, which has the old key.
+                    if problem != Some(SyncProblem::Offline) {
+                        open.key_change_saved(finished.edits);
+                    }
                 }
                 (Ok(()), problem)
             }
