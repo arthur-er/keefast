@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use keefast_core::{CompositeKey, EntryFields, Timestamp, Vault};
 use keefast_workspace::{
-    EditVaultError, LocalStorage, SaveStatus, SaveVaultError, StorageProvider, VaultId,
+    EditVaultError, EntryScope, LocalStorage, SaveStatus, SaveVaultError, StorageProvider, VaultId,
     VaultLocation, Workspace,
 };
 use secrecy::{ExposeSecret, SecretString};
@@ -161,7 +161,9 @@ fn groups_and_moves_survive_saving_and_reopening() {
     let archive = h.workspace.create_group(h.vault, root, "Archive").unwrap();
     let old = h.workspace.create_group(h.vault, archive, "Old").unwrap();
     let servers = h.group("Servers");
-    let email = h.workspace.visible_entries(h.vault, None)[0].id();
+    let email = h.workspace.visible_entries(EntryScope::Vault(h.vault))[0]
+        .entry
+        .id();
 
     h.workspace.rename_group(h.vault, old, "Older").unwrap();
     h.workspace.move_group(h.vault, servers, old).unwrap();
@@ -183,10 +185,11 @@ fn deleted_entries_and_groups_are_in_the_recycle_bin_after_reopening() {
     let personal = h.group("Personal");
     let github = h
         .workspace
-        .visible_entries(h.vault, None)
+        .visible_entries(EntryScope::Vault(h.vault))
         .into_iter()
-        .find(|entry| entry.title() == "GitHub")
+        .find(|listed| listed.entry.title() == "GitHub")
         .unwrap()
+        .entry
         .id();
 
     h.workspace.delete_entry(h.vault, github).unwrap();

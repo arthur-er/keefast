@@ -1,9 +1,9 @@
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyDownEvent, PromptLevel,
-    SharedString, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
+    PromptLevel, SharedString, Window, div, prelude::*, px,
 };
-use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, Vault};
-use keefast_workspace::{EditVaultError, PendingSave, SaveStatus, VaultId, Workspace};
+use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId};
+use keefast_workspace::{EditVaultError, EntryScope, PendingSave, SaveStatus, VaultId, Workspace};
 
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::strings;
@@ -11,17 +11,19 @@ use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::widgets::{button, tool_button};
 
-/// The KeeWeb-style three panes: Groups sidebar → Entry list → Entry detail, with commands to
-/// edit Entries and Groups and to save the Vaults.
+/// Emitted when the user asks to open another Vault.
+pub struct OpenAnotherVault;
+
+/// The KeeWeb-style three panes: Vaults and Groups sidebar → Entry list → Entry detail, with
+/// commands to edit Entries and Groups and to save the Vaults.
 pub struct VaultBrowser {
     workspace: Entity<Workspace>,
     focus: FocusHandle,
-    selected_vault: VaultId,
-    selected_group: Option<GroupId>,
-    selected_entry: Option<EntryId>,
+    scope: EntryScope,
+    selected_entry: Option<(VaultId, EntryId)>,
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
-    renaming: Option<(GroupId, Entity<TextField>)>,
+    renaming: Option<(VaultId, GroupId, Entity<TextField>)>,
     error: Option<SharedString>,
 }
 
@@ -37,15 +39,25 @@ enum Detail {
 }
 
 enum EditTarget {
-    Existing(EntryId),
-    New(GroupId),
+    Existing(VaultId, EntryId),
+    New(VaultId, GroupId),
 }
 
 #[derive(Clone, Copy)]
 enum Subject {
-    Entry(EntryId),
-    Group(GroupId),
+    Entry(VaultId, EntryId),
+    Group(VaultId, GroupId),
 }
+
+impl Subject {
+    fn vault(self) -> VaultId {
+        match self {
+            Subject::Entry(vault, _) | Subject::Group(vault, _) => vault,
+        }
+    }
+}
+
+impl EventEmitter<OpenAnotherVault> for VaultBrowser {}
 
 impl Focusable for VaultBrowser {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -59,8 +71,7 @@ impl VaultBrowser {
         Self {
             workspace,
             focus: cx.focus_handle(),
-            selected_vault: vault,
-            selected_group: None,
+            scope: EntryScope::Vault(vault),
             selected_entry: None,
             detail: Detail::Entry,
             renaming: None,
@@ -68,30 +79,38 @@ impl VaultBrowser {
         }
     }
 
-    fn vault<'a>(&self, cx: &'a App) -> Option<&'a Vault> {
-        self.workspace
-            .read(cx)
-            .vault(self.selected_vault)
-            .map(|open| open.vault())
+    /// Shows a Vault's Entries, as after opening it.
+    pub fn show_vault(&mut self, vault: VaultId, cx: &mut Context<Self>) {
+        self.select(EntryScope::Vault(vault), cx);
     }
 
-    /// The Group new Entries and Groups go into: the selected one, or the top of the Vault.
-    fn target_group(&self, cx: &App) -> Option<GroupId> {
-        self.selected_group
-            .or_else(|| self.vault(cx).map(|vault| vault.root().id()))
+    /// The Group new Entries and Groups go into: the selected one, or the top of the selected
+    /// Vault. With all Vaults shown there is none, unless only one Vault is open.
+    fn target_group(&self, cx: &App) -> Option<(VaultId, GroupId)> {
+        if let EntryScope::Group(vault, group) = self.scope {
+            return Some((vault, group));
+        }
+        let workspace = self.workspace.read(cx);
+        let vault = match self.scope.vault() {
+            Some(vault) => workspace.vault(vault),
+            None => {
+                let mut open = workspace.vaults();
+                open.next().filter(|_| open.next().is_none())
+            }
+        }?;
+        Some((vault.id(), vault.vault().root().id()))
     }
 
-    fn select_group(&mut self, vault: VaultId, group: Option<GroupId>, cx: &mut Context<Self>) {
-        self.selected_vault = vault;
-        self.selected_group = group;
+    fn select(&mut self, scope: EntryScope, cx: &mut Context<Self>) {
+        self.scope = scope;
         self.selected_entry = None;
         self.detail = Detail::Entry;
         self.error = None;
         cx.notify();
     }
 
-    fn select_entry(&mut self, entry: EntryId, cx: &mut Context<Self>) {
-        self.selected_entry = Some(entry);
+    fn select_entry(&mut self, vault: VaultId, entry: EntryId, cx: &mut Context<Self>) {
+        self.selected_entry = Some((vault, entry));
         self.detail = Detail::Entry;
         self.error = None;
         cx.notify();
@@ -101,11 +120,10 @@ impl VaultBrowser {
     fn edit<T>(
         &mut self,
         cx: &mut Context<Self>,
-        command: impl FnOnce(&mut Workspace, VaultId) -> Result<T, EditVaultError>,
+        command: impl FnOnce(&mut Workspace) -> Result<T, EditVaultError>,
     ) -> Option<T> {
-        let vault = self.selected_vault;
         let result = self.workspace.update(cx, |workspace, cx| {
-            let result = command(workspace, vault);
+            let result = command(workspace);
             cx.notify();
             result
         });
@@ -125,13 +143,13 @@ impl VaultBrowser {
 
     fn open_editor(&mut self, target: EditTarget, window: &mut Window, cx: &mut Context<Self>) {
         let fields = match &target {
-            EditTarget::Existing(id) => self
+            EditTarget::Existing(vault, id) => self
                 .workspace
                 .read(cx)
-                .entry(self.selected_vault, *id)
+                .entry(*vault, *id)
                 .map(EntryFields::from)
                 .unwrap_or_default(),
-            EditTarget::New(_) => EntryFields::default(),
+            EditTarget::New(..) => EntryFields::default(),
         };
         let editor = cx.new(|cx| EntryEditor::new(&fields, cx));
         cx.subscribe_in(&editor, window, Self::on_editor_event)
@@ -155,17 +173,15 @@ impl VaultBrowser {
         match event {
             EntryEditorEvent::Save(fields) => {
                 let saved = match *target {
-                    EditTarget::Existing(id) => self
-                        .edit(cx, |workspace, vault| {
-                            workspace.update_entry(vault, id, fields)
-                        })
-                        .map(|()| id),
-                    EditTarget::New(group) => self.edit(cx, |workspace, vault| {
-                        workspace.create_entry(vault, group, fields)
-                    }),
+                    EditTarget::Existing(vault, id) => self
+                        .edit(cx, |workspace| workspace.update_entry(vault, id, fields))
+                        .map(|()| (vault, id)),
+                    EditTarget::New(vault, group) => self
+                        .edit(cx, |workspace| workspace.create_entry(vault, group, fields))
+                        .map(|id| (vault, id)),
                 };
-                if let Some(id) = saved {
-                    self.selected_entry = Some(id);
+                if let Some(selected) = saved {
+                    self.selected_entry = Some(selected);
                     self.detail = Detail::Entry;
                 }
             }
@@ -176,23 +192,29 @@ impl VaultBrowser {
     }
 
     fn new_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(parent) = self.target_group(cx) else {
+        let Some((vault, parent)) = self.target_group(cx) else {
             return;
         };
-        let created = self.edit(cx, |workspace, vault| {
+        let created = self.edit(cx, |workspace| {
             workspace.create_group(vault, parent, strings::NEW_GROUP_NAME)
         });
         if let Some(group) = created {
-            self.select_group(self.selected_vault, Some(group), cx);
-            self.start_rename(group, window, cx);
+            self.select(EntryScope::Group(vault, group), cx);
+            self.start_rename(vault, group, window, cx);
         }
     }
 
-    fn start_rename(&mut self, group: GroupId, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_rename(
+        &mut self,
+        vault: VaultId,
+        group: GroupId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = self
             .workspace
             .read(cx)
-            .group(self.selected_vault, group)
+            .group(vault, group)
             .map(|group| group.name().to_owned())
             .unwrap_or_default();
         let field = cx.new(|cx| {
@@ -203,9 +225,7 @@ impl VaultBrowser {
         cx.subscribe_in(&field, window, move |this, field, event, window, cx| {
             if let TextFieldEvent::Submit = event {
                 let name = field.read(cx).text().to_owned();
-                this.edit(cx, |workspace, vault| {
-                    workspace.rename_group(vault, group, &name)
-                });
+                this.edit(cx, |workspace| workspace.rename_group(vault, group, &name));
             }
             this.renaming = None;
             window.focus(&this.focus);
@@ -213,14 +233,14 @@ impl VaultBrowser {
         })
         .detach();
         window.focus(&field.focus_handle(cx));
-        self.renaming = Some((group, field));
+        self.renaming = Some((vault, group, field));
         cx.notify();
     }
 
     fn move_to(&mut self, item: Subject, to: GroupId, cx: &mut Context<Self>) {
-        let moved = self.edit(cx, |workspace, vault| match item {
-            Subject::Entry(entry) => workspace.move_entry(vault, entry, to),
-            Subject::Group(group) => workspace.move_group(vault, group, to),
+        let moved = self.edit(cx, |workspace| match item {
+            Subject::Entry(vault, entry) => workspace.move_entry(vault, entry, to),
+            Subject::Group(vault, group) => workspace.move_group(vault, group, to),
         });
         if moved.is_some() {
             self.detail = Detail::Entry;
@@ -230,19 +250,20 @@ impl VaultBrowser {
     /// Deletes an Entry or Group, asking first when it would be deleted for good rather than
     /// moved to the Recycle Bin.
     fn delete(&mut self, item: Subject, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(vault) = self.vault(cx) else {
+        let Some(open) = self.workspace.read(cx).vault(item.vault()) else {
             return;
         };
+        let vault = open.vault();
         let for_good = match item {
-            Subject::Entry(entry) => vault.deletes_entry_for_good(entry),
-            Subject::Group(group) => vault.deletes_group_for_good(group),
+            Subject::Entry(_, entry) => vault.deletes_entry_for_good(entry),
+            Subject::Group(_, group) => vault.deletes_group_for_good(group),
         };
         match for_good {
             Ok(false) => self.delete_now(item, cx),
             Ok(true) => {
                 let question = match item {
-                    Subject::Entry(_) => strings::CONFIRM_DELETE_ENTRY,
-                    Subject::Group(_) => strings::CONFIRM_DELETE_GROUP,
+                    Subject::Entry(..) => strings::CONFIRM_DELETE_ENTRY,
+                    Subject::Group(..) => strings::CONFIRM_DELETE_GROUP,
                 };
                 let answer = window.prompt(
                     PromptLevel::Warning,
@@ -266,14 +287,14 @@ impl VaultBrowser {
     }
 
     fn delete_now(&mut self, item: Subject, cx: &mut Context<Self>) {
-        let deleted = self.edit(cx, |workspace, vault| match item {
-            Subject::Entry(entry) => workspace.delete_entry(vault, entry),
-            Subject::Group(group) => workspace.delete_group(vault, group),
+        let deleted = self.edit(cx, |workspace| match item {
+            Subject::Entry(vault, entry) => workspace.delete_entry(vault, entry),
+            Subject::Group(vault, group) => workspace.delete_group(vault, group),
         });
         if deleted.is_some() {
             match item {
-                Subject::Entry(_) => self.selected_entry = None,
-                Subject::Group(_) => self.selected_group = None,
+                Subject::Entry(..) => self.selected_entry = None,
+                Subject::Group(vault, _) => self.scope = EntryScope::Vault(vault),
             }
             self.detail = Detail::Entry;
         }
@@ -325,18 +346,37 @@ impl VaultBrowser {
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
-        if keystroke.key == "s" && keystroke.modifiers.secondary() {
-            self.save_all(cx);
-            cx.stop_propagation();
+        if !keystroke.modifiers.secondary() {
+            return;
         }
+        match keystroke.key.as_str() {
+            "s" => self.save_all(cx),
+            "o" => cx.emit(OpenAnotherVault),
+            _ => return,
+        }
+        cx.stop_propagation();
     }
 
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
         let mut rows: Vec<AnyElement> = Vec::new();
+        if workspace.vaults().nth(1).is_some() {
+            rows.push(
+                sidebar_row(
+                    ("vault", rows.len()),
+                    strings::SIDEBAR_ALL_VAULTS.into(),
+                    0,
+                    self.scope == EntryScope::AllVaults,
+                    theme,
+                )
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
+                .into_any_element(),
+            );
+        }
         for open in workspace.vaults() {
             let vault = open.id();
-            let selected = vault == self.selected_vault && self.selected_group.is_none();
+            let selected = self.scope == EntryScope::Vault(vault);
             let name = match open.has_unsaved_changes() {
                 true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
                 false => open.display_name(),
@@ -344,17 +384,21 @@ impl VaultBrowser {
             rows.push(
                 sidebar_row(("vault", rows.len()), name.into(), 0, selected, theme)
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_group(vault, None, cx)))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.select(EntryScope::Vault(vault), cx)
+                        }),
+                    )
                     .into_any_element(),
             );
             let mut groups = Vec::new();
             flatten_groups(open.vault().root().groups(), 1, &mut groups);
             for (group, depth) in groups {
                 let id = group.id();
-                if let Some((_, field)) = self
+                if let Some((.., field)) = self
                     .renaming
                     .as_ref()
-                    .filter(|(renaming, _)| vault == self.selected_vault && *renaming == id)
+                    .filter(|(in_vault, renaming, _)| (*in_vault, *renaming) == (vault, id))
                 {
                     rows.push(
                         div()
@@ -365,7 +409,7 @@ impl VaultBrowser {
                     );
                     continue;
                 }
-                let selected = vault == self.selected_vault && self.selected_group == Some(id);
+                let selected = self.scope == EntryScope::Group(vault, id);
                 rows.push(
                     sidebar_row(
                         ("group", rows.len()),
@@ -374,9 +418,9 @@ impl VaultBrowser {
                         selected,
                         theme,
                     )
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.select_group(vault, Some(id), cx)),
-                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select(EntryScope::Group(vault, id), cx)
+                    }))
                     .into_any_element(),
                 );
             }
@@ -391,6 +435,21 @@ impl VaultBrowser {
             .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .pt_2()
+                    .text_sm()
+                    .text_color(theme.muted)
+                    .child(strings::SIDEBAR_VAULTS)
+                    .child(
+                        tool_button("open-vault", strings::OPEN_VAULT, theme)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
+                    ),
+            )
             .child(
                 div()
                     .id("sidebar")
@@ -459,21 +518,28 @@ impl VaultBrowser {
 
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
-        let entries = workspace.visible_entries(self.selected_vault, self.selected_group);
-        let header = match self.selected_group {
-            Some(group) => workspace
-                .group(self.selected_vault, group)
+        let entries = workspace.visible_entries(self.scope);
+        let header = match self.scope {
+            EntryScope::AllVaults => Some(strings::SIDEBAR_ALL_VAULTS.to_owned()),
+            EntryScope::Vault(vault) => workspace.vault(vault).map(|open| open.display_name()),
+            EntryScope::Group(vault, group) => workspace
+                .group(vault, group)
                 .map(|group| group.name().to_owned()),
-            None => Some(strings::SIDEBAR_ALL_ENTRIES.to_owned()),
         }
         .unwrap_or_default();
+        // Across several Vaults, each Entry says which Vault it is from.
+        let show_vault = self.scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
 
         let rows: Vec<AnyElement> = entries
             .iter()
             .enumerate()
-            .map(|(ix, entry)| {
+            .map(|(ix, listed)| {
+                let (vault, entry) = (listed.vault, listed.entry);
                 let id = entry.id();
-                let selected = self.selected_entry == Some(id);
+                let selected = self.selected_entry == Some((vault, id));
+                let vault_name = show_vault
+                    .then(|| workspace.vault(vault).map(|open| open.display_name()))
+                    .flatten();
                 div()
                     .id(("entry", ix))
                     .flex()
@@ -487,54 +553,55 @@ impl VaultBrowser {
                     .child(div().truncate().child(title_of(entry)))
                     .child(
                         div()
-                            .truncate()
+                            .flex()
+                            .gap_2()
                             .text_sm()
                             .text_color(theme.muted)
-                            .child(entry.username().to_owned()),
+                            .child(div().flex_1().truncate().child(entry.username().to_owned()))
+                            .when_some(vault_name, |this, name| {
+                                this.child(div().flex_none().text_xs().child(name))
+                            }),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_entry(id, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_entry(vault, id, cx)))
                     .into_any_element()
             })
             .collect();
 
-        let mut toolbar = div()
-            .flex()
-            .flex_wrap()
-            .gap_1()
-            .child(
-                tool_button("new-entry", strings::NEW_ENTRY, theme).on_click(cx.listener(
-                    |this, _, window, cx| {
-                        if let Some(group) = this.target_group(cx) {
-                            this.open_editor(EditTarget::New(group), window, cx);
-                        }
-                    },
-                )),
-            )
-            .child(
-                tool_button("new-group", strings::NEW_GROUP, theme)
-                    .on_click(cx.listener(|this, _, window, cx| this.new_group(window, cx))),
-            );
-        if let Some(group) = self.selected_group {
+        let mut toolbar = div().flex().flex_wrap().gap_1();
+        if let Some((vault, group)) = self.target_group(cx) {
             toolbar = toolbar
                 .child(
-                    tool_button("rename-group", strings::RENAME, theme).on_click(
-                        cx.listener(move |this, _, window, cx| {
-                            this.start_rename(group, window, cx)
-                        }),
-                    ),
+                    tool_button("new-entry", strings::NEW_ENTRY, theme).on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            this.open_editor(EditTarget::New(vault, group), window, cx)
+                        },
+                    )),
+                )
+                .child(
+                    tool_button("new-group", strings::NEW_GROUP, theme)
+                        .on_click(cx.listener(|this, _, window, cx| this.new_group(window, cx))),
+                );
+        }
+        if let EntryScope::Group(vault, group) = self.scope {
+            let subject = Subject::Group(vault, group);
+            toolbar = toolbar
+                .child(
+                    tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
+                        move |this, _, window, cx| this.start_rename(vault, group, window, cx),
+                    )),
                 )
                 .child(
                     tool_button("move-group", strings::MOVE, theme).on_click(cx.listener(
                         move |this, _, _, cx| {
-                            this.detail = Detail::Moving(Subject::Group(group));
+                            this.detail = Detail::Moving(subject);
                             cx.notify();
                         },
                     )),
                 )
                 .child(
-                    tool_button("delete-group", strings::DELETE, theme).on_click(cx.listener(
-                        move |this, _, window, cx| this.delete(Subject::Group(group), window, cx),
-                    )),
+                    tool_button("delete-group", strings::DELETE, theme).on_click(
+                        cx.listener(move |this, _, window, cx| this.delete(subject, window, cx)),
+                    ),
                 );
         }
 
@@ -608,9 +675,9 @@ impl VaultBrowser {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let workspace = self.workspace.read(cx);
-        let Some(entry) = self
+        let Some((vault, entry)) = self
             .selected_entry
-            .and_then(|id| workspace.entry(self.selected_vault, id))
+            .and_then(|(vault, id)| workspace.entry(vault, id).map(|entry| (vault, entry)))
         else {
             return pane
                 .items_center()
@@ -643,19 +710,19 @@ impl VaultBrowser {
                         .gap_1()
                         .child(tool_button("edit-entry", strings::EDIT, theme).on_click(
                             cx.listener(move |this, _, window, cx| {
-                                this.open_editor(EditTarget::Existing(id), window, cx)
+                                this.open_editor(EditTarget::Existing(vault, id), window, cx)
                             }),
                         ))
                         .child(tool_button("move-entry", strings::MOVE, theme).on_click(
                             cx.listener(move |this, _, _, cx| {
-                                this.detail = Detail::Moving(Subject::Entry(id));
+                                this.detail = Detail::Moving(Subject::Entry(vault, id));
                                 cx.notify();
                             }),
                         ))
                         .child(
                             tool_button("delete-entry", strings::DELETE, theme).on_click(
                                 cx.listener(move |this, _, window, cx| {
-                                    this.delete(Subject::Entry(id), window, cx)
+                                    this.delete(Subject::Entry(vault, id), window, cx)
                                 }),
                             ),
                         ),
@@ -684,7 +751,7 @@ impl VaultBrowser {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(open) = self.workspace.read(cx).vault(self.selected_vault) else {
+        let Some(open) = self.workspace.read(cx).vault(item.vault()) else {
             return div().into_any_element();
         };
         let root = open.vault().root();

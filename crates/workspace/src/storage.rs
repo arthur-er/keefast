@@ -1,7 +1,8 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+
+use crate::atomic_file;
 
 /// Where a Vault file lives, in terms a Storage provider understands.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -18,6 +19,13 @@ impl VaultLocation {
                 .unwrap_or(path.as_os_str())
                 .to_string_lossy()
                 .into_owned(),
+        }
+    }
+
+    /// Where the Vault file is, in full: its path, or its Storage provider reference.
+    pub fn description(&self) -> String {
+        match self {
+            VaultLocation::Local(path) => path.display().to_string(),
         }
     }
 }
@@ -51,65 +59,10 @@ impl StorageProvider for LocalStorage {
         })
     }
 
-    /// Writes a temporary file next to the Vault file, flushes it to disk, then renames it over
-    /// the Vault file, so a crash mid-save never leaves a half-written Vault file. A symlinked
-    /// Vault file is saved where the link points, and the link is kept.
+    /// Saves through a temporary file and a rename, so a crash mid-save never leaves a
+    /// half-written Vault file. A symlinked Vault file is saved where the link points.
     fn write(&self, location: &VaultLocation, bytes: &[u8]) -> Result<(), StorageError> {
         let VaultLocation::Local(path) = location;
-        let path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-        let temp = temp_path(&path);
-        let result = write_and_rename(&temp, &path, bytes);
-        if result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        Ok(result?)
+        Ok(atomic_file::replace(path, bytes)?)
     }
-}
-
-fn write_and_rename(temp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(temp)?;
-    // Only Unix modes are copied: on Windows a read-only Vault file would make the temporary
-    // file read-only too, and replacing a read-only file fails there anyway.
-    #[cfg(unix)]
-    if let Ok(existing) = fs::metadata(path) {
-        file.set_permissions(existing.permissions())?;
-    }
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(temp, path)?;
-    sync_parent(path);
-    Ok(())
-}
-
-/// A hidden, unique name in the Vault file's directory, so the rename stays on one filesystem.
-fn temp_path(path: &Path) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let unique = format!(
-        ".{name}.{}-{}.keefast-tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    );
-    path.with_file_name(unique)
-}
-
-/// Makes the rename itself durable. Best effort: not every platform can sync a directory.
-fn sync_parent(path: &Path) {
-    #[cfg(unix)]
-    if let Some(dir) = path.parent() {
-        let dir = if dir.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            dir
-        };
-        if let Ok(dir) = fs::File::open(dir) {
-            let _ = dir.sync_all();
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }

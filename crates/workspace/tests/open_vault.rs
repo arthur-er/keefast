@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use keefast_core::{CompositeKey, OpenError};
 use keefast_workspace::{
-    LocalStorage, OpenVaultError, StorageError, StorageProvider, VaultLocation, Workspace,
+    EntryScope, ListedEntry, LocalStorage, OpenVaultError, StorageError, StorageProvider,
+    VaultLocation, Workspace,
 };
 use support::{FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
 
@@ -14,8 +15,11 @@ fn workspace_with_fixture() -> Workspace {
     Workspace::new(Arc::new(storage))
 }
 
-fn titles<'a>(entries: impl IntoIterator<Item = &'a keefast_core::Entry>) -> Vec<&'a str> {
-    entries.into_iter().map(|entry| entry.title()).collect()
+fn titles<'a>(entries: impl IntoIterator<Item = ListedEntry<'a>>) -> Vec<&'a str> {
+    entries
+        .into_iter()
+        .map(|listed| listed.entry.title())
+        .collect()
 }
 
 #[test]
@@ -26,7 +30,7 @@ fn opening_a_vault_shows_every_entry_sorted_by_title() {
         .open_vault(&personal_vault(), &CompositeKey::password(PASSWORD))
         .expect("vault opens");
 
-    let entries = workspace.visible_entries(id, None);
+    let entries = workspace.visible_entries(EntryScope::Vault(id));
     assert_eq!(
         titles(entries),
         ["Email", "GitHub", "Prod DB", "Root Entry"]
@@ -41,7 +45,7 @@ fn selecting_a_group_shows_its_entries_and_those_of_its_subgroups() {
         .unwrap();
 
     let work = workspace.vault(id).unwrap().vault().root().groups()[0].id();
-    let entries = workspace.visible_entries(id, Some(work));
+    let entries = workspace.visible_entries(EntryScope::Group(id, work));
 
     assert_eq!(titles(entries), ["GitHub", "Prod DB"]);
 }
@@ -105,14 +109,16 @@ fn a_missing_vault_file_is_a_storage_error() {
 fn unlocking_can_run_on_another_thread() {
     let mut workspace = workspace_with_fixture();
 
-    let pending = workspace.begin_open(personal_vault(), CompositeKey::password(PASSWORD));
+    let pending = workspace
+        .begin_open(personal_vault(), CompositeKey::password(PASSWORD))
+        .unwrap();
     let unlocked = std::thread::spawn(move || pending.unlock())
         .join()
         .unwrap()
         .unwrap();
     let id = workspace.add_unlocked(unlocked);
 
-    assert_eq!(workspace.visible_entries(id, None).len(), 4);
+    assert_eq!(workspace.visible_entries(EntryScope::Vault(id)).len(), 4);
 }
 
 #[test]
@@ -128,7 +134,7 @@ fn the_local_storage_provider_reads_vault_files_from_disk() {
         )
         .unwrap();
 
-    assert_eq!(workspace.visible_entries(id, None).len(), 4);
+    assert_eq!(workspace.visible_entries(EntryScope::Vault(id)).len(), 4);
 }
 
 #[test]

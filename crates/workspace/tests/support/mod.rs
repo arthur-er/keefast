@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use keefast_workspace::{Clock, StorageError, StorageProvider, VaultLocation};
+use keefast_workspace::{
+    AppConfig, Clock, ConfigError, ConfigStore, StorageError, StorageProvider, VaultLocation,
+};
 
 pub const KEEPASSXC_KDBX4: &[u8] = include_bytes!("../../../../fixtures/keepassxc-kdbx4.kdbx");
 pub const PASSWORD: &str = "fixture-password";
@@ -84,4 +86,53 @@ impl Clock for FakeClock {
 
 pub fn personal_vault() -> VaultLocation {
     VaultLocation::Local(PathBuf::from("/vaults/personal.kdbx"))
+}
+
+pub fn work_vault() -> VaultLocation {
+    VaultLocation::Local(PathBuf::from("/vaults/work.kdbx"))
+}
+
+/// An in-memory app config, as a config file would hold it between runs.
+#[derive(Default)]
+pub struct FakeConfigStore {
+    config: Mutex<Option<AppConfig>>,
+    failing: Mutex<bool>,
+}
+
+impl FakeConfigStore {
+    pub fn holding(config: AppConfig) -> Self {
+        Self {
+            config: Mutex::new(Some(config)),
+            failing: Mutex::new(false),
+        }
+    }
+
+    pub fn saved(&self) -> Option<AppConfig> {
+        self.config.lock().unwrap().clone()
+    }
+
+    /// Makes every load and save fail, like an unreadable config directory.
+    pub fn fail(&self, fail: bool) {
+        *self.failing.lock().unwrap() = fail;
+    }
+
+    fn check(&self) -> Result<(), ConfigError> {
+        match *self.failing.lock().unwrap() {
+            true => Err(ConfigError::Io(io::Error::other("permission denied"))),
+            false => Ok(()),
+        }
+    }
+}
+
+impl ConfigStore for FakeConfigStore {
+    fn load(&self) -> Result<AppConfig, ConfigError> {
+        self.check()?;
+        Ok(self.saved().unwrap_or_default())
+    }
+
+    fn save(&self, config: &AppConfig) -> Result<(), ConfigError> {
+        self.check()?;
+        *self.config.lock().unwrap() = Some(config.clone());
+        Ok(())
+    }
 }

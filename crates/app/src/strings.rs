@@ -16,8 +16,16 @@ pub const UNLOCK_ERROR_UNSUPPORTED: &str = "This Vault file format is not suppor
 pub const UNLOCK_ERROR_NOT_FOUND: &str = "The Vault file could not be found.";
 pub const UNLOCK_ERROR_READ: &str = "The Vault file could not be read.";
 pub const UNLOCK_ERROR_PICKER: &str = "The file picker could not be opened.";
+pub const UNLOCK_ERROR_ALREADY_OPEN: &str = "This Vault file is already open.";
+pub const RECENT_VAULTS: &str = "Recent Vault files";
+pub const RECENT_FORGET: &str = "×";
+pub const CONFIG_ERROR: &str =
+    "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
 
-pub const SIDEBAR_ALL_ENTRIES: &str = "All Entries";
+pub const SIDEBAR_VAULTS: &str = "Vaults";
+pub const SIDEBAR_ALL_VAULTS: &str = "All Vaults";
+pub const OPEN_VAULT: &str = "+ Vault";
+
 pub const LIST_EMPTY: &str = "No Entries";
 pub const DETAIL_EMPTY: &str = "Select an Entry";
 pub const DETAIL_USERNAME: &str = "Username";

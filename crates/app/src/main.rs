@@ -15,61 +15,99 @@ use gpui::{
     App, Application, Bounds, Context, Entity, Focusable, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, size,
 };
-use keefast_workspace::{LocalStorage, Workspace};
+use keefast_workspace::{FileConfigStore, LocalStorage, VaultLocation, Workspace};
 
-use crate::unlock::{UnlockView, Unlocked};
-use crate::vault_browser::VaultBrowser;
+use crate::unlock::{UnlockEvent, UnlockView};
+use crate::vault_browser::{OpenAnotherVault, VaultBrowser};
 
-/// The main window: the unlock dialog until a Vault is open, then the three panes.
+/// The main window: the unlock dialog until a Vault is open, then the three panes, with the
+/// unlock dialog shown again to open another Vault.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
-    screen: Screen,
-}
-
-enum Screen {
-    Unlock(Entity<UnlockView>),
-    Browse(Entity<VaultBrowser>),
+    unlock: Entity<UnlockView>,
+    browser: Option<Entity<VaultBrowser>>,
+    unlocking: bool,
 }
 
 impl KeefastWindow {
     fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let workspace = cx.new(|_| Workspace::new(Arc::new(LocalStorage)));
-        let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), path, cx));
-        cx.subscribe_in(&unlock, window, Self::on_unlocked).detach();
+        let workspace = cx.new(|_| {
+            let workspace = Workspace::new(Arc::new(LocalStorage));
+            match FileConfigStore::in_os_config_dir() {
+                Some(config) => workspace.with_config(Arc::new(config)),
+                None => workspace,
+            }
+        });
+        let location = path.map(VaultLocation::Local);
+        let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), location, cx));
+        cx.subscribe_in(&unlock, window, Self::on_unlock_event)
+            .detach();
         window.focus(&unlock.focus_handle(cx));
         Self {
             workspace,
-            screen: Screen::Unlock(unlock),
+            unlock,
+            browser: None,
+            unlocking: true,
         }
     }
 
-    fn on_unlocked(
+    fn on_unlock_event(
         &mut self,
         _: &Entity<UnlockView>,
-        &Unlocked(vault): &Unlocked,
+        event: &UnlockEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self.workspace.clone();
-        let browser = cx.new(|cx| VaultBrowser::new(workspace, vault, cx));
+        let browser = match (event, &self.browser) {
+            (UnlockEvent::Cancelled, None) => return,
+            (UnlockEvent::Cancelled, Some(browser)) => browser.clone(),
+            (&UnlockEvent::Unlocked(vault), Some(browser)) => {
+                browser.update(cx, |browser, cx| browser.show_vault(vault, cx));
+                browser.clone()
+            }
+            (&UnlockEvent::Unlocked(vault), None) => {
+                let workspace = self.workspace.clone();
+                let browser = cx.new(|cx| VaultBrowser::new(workspace, vault, cx));
+                cx.subscribe_in(&browser, window, Self::on_open_another)
+                    .detach();
+                self.browser = Some(browser.clone());
+                browser
+            }
+        };
         window.focus(&browser.focus_handle(cx));
-        self.screen = Screen::Browse(browser);
+        self.unlocking = false;
+        cx.notify();
+    }
+
+    fn on_open_another(
+        &mut self,
+        _: &Entity<VaultBrowser>,
+        _: &OpenAnotherVault,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.unlock.update(cx, |unlock, cx| unlock.reset(cx));
+        window.focus(&self.unlock.focus_handle(cx));
+        self.unlocking = true;
         cx.notify();
     }
 }
 
 impl Render for KeefastWindow {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let screen = match &self.screen {
-            Screen::Unlock(view) => view.clone().into_any_element(),
-            Screen::Browse(view) => view.clone().into_any_element(),
+        let screen = match (&self.browser, self.unlocking) {
+            (Some(browser), false) => browser.clone().into_any_element(),
+            _ => self.unlock.clone().into_any_element(),
         };
         div().size_full().child(screen)
     }
 }
 
 fn main() {
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    // Recent Vault files are remembered by full path, so a relative path is made absolute.
+    let path = std::env::args_os()
+        .nth(1)
+        .map(|path| std::path::absolute(&path).unwrap_or_else(|_| PathBuf::from(path)));
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
         cx.open_window(

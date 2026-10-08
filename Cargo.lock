@@ -3036,10 +3036,13 @@ dependencies = [
 name = "keefast-workspace"
 version = "0.1.0"
 dependencies = [
+ "dirs 5.0.1",
  "keefast-core",
  "secrecy",
+ "serde",
  "tempfile",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

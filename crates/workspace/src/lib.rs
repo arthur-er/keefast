@@ -1,7 +1,9 @@
 //! keefast's headless app model: the set of open Vaults, with its environment injected.
 //! No GPUI here; the app renders this state and sends it commands.
 
+mod atomic_file;
 mod clock;
+mod config;
 mod storage;
 
 use std::sync::Arc;
@@ -12,13 +14,48 @@ use keefast_core::{
 };
 
 pub use clock::{Clock, SystemClock};
+pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
 pub use storage::{LocalStorage, StorageError, StorageProvider, VaultLocation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VaultId(u64);
 
+/// What the Entry list shows: every open Vault, one Vault, or one Group of a Vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryScope {
+    AllVaults,
+    Vault(VaultId),
+    Group(VaultId, GroupId),
+}
+
+impl EntryScope {
+    /// The one Vault the scope is narrowed to, if it is.
+    pub fn vault(self) -> Option<VaultId> {
+        match self {
+            EntryScope::AllVaults => None,
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
+        }
+    }
+
+    pub fn group(self) -> Option<GroupId> {
+        match self {
+            EntryScope::Group(_, group) => Some(group),
+            EntryScope::AllVaults | EntryScope::Vault(_) => None,
+        }
+    }
+}
+
+/// An Entry in the Entry list, with the Vault it belongs to.
+#[derive(Clone, Copy)]
+pub struct ListedEntry<'a> {
+    pub vault: VaultId,
+    pub entry: &'a Entry,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OpenVaultError {
+    #[error("the Vault file is already open")]
+    AlreadyOpen(VaultId),
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
@@ -165,10 +202,16 @@ pub struct Workspace {
     clock: Arc<dyn Clock>,
     vaults: Vec<OpenVault>,
     next_id: u64,
-    autosave: bool,
+    config: AppConfig,
+    /// Where the config is kept between runs; `None` keeps it in memory only.
+    config_store: Option<Arc<dyn ConfigStore>>,
+    config_error: Option<ConfigError>,
 }
 
 impl Workspace {
+    /// How many recent Vault files are remembered.
+    pub const MAX_RECENT_VAULTS: usize = 10;
+
     pub fn new(storage: Arc<dyn StorageProvider>) -> Self {
         Self::with_clock(storage, Arc::new(SystemClock))
     }
@@ -179,8 +222,55 @@ impl Workspace {
             clock,
             vaults: Vec::new(),
             next_id: 0,
-            autosave: false,
+            config: AppConfig::default(),
+            config_store: None,
+            config_error: None,
         }
+    }
+
+    /// Loads the app config from `store` and keeps it there from now on. A config that can't
+    /// be loaded is reported by [`Self::config_error`], and is left alone rather than
+    /// overwritten with the defaults the Workspace falls back to.
+    pub fn with_config(mut self, store: Arc<dyn ConfigStore>) -> Self {
+        match store.load() {
+            Ok(config) => {
+                self.config = config;
+                self.config_store = Some(store);
+            }
+            Err(error) => self.config_error = Some(error),
+        }
+        self
+    }
+
+    /// Why the app config could not be loaded or last saved, if it couldn't.
+    pub fn config_error(&self) -> Option<&ConfigError> {
+        self.config_error.as_ref()
+    }
+
+    fn save_config(&mut self) {
+        if let Some(store) = &self.config_store {
+            self.config_error = store.save(&self.config).err();
+        }
+    }
+
+    /// Vault files opened lately, most recent first, whether open now or not.
+    pub fn recent_vaults(&self) -> &[VaultLocation] {
+        &self.config.recent_vaults
+    }
+
+    pub fn forget_recent(&mut self, location: &VaultLocation) {
+        self.config
+            .recent_vaults
+            .retain(|recent| recent != location);
+        self.save_config();
+    }
+
+    fn remember_recent(&mut self, location: &VaultLocation) {
+        let recent = &mut self.config.recent_vaults;
+        recent.retain(|recent| recent != location);
+        recent.insert(0, location.clone());
+        recent.truncate(Self::MAX_RECENT_VAULTS);
+        self.save_config();
     }
 
     /// Reads, decrypts and adds a Vault in one blocking call.
@@ -189,19 +279,34 @@ impl Workspace {
         location: &VaultLocation,
         key: &CompositeKey,
     ) -> Result<VaultId, OpenVaultError> {
-        let pending = self.begin_open(location.clone(), key.clone());
+        let pending = self.begin_open(location.clone(), key.clone())?;
         Ok(self.add_unlocked(pending.unlock()?))
     }
 
-    pub fn begin_open(&self, location: VaultLocation, key: CompositeKey) -> PendingOpen {
-        PendingOpen {
+    /// Starts opening a Vault file. Run the returned open off the UI thread, then hand the
+    /// unlocked Vault to [`Self::add_unlocked`]. A Vault file that is already open is refused.
+    pub fn begin_open(
+        &self,
+        location: VaultLocation,
+        key: CompositeKey,
+    ) -> Result<PendingOpen, OpenVaultError> {
+        if let Some(open) = self.open_vault_at(&location) {
+            return Err(OpenVaultError::AlreadyOpen(open));
+        }
+        Ok(PendingOpen {
             storage: Arc::clone(&self.storage),
             location,
             key,
-        }
+        })
     }
 
+    /// Adds an unlocked Vault and remembers its Vault file as the most recent. If the same
+    /// Vault file was opened meanwhile, that Vault is kept and this one dropped.
     pub fn add_unlocked(&mut self, unlocked: UnlockedVault) -> VaultId {
+        self.remember_recent(&unlocked.location);
+        if let Some(open) = self.open_vault_at(&unlocked.location) {
+            return open;
+        }
         let id = VaultId(self.next_id);
         self.next_id += 1;
         self.vaults.push(OpenVault {
@@ -220,6 +325,14 @@ impl Workspace {
         self.vaults.iter()
     }
 
+    /// The open Vault read from the Vault file at `location`, if there is one.
+    pub fn open_vault_at(&self, location: &VaultLocation) -> Option<VaultId> {
+        self.vaults
+            .iter()
+            .find(|open| &open.location == location)
+            .map(|open| open.id)
+    }
+
     pub fn vault(&self, id: VaultId) -> Option<&OpenVault> {
         self.vaults.iter().find(|vault| vault.id == id)
     }
@@ -236,18 +349,35 @@ impl Workspace {
         self.vault(vault)?.vault.entry(entry)
     }
 
-    /// The Entry list for a Vault: every Entry in the selected Group (the whole Vault when
-    /// `None`) and its subgroups, sorted by title.
-    pub fn visible_entries(&self, id: VaultId, group: Option<GroupId>) -> Vec<&Entry> {
-        let group = match group {
-            Some(group) => self.group(id, group),
-            None => self.vault(id).map(|open| open.vault.root()),
+    /// The Entry list: every Entry in scope, including those in subgroups, sorted by title.
+    /// Entries with the same title stay in the order their Vaults were opened.
+    pub fn visible_entries(&self, scope: EntryScope) -> Vec<ListedEntry<'_>> {
+        let groups: Vec<(VaultId, &Group)> = match scope {
+            EntryScope::AllVaults => self
+                .vaults
+                .iter()
+                .map(|open| (open.id, open.vault.root()))
+                .collect(),
+            EntryScope::Vault(vault) => self
+                .vault(vault)
+                .map(|open| (vault, open.vault.root()))
+                .into_iter()
+                .collect(),
+            EntryScope::Group(vault, group) => self
+                .group(vault, group)
+                .map(|group| (vault, group))
+                .into_iter()
+                .collect(),
         };
-        let Some(group) = group else {
-            return Vec::new();
-        };
-        let mut entries: Vec<&Entry> = group.all_entries().collect();
-        entries.sort_by_cached_key(|entry| entry.title().to_lowercase());
+        let mut entries: Vec<ListedEntry> = groups
+            .into_iter()
+            .flat_map(|(vault, group)| {
+                group
+                    .all_entries()
+                    .map(move |entry| ListedEntry { vault, entry })
+            })
+            .collect();
+        entries.sort_by_cached_key(|listed| listed.entry.title().to_lowercase());
         entries
     }
 
@@ -398,19 +528,20 @@ impl Workspace {
     }
 
     pub fn autosave(&self) -> bool {
-        self.autosave
+        self.config.autosave
     }
 
-    /// Turns saving after every edit on or off.
+    /// Turns saving after every edit on or off, and remembers the choice in the app config.
     pub fn set_autosave(&mut self, autosave: bool) {
-        self.autosave = autosave;
+        self.config.autosave = autosave;
+        self.save_config();
     }
 
     /// With autosave on, starts saving every Vault with unsaved changes that isn't already
     /// being saved. Call it after edits and after saves finish. A Vault whose last save failed
     /// is not retried until it is edited again.
     pub fn begin_autosaves(&mut self) -> Vec<PendingSave> {
-        if !self.autosave {
+        if !self.config.autosave {
             return Vec::new();
         }
         let due: Vec<VaultId> = self
