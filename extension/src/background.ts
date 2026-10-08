@@ -42,6 +42,19 @@ async function inPage<Args extends unknown[], T>(
   return result?.result as Awaited<T> | undefined;
 }
 
+/** Runs a fill in the tab's page, and says whether it filled anything. */
+async function fillIn<Args extends unknown[]>(
+  tab: number,
+  func: (...args: Args) => boolean,
+  args: Args,
+): Promise<boolean> {
+  try {
+    return (await inPage(tab, func, args)) === true;
+  } catch {
+    return false;
+  }
+}
+
 const tabs: Tabs = {
   async inspect(tab) {
     try {
@@ -51,29 +64,19 @@ const tabs: Tabs = {
       return undefined;
     }
   },
-  async fill(tab, origin, credentials) {
-    try {
-      const filled = await inPage(
-        tab,
-        (origin, credentials) => globalThis.keefast?.fill(origin, credentials) ?? false,
-        [origin, credentials] as [string, Credentials],
-      );
-      return filled === true;
-    } catch {
-      return false;
-    }
+  fill(tab, origin, credentials) {
+    return fillIn(
+      tab,
+      (origin, credentials) => globalThis.keefast?.fill(origin, credentials) ?? false,
+      [origin, credentials] as [string, Credentials],
+    );
   },
-  async fillNewPassword(tab, origin, password) {
-    try {
-      const filled = await inPage(
-        tab,
-        (origin, password) => globalThis.keefast?.fillNewPassword(origin, password) ?? false,
-        [origin, password],
-      );
-      return filled === true;
-    } catch {
-      return false;
-    }
+  fillNewPassword(tab, origin, password) {
+    return fillIn(
+      tab,
+      (origin, password) => globalThis.keefast?.fillNewPassword(origin, password) ?? false,
+      [origin, password] as [string, string],
+    );
   },
 };
 

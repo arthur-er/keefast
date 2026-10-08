@@ -3,7 +3,7 @@
 // generator. It never asks for a master password: keefast is unlocked in keefast itself
 // (ADR 0001).
 import type { EntrySummary } from "./companion";
-import type { PageFields } from "./forms";
+import { type PageFields, isTwoFactorStep } from "./forms";
 import type { FailureReason } from "./keefast";
 import type { Answer, Answers, Request } from "./messages";
 
@@ -28,20 +28,25 @@ function message(title: string, detail = ""): void {
   show(element("p", title, "title"), ...(detail ? [element("p", detail, "muted")] : []));
 }
 
-function failed(reason: FailureReason): void {
+/** What went wrong, and what the user can do about it. */
+function explain(reason: FailureReason): [title: string, detail?: string] {
   switch (reason) {
     case "not-running":
-      return message(
+      return [
         "keefast is not running — start keefast and unlock it.",
         "Browser integration must be on in keefast's settings.",
-      );
+      ];
     case "locked":
-      return message("keefast is locked — unlock it.", "Then open this popup again.");
+      return ["keefast is locked — unlock it.", "Then open this popup again."];
     case "denied":
-      return message("Turned down in keefast.");
+      return ["Turned down in keefast."];
     case "failed":
-      return message("Something went wrong talking to keefast.", "Try again.");
+      return ["Something went wrong talking to keefast.", "Try again."];
   }
+}
+
+function failed(reason: FailureReason): void {
+  message(...explain(reason));
 }
 
 async function start(): Promise<void> {
@@ -101,7 +106,7 @@ async function listEntries(): Promise<void> {
   if (!answer.ok) return failed(answer.reason);
   if (answer.value === null) return message("keefast can't fill this page.");
   const { entries, fields } = answer.value;
-  const twoFactor = fields.totp && !fields.login;
+  const twoFactor = isTwoFactorStep(fields);
   if (entries.length === 0) {
     if (twoFactor) {
       message("No Entry for this site has TOTP.", "Set up TOTP on its Entry in keefast.");
@@ -136,12 +141,10 @@ function entryItem(tab: number, entry: EntrySummary, fields: PageFields): HTMLEl
     } else if (!filled.ok) {
       failed(filled.reason);
     } else {
-      message(
-        "Nothing was filled.",
-        fields.login
-          ? "This page has no login form, or it changed. Open the popup again."
-          : "This page has no 2FA field, or it changed. Open the popup again.",
-      );
+      const why = fields.login
+        ? "This page has no login form, or it changed."
+        : "This page changed, or keefast no longer gives this Entry's code here.";
+      message("Nothing was filled.", `${why} Open the popup again.`);
     }
   });
   const item = element("li");
@@ -165,12 +168,12 @@ function generator(tab: number, fields: PageFields): HTMLElement {
 async function makePassword(tab: number, fields: PageFields, section: HTMLElement): Promise<void> {
   const generated = await ask({ type: "generate", tab });
   if (!generated.ok || generated.value === null) {
-    const detail = generated.ok
-      ? "keefast can't fill this page."
-      : generated.reason === "denied"
-        ? "keefast's generator settings can't make a password. Change them in keefast."
-        : "Something went wrong talking to keefast. Try again.";
-    section.replaceChildren(element("p", detail, "muted"));
+    const [title, detail = ""] = !generated.ok
+      ? generated.reason === "denied"
+        ? ["keefast's generator settings can't make a password.", "Change them in keefast."]
+        : explain(generated.reason)
+      : ["keefast can't fill this page."];
+    section.replaceChildren(element("p", title, "title"), element("p", detail, "muted"));
     return;
   }
   const password = document.createElement("input");
@@ -206,7 +209,7 @@ async function makePassword(tab: number, fields: PageFields, section: HTMLElemen
   if (!fields.newPassword) {
     section.append(element("p", "This page has no new password field to fill.", "muted"));
   }
-  (actions.querySelector("button") as HTMLElement).focus();
+  actions.querySelector<HTMLElement>("button")?.focus();
 }
 
 void start();

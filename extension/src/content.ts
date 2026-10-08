@@ -17,6 +17,7 @@ export interface PageApi {
   inspect(): InspectedPage | undefined;
   /** Fills the login form, and the 2FA field with the TOTP code; says whether it filled any. */
   fill(origin: string, credentials: Credentials): boolean;
+  /** Fills a generated password into the new password fields; says whether it did. */
   fillNewPassword(origin: string, password: string): boolean;
 }
 

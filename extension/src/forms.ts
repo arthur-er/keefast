@@ -23,6 +23,7 @@ export interface LoginFields {
 
 /** What a page has for the extension to fill. */
 export interface PageFields {
+  /** A login form, or one step of it: a username or a password field. */
   login: boolean;
   /** A field for a TOTP code, as a 2FA step of a sign-in has. */
   totp: boolean;
@@ -42,11 +43,18 @@ const CODE_HINT = /code|token|\bpin\b/i;
 /** What other code fields are labelled. */
 const NOT_TOTP_HINT =
   /promo|coupon|voucher|gift|discount|referral|invit|postal|post.?code|zip|country|area|captcha/i;
+/** What a form asking for a code split over digit fields says, around the fields. */
+const CODE_CONTEXT = /code|verif|2fa|two.?factor|authenticat|one.?time|\botp/i;
 /** How many digits a TOTP code has, at fewest and at most. */
 const TOTP_DIGITS = { min: 6, max: 8 };
 
 /** What a new password's field, or its confirmation's, is labelled. */
 const NEW_PASSWORD_HINT = /new|confirm|repeat|retype|again|sign.?up|regist|create/i;
+
+/** Whether a page is a sign-in's 2FA step: it asks for a TOTP code alone. */
+export function isTwoFactorStep({ login, totp }: PageFields): boolean {
+  return totp && !login;
+}
 
 /** What the page has for the extension to fill. */
 export function pageFields(document: Document): PageFields {
@@ -191,7 +199,8 @@ function isTotpField(input: HTMLInputElement): boolean {
 }
 
 /**
- * The first run of single-character fields side by side, one for each digit of a TOTP code.
+ * The first run of single-character fields side by side, one for each digit of a TOTP code,
+ * in a form that says it asks for a code: split card numbers and PINs look alike.
  */
 function digitFields(inputs: HTMLInputElement[]): HTMLInputElement[] {
   let run: HTMLInputElement[] = [];
@@ -200,10 +209,19 @@ function digitFields(inputs: HTMLInputElement[]): HTMLInputElement[] {
       run.push(input);
       continue;
     }
-    if (run.length >= TOTP_DIGITS.min && run.length <= TOTP_DIGITS.max) return run;
+    if (run.length >= TOTP_DIGITS.min && run.length <= TOTP_DIGITS.max && asksForCode(run[0]!)) {
+      return run;
+    }
     run = input?.maxLength === 1 ? [input] : [];
   }
   return [];
+}
+
+/** Whether the form of a digit field, or else its page, says it asks for a code. */
+function asksForCode(input: HTMLInputElement): boolean {
+  const scope = input.form ?? input.ownerDocument.body;
+  const text = scope.textContent ?? "";
+  return CODE_CONTEXT.test(`${text} ${labels(input)}`) && !NOT_TOTP_HINT.test(text);
 }
 
 /** Whether two fields are in the same box, alone in boxes of their own or not. */

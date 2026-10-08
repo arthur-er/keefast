@@ -283,6 +283,7 @@ describe("findTotpFields", () => {
   it("finds a code split into a field for each digit", () => {
     page(`
       <form>
+        <p>Enter the code from your authenticator app.</p>
         <input id="search" type="text" maxlength="1">
         <div>${digits}</div>
       </form>`);
@@ -292,9 +293,17 @@ describe("findTotpFields", () => {
 
   it("finds digit fields each in a box of its own", () => {
     const boxed = Array(6).fill(`<span><input maxlength="1"></span>`);
-    page(`<form>${boxed.join("")}</form>`);
+    page(`<form>Verification code ${boxed.join("")}</form>`);
 
     expect(findTotpFields(document)).toHaveLength(6);
+  });
+
+  it("doesn't take digit fields that don't ask for a code for one", () => {
+    page(`<form>Your card's PIN ${digits}</form>`);
+    expect(findTotpFields(document)).toEqual([]);
+
+    page(`<form>Enter the promo code ${digits}</form>`);
+    expect(findTotpFields(document)).toEqual([]);
   });
 
   it("prefers the marked field over digit fields", () => {
@@ -320,7 +329,7 @@ describe("fillTotp", () => {
   });
 
   it("fills a digit into each of the code's digit fields", () => {
-    page(`<form>${digits}</form>`);
+    page(`<form>Enter your 2FA code ${digits}</form>`);
 
     expect(fillTotp(document, location.origin, "123456")).toBe(true);
     expect([0, 1, 2, 3, 4, 5].map((i) => byId(`d${i}`).value).join("")).toBe("123456");
