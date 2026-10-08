@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use keefast_core::{EntryFields, EntryId, GroupId, OpenError, Vault};
 use keefast_workspace::{
-    AppConfig, ConfigStore, CopyField, EntryScope, FileConfigStore, OpenVaultError, PendingSave,
-    UnlockSecrets, UnsavedLock, VaultId, VaultLocation, View, Workspace,
+    AppConfig, ConfigStore, CopyError, CopyField, EntryScope, FileConfigStore, OpenVaultError,
+    PendingSave, UnlockSecrets, UnsavedLock, VaultId, VaultLocation, View, Workspace,
 };
 use support::{
     FakeClipboard, FakeClock, FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD,
@@ -608,4 +608,93 @@ fn a_locked_vault_is_not_watched_or_merged_and_unlocking_watches_it_again() {
     let unlocked = workspace.open_vault(&personal_vault(), &key()).unwrap();
     assert_eq!(unlocked, vault);
     assert_eq!(storage.watching(&personal_vault()), 1);
+}
+
+#[test]
+fn a_vault_waiting_to_lock_is_hidden_until_its_changes_are_dealt_with() {
+    let mut h = harness();
+    let github = h.entry(h.personal, "GitHub");
+    h.edit_personal();
+
+    h.lock(h.personal);
+
+    let waiting = h.workspace.vault(h.personal).unwrap();
+    assert!(waiting.is_locking());
+    // Nothing of it is shown, or can be copied from.
+    assert!(h.workspace.entry(h.personal, github).is_none());
+    assert!(h.workspace.readable_vault(h.personal).is_none());
+    assert!(
+        h.workspace
+            .visible_entries(EntryScope::Vault(h.personal))
+            .is_empty()
+    );
+    assert!(
+        h.workspace
+            .visible_entries(EntryScope::AllVaults)
+            .iter()
+            .all(|listed| listed.vault != h.personal)
+    );
+    assert_eq!(
+        h.workspace
+            .copy_field(&mut h.clipboard, h.personal, github, CopyField::Password),
+        Err(CopyError::NotFound)
+    );
+    assert_eq!(h.clipboard.text(), None);
+
+    // Cancelling a lock the user asked for brings it back.
+    h.workspace.answer_lock(h.personal, UnsavedLock::Cancel);
+    assert!(!h.workspace.vault(h.personal).unwrap().is_locking());
+    assert!(h.workspace.entry(h.personal, github).is_some());
+}
+
+#[test]
+fn the_idle_lock_cannot_be_cancelled() {
+    let mut h = harness();
+    h.edit_personal();
+
+    h.idle(15 * 60);
+
+    assert_eq!(h.workspace.pending_lock(), Some(h.personal));
+    assert!(!h.workspace.can_cancel_lock(h.personal));
+    assert!(
+        h.workspace
+            .answer_lock(h.personal, UnsavedLock::Cancel)
+            .is_none()
+    );
+    assert_eq!(h.workspace.pending_lock(), Some(h.personal));
+    assert!(h.workspace.vault(h.personal).unwrap().is_locking());
+    // Saving or discarding still locks it.
+    h.workspace.answer_lock(h.personal, UnsavedLock::Discard);
+    assert!(h.is_locked(h.personal));
+}
+
+#[test]
+fn the_os_locking_or_suspending_cannot_be_cancelled_either() {
+    let mut h = harness();
+    h.edit_personal();
+
+    let saves = h.workspace.os_locked(&mut h.clipboard);
+    run(&mut h.workspace, saves);
+
+    assert_eq!(h.workspace.pending_lock(), Some(h.personal));
+    assert!(!h.workspace.can_cancel_lock(h.personal));
+    h.workspace.answer_lock(h.personal, UnsavedLock::Cancel);
+    assert!(h.workspace.vault(h.personal).unwrap().is_locking());
+    let save = h.workspace.answer_lock(h.personal, UnsavedLock::Save);
+    run(&mut h.workspace, save.into_iter().collect());
+    assert!(h.is_locked(h.personal));
+}
+
+#[test]
+fn a_lock_the_user_asked_for_can_be_cancelled_until_idle_time_makes_it_final() {
+    let mut h = harness();
+    h.edit_personal();
+    h.lock(h.personal);
+    assert!(h.workspace.can_cancel_lock(h.personal));
+
+    h.idle(15 * 60);
+
+    assert!(!h.workspace.can_cancel_lock(h.personal));
+    h.workspace.answer_lock(h.personal, UnsavedLock::Cancel);
+    assert!(h.workspace.vault(h.personal).unwrap().is_locking());
 }

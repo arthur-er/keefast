@@ -163,7 +163,12 @@ pub struct OpenVault {
     file_changed: bool,
     watch: Option<Watch>,
     /// Whether the Vault locks once its unsaved changes are saved, or the user discards them.
+    /// Until then it is hidden: the browser, the Entry list and the copy commands behave as if
+    /// it were locked, so a Vault that is about to lock can't be read from.
     lock_requested: bool,
+    /// Whether that lock was not asked for by the user (idle, OS lock or suspend), and so
+    /// can't be cancelled by whoever is at the keyboard.
+    auto_lock: bool,
 }
 
 impl OpenVault {
@@ -190,6 +195,12 @@ impl OpenVault {
 
     pub fn is_saving(&self) -> bool {
         self.saving
+    }
+
+    /// Whether the Vault is waiting to lock until its unsaved changes are saved or discarded.
+    /// It is hidden from the Entry list, the browser and the copy commands meanwhile.
+    pub fn is_locking(&self) -> bool {
+        self.lock_requested
     }
 
     /// Whether the last save failed and the Vault hasn't been saved since.
@@ -542,10 +553,12 @@ impl Workspace {
             .config
             .clipboard_clear_after
             .map(|after| self.clock.now() + after);
+        // A Vault waiting to lock can't be copied from. (Not through `readable_vault`: that
+        // would borrow all of the Workspace, and the clipboard record is written below.)
         let entry = self
             .vaults
             .iter()
-            .find(|open| open.id == vault)
+            .find(|open| open.id == vault && !open.lock_requested)
             .and_then(|open| open.vault.entry(entry_id))
             .ok_or(CopyError::NotFound)?;
         let totp_code;
@@ -652,6 +665,7 @@ impl Workspace {
                 file_changed: false,
                 watch,
                 lock_requested: false,
+                auto_lock: false,
             },
         );
         match view {
@@ -738,12 +752,25 @@ impl Workspace {
         self.vaults.iter_mut().find(|vault| vault.id == id)
     }
 
-    pub fn group(&self, vault: VaultId, group: GroupId) -> Option<&Group> {
-        self.vault(vault)?.vault.group(group)
+    /// An open Vault that is not waiting to lock: the ones the user and the browser can read
+    /// from.
+    pub fn readable_vault(&self, id: VaultId) -> Option<&OpenVault> {
+        self.vault(id).filter(|open| !open.lock_requested)
     }
 
+    /// The open Vaults that are not waiting to lock, in the order they were opened.
+    pub fn readable_vaults(&self) -> impl Iterator<Item = &OpenVault> {
+        self.vaults.iter().filter(|open| !open.lock_requested)
+    }
+
+    /// A Group of a Vault that is not waiting to lock.
+    pub fn group(&self, vault: VaultId, group: GroupId) -> Option<&Group> {
+        self.readable_vault(vault)?.vault.group(group)
+    }
+
+    /// An Entry of a Vault that is not waiting to lock.
     pub fn entry(&self, vault: VaultId, entry: EntryId) -> Option<&Entry> {
-        self.vault(vault)?.vault.entry(entry)
+        self.readable_vault(vault)?.vault.entry(entry)
     }
 
     /// The Entry list: every Entry in scope, including those in subgroups, sorted by title.
@@ -751,12 +778,11 @@ impl Workspace {
     pub fn visible_entries(&self, scope: EntryScope) -> Vec<ListedEntry<'_>> {
         let groups: Vec<(VaultId, &Group)> = match scope {
             EntryScope::AllVaults => self
-                .vaults
-                .iter()
+                .readable_vaults()
                 .map(|open| (open.id, open.vault.root()))
                 .collect(),
             EntryScope::Vault(vault) => self
-                .vault(vault)
+                .readable_vault(vault)
                 .map(|open| (vault, open.vault.root()))
                 .into_iter()
                 .collect(),

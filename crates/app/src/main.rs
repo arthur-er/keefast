@@ -187,13 +187,19 @@ impl KeefastWindow {
             .map(|open| open.display_name())
             .unwrap_or_default();
         let question = strings::LOCK_UNSAVED.replace("{vault}", &name);
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            &question,
-            Some(strings::LOCK_UNSAVED_DETAIL),
-            &[strings::LOCK_SAVE, strings::LOCK_DISCARD, strings::CANCEL],
-            cx,
-        );
+        // A lock the user asked for can be called off. One that idle time, the OS locking or a
+        // suspend asked for can't: whoever is at the keyboard may not be the user, so the
+        // Vault stays hidden until the changes are saved or discarded.
+        let can_cancel = self.workspace.read(cx).can_cancel_lock(vault);
+        let buttons: &[&str] = match can_cancel {
+            true => &[strings::LOCK_SAVE, strings::LOCK_DISCARD, strings::CANCEL],
+            false => &[strings::LOCK_SAVE, strings::LOCK_DISCARD],
+        };
+        let detail = match can_cancel {
+            true => strings::LOCK_UNSAVED_DETAIL,
+            false => strings::LOCK_UNSAVED_AUTO_DETAIL,
+        };
+        let answer = window.prompt(PromptLevel::Warning, &question, Some(detail), buttons, cx);
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
             let answer = match answer.await {

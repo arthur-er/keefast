@@ -39,10 +39,13 @@ pub const OPEN_VAULT: &str = "+ Vault";
 pub const LOCK: &str = "Lock";
 pub const LOCK_ALL: &str = "Lock all";
 pub const LOCKED_MARKER: &str = " (locked)";
+pub const LOCKING_MARKER: &str = " (locking…)";
+pub const LOCKING_NOTE: &str = "This Vault is about to lock. Save or discard its changes to continue; nothing in it is shown until then.";
 pub const VAULT_LOCKED: &str = "This Vault is locked.";
 pub const UNLOCK_VAULT: &str = "Unlock…";
 pub const LOCK_UNSAVED: &str = "“{vault}” has unsaved changes. Save them before locking?";
 pub const LOCK_UNSAVED_DETAIL: &str = "Discarding loses them.";
+pub const LOCK_UNSAVED_AUTO_DETAIL: &str = "keefast is locking, and the Vault stays hidden until you choose. Discarding loses the changes.";
 pub const LOCK_SAVE: &str = "Save";
 pub const LOCK_DISCARD: &str = "Discard";
 

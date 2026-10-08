@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use keefast_core::AccessDecision;
 use keefast_workspace::{
-    AccessAnswer, ConnectionId, Outgoing, PendingAccess, UnlockSecrets, VaultId, Workspace,
+    AccessAnswer, ConnectionId, Outgoing, PendingAccess, UnlockSecrets, UnsavedLock, VaultId,
+    Workspace,
 };
 use serde_json::Value;
 use support::extension::{FakeExtension, Sent};
@@ -649,5 +650,78 @@ mod locking {
             browser.announcements(),
             ["database-locked", "database-unlocked"]
         );
+    }
+
+    /// Locks the Vault the way idle time or an OS lock does, with its Pairing still an unsaved
+    /// change, so it waits for the user to save or discard.
+    fn lock_waits_for_the_user(browser: &mut Browser, vault: VaultId) {
+        let saves = browser.workspace.os_locked(&mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        assert!(browser.workspace.vault(vault).unwrap().is_locking());
+    }
+
+    #[test]
+    fn a_vault_waiting_to_lock_answers_that_keefast_is_locked() {
+        let (mut browser, vault) = Browser::paired(storage());
+        lock_waits_for_the_user(&mut browser, vault);
+
+        let reply = parse(&browser.request(&browser.get_logins(EXAMPLE)).unwrap());
+
+        assert_eq!(reply["errorCode"], "1");
+        assert_eq!(reply["action"], "get-logins");
+    }
+
+    #[test]
+    fn a_vault_waiting_to_lock_offers_nothing_while_another_is_open() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.unlock(&work_vault());
+        // Only this Vault is asked to lock; the work Vault stays open.
+        let saves = browser
+            .workspace
+            .lock_vault(vault, &mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        assert!(browser.workspace.vault(vault).unwrap().is_locking());
+
+        let reply = parse(&browser.request(&browser.get_logins(EXAMPLE)).unwrap());
+
+        assert_eq!(
+            reply["errorCode"], "15",
+            "the unpaired Vault offers nothing"
+        );
+        assert_eq!(browser.workspace.pending_access(), None);
+    }
+
+    #[test]
+    fn requests_waiting_on_a_vault_that_is_about_to_lock_are_answered_as_locked() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.ask(&browser.get_logins(EXAMPLE));
+
+        lock_waits_for_the_user(&mut browser, vault);
+
+        assert_eq!(browser.workspace.pending_access(), None);
+        let errors: Vec<Value> = browser
+            .workspace
+            .take_browser_messages()
+            .iter()
+            .map(|outgoing| parse(&outgoing.message))
+            .filter(|message| message["action"] == "get-logins")
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["errorCode"], "1");
+    }
+
+    #[test]
+    fn a_lock_the_user_cancels_gives_the_vault_back_to_the_browser() {
+        let (mut browser, vault) = Browser::paired(storage());
+        let saves = browser
+            .workspace
+            .lock_vault(vault, &mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        let hidden = parse(&browser.request(&browser.get_logins(EXAMPLE)).unwrap());
+        assert_eq!(hidden["errorCode"], "1");
+
+        browser.workspace.answer_lock(vault, UnsavedLock::Cancel);
+
+        browser.ask(&browser.get_logins(EXAMPLE));
     }
 }

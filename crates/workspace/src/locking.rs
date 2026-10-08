@@ -76,22 +76,25 @@ impl Workspace {
     /// clipboard. Run the returned saves, of Vaults to save before they lock, as any other.
     pub fn lock_all(&mut self, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
         let all = self.vaults.iter().map(|open| open.id).collect();
-        self.request_lock(all, clipboard)
+        self.request_lock(all, clipboard, false)
     }
 
     /// Locks one Vault, and clears what keefast copied from the clipboard, like
     /// [`Self::lock_all`].
     pub fn lock_vault(&mut self, id: VaultId, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
-        self.request_lock(vec![id], clipboard)
+        self.request_lock(vec![id], clipboard, false)
     }
 
     /// Tells the Workspace the OS screen locked or the machine is suspending: every Vault
-    /// locks, unless the user turned that off.
+    /// locks, unless the user turned that off. A Vault with unsaved changes can only be saved
+    /// or discarded, not left open: whoever is at the keyboard didn't ask to lock it, and may
+    /// not be the user.
     pub fn os_locked(&mut self, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
         if !self.config.lock_on_os_lock {
             return Vec::new();
         }
-        self.lock_all(clipboard)
+        let all = self.vaults.iter().map(|open| open.id).collect();
+        self.request_lock(all, clipboard, true)
     }
 
     /// Tells the Workspace the user gave keefast input, which postpones the idle lock.
@@ -103,7 +106,11 @@ impl Workspace {
     /// on. Call [`Self::lock_if_idle`] then.
     pub fn idle_lock_in(&self) -> Option<Duration> {
         let after = self.config.idle_lock_after?;
-        if self.vaults.iter().all(|open| open.lock_requested) {
+        if self
+            .vaults
+            .iter()
+            .all(|open| open.lock_requested && open.auto_lock)
+        {
             return None;
         }
         let idle = self
@@ -123,10 +130,10 @@ impl Workspace {
         let due = self
             .vaults
             .iter()
-            .filter(|open| !open.lock_requested)
+            .filter(|open| !(open.lock_requested && open.auto_lock))
             .map(|open| open.id)
             .collect();
-        self.request_lock(due, clipboard)
+        self.request_lock(due, clipboard, true)
     }
 
     /// The Vault waiting to lock until the user says what to do with its unsaved changes, if
@@ -144,6 +151,10 @@ impl Workspace {
     pub fn answer_lock(&mut self, id: VaultId, answer: UnsavedLock) -> Option<PendingSave> {
         let open = self.vault_mut(id).filter(|open| open.lock_requested)?;
         if answer == UnsavedLock::Cancel {
+            // Only a lock the user asked for can be called off.
+            if open.auto_lock {
+                return None;
+            }
             open.lock_requested = false;
         }
         // Answering is the user's input, so the idle lock doesn't ask again at once.
@@ -158,12 +169,22 @@ impl Workspace {
         }
     }
 
+    /// Whether the user may call off the lock of a Vault waiting to lock: not when idle time,
+    /// the OS locking or a suspend asked for it.
+    pub fn can_cancel_lock(&self, id: VaultId) -> bool {
+        self.vault(id)
+            .is_some_and(|open| open.lock_requested && !open.auto_lock)
+    }
+
     /// Locks the Vaults that have nothing unsaved, and marks the others to lock once they
-    /// are saved, saving them now with autosave on.
+    /// are saved, saving them now with autosave on. A Vault marked is hidden from the browser
+    /// and the app at once, and browser requests waiting on it are answered as locked. `auto`
+    /// is for locks the user didn't ask for, which can't be cancelled.
     fn request_lock(
         &mut self,
         ids: Vec<VaultId>,
         clipboard: &mut dyn Clipboard,
+        auto: bool,
     ) -> Vec<PendingSave> {
         self.pending_clear.clear_now(clipboard);
         let mut unsaved = Vec::new();
@@ -174,7 +195,9 @@ impl Workspace {
             };
             if open.has_unsaved_changes() {
                 open.lock_requested = true;
+                open.auto_lock |= auto;
                 unsaved.push(id);
+                self.cut_off_browser_requests(id);
             } else {
                 saved.push(id);
             }

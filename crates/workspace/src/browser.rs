@@ -252,7 +252,7 @@ impl BrowserSession {
         if action.is_empty() {
             return fail(ProtocolError::IncorrectAction);
         }
-        if action != "change-public-keys" && workspace.vaults.is_empty() {
+        if action != "change-public-keys" && workspace.readable_vaults().next().is_none() {
             return fail(match self.keys {
                 None => ProtocolError::ClientPublicKeyNotReceived,
                 Some(_) => ProtocolError::DatabaseNotOpened,
@@ -554,7 +554,7 @@ impl BrowserSession {
         query: &SiteQuery,
         decided: impl Fn(VaultId, EntryId) -> Option<AccessDecision>,
     ) -> String {
-        if workspace.vaults.is_empty() {
+        if workspace.readable_vaults().next().is_none() {
             return self.error(request, ProtocolError::DatabaseNotOpened);
         }
         let now = workspace.now();
@@ -659,8 +659,7 @@ fn candidates<'a>(workspace: &'a Workspace, query: &SiteQuery) -> Vec<Candidate<
     };
     let hosts = query.hosts();
     workspace
-        .vaults
-        .iter()
+        .readable_vaults()
         .filter(paired)
         .flat_map(|open| {
             open.vault
@@ -974,8 +973,7 @@ impl Workspace {
     /// The open Vaults a captured login may go to: those paired with a Pairing the extension
     /// proved.
     fn login_vaults(&self, request: &LoginRequest) -> Vec<VaultId> {
-        self.vaults
-            .iter()
+        self.readable_vaults()
             .filter(|open| {
                 request
                     .pairings
@@ -994,7 +992,7 @@ impl Workspace {
         };
         let offered: Vec<(VaultId, &keefast_core::Entry)> = vaults
             .iter()
-            .filter_map(|&vault| self.vault(vault))
+            .filter_map(|&vault| self.readable_vault(vault))
             .flat_map(|open| {
                 let found = open.vault.entries_for_site(&site);
                 found.into_iter().map(move |found| (open.id, found.entry))
@@ -1134,7 +1132,7 @@ impl Workspace {
     /// was given. Vaults still unlocked are announced again, so it reconnects to them.
     pub(crate) fn announce_locked(&mut self) {
         self.broadcast("database-locked");
-        if !self.vaults.is_empty() {
+        if self.readable_vaults().next().is_some() {
             self.broadcast("database-unlocked");
         }
     }
@@ -1189,9 +1187,12 @@ impl Workspace {
     /// The Vault the browser deals with, as KeePassXC's active database: the focused Vault, or
     /// else the first open Vault paired with one of `connected_ids`, or else the first open.
     fn browser_vault(&self, connected_ids: &[String]) -> Option<VaultId> {
-        let focused = self.view.vault().filter(|&id| self.vault(id).is_some());
+        let focused = self
+            .view
+            .vault()
+            .filter(|&id| self.readable_vault(id).is_some());
         let paired = || {
-            self.vaults.iter().find(|open| {
+            self.readable_vaults().find(|open| {
                 open.vault
                     .pairings()
                     .iter()
@@ -1200,21 +1201,20 @@ impl Workspace {
         };
         focused
             .or_else(|| paired().map(|open| open.id))
-            .or_else(|| self.vaults.first().map(|open| open.id))
+            .or_else(|| self.readable_vaults().next().map(|open| open.id))
     }
 
     /// An open Vault paired with the extension known as `id` by `key`, preferring the Vault
     /// the browser deals with.
     fn paired_vault(&self, id: &str, key: &str, connected_ids: &[String]) -> Option<VaultId> {
         let paired = |vault: VaultId| {
-            self.vault(vault)
+            self.readable_vault(vault)
                 .is_some_and(|open| open.vault.is_paired_with(id, key))
         };
         self.browser_vault(connected_ids)
             .filter(|&vault| paired(vault))
             .or_else(|| {
-                self.vaults
-                    .iter()
+                self.readable_vaults()
                     .map(|open| open.id)
                     .find(|&vault| paired(vault))
             })

@@ -238,7 +238,8 @@ impl VaultBrowser {
     /// own unsaved changes are asked about before it locks.
     fn leave_locked_vaults(&mut self, cx: &App) {
         let workspace = self.workspace.read(cx);
-        let locked = |vault: VaultId| workspace.vault(vault).is_none();
+        // A Vault waiting to lock is hidden like a locked one, so its panes close too.
+        let locked = |vault: VaultId| workspace.readable_vault(vault).is_none();
         let detail_vault = match &self.detail {
             Detail::Entry => None,
             Detail::Editing {
@@ -872,6 +873,23 @@ impl VaultBrowser {
                 );
                 continue;
             };
+            // A Vault waiting to lock shows nothing of what it holds.
+            if open.is_locking() {
+                rows.push(
+                    sidebar_row(
+                        ("vault", rows.len()),
+                        format!("{}{}", open.display_name(), strings::LOCKING_MARKER).into(),
+                        0,
+                        false,
+                        theme,
+                    )
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.muted)
+                    .on_click(select)
+                    .into_any_element(),
+                );
+                continue;
+            }
             let name = match open.has_unsaved_changes() {
                 true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
                 false => open.display_name(),
@@ -1089,6 +1107,13 @@ impl VaultBrowser {
             EntryScope::Vault(vault) => workspace.locked_vault(vault),
             _ => None,
         };
+        // The Vault shown is waiting to lock, so the list has nothing in it.
+        let locking = match scope {
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => {
+                workspace.vault(vault).is_some_and(|open| open.is_locking())
+            }
+            _ => false,
+        };
         let header = match scope {
             EntryScope::AllVaults => Some(strings::SIDEBAR_ALL_VAULTS.to_owned()),
             EntryScope::Vault(vault) => workspace
@@ -1236,9 +1261,11 @@ impl VaultBrowser {
                     .overflow_y_scroll()
                     .track_scroll(&self.entry_list_scroll)
                     .when(rows.is_empty() && locked.is_none(), |this| {
-                        this.p_3()
-                            .text_color(theme.muted)
-                            .child(strings::LIST_EMPTY)
+                        this.p_3().text_color(theme.muted).child(if locking {
+                            strings::LOCKING_NOTE
+                        } else {
+                            strings::LIST_EMPTY
+                        })
                     })
                     .when_some(locked.map(|locked| locked.id()), |this, vault| {
                         this.p_3()
