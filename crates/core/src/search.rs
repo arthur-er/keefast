@@ -54,12 +54,12 @@ enum SortKey {
 
 /// A search through Entries. Every word of the query must match one of an Entry's fields,
 /// though not all the same one; an empty query matches every Entry.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntrySearch {
     terms: Vec<Term>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Term {
     text: String,
     chars: Vec<char>,
@@ -173,10 +173,13 @@ fn searched_fields(entry: &Entry) -> Vec<(Field, String)> {
 
 impl Term {
     fn score(&self, field: Field, text: &str) -> Option<u32> {
+        // A word found as typed scores above every typo, which scores at most `Field::Title`;
+        // and by its field first, as the best `Match` adds less than a field's step.
+        const FOUND: u32 = 10;
+        const FIELD_STEP: u32 = 5;
         let weight = field as u32;
         if let Some(found) = self.find(text) {
-            // Above every typo, which scores at most `Field::Title`.
-            return Some(10 + weight * 5 + found as u32);
+            return Some(FOUND + weight * FIELD_STEP + found as u32);
         }
         self.is_typo_of_a_word_in(text).then_some(weight)
     }

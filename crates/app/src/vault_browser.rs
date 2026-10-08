@@ -44,6 +44,8 @@ pub struct VaultBrowser {
     focus: FocusHandle,
     /// Narrows the Entry list to the Entries matching what is typed in it.
     search: Entity<TextField>,
+    /// What `search` holds, as last searched for.
+    query: EntrySearch,
     sort: EntrySort,
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
@@ -147,7 +149,7 @@ impl VaultBrowser {
         })
         .detach();
         let search = cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx));
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
         Self {
@@ -155,6 +157,7 @@ impl VaultBrowser {
             integration,
             focus: cx.focus_handle(),
             search,
+            query: EntrySearch::default(),
             sort: EntrySort::default(),
             detail: Detail::Entry,
             renaming: None,
@@ -324,13 +327,37 @@ impl VaultBrowser {
     }
 
     /// The Entry list: the Entries in scope matching the search, in the chosen order.
-    fn listed_entries<'a>(&self, workspace: &'a Workspace, cx: &App) -> Vec<ListedEntry<'a>> {
-        let search = EntrySearch::new(self.search.read(cx).text());
-        workspace.find_entries(workspace.view().scope, &search, self.sort)
+    fn listed_entries<'a>(&self, workspace: &'a Workspace) -> Vec<ListedEntry<'a>> {
+        workspace.find_entries(workspace.view().scope, &self.query, self.sort)
     }
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.search.focus_handle(cx));
+    }
+
+    /// A new search selects its best match, unless an Entry is being edited or set up.
+    fn on_search_changed(&mut self, search: Entity<TextField>, cx: &mut Context<Self>) {
+        let query = EntrySearch::new(search.read(cx).text());
+        if query == self.query {
+            return;
+        }
+        self.query = query;
+        if matches!(self.detail, Detail::Entry) {
+            let workspace = self.workspace.read(cx);
+            let best = self
+                .listed_entries(workspace)
+                .first()
+                .map(|listed| (listed.vault, listed.entry.id()));
+            match best {
+                Some((vault, entry)) => self.select_entry(vault, entry, cx),
+                None => {
+                    let scope = self.scope(cx);
+                    self.show(View { scope, entry: None }, cx);
+                }
+            }
+            self.entry_list_scroll.scroll_to_item(0);
+        }
+        cx.notify();
     }
 
     /// Enter in the search field goes to the Entry list, with the best match selected unless
@@ -367,7 +394,7 @@ impl VaultBrowser {
     /// Where the selected Entry is in the Entry list, if it is listed.
     fn selected_position(&self, cx: &App) -> Option<usize> {
         let workspace = self.workspace.read(cx);
-        self.listed_entries(workspace, cx)
+        self.listed_entries(workspace)
             .iter()
             .position(|listed| Some((listed.vault, listed.entry.id())) == self.selected_entry(cx))
     }
@@ -399,7 +426,7 @@ impl VaultBrowser {
     ) {
         let workspace = self.workspace.read(cx);
         let View { entry, .. } = workspace.view();
-        let entries = self.listed_entries(workspace, cx);
+        let entries = self.listed_entries(workspace);
         if entries.is_empty() {
             return;
         }
@@ -1165,8 +1192,8 @@ impl VaultBrowser {
             scope,
             entry: selected_entry,
         } = workspace.view();
-        let entries = self.listed_entries(workspace, cx);
-        let searching = !self.search.read(cx).text().trim().is_empty();
+        let entries = self.listed_entries(workspace);
+        let searching = !self.query.is_empty();
         let locked = match scope {
             EntryScope::Vault(vault) => workspace.locked_vault(vault),
             _ => None,
