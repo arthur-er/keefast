@@ -40,8 +40,15 @@ pub trait FaviconSource: Send + Sync {
 #[derive(Default)]
 pub(crate) struct Favicons {
     source: Option<Arc<dyn FaviconSource>>,
-    /// By site origin: `None` while downloading, then the favicon if the site had one.
-    sites: HashMap<String, Option<Option<Favicon>>>,
+    /// By site origin.
+    sites: HashMap<String, SiteFavicon>,
+}
+
+enum SiteFavicon {
+    Downloading,
+    /// The favicon, if the site had one. A site without one, or that couldn't be reached, is
+    /// not asked again until its favicon is forgotten, as when every Vault locks.
+    Downloaded(Option<Favicon>),
 }
 
 /// A favicon to download off the UI thread: [`Self::run`] it, then hand the result back with
@@ -99,16 +106,21 @@ impl Workspace {
         if !self.config.download_favicons {
             return Vec::new();
         }
-        let mut new: HashMap<String, Site> = HashMap::new();
-        for site in self.entry_sites() {
-            let origin = site.origin();
-            if !self.favicons.sites.contains_key(&origin) {
-                new.entry(origin).or_insert(site);
-            }
-        }
+        let sites: HashMap<String, Site> = self
+            .entry_sites()
+            .map(|site| (site.origin(), site))
+            .collect();
+        // Sites no Entry is for any more, as after an Entry's URL changed, are forgotten.
+        self.favicons
+            .sites
+            .retain(|origin, _| sites.contains_key(origin));
+        let new: Vec<(String, Site)> = sites
+            .into_iter()
+            .filter(|(origin, _)| !self.favicons.sites.contains_key(origin))
+            .collect();
         new.into_iter()
             .map(|(origin, site)| {
-                self.favicons.sites.insert(origin, None);
+                self.favicons.sites.insert(origin, SiteFavicon::Downloading);
                 PendingFavicon {
                     site,
                     source: Arc::clone(&source),
@@ -120,15 +132,20 @@ impl Workspace {
     /// Keeps a downloaded favicon, unless it is no longer wanted: favicon download was turned
     /// off, or no unlocked Vault has an Entry for its site any more, since it started.
     pub fn finish_favicon_download(&mut self, downloaded: DownloadedFavicon) {
-        if let Some(slot @ None) = self.favicons.sites.get_mut(&downloaded.origin) {
-            *slot = Some(downloaded.favicon);
+        if let Some(slot @ SiteFavicon::Downloading) =
+            self.favicons.sites.get_mut(&downloaded.origin)
+        {
+            *slot = SiteFavicon::Downloaded(downloaded.favicon);
         }
     }
 
     /// The favicon of the site an Entry's URL is for, once downloaded.
     pub fn favicon(&self, vault: VaultId, entry: EntryId) -> Option<Favicon> {
         let site = Site::of_entry_url(self.entry(vault, entry)?.url())?;
-        self.favicons.sites.get(&site.origin())?.clone()?
+        match self.favicons.sites.get(&site.origin())? {
+            SiteFavicon::Downloaded(favicon) => favicon.clone(),
+            SiteFavicon::Downloading => None,
+        }
     }
 
     /// Forgets the favicons of sites no unlocked Vault has an Entry for, as after locking.

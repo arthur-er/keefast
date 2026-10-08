@@ -330,7 +330,6 @@ pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
 
 /// The app-wide settings, kept on this machine, as opposed to a Vault's own settings.
 pub const SETTINGS: &str = "App settings";
-pub const SETTINGS_TITLE: &str = "App settings";
 pub const SETTINGS_CLOSE: &str = "Done";
 pub const SETTINGS_APPEARANCE: &str = "Appearance";
 pub const SETTINGS_THEME: &str = "Theme";
@@ -347,10 +346,10 @@ pub const SETTINGS_SAVING: &str = "Saving";
 pub const SETTINGS_AUTOSAVE: &str = "Save Vaults automatically after every change";
 pub const SETTINGS_GENERATOR: &str = "Password generator";
 pub const SETTINGS_GENERATOR_NOTE: &str =
-    "keefast and the browser extension generate passwords with these settings.";
+    "keefast and the Companion extension generate passwords with these settings.";
 pub const SETTINGS_BROWSER: &str = "Browser";
 pub const SETTINGS_BROWSER_INTEGRATION: &str =
-    "Let browser extensions ask keefast for logins (KeePassXC-Browser protocol)";
+    "Let browser extensions ask keefast for Entries to fill (KeePassXC-Browser protocol)";
 pub const SETTINGS_NETWORK: &str = "Network";
 pub const SETTINGS_FAVICONS: &str = "Download website icons for Entries";
 pub const SETTINGS_FAVICONS_NOTE: &str = "keefast then asks each Entry's website for its icon, \

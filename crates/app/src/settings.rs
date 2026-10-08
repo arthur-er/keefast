@@ -78,6 +78,7 @@ impl SettingsView {
         cx.observe(&integration, |_, _, cx| cx.notify()).detach();
         let generator = cx.new(|cx| PasswordGenerator::for_settings(workspace.clone(), cx));
         cx.subscribe(&generator, |_, _, event, cx| {
+            // Escape in the separator field.
             if let PasswordGeneratorEvent::Cancel = event {
                 cx.emit(SettingsClosed);
             }
@@ -387,7 +388,7 @@ impl Render for SettingsView {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(div().text_xl().child(strings::SETTINGS_TITLE))
+                            .child(div().text_xl().child(strings::SETTINGS))
                             .child(
                                 button("close-settings", strings::SETTINGS_CLOSE, theme)
                                     .bg(theme.accent)

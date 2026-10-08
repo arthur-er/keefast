@@ -207,6 +207,42 @@ fn a_changed_entry_url_has_its_new_site_downloaded() {
 }
 
 #[test]
+fn a_site_no_entry_is_for_any_more_is_forgotten() {
+    let mut h = harness();
+    h.download();
+    let github = h
+        .workspace
+        .visible_entries(EntryScope::Vault(h.personal))
+        .into_iter()
+        .find(|listed| listed.entry.title() == "GitHub")
+        .unwrap()
+        .entry
+        .id();
+    let with_url = |url: &str| EntryFields {
+        title: "GitHub".into(),
+        url: url.into(),
+        ..EntryFields::default()
+    };
+    h.workspace
+        .update_entry(h.personal, github, &with_url("gitlab.com"))
+        .unwrap();
+    h.download();
+
+    h.workspace
+        .update_entry(h.personal, github, &with_url("https://github.com/login"))
+        .unwrap();
+    h.download();
+
+    let asked_github = h
+        .source
+        .asked()
+        .iter()
+        .filter(|origin| *origin == "https://github.com")
+        .count();
+    assert_eq!(asked_github, 2);
+}
+
+#[test]
 fn turning_favicon_download_off_forgets_the_favicons() {
     let mut h = harness();
     h.download();
