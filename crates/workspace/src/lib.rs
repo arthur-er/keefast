@@ -652,8 +652,13 @@ impl Workspace {
     /// read. `None` when the Entry has no TOTP, or isn't open.
     pub fn totp_code(&self, vault: VaultId, entry: EntryId) -> Option<Result<TotpCode, TotpError>> {
         let totp = self.entry(vault, entry)?.totp()?;
-        let now = Timestamp::from_system_time(self.clock.now());
+        let now = self.now();
         Some(totp.map(|totp| totp.code(now)))
+    }
+
+    /// The time at the Workspace's clock.
+    fn now(&self) -> Timestamp {
+        Timestamp::from_system_time(self.clock.now())
     }
 
     fn edit<T>(
@@ -661,7 +666,7 @@ impl Workspace {
         id: VaultId,
         edit: impl FnOnce(&mut Vault, Timestamp) -> Result<T, EditError>,
     ) -> Result<T, EditVaultError> {
-        let now = Timestamp::from_system_time(self.clock.now());
+        let now = self.now();
         let open = self.vault_mut(id).ok_or(EditVaultError::VaultNotOpen)?;
         let result = edit(&mut open.vault, now)?;
         open.edits += 1;

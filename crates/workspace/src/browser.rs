@@ -8,13 +8,16 @@
 //! Entries the user hasn't decided on for that site waits for an Access decision, and a
 //! `set-login` request waits for the user to say where the login goes.
 
+mod generate_password;
+mod get_totp;
+
 use std::collections::{HashMap, VecDeque};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
-use keefast_core::{AccessDecision, CapturedLogin, EntryId, GroupId, Site, SiteEntry};
+use keefast_core::{AccessDecision, CapturedLogin, EntryId, GroupId, Site, SiteEntry, Timestamp};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
 use zeroize::Zeroize;
@@ -45,6 +48,7 @@ pub enum ProtocolError {
     EmptyMessageReceived = 13,
     NoUrlProvided = 14,
     NoLoginsFound = 15,
+    NoValidUuidProvided = 18,
 }
 
 impl ProtocolError {
@@ -64,6 +68,7 @@ impl ProtocolError {
             ProtocolError::EmptyMessageReceived => "Empty message received",
             ProtocolError::NoUrlProvided => "No URL provided",
             ProtocolError::NoLoginsFound => "No logins found",
+            ProtocolError::NoValidUuidProvided => "No valid UUID provided",
         }
     }
 }
@@ -186,17 +191,21 @@ impl Candidate<'_> {
         (self.vault, self.found.entry.id())
     }
 
-    /// The Entry as the extension receives it.
-    fn to_protocol(&self) -> Value {
+    /// The Entry as the extension receives it, with its TOTP code at `now` if it has TOTP.
+    fn to_protocol(&self, now: Timestamp) -> Value {
         let SiteEntry { entry, group } = self.found;
-        json!({
+        let mut fields = json!({
             "login": entry.username(),
             "name": entry.title(),
             "password": entry.password().expose_secret(),
             "uuid": entry.id().to_hex(),
             "group": group.name(),
             "stringFields": [],
-        })
+        });
+        if let Some(Ok(totp)) = entry.totp() {
+            fields["totp"] = totp.code(now).code().into();
+        }
+        fields
     }
 }
 
@@ -216,6 +225,8 @@ pub struct BrowserSession {
     connected_ids: Vec<String>,
     /// The Pairings the extension proved it holds, as name and key.
     proven: Vec<(String, String)>,
+    /// The Entries handed to the extension, each with the site it was allowed for.
+    handed: HashMap<(VaultId, EntryId), SiteQuery>,
 }
 
 struct SessionKeys {
@@ -253,6 +264,8 @@ impl BrowserSession {
             "test-associate" => self.test_associate(workspace, &request),
             "get-logins" => self.get_logins(workspace, &request),
             "set-login" => self.set_login(workspace, &request),
+            "get-totp" => self.get_totp(workspace, &request),
+            "generate-password" => self.generate_password(workspace, &request),
             _ => Err(ProtocolError::IncorrectAction),
         };
         reply.unwrap_or_else(fail)
@@ -290,7 +303,7 @@ impl BrowserSession {
     /// Answers a site asking for Entries with the user's decision on them, remembered on the
     /// Entries if the user wants, and returns the reply to send.
     pub(crate) fn answer_access(
-        &self,
+        &mut self,
         workspace: &mut Workspace,
         access: &AccessRequest,
         answer: AccessAnswer,
@@ -532,7 +545,7 @@ impl BrowserSession {
     /// without a remembered decision. There may be none, once the user has turned the site
     /// down, which KeePassXC answers with an empty list too.
     fn entries_reply(
-        &self,
+        &mut self,
         workspace: &Workspace,
         request: &Request,
         query: &SiteQuery,
@@ -541,14 +554,21 @@ impl BrowserSession {
         if workspace.vaults.is_empty() {
             return self.error(request, ProtocolError::DatabaseNotOpened);
         }
-        let entries: Vec<Value> = candidates(workspace, query)
-            .iter()
+        let now = workspace.now();
+        let allowed: Vec<Candidate> = candidates(workspace, query)
+            .into_iter()
             .filter(|candidate| {
                 let (vault, entry) = candidate.id();
                 let decision = candidate.decision.or_else(|| decided(vault, entry));
                 decision == Some(AccessDecision::Allow)
             })
-            .map(Candidate::to_protocol)
+            .collect();
+        for candidate in &allowed {
+            self.handed.insert(candidate.id(), query.clone());
+        }
+        let entries: Vec<Value> = allowed
+            .iter()
+            .map(|candidate| candidate.to_protocol(now))
             .collect();
         let vault = workspace
             .browser_vault(&self.connected_ids)
@@ -811,7 +831,7 @@ impl Workspace {
         }
         let (_, connection, request) = self.browser.accesses.pop_front().expect("pending");
         let mut replies = Vec::new();
-        if let Some(session) = self.browser.sessions.remove(&connection) {
+        if let Some(mut session) = self.browser.sessions.remove(&connection) {
             let message = session.answer_access(self, &request, answer);
             self.browser.sessions.insert(connection, session);
             replies.push(Outgoing {
@@ -836,15 +856,13 @@ impl Workspace {
                 index += 1;
                 continue;
             }
-            if let Some(session) = self.browser.sessions.get(connection) {
+            if let Some(mut session) = self.browser.sessions.remove(connection) {
+                let message =
+                    session.entries_reply(self, &request.request, &request.query, |_, _| None);
+                self.browser.sessions.insert(*connection, session);
                 replies.push(Outgoing {
                     connection: *connection,
-                    message: session.entries_reply(
-                        self,
-                        &request.request,
-                        &request.query,
-                        |_, _| None,
-                    ),
+                    message,
                 });
             }
             self.browser.accesses.remove(index);
