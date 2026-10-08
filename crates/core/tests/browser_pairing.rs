@@ -75,11 +75,14 @@ fn a_pairing_survives_a_save_under_keepassxcs_custom_data_keys() {
         .chars()
         .filter(|c| !matches!(c, '\n' | '\t'))
         .collect();
+    // Each with when it changed, as KDBX 4.1 records it, so a Merge keeps the newest.
     assert!(xml.contains(&format!(
-        "<Item><Key>KPXC_BROWSER_Work laptop</Key><Value>{ID_KEY}</Value></Item>"
+        "<Item><Key>KPXC_BROWSER_Work laptop</Key><Value>{ID_KEY}</Value>\
+         <LastModificationTime>"
     )));
     assert!(xml.contains(
-        "<Item><Key>_CREATED_Work laptop</Key><Value>2026-10-07T23:15:22Z</Value></Item>"
+        "<Item><Key>_CREATED_Work laptop</Key><Value>2026-10-07T23:15:22Z</Value>\
+         <LastModificationTime>"
     ));
 }
 

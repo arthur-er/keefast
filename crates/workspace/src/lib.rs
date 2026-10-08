@@ -203,8 +203,9 @@ pub struct UnlockedVault {
 /// encryption and writing) can run off the UI thread while editing goes on.
 ///
 /// A save never overwrites changes made to the Vault file elsewhere: it Merges them in first,
-/// and writes only if the Vault file then lacks something. A save that is only a check for
-/// such changes writes only after a Merge.
+/// then writes. A save that is only a check for such changes writes only after a Merge, and
+/// only if the Vault had no unsaved edits and the Vault file lacks something: unsaved edits
+/// wait for the user, or autosave, to save them.
 pub struct PendingSave {
     id: VaultId,
     edits: u64,
@@ -214,6 +215,8 @@ pub struct PendingSave {
     revision: Option<Revision>,
     /// Whether the Vault has changes to write, or this only checks the Vault file.
     write: bool,
+    /// Whether the Vault had edits its Vault file didn't have.
+    unsaved: bool,
 }
 
 /// How often a save Merges and tries again when the Vault file keeps changing under it.
@@ -252,20 +255,24 @@ impl PendingSave {
             let stored = match self.storage.read(&self.location) {
                 Ok(stored) => stored,
                 // Gone, perhaps for a moment while a sync tool replaces it: nothing to Merge.
-                Err(StorageError::NotFound(_)) if !write => return Ok(Synced::unchanged()),
+                Err(StorageError::NotFound(_)) if !write => return Ok(Synced::behind(None)),
                 Err(error) => return Err(error.into()),
             };
             if self.revision.as_ref() == Some(&stored.revision) && !write {
-                return Ok(Synced::unchanged());
+                return Ok(Synced::behind(None));
             }
             let theirs = self.vault.open_version(&stored.bytes)?;
             self.vault.merge(&theirs);
-            // The Vault file needs writing only if it lacks something the Vault has.
-            write = theirs.clone().merge(&self.vault).changed();
-            merged.push(theirs);
             self.revision = Some(stored.revision.clone());
+            // A check writes only for a Vault without unsaved edits, and only if the Vault
+            // file lacks something the Vault has.
+            write = self.write || (!self.unsaved && theirs.clone().merge(&self.vault).changed());
+            merged.push(theirs);
             if !write {
-                return Ok(Synced::saved(stored.revision));
+                return Ok(match self.unsaved {
+                    true => Synced::behind(Some(stored.revision)),
+                    false => Synced::saved(stored.revision),
+                });
             }
         }
         Err(StorageError::Conflict.into())
@@ -287,9 +294,10 @@ impl Synced {
         }
     }
 
-    fn unchanged() -> Self {
+    /// The Vault file doesn't hold everything the snapshot did: it is at `revision`, if read.
+    fn behind(revision: Option<Revision>) -> Self {
         Self {
-            revision: None,
+            revision,
             caught_up: false,
         }
     }
@@ -830,6 +838,7 @@ impl Workspace {
             vault: open.vault.clone(),
             revision: open.revision.clone(),
             write,
+            unsaved: open.has_unsaved_changes() || open.save_failed(),
         })
     }
 
@@ -871,12 +880,18 @@ impl Workspace {
     /// Starts saving every Vault with unsaved changes or a failed last save, and checking
     /// every Vault whose Vault file may have changed, except those already being saved.
     pub fn begin_saves(&mut self) -> Vec<PendingSave> {
+        self.begin_due(|open| open.has_unsaved_changes() || open.save_failed())
+    }
+
+    /// Starts saving every Vault not being saved for which `write` says so, and checking
+    /// every other one whose Vault file may have changed.
+    fn begin_due(&mut self, write: impl Fn(&OpenVault) -> bool) -> Vec<PendingSave> {
         let due: Vec<(VaultId, bool)> = self
             .vaults
             .iter()
             .filter(|open| !open.saving)
             .filter_map(|open| {
-                let write = open.has_unsaved_changes() || open.save_failed();
+                let write = write(open);
                 (write || open.file_changed).then_some((open.id, write))
             })
             .collect();
@@ -914,22 +929,12 @@ impl Workspace {
     /// Vault whose last save failed is not retried until it is edited again.
     ///
     /// Autosave on or off, it also starts checking every Vault whose Vault file may have
-    /// changed elsewhere: changes found are Merged in, and the Merge saved.
+    /// changed elsewhere: changes found are Merged in, and the Merge saved unless the Vault has
+    /// unsaved edits, which wait for a save.
     pub fn begin_autosaves(&mut self) -> Vec<PendingSave> {
         let autosave = self.config.autosave;
-        let due: Vec<(VaultId, bool)> = self
-            .vaults
-            .iter()
-            .filter(|open| !open.saving)
-            .filter_map(|open| {
-                let write = autosave
-                    && open.has_unsaved_changes()
-                    && open.failed_save_at != Some(open.edits);
-                (write || open.file_changed).then_some((open.id, write))
-            })
-            .collect();
-        due.into_iter()
-            .filter_map(|(id, write)| self.begin(id, write).ok())
-            .collect()
+        self.begin_due(|open| {
+            autosave && open.has_unsaved_changes() && open.failed_save_at != Some(open.edits)
+        })
     }
 }

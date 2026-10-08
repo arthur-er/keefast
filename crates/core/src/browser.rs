@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::edit::{Kind, child_or_insert, push, set_time, text_element};
 use crate::vault::{decode_uuid, encode_uuid};
-use crate::xml::Element;
+use crate::xml::{Element, Node};
 use crate::{EditError, Entry, EntryFields, EntryId, Group, GroupId, Site, Timestamp, Vault};
 
 /// KeePassXC stores each Pairing's identification key under this prefix plus the Pairing's name.
@@ -125,17 +125,11 @@ impl Vault {
         if self.pairings().iter().any(|pairing| pairing.name == name) {
             return Err(EditError::PairingNameTaken);
         }
-        let custom_data = self.custom_data_mut();
-        push(
-            custom_data,
-            custom_data_item(&format!("{PAIRING_KEY_PREFIX}{name}"), key),
-        );
-        push(
-            custom_data,
-            custom_data_item(
-                &format!("{PAIRING_CREATED_PREFIX}{name}"),
-                &now.to_iso_8601(),
-            ),
+        self.set_vault_custom_data(&format!("{PAIRING_KEY_PREFIX}{name}"), key, now);
+        self.set_vault_custom_data(
+            &format!("{PAIRING_CREATED_PREFIX}{name}"),
+            &now.to_iso_8601(),
+            now,
         );
         Ok(())
     }
@@ -154,9 +148,13 @@ impl Vault {
             })
     }
 
-    fn custom_data_mut(&mut self) -> &mut Element {
+    /// Sets an item of the Vault's custom data, with when it changed as KDBX 4.1 records it,
+    /// so a Merge keeps the newest value.
+    fn set_vault_custom_data(&mut self, key: &str, value: &str, now: Timestamp) {
         let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
-        child_or_insert(meta, "CustomData", &[])
+        let custom_data = child_or_insert(meta, "CustomData", &[]);
+        let item = set_custom_data(custom_data, key, value);
+        child_or_insert(item, "LastModificationTime", &["Value"]).set_text(now.encode());
     }
 }
 
@@ -247,15 +245,11 @@ impl Vault {
 
     /// Makes `group` the Browser group. It stays so when renamed or moved. A Group in the
     /// Recycle Bin can't be.
-    pub fn set_browser_group(&mut self, group: GroupId) -> Result<(), EditError> {
+    pub fn set_browser_group(&mut self, group: GroupId, now: Timestamp) -> Result<(), EditError> {
         if self.is_group_in_recycle_bin(group)? {
             return Err(EditError::InRecycleBin);
         }
-        set_custom_data(
-            self.custom_data_mut(),
-            BROWSER_GROUP_KEY,
-            &encode_uuid(group.0),
-        );
+        self.set_vault_custom_data(BROWSER_GROUP_KEY, &encode_uuid(group.0), now);
         Ok(())
     }
 
@@ -312,7 +306,7 @@ impl Vault {
             return Ok(group);
         }
         let group = self.create_group(self.root().id(), DEFAULT_BROWSER_GROUP, now)?;
-        self.set_browser_group(group)?;
+        self.set_browser_group(group, now)?;
         Ok(group)
     }
 }
@@ -409,14 +403,21 @@ impl AccessSettings {
 }
 
 /// Sets the custom data item `key` to `value`, adding it if there is none.
-fn set_custom_data(custom_data: &mut Element, key: &str, value: &str) {
-    let existing = custom_data
-        .elements_mut()
-        .find(|item| item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key));
-    match existing {
-        Some(item) => child_or_insert(item, "Value", &["Key"]).set_text(value),
-        None => push(custom_data, custom_data_item(key, value)),
-    }
+/// Sets the custom data item with `key`, adding it if there is none, and returns it.
+fn set_custom_data<'a>(custom_data: &'a mut Element, key: &str, value: &str) -> &'a mut Element {
+    let index = custom_data.children.iter().position(|node| {
+        matches!(node, Node::Element(item)
+            if item.name == "Item" && item.child("Key").is_some_and(|k| k.text() == key))
+    });
+    let index = index.unwrap_or_else(|| {
+        push(custom_data, custom_data_item(key, value));
+        custom_data.children.len() - 1
+    });
+    let Node::Element(item) = &mut custom_data.children[index] else {
+        unreachable!("found or pushed an element")
+    };
+    child_or_insert(item, "Value", &["Key"]).set_text(value);
+    item
 }
 
 fn custom_data_item(key: &str, value: &str) -> Element {

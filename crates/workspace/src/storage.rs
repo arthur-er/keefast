@@ -37,17 +37,13 @@ impl VaultLocation {
 }
 
 /// One version of a Vault file, as its Storage provider tells versions apart: a content hash
-/// for local files, a revision ID for cloud storage.
+/// for local files, a revision ID for Dropbox.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Revision(String);
 
 impl Revision {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 

@@ -525,3 +525,17 @@ fn a_damaged_version_is_refused() {
         Err(OpenError::Corrupt(_) | OpenError::Unsupported(_))
     ));
 }
+
+#[test]
+fn the_browser_group_chosen_last_wins_on_both_sides() {
+    let (mut ours, mut theirs) = two_copies();
+    let work = group_id(&ours, "Work");
+    let personal = group_id(&ours, "Personal");
+    ours.set_browser_group(work, at(1)).unwrap();
+    theirs.set_browser_group(personal, at(2)).unwrap();
+
+    merge_both_ways(&mut ours, &mut theirs);
+
+    assert_eq!(ours.browser_group(), Some(personal));
+    assert_eq!(theirs.browser_group(), Some(personal));
+}

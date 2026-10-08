@@ -1023,7 +1023,7 @@ impl Workspace {
         vault: VaultId,
         group: GroupId,
     ) -> Result<(), EditVaultError> {
-        self.edit(vault, |open, _| open.set_browser_group(group))
+        self.edit(vault, |open, now| open.set_browser_group(group, now))
     }
 
     /// The Pairing request to put to the user now.

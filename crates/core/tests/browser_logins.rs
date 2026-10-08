@@ -95,7 +95,7 @@ fn the_browser_group_can_be_any_group_and_follows_it_when_renamed() {
     let mut vault = open();
     let chosen = group_named(&vault, "Hidden group");
 
-    vault.set_browser_group(chosen).unwrap();
+    vault.set_browser_group(chosen, now()).unwrap();
     vault.rename_group(chosen, "Captured", now()).unwrap();
     let mut vault = reopen(&vault);
 
@@ -114,7 +114,7 @@ fn a_browser_group_that_was_deleted_is_made_again() {
     let chosen = vault
         .create_group(vault.root().id(), "Logins", now())
         .unwrap();
-    vault.set_browser_group(chosen).unwrap();
+    vault.set_browser_group(chosen, now()).unwrap();
     vault.delete_group(chosen, now()).unwrap();
 
     // In the Recycle Bin it is no place for new logins.

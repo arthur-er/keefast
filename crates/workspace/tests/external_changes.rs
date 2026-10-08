@@ -157,13 +157,13 @@ fn a_change_elsewhere_is_noticed_merged_and_reported() {
 }
 
 #[test]
-fn a_change_elsewhere_is_merged_with_unsaved_edits_and_the_merge_saved() {
+fn with_autosave_a_change_elsewhere_is_merged_with_unsaved_edits_and_the_merge_saved() {
     let mut h = harness();
+    h.workspace.set_autosave(true);
     let root = h.workspace.vault(h.vault).unwrap().vault().root().id();
     h.workspace
         .create_entry(h.vault, root, &fields("Bank", "made-here"))
         .unwrap();
-    assert_eq!(h.workspace.save_status(), SaveStatus::Unsaved);
 
     h.edit_elsewhere(|theirs| {
         set_password(theirs, "GitHub", "changed-elsewhere", elsewhere_later())
@@ -181,6 +181,53 @@ fn a_change_elsewhere_is_merged_with_unsaved_edits_and_the_merge_saved() {
         "changed-elsewhere"
     );
     assert_eq!(h.password(github), "changed-elsewhere");
+    assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
+}
+
+#[test]
+fn without_autosave_unsaved_edits_wait_for_a_save_after_a_change_elsewhere() {
+    let mut h = harness();
+    let root = h.workspace.vault(h.vault).unwrap().vault().root().id();
+    h.workspace
+        .create_entry(h.vault, root, &fields("Bank", "made-here"))
+        .unwrap();
+
+    h.edit_elsewhere(|theirs| {
+        set_password(theirs, "GitHub", "changed-elsewhere", elsewhere_later())
+    });
+    let writes = h.storage.writes();
+    h.handle_changes();
+
+    let github = h.github();
+    assert_eq!(h.password(github), "changed-elsewhere", "Merged in");
+    assert_eq!(h.storage.writes(), writes, "but nothing saved unasked");
+    assert_eq!(h.workspace.save_status(), SaveStatus::Unsaved);
+
+    h.workspace.save_vault(h.vault).unwrap();
+    let saved = h.other_device();
+    assert!(h.has_entry_titled(&saved, "Bank"));
+    assert_eq!(
+        saved.entry(github).unwrap().password().expose_secret(),
+        "changed-elsewhere"
+    );
+    assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
+}
+
+#[test]
+fn a_vault_file_missing_saved_changes_gets_them_back_after_the_merge() {
+    let mut h = harness();
+    let root = h.workspace.vault(h.vault).unwrap().vault().root().id();
+    h.workspace
+        .create_entry(h.vault, root, &fields("Bank", "made-here"))
+        .unwrap();
+    h.workspace.save_vault(h.vault).unwrap();
+
+    // A sync tool puts back an older copy of the Vault file.
+    h.storage
+        .change_elsewhere(&personal_vault(), KEEPASSXC_KDBX4);
+    h.handle_changes();
+
+    assert!(h.has_entry_titled(&h.other_device(), "Bank"));
     assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
 }
 
@@ -280,11 +327,12 @@ fn a_vault_file_that_cant_be_merged_is_not_overwritten() {
     );
     assert_eq!(h.workspace.save_status(), SaveStatus::Failed);
 
-    // Once the sync tool is done, the Merge goes through.
+    // Once the sync tool is done, the Merge goes through, and saving does too.
     h.storage
         .change_elsewhere(&personal_vault(), KEEPASSXC_KDBX4);
     let results = h.handle_changes();
     assert!(matches!(results.as_slice(), [Ok(())]));
+    h.workspace.save_vault(h.vault).unwrap();
     assert!(h.has_entry_titled(&h.other_device(), "Bank"));
     assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
 }

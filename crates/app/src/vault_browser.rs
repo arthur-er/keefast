@@ -56,7 +56,7 @@ pub struct VaultBrowser {
     /// What the latest Merges of changes made elsewhere changed, until dismissed or timed out.
     merge_notice: Option<SharedString>,
     /// Counts the notices shown, so a timeout only hides the one it was set for.
-    merge_notices: u64,
+    merge_notice_generation: u64,
 }
 
 /// How long a Merge notice stays up, and how many Merges it lists at most.
@@ -152,7 +152,7 @@ impl VaultBrowser {
             revealed_fields: Vec::new(),
             copied_field: None,
             merge_notice: None,
-            merge_notices: 0,
+            merge_notice_generation: 0,
         };
         browser.select(EntryScope::Vault(vault), cx);
         browser
@@ -179,12 +179,12 @@ impl VaultBrowser {
             .collect();
         let lines = &lines[lines.len().saturating_sub(MERGE_NOTICE_LINES)..];
         self.merge_notice = Some(lines.join("\n").into());
-        self.merge_notices += 1;
-        let shown = self.merge_notices;
+        self.merge_notice_generation += 1;
+        let shown = self.merge_notice_generation;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(MERGE_NOTICE_TIME).await;
             let _ = this.update(cx, |this, cx| {
-                if this.merge_notices == shown {
+                if this.merge_notice_generation == shown {
                     this.merge_notice = None;
                     cx.notify();
                 }

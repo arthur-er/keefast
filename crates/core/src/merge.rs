@@ -52,7 +52,7 @@ impl std::ops::AddAssign for MergeSummary {
 
 impl MergeSummary {
     /// Whether the Merge changed the Vault at all, including what the counts leave out: Entry
-    /// histories, deletion records, custom icons and Vault settings.
+    /// histories, deletion records, custom icons, Vault custom data and the Recycle Bin.
     pub fn changed(&self) -> bool {
         self.changed
     }
@@ -161,10 +161,8 @@ impl Merge<'_> {
         if modified(source) > modified(target) {
             // The source version wins; the target's goes to history.
             let mut loser = target.clone();
-            let mut versions: Vec<Element> = loser
-                .take_child("History")
-                .map(|history| history.elements().cloned().collect())
-                .unwrap_or_default();
+            let mut versions = history_of(&loser);
+            loser.take_child("History");
             versions.push(loser);
             let mut current = self.import(source);
             let history = child_or_insert(&mut current, "History", &[]);
@@ -172,10 +170,7 @@ impl Merge<'_> {
             *self.target.at_mut(&path) = current;
             self.summary.entries_updated += 1;
         } else {
-            let mut versions: Vec<Element> = source
-                .child("History")
-                .map(|history| history.elements().cloned().collect())
-                .unwrap_or_default();
+            let mut versions = history_of(source);
             if modified(source) < modified(target) {
                 let mut loser = source.clone();
                 loser.take_child("History");
@@ -322,7 +317,7 @@ impl Merge<'_> {
                     continue;
                 }
                 self.target.take(&path);
-                self.count_deletion(id, false);
+                self.count_deletion(id, Kind::Entry);
             } else if let Ok(path) = self.target.path_to(Kind::Group, id)
                 && !path.is_empty()
             {
@@ -340,7 +335,7 @@ impl Merge<'_> {
                 continue;
             }
             self.target.take(&path);
-            self.count_deletion(id, true);
+            self.count_deletion(id, Kind::Group);
             kept.push(record);
         }
 
@@ -356,11 +351,11 @@ impl Merge<'_> {
         }
     }
 
-    fn count_deletion(&mut self, id: Uuid, group: bool) {
+    fn count_deletion(&mut self, id: Uuid, kind: Kind) {
         let summary = &mut self.summary;
-        let (added, deleted) = match group {
-            true => (&mut summary.groups_added, &mut summary.groups_deleted),
-            false => (&mut summary.entries_added, &mut summary.entries_deleted),
+        let (added, deleted) = match kind {
+            Kind::Group => (&mut summary.groups_added, &mut summary.groups_deleted),
+            Kind::Entry => (&mut summary.entries_added, &mut summary.entries_deleted),
         };
         if self.added.remove(&id) {
             *added -= 1;
@@ -485,6 +480,16 @@ fn add_versions(
         .into_iter()
         .chain(entries.into_iter().map(Node::Element))
         .collect();
+}
+
+/// The earlier versions in an Entry's history.
+fn history_of(entry: &Element) -> Vec<Element> {
+    entry
+        .child("History")
+        .into_iter()
+        .flat_map(|history| history.children_named("Entry"))
+        .cloned()
+        .collect()
 }
 
 fn deletion_records(vault: &Vault) -> Vec<(Uuid, Element)> {
