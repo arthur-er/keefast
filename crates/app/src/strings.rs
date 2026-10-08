@@ -28,6 +28,7 @@ pub const UNLOCK_ERROR_KEY_FILE_UNSUPPORTED: &str = "This key file format is not
 pub const UNLOCK_ERROR_PICKER: &str = "The file picker could not be opened.";
 pub const UNLOCK_ERROR_ALREADY_OPEN: &str = "A Vault from this Vault file is already open.";
 pub const RECENT_VAULTS: &str = "Recent Vault files";
+pub const LOCKED_VAULTS: &str = "Locked Vaults";
 pub const RECENT_FORGET: &str = "×";
 pub const CONFIG_ERROR: &str =
     "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
@@ -35,6 +36,15 @@ pub const CONFIG_ERROR: &str =
 pub const SIDEBAR_VAULTS: &str = "Vaults";
 pub const SIDEBAR_ALL_VAULTS: &str = "All Vaults";
 pub const OPEN_VAULT: &str = "+ Vault";
+pub const LOCK: &str = "Lock";
+pub const LOCK_ALL: &str = "Lock all";
+pub const LOCKED_MARKER: &str = " (locked)";
+pub const VAULT_LOCKED: &str = "This Vault is locked.";
+pub const UNLOCK_VAULT: &str = "Unlock…";
+pub const LOCK_UNSAVED: &str = "“{vault}” has unsaved changes. Save them before locking?";
+pub const LOCK_UNSAVED_DETAIL: &str = "Discarding loses them.";
+pub const LOCK_SAVE: &str = "Save";
+pub const LOCK_DISCARD: &str = "Discard";
 
 pub const LIST_EMPTY: &str = "No Entries";
 pub const DETAIL_EMPTY: &str = "Select an Entry";

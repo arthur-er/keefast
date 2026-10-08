@@ -20,6 +20,8 @@ actions!(
         CopyCustomField,
         SaveAll,
         OpenVault,
+        /// Locks every open Vault.
+        LockAll,
     ]
 );
 
@@ -69,5 +71,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),
         KeyBinding::new("down", SelectNextCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("up", SelectPreviousCommand, Some(COMMAND_PALETTE_CONTEXT)),
+        KeyBinding::new("secondary-l", LockAll, anywhere),
     ]);
 }

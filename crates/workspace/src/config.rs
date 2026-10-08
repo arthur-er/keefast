@@ -26,10 +26,15 @@ pub struct AppConfig {
     pub last_login_vault: Option<VaultLocation>,
     /// How long copied usernames and passwords stay on the clipboard; `None` keeps them.
     pub clipboard_clear_after: Option<Duration>,
+    /// How long without the user's input before every Vault locks; `None` never locks them.
+    pub idle_lock_after: Option<Duration>,
+    /// Whether every Vault locks when the OS screen locks or the machine suspends.
+    pub lock_on_os_lock: bool,
 }
 
 impl AppConfig {
     pub const DEFAULT_CLIPBOARD_CLEAR_AFTER: Duration = Duration::from_secs(30);
+    pub const DEFAULT_IDLE_LOCK_AFTER: Duration = Duration::from_secs(15 * 60);
 }
 
 impl Default for AppConfig {
@@ -41,6 +46,8 @@ impl Default for AppConfig {
             generator: GeneratorSettings::default(),
             last_login_vault: None,
             clipboard_clear_after: Some(Self::DEFAULT_CLIPBOARD_CLEAR_AFTER),
+            idle_lock_after: Some(Self::DEFAULT_IDLE_LOCK_AFTER),
+            lock_on_os_lock: true,
         }
     }
 }
@@ -119,6 +126,9 @@ struct ConfigFile {
     browser_integration: bool,
     /// 0 keeps copied secrets on the clipboard.
     clipboard_clear_seconds: u64,
+    /// 0 never locks the Vaults for inactivity.
+    idle_lock_seconds: u64,
+    lock_on_os_lock: bool,
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
@@ -154,10 +164,9 @@ impl From<ConfigFile> for AppConfig {
                 .map(GeneratorSettings::from)
                 .unwrap_or_default(),
             last_login_vault: file.last_login_vault.and_then(read_location),
-            clipboard_clear_after: match file.clipboard_clear_seconds {
-                0 => None,
-                seconds => Some(Duration::from_secs(seconds)),
-            },
+            clipboard_clear_after: wait_from_seconds(file.clipboard_clear_seconds),
+            idle_lock_after: wait_from_seconds(file.idle_lock_seconds),
+            lock_on_os_lock: file.lock_on_os_lock,
         }
     }
 }
@@ -167,9 +176,9 @@ impl From<&AppConfig> for ConfigFile {
         Self {
             autosave: config.autosave,
             browser_integration: config.browser_integration,
-            clipboard_clear_seconds: config
-                .clipboard_clear_after
-                .map_or(0, |after| after.as_secs().max(1)),
+            clipboard_clear_seconds: wait_to_seconds(config.clipboard_clear_after),
+            idle_lock_seconds: wait_to_seconds(config.idle_lock_after),
+            lock_on_os_lock: config.lock_on_os_lock,
             recent_vaults: config
                 .recent_vaults
                 .iter()
@@ -258,6 +267,16 @@ impl From<&GeneratorSettings> for GeneratorFile {
             separator: settings.passphrase.separator.clone(),
         }
     }
+}
+
+/// A wait in whole seconds, where 0 is never.
+fn wait_from_seconds(seconds: u64) -> Option<Duration> {
+    (seconds > 0).then(|| Duration::from_secs(seconds))
+}
+
+/// A wait as whole seconds, where 0 is never, so a wait under a second is kept as one.
+fn wait_to_seconds(wait: Option<Duration>) -> u64 {
+    wait.map_or(0, |wait| wait.as_secs().max(1))
 }
 
 fn read_location(value: toml::Value) -> Option<VaultLocation> {

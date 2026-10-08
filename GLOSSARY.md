@@ -10,6 +10,10 @@ A fast, native password manager for KeePass (KDBX) vaults, with a companion brow
 An opened, decrypted collection of Groups and Entries that the user is working with. Several Vaults can be open at once.
 _Avoid_: Database, file, store
 
+**Locked Vault**:
+A Vault that is still open but whose decrypted contents have been dropped, until it is unlocked again with its key. Neither the app nor the browser can see into it.
+_Avoid_: Closed Vault, sleeping Vault
+
 **Vault file**:
 The encrypted KDBX file that a Vault is read from and saved to, wherever it is stored.
 _Avoid_: Database file, kdbx

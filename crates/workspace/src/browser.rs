@@ -755,6 +755,9 @@ pub(crate) struct BrowserConnections {
     next_access: u64,
     logins: VecDeque<(LoginId, ConnectionId, LoginRequest)>,
     next_login: u64,
+    /// Messages for extensions that no request of theirs is waiting on: news of Vaults locking
+    /// and unlocking, and answers to requests that locking cut off.
+    unsolicited: Vec<Outgoing>,
 }
 
 impl Workspace {
@@ -1084,6 +1087,82 @@ impl Workspace {
         (*pending == id).then(|| (*connection, request.clone()))
     }
 
+    /// Messages for extensions that came about without a request to answer, such as when a
+    /// Vault locks. Send them on whenever the Workspace changes.
+    pub fn take_browser_messages(&mut self) -> Vec<Outgoing> {
+        std::mem::take(&mut self.browser.unsolicited)
+    }
+
+    /// Answers the pending Pairing, Access and login requests that involve a Vault about to
+    /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked.
+    pub(crate) fn cut_off_browser_requests(&mut self, vault: VaultId) {
+        let involved: Vec<bool> = self
+            .browser
+            .logins
+            .iter()
+            .map(|(_, _, request)| self.login_vaults(request).contains(&vault))
+            .collect();
+        let mut involved = involved.into_iter();
+        let browser = &mut self.browser;
+        let mut cut_off = Vec::new();
+        browser.pairings.retain(|(_, connection, request)| {
+            let keep = request.vault != vault;
+            if !keep {
+                cut_off.push((*connection, request.request.clone()));
+            }
+            keep
+        });
+        browser.accesses.retain(|(_, connection, request)| {
+            let keep = !request.undecided.iter().any(|&(of, _)| of == vault);
+            if !keep {
+                cut_off.push((*connection, request.request.clone()));
+            }
+            keep
+        });
+        browser.logins.retain(|(_, connection, request)| {
+            let keep = !involved.next().unwrap_or(false);
+            if !keep {
+                cut_off.push((*connection, request.request.clone()));
+            }
+            keep
+        });
+        for (connection, request) in cut_off {
+            if let Some(session) = browser.sessions.get(&connection) {
+                browser.unsolicited.push(Outgoing {
+                    connection,
+                    message: session.error(&request, ProtocolError::DatabaseNotOpened),
+                });
+            }
+        }
+    }
+
+    /// Tells every extension a Vault locked, as KeePassXC does, so it forgets the Entries it
+    /// was given. Vaults still unlocked are announced again, so it reconnects to them.
+    pub(crate) fn announce_locked(&mut self) {
+        self.broadcast("database-locked");
+        if !self.vaults.is_empty() {
+            self.broadcast("database-unlocked");
+        }
+    }
+
+    /// Tells every extension a Vault unlocked, as KeePassXC does.
+    pub(crate) fn announce_unlocked(&mut self) {
+        self.broadcast("database-unlocked");
+    }
+
+    fn broadcast(&mut self, action: &str) {
+        let message = json!({ "action": action }).to_string();
+        let browser = &mut self.browser;
+        let mut connections: Vec<ConnectionId> = browser.sessions.keys().copied().collect();
+        connections.sort_by_key(|connection| connection.0);
+        browser
+            .unsolicited
+            .extend(connections.into_iter().map(|connection| Outgoing {
+                connection,
+                message: message.clone(),
+            }));
+    }
+
     /// Ends every session and turns every pending Pairing, Access and login request down, for
     /// browser integration turned off.
     pub(crate) fn end_browser_sessions(&mut self) -> Vec<Outgoing> {
@@ -1116,7 +1195,7 @@ impl Workspace {
     /// The Vault the browser deals with, as KeePassXC's active database: the focused Vault, or
     /// else the first open Vault paired with one of `connected_ids`, or else the first open.
     fn browser_vault(&self, connected_ids: &[String]) -> Option<VaultId> {
-        let focused = self.focused_vault.filter(|&id| self.vault(id).is_some());
+        let focused = self.view.vault().filter(|&id| self.vault(id).is_some());
         let paired = || {
             self.vaults.iter().find(|open| {
                 open.vault

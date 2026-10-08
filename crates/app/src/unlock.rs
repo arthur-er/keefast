@@ -7,7 +7,8 @@ use gpui::{
 };
 use keefast_core::{KeyFileError, OpenError};
 use keefast_workspace::{
-    OpenVaultError, StorageError, UnlockSecrets, VaultId, VaultLocation, Workspace,
+    EntryScope, OpenVaultError, StorageError, UnlockSecrets, VaultId, VaultLocation, View,
+    Workspace,
 };
 use secrecy::SecretString;
 
@@ -17,14 +18,15 @@ use crate::theme::Theme;
 use crate::widgets::{button, tool_button};
 
 pub enum UnlockEvent {
-    /// A Vault has been decrypted and added to the Workspace, or was open already.
-    Unlocked(VaultId),
+    /// A Vault has been decrypted and added to the Workspace, or was open already. The
+    /// Workspace shows it, or returns to where the user was in it if it was locked.
+    Unlocked,
     /// The user went back to the Vaults already open.
     Cancelled,
 }
 
-/// The unlock dialog: pick a recent Vault file or choose one, type the master password and/or
-/// choose a key file, unlock off the UI thread.
+/// The unlock dialog: pick a locked Vault or a recent Vault file, or choose one, type the
+/// master password and/or choose a key file, unlock off the UI thread.
 pub struct UnlockView {
     workspace: Entity<Workspace>,
     location: Option<VaultLocation>,
@@ -94,6 +96,17 @@ impl UnlockView {
         self.key_file = None;
         self.error = None;
         self.location = self.most_recent_closed(cx);
+        cx.notify();
+    }
+
+    /// Readies the dialog to unlock a locked Vault.
+    pub fn unlock_locked(&mut self, vault: VaultId, cx: &mut Context<Self>) {
+        self.clear_password(cx);
+        self.key_file = None;
+        self.error = None;
+        if let Some(locked) = self.workspace.read(cx).locked_vault(vault) {
+            self.location = Some(locked.location().clone());
+        }
         cx.notify();
     }
 
@@ -200,7 +213,10 @@ impl UnlockView {
             Ok(pending) => pending,
             Err(OpenVaultError::AlreadyOpen(vault)) => {
                 self.clear_password(cx);
-                cx.emit(UnlockEvent::Unlocked(vault));
+                self.workspace.update(cx, |workspace, _| {
+                    workspace.show(View::from(EntryScope::Vault(vault)))
+                });
+                cx.emit(UnlockEvent::Unlocked);
                 return;
             }
             Err(error) => {
@@ -220,11 +236,11 @@ impl UnlockView {
                 match result {
                     Ok(unlocked) => {
                         this.clear_password(cx);
-                        let vault = this.workspace.update(cx, |workspace, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
                             cx.notify();
-                            workspace.add_unlocked(unlocked)
+                            workspace.add_unlocked(unlocked);
                         });
-                        cx.emit(UnlockEvent::Unlocked(vault));
+                        cx.emit(UnlockEvent::Unlocked);
                     }
                     Err(error) => this.error = Some(describe(&error)),
                 }
@@ -242,10 +258,34 @@ impl UnlockView {
             .closed_recent_vaults()
             .cloned()
             .collect();
-        if recents.is_empty() {
+        self.render_locations("recent", strings::RECENT_VAULTS, recents, true, theme, cx)
+    }
+
+    fn render_locked(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let locked: Vec<VaultLocation> = self
+            .workspace
+            .read(cx)
+            .locked_vaults()
+            .map(|locked| locked.location().clone())
+            .collect();
+        self.render_locations("locked", strings::LOCKED_VAULTS, locked, false, theme, cx)
+    }
+
+    /// A list of Vault files to pick from under `title`, each with a button to forget it if
+    /// `forgettable`.
+    fn render_locations(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        locations: Vec<VaultLocation>,
+        forgettable: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if locations.is_empty() {
             return None;
         }
-        let rows: Vec<AnyElement> = recents
+        let rows: Vec<AnyElement> = locations
             .into_iter()
             .enumerate()
             .map(|(ix, location)| {
@@ -262,7 +302,7 @@ impl UnlockView {
                     .when(selected, |this| this.bg(theme.selection))
                     .child(
                         div()
-                            .id(("recent", ix))
+                            .id((id, ix))
                             .flex_1()
                             .min_w_0()
                             .flex()
@@ -282,13 +322,15 @@ impl UnlockView {
                                 this.select(location.clone(), window, cx)
                             })),
                     )
-                    .child(
-                        tool_button(("forget-recent", ix), strings::RECENT_FORGET, theme)
-                            .text_color(theme.muted)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.forget(forget.clone(), cx)),
-                            ),
-                    )
+                    .when(forgettable, |this| {
+                        this.child(
+                            tool_button(("forget-recent", ix), strings::RECENT_FORGET, theme)
+                                .text_color(theme.muted)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.forget(forget.clone(), cx)
+                                })),
+                        )
+                    })
                     .into_any_element()
             })
             .collect();
@@ -297,15 +339,10 @@ impl UnlockView {
                 .flex()
                 .flex_col()
                 .gap_1()
+                .child(div().text_sm().text_color(theme.muted).child(title))
                 .child(
                     div()
-                        .text_sm()
-                        .text_color(theme.muted)
-                        .child(strings::RECENT_VAULTS),
-                )
-                .child(
-                    div()
-                        .id("recent-vaults")
+                        .id(id)
                         .max_h(px(220.))
                         .overflow_y_scroll()
                         .flex()
@@ -393,6 +430,7 @@ impl Render for UnlockView {
                 .into(),
             None => strings::UNLOCK_NO_KEY_FILE.into(),
         };
+        let locked = self.render_locked(theme, cx);
         let recents = self.render_recents(theme, cx);
         div()
             .size_full()
@@ -413,6 +451,7 @@ impl Render for UnlockView {
                     .border_color(theme.border)
                     .bg(theme.panel)
                     .child(div().text_xl().child(strings::UNLOCK_TITLE))
+                    .children(locked)
                     .children(recents)
                     .child(
                         div()

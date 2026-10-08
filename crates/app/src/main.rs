@@ -6,6 +6,7 @@ mod browser_integration;
 mod clipboard;
 mod command_palette;
 mod entry_editor;
+mod locking;
 mod login_dialog;
 mod merge_notice;
 mod pairing_dialog;
@@ -23,11 +24,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, Entity, FocusHandle, Focusable, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba, size,
+    AnyView, App, Application, Bounds, Context, Entity, FocusHandle, Focusable, PromptLevel,
+    Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba,
+    size,
 };
 use keefast_workspace::{
-    FileConfigStore, LocalStorage, NativeMessagingHosts, VaultLocation, Workspace,
+    FileConfigStore, LocalStorage, NativeMessagingHosts, UnsavedLock, VaultId, VaultLocation,
+    Workspace,
 };
 
 use crate::access_dialog::{AccessDialog, AccessDialogEvent, AskedEntry};
@@ -38,12 +41,12 @@ use crate::command_palette::{CommandPalette, Dismissed};
 use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
 use crate::unlock::{UnlockEvent, UnlockView};
-use crate::vault_browser::{OpenAnotherVault, VaultBrowser};
+use crate::vault_browser::{OpenAnotherVault, UnlockLockedVault, VaultBrowser};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
-/// unlock dialog shown again to open another Vault. The command palette opens over it, and
-/// Pairing and Access requests and captured logins from browsers are asked over everything, in
-/// that order.
+/// unlock dialog shown again to open another Vault, or to unlock one, and whenever every Vault
+/// is locked. The command palette opens over it, and Pairing and Access requests and captured
+/// logins from browsers are asked over everything, in that order.
 struct KeefastWindow {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -54,6 +57,9 @@ struct KeefastWindow {
     access: Option<Entity<AccessDialog>>,
     login: Option<Entity<LoginDialog>>,
     palette: Option<Entity<CommandPalette>>,
+    /// The Vault whose unsaved changes the user is being asked about before it locks.
+    asking_lock: Option<VaultId>,
+    _keystrokes: Subscription,
 }
 
 impl KeefastWindow {
@@ -78,6 +84,13 @@ impl KeefastWindow {
         })
         .detach();
         saving::watch_vault_files(&workspace, cx);
+        locking::watch(&workspace, cx);
+        // Any key typed in keefast counts as activity, wherever it goes.
+        let typing = workspace.clone();
+        let keystrokes =
+            cx.intercept_keystrokes(move |_, _, cx| locking::note_activity(&typing, cx));
+        cx.observe_in(&workspace, window, Self::on_workspace_changed)
+            .detach();
         let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
         cx.observe_in(&integration, window, Self::show_pending_requests)
             .detach();
@@ -96,6 +109,8 @@ impl KeefastWindow {
             access: None,
             login: None,
             palette: None,
+            asking_lock: None,
+            _keystrokes: keystrokes,
         }
     }
 
@@ -128,6 +143,76 @@ impl KeefastWindow {
             palette.update(cx, |palette, cx| palette.dismiss(window, cx));
             cx.notify();
         }
+    }
+
+    /// Shows the unlock dialog once every Vault is locked, and asks about the unsaved changes
+    /// of a Vault waiting to lock.
+    fn on_workspace_changed(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (all_locked, to_unlock, pending_lock) = {
+            let workspace = workspace.read(cx);
+            let to_unlock = workspace
+                .view()
+                .vault()
+                .filter(|&vault| workspace.locked_vault(vault).is_some())
+                .or_else(|| workspace.locked_vaults().next().map(|locked| locked.id()));
+            let all_locked = workspace.vaults().next().is_none() && to_unlock.is_some();
+            (all_locked, to_unlock, workspace.pending_lock())
+        };
+        if all_locked && !self.showing_unlock {
+            if let Some(vault) = to_unlock {
+                self.unlock
+                    .update(cx, |unlock, cx| unlock.unlock_locked(vault, cx));
+            }
+            self.showing_unlock = true;
+            if self.dialog(cx).is_none() {
+                window.focus(&self.unlock.focus_handle(cx));
+            }
+            cx.notify();
+        }
+        if pending_lock != self.asking_lock {
+            self.asking_lock = pending_lock;
+            if let Some(vault) = pending_lock {
+                self.ask_lock(vault, window, cx);
+            }
+        }
+    }
+
+    /// Asks whether to save a Vault's unsaved changes before it locks, as KeePassXC does.
+    fn ask_lock(&mut self, vault: VaultId, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
+            .workspace
+            .read(cx)
+            .vault(vault)
+            .map(|open| open.display_name())
+            .unwrap_or_default();
+        let question = strings::LOCK_UNSAVED.replace("{vault}", &name);
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &question,
+            Some(strings::LOCK_UNSAVED_DETAIL),
+            &[strings::LOCK_SAVE, strings::LOCK_DISCARD, strings::CANCEL],
+            cx,
+        );
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let answer = match answer.await {
+                Ok(0) => UnsavedLock::Save,
+                Ok(1) => UnsavedLock::Discard,
+                _ => UnsavedLock::Cancel,
+            };
+            cx.update(|cx| {
+                // Asked again if the Vault is still waiting, as after a failed save.
+                this.update(cx, |this, _| this.asking_lock = None).ok();
+                locking::answer(&workspace, vault, answer, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Shows the dialog for the browser request to answer now, if there is one: a Pairing
@@ -349,15 +434,17 @@ impl KeefastWindow {
         let browser = match (event, &self.browser) {
             (UnlockEvent::Cancelled, None) => return,
             (UnlockEvent::Cancelled, Some(browser)) => browser.clone(),
-            (&UnlockEvent::Unlocked(vault), Some(browser)) => {
-                browser.update(cx, |browser, cx| browser.show_vault(vault, cx));
+            (UnlockEvent::Unlocked, Some(browser)) => {
+                browser.update(cx, |browser, cx| browser.clear_detail(cx));
                 browser.clone()
             }
-            (&UnlockEvent::Unlocked(vault), None) => {
+            (UnlockEvent::Unlocked, None) => {
                 let workspace = self.workspace.clone();
                 let integration = self.integration.clone();
-                let browser = cx.new(|cx| VaultBrowser::new(workspace, integration, vault, cx));
+                let browser = cx.new(|cx| VaultBrowser::new(workspace, integration, cx));
                 cx.subscribe_in(&browser, window, Self::on_open_another)
+                    .detach();
+                cx.subscribe_in(&browser, window, Self::on_unlock_locked)
                     .detach();
                 self.browser = Some(browser.clone());
                 browser
@@ -380,6 +467,20 @@ impl KeefastWindow {
         self.showing_unlock = true;
         cx.notify();
     }
+
+    fn on_unlock_locked(
+        &mut self,
+        _: &Entity<VaultBrowser>,
+        &UnlockLockedVault(vault): &UnlockLockedVault,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.unlock
+            .update(cx, |unlock, cx| unlock.unlock_locked(vault, cx));
+        window.focus(&self.unlock.focus_handle(cx));
+        self.showing_unlock = true;
+        cx.notify();
+    }
 }
 
 impl Render for KeefastWindow {
@@ -393,6 +494,13 @@ impl Render for KeefastWindow {
             .size_full()
             .relative()
             .on_action(cx.listener(Self::toggle_command_palette))
+            // Clicks and scrolling anywhere in keefast count as activity.
+            .capture_any_mouse_down(
+                cx.listener(|this, _, _, cx| locking::note_activity(&this.workspace, cx)),
+            )
+            .on_scroll_wheel(
+                cx.listener(|this, _, _, cx| locking::note_activity(&this.workspace, cx)),
+            )
             .child(screen)
             .when_some(self.palette.clone(), |this, palette| {
                 // Clicking beside the palette closes it.

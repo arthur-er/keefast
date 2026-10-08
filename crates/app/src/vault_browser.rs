@@ -6,17 +6,18 @@ use gpui::{
 };
 use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
 use keefast_workspace::{
-    CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace,
+    CopyError, CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, View, Workspace,
 };
 use secrecy::ExposeSecret;
 
 use crate::actions::{
-    self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, OpenEntry, OpenVault, SaveAll,
-    SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
+    self, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, LockAll, OpenEntry, OpenVault,
+    SaveAll, SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
 };
 use crate::browser_integration::BrowserIntegration;
 use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
+use crate::locking;
 use crate::merge_notice;
 use crate::saving;
 use crate::strings;
@@ -28,14 +29,15 @@ use crate::widgets::{button, tool_button};
 /// Emitted when the user asks to open another Vault.
 pub struct OpenAnotherVault;
 
+/// Emitted when the user asks to unlock a locked Vault.
+pub struct UnlockLockedVault(pub VaultId);
+
 /// The KeeWeb-style three panes: Vaults and Groups sidebar → Entry list → Entry detail, with
 /// commands to edit Entries and Groups and to save the Vaults.
 pub struct VaultBrowser {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
     focus: FocusHandle,
-    scope: EntryScope,
-    selected_entry: Option<(VaultId, EntryId)>,
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
     renaming: Option<(VaultId, GroupId, Entity<TextField>)>,
@@ -100,6 +102,7 @@ impl Subject {
 }
 
 impl EventEmitter<OpenAnotherVault> for VaultBrowser {}
+impl EventEmitter<UnlockLockedVault> for VaultBrowser {}
 
 impl Focusable for VaultBrowser {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -111,11 +114,11 @@ impl VaultBrowser {
     pub fn new(
         workspace: Entity<Workspace>,
         integration: Entity<BrowserIntegration>,
-        vault: VaultId,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |this, workspace, cx| {
             this.show_merges(&workspace, cx);
+            this.leave_locked_vaults(cx);
             cx.notify();
         })
         .detach();
@@ -135,12 +138,10 @@ impl VaultBrowser {
             }
         })
         .detach();
-        let mut browser = Self {
+        Self {
             workspace,
             integration,
             focus: cx.focus_handle(),
-            scope: EntryScope::AllVaults,
-            selected_entry: None,
             detail: Detail::Entry,
             renaming: None,
             totp_copied: None,
@@ -153,9 +154,7 @@ impl VaultBrowser {
             copied_field: None,
             merge_notice: None,
             merge_notice_generation: 0,
-        };
-        browser.select(EntryScope::Vault(vault), cx);
-        browser
+        }
     }
 
     /// Tells the user about Merges of changes made elsewhere since last shown.
@@ -228,26 +227,75 @@ impl VaultBrowser {
         )
     }
 
-    /// Shows a Vault's Entries, as after opening it.
-    pub fn show_vault(&mut self, vault: VaultId, cx: &mut Context<Self>) {
-        self.select(EntryScope::Vault(vault), cx);
+    /// Closes what the detail pane and the sidebar had open of Vaults that have locked. An
+    /// Entry open in the editor is closed with whatever was typed into it: only the Vault's
+    /// own unsaved changes are asked about before it locks.
+    fn leave_locked_vaults(&mut self, cx: &App) {
+        let workspace = self.workspace.read(cx);
+        let locked = |vault: VaultId| workspace.vault(vault).is_none();
+        let detail_vault = match &self.detail {
+            Detail::Entry => None,
+            Detail::Editing {
+                target: EditTarget::Existing(vault, _) | EditTarget::New(vault, _),
+                ..
+            } => Some(*vault),
+            Detail::Moving(subject) => Some(subject.vault()),
+            Detail::Totp { vault, .. } => Some(*vault),
+        };
+        if detail_vault.is_some_and(locked) {
+            self.detail = Detail::Entry;
+        }
+        if self
+            .renaming
+            .as_ref()
+            .is_some_and(|(vault, ..)| locked(*vault))
+        {
+            self.renaming = None;
+        }
+        if self.totp_copied.is_some_and(|(vault, _)| locked(vault)) {
+            self.totp_copied = None;
+        }
+        // Locking clears the clipboard early, which puts the notice about the copy out of date.
+        if self.clipboard_clear.is_some() && workspace.clipboard_clears_in().is_none() {
+            self.clipboard_clear = None;
+            self.notice = None;
+        }
     }
 
     /// The Group new Entries and Groups go into, if there is one for what the list shows.
     fn target_group(&self, cx: &App) -> Option<(VaultId, GroupId)> {
-        self.workspace.read(cx).group_for_new_items(self.scope)
+        self.workspace.read(cx).group_for_new_items(self.scope(cx))
     }
 
-    /// Shows `scope` in the Entry list. A browser pairs with the Vault shown.
-    fn select(&mut self, scope: EntryScope, cx: &mut Context<Self>) {
-        let vault = match scope {
-            EntryScope::AllVaults => None,
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
-        };
+    /// Where the user is: what the Entry list shows and the Entry selected, kept by the
+    /// Workspace so unlocking a Vault returns there.
+    fn view(&self, cx: &App) -> View {
+        self.workspace.read(cx).view()
+    }
+
+    fn scope(&self, cx: &App) -> EntryScope {
+        self.view(cx).scope
+    }
+
+    fn selected_entry(&self, cx: &App) -> Option<(VaultId, EntryId)> {
+        self.view(cx).entry
+    }
+
+    /// Moves the user to `view`. A browser pairs with the Vault shown.
+    fn show(&mut self, view: View, cx: &mut Context<Self>) {
         self.workspace
-            .update(cx, |workspace, _| workspace.focus_vault(vault));
-        self.scope = scope;
-        self.selected_entry = None;
+            .update(cx, |workspace, _| workspace.show(view));
+    }
+
+    /// Shows `scope` in the Entry list.
+    fn select(&mut self, scope: EntryScope, cx: &mut Context<Self>) {
+        self.show(View::from(scope), cx);
+        self.clear_detail(cx);
+    }
+
+    /// Shows the Entry selected, or the Vault unlocked, rather than what was open before, as
+    /// after selecting or unlocking a Vault.
+    pub fn clear_detail(&mut self, cx: &mut Context<Self>) {
         self.detail = Detail::Entry;
         self.error = None;
         self.notice = None;
@@ -255,7 +303,14 @@ impl VaultBrowser {
     }
 
     fn select_entry(&mut self, vault: VaultId, entry: EntryId, cx: &mut Context<Self>) {
-        self.selected_entry = Some((vault, entry));
+        let scope = self.scope(cx);
+        self.show(
+            View {
+                scope,
+                entry: Some((vault, entry)),
+            },
+            cx,
+        );
         self.detail = Detail::Entry;
         self.totp_copied = None;
         self.error = None;
@@ -273,13 +328,14 @@ impl VaultBrowser {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace.read(cx);
-        let entries = workspace.visible_entries(self.scope);
+        let View { scope, entry } = workspace.view();
+        let entries = workspace.visible_entries(scope);
         if entries.is_empty() {
             return;
         }
         let current = entries
             .iter()
-            .position(|listed| Some((listed.vault, listed.entry.id())) == self.selected_entry);
+            .position(|listed| Some((listed.vault, listed.entry.id())) == entry);
         let ix = pick(current, entries.len()).min(entries.len() - 1);
         let (vault, entry) = (entries[ix].vault, entries[ix].entry.id());
         self.select_entry(vault, entry, cx);
@@ -306,7 +362,7 @@ impl VaultBrowser {
     }
 
     fn open_selected(&mut self, _: &OpenEntry, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((vault, entry)) = self.selected_entry {
+        if let Some((vault, entry)) = self.selected_entry(cx) {
             self.open_editor(EditTarget::Existing(vault, entry), window, cx);
         }
     }
@@ -327,7 +383,7 @@ impl VaultBrowser {
     /// comes.
     /// Returns whether something was copied.
     fn copy(&mut self, field: CopyField, cx: &mut Context<Self>) -> bool {
-        let Some((vault, entry)) = self.selected_entry else {
+        let Some((vault, entry)) = self.selected_entry(cx) else {
             return false;
         };
         let result = self.workspace.update(cx, |workspace, cx| {
@@ -393,14 +449,14 @@ impl VaultBrowser {
 
     /// Whether the selected Entry has TOTP, whose countdown needs redrawing.
     fn shows_totp(&self, cx: &App) -> bool {
-        self.selected_entry
+        self.selected_entry(cx)
             .and_then(|(vault, entry)| self.workspace.read(cx).entry(vault, entry))
             .is_some_and(|entry| entry.totp().is_some_and(|totp| totp.is_ok()))
     }
 
     /// The selected Entry's TOTP code now, if it has TOTP that can be read.
     fn selected_totp(&self, cx: &App) -> Option<TotpCode> {
-        let (vault, entry) = self.selected_entry?;
+        let (vault, entry) = self.selected_entry(cx)?;
         self.workspace.read(cx).totp_code(vault, entry)?.ok()
     }
 
@@ -411,7 +467,7 @@ impl VaultBrowser {
             return;
         }
         if self.copy(CopyField::TotpCode, cx) {
-            self.totp_copied = self.selected_entry;
+            self.totp_copied = self.selected_entry(cx);
         }
     }
 
@@ -512,7 +568,7 @@ impl VaultBrowser {
     fn ensure_custom_field_focus(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         let count = self
-            .selected_entry
+            .selected_entry(cx)
             .and_then(|(vault, id)| workspace.entry(vault, id))
             .map_or(0, |entry| entry.custom_fields().len());
         while self.custom_field_focus.len() < count {
@@ -586,7 +642,14 @@ impl VaultBrowser {
                         .map(|id| (vault, id)),
                 };
                 if let Some(selected) = saved {
-                    self.selected_entry = Some(selected);
+                    let scope = self.scope(cx);
+                    self.show(
+                        View {
+                            scope,
+                            entry: Some(selected),
+                        },
+                        cx,
+                    );
                     self.detail = Detail::Entry;
                     self.revealed_fields.clear();
                     self.copied_field = None;
@@ -706,10 +769,14 @@ impl VaultBrowser {
             Subject::Group(vault, group) => workspace.delete_group(vault, group),
         });
         if deleted.is_some() {
-            match item {
-                Subject::Entry(..) => self.selected_entry = None,
-                Subject::Group(vault, _) => self.scope = EntryScope::Vault(vault),
-            }
+            let view = match item {
+                Subject::Entry(..) => View::from(self.scope(cx)),
+                Subject::Group(vault, _) => View {
+                    scope: EntryScope::Vault(vault),
+                    entry: self.selected_entry(cx),
+                },
+            };
+            self.show(view, cx);
             self.detail = Detail::Entry;
         }
     }
@@ -752,14 +819,22 @@ impl VaultBrowser {
 
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
+        let scope = workspace.view().scope;
         let mut rows: Vec<AnyElement> = Vec::new();
-        if workspace.vaults().nth(1).is_some() {
+        // Unlocked and locked Vaults, in the order they were opened.
+        let mut vaults: Vec<VaultId> = workspace
+            .vaults()
+            .map(|open| open.id())
+            .chain(workspace.locked_vaults().map(|locked| locked.id()))
+            .collect();
+        vaults.sort();
+        if vaults.len() > 1 {
             rows.push(
                 sidebar_row(
                     ("vault", rows.len()),
                     strings::SIDEBAR_ALL_VAULTS.into(),
                     0,
-                    self.scope == EntryScope::AllVaults,
+                    scope == EntryScope::AllVaults,
                     theme,
                 )
                 .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -767,20 +842,54 @@ impl VaultBrowser {
                 .into_any_element(),
             );
         }
-        for open in workspace.vaults() {
-            let vault = open.id();
-            let selected = self.scope == EntryScope::Vault(vault);
+        for vault in vaults {
+            let selected = scope == EntryScope::Vault(vault);
+            let select =
+                cx.listener(move |this, _, _, cx| this.select(EntryScope::Vault(vault), cx));
+            let Some(open) = workspace.vault(vault) else {
+                let name = workspace
+                    .locked_vault(vault)
+                    .map(|locked| locked.display_name())
+                    .unwrap_or_default();
+                rows.push(
+                    sidebar_row(
+                        ("vault", rows.len()),
+                        format!("{name}{}", strings::LOCKED_MARKER).into(),
+                        0,
+                        selected,
+                        theme,
+                    )
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.muted)
+                    .on_click(select)
+                    .into_any_element(),
+                );
+                continue;
+            };
             let name = match open.has_unsaved_changes() {
                 true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
                 false => open.display_name(),
             };
             rows.push(
-                sidebar_row(("vault", rows.len()), name.into(), 0, selected, theme)
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.select(EntryScope::Vault(vault), cx)
-                        }),
+                div()
+                    .flex()
+                    .items_center()
+                    .pr_2()
+                    .when(selected, |this| this.bg(theme.selection))
+                    .child(
+                        sidebar_row(("vault", rows.len()), name.into(), 0, false, theme)
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .on_click(select),
+                    )
+                    .child(
+                        tool_button(("lock-vault", rows.len()), strings::LOCK, theme)
+                            .text_xs()
+                            .text_color(theme.muted)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                locking::lock_vault(&this.workspace, vault, cx)
+                            })),
                     )
                     .into_any_element(),
             );
@@ -802,7 +911,7 @@ impl VaultBrowser {
                     );
                     continue;
                 }
-                let selected = self.scope == EntryScope::Group(vault, id);
+                let selected = scope == EntryScope::Group(vault, id);
                 rows.push(
                     sidebar_row(
                         ("group", rows.len()),
@@ -818,6 +927,7 @@ impl VaultBrowser {
                 );
             }
         }
+        let can_lock = workspace.vaults().next().is_some();
 
         div()
             .w(px(220.))
@@ -839,8 +949,22 @@ impl VaultBrowser {
                     .text_color(theme.muted)
                     .child(strings::SIDEBAR_VAULTS)
                     .child(
-                        tool_button("open-vault", strings::OPEN_VAULT, theme)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
+                        div()
+                            .flex()
+                            .gap_1()
+                            .when(can_lock, |this| {
+                                this.child(
+                                    tool_button("lock-all", strings::LOCK_ALL, theme).on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            locking::lock_all(&this.workspace, cx)
+                                        }),
+                                    ),
+                                )
+                            })
+                            .child(
+                                tool_button("open-vault", strings::OPEN_VAULT, theme)
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
+                            ),
                     ),
             )
             .child(
@@ -950,18 +1074,28 @@ impl VaultBrowser {
 
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
-        let entries = workspace.visible_entries(self.scope);
-        let header = match self.scope {
+        let View {
+            scope,
+            entry: selected_entry,
+        } = workspace.view();
+        let entries = workspace.visible_entries(scope);
+        let locked = match scope {
+            EntryScope::Vault(vault) => workspace.locked_vault(vault),
+            _ => None,
+        };
+        let header = match scope {
             EntryScope::AllVaults => Some(strings::SIDEBAR_ALL_VAULTS.to_owned()),
-            EntryScope::Vault(vault) => workspace.vault(vault).map(|open| open.display_name()),
+            EntryScope::Vault(vault) => workspace
+                .vault(vault)
+                .map(|open| open.display_name())
+                .or_else(|| locked.map(|locked| locked.display_name())),
             EntryScope::Group(vault, group) => workspace
                 .group(vault, group)
                 .map(|group| group.name().to_owned()),
         }
         .unwrap_or_default();
         // Across several Vaults, each Entry says which Vault it is from.
-        let label_vaults =
-            self.scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
+        let label_vaults = scope == EntryScope::AllVaults && workspace.vaults().nth(1).is_some();
 
         let rows: Vec<AnyElement> = entries
             .iter()
@@ -969,7 +1103,7 @@ impl VaultBrowser {
             .map(|(ix, listed)| {
                 let (vault, entry) = (listed.vault, listed.entry);
                 let id = entry.id();
-                let selected = self.selected_entry == Some((vault, id));
+                let selected = selected_entry == Some((vault, id));
                 let vault_name = label_vaults
                     .then(|| workspace.vault(vault).map(|open| open.display_name()))
                     .flatten();
@@ -1019,7 +1153,7 @@ impl VaultBrowser {
                         .on_click(cx.listener(|this, _, window, cx| this.new_group(window, cx))),
                 );
         }
-        if let EntryScope::Group(vault, group) = self.scope {
+        if let EntryScope::Group(vault, group) = scope {
             let subject = Subject::Group(vault, group);
             let is_browser_group = workspace.browser_group(vault) == Some(group);
             let in_bin = workspace
@@ -1095,10 +1229,26 @@ impl VaultBrowser {
                     .flex_1()
                     .overflow_y_scroll()
                     .track_scroll(&self.entry_list_scroll)
-                    .when(rows.is_empty(), |this| {
+                    .when(rows.is_empty() && locked.is_none(), |this| {
                         this.p_3()
                             .text_color(theme.muted)
                             .child(strings::LIST_EMPTY)
+                    })
+                    .when_some(locked.map(|locked| locked.id()), |this, vault| {
+                        this.p_3()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap_2()
+                            .child(div().text_color(theme.muted).child(strings::VAULT_LOCKED))
+                            .child(
+                                button("unlock-vault", strings::UNLOCK_VAULT, theme)
+                                    .bg(theme.accent)
+                                    .text_color(theme.accent_text)
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.emit(UnlockLockedVault(vault))
+                                    })),
+                            )
                     })
                     .children(rows),
             )
@@ -1141,8 +1291,9 @@ impl VaultBrowser {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let workspace = self.workspace.read(cx);
-        let Some((vault, entry)) = self
-            .selected_entry
+        let Some((vault, entry)) = workspace
+            .view()
+            .entry
             .and_then(|(vault, id)| workspace.entry(vault, id).map(|entry| (vault, entry)))
         else {
             return pane
@@ -1462,6 +1613,9 @@ impl Render for VaultBrowser {
             .on_action(cx.listener(Self::copy_totp_code))
             .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
             .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
+            .on_action(
+                cx.listener(|this, _: &LockAll, _, cx| locking::lock_all(&this.workspace, cx)),
+            )
             .size_full()
             .relative()
             .flex()

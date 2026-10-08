@@ -23,6 +23,14 @@ pub struct BrowserIntegration {
 
 impl BrowserIntegration {
     pub fn new(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+        // Sends what the Workspace has for the extensions unasked, such as news of a Vault
+        // locking, and has the requests shown again, as locking answers those waiting on it.
+        cx.observe(&workspace, |this: &mut Self, workspace, cx| {
+            let messages = workspace.update(cx, |workspace, _| workspace.take_browser_messages());
+            this.send(messages);
+            cx.notify();
+        })
+        .detach();
         let mut integration = Self {
             workspace,
             replies: HashMap::new(),

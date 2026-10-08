@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use keefast_core::EditError;
 use keefast_workspace::{
-    BrowserReply, BrowserSession, EditVaultError, KEEPASSXC_VERSION, PairingRequest, UnlockSecrets,
-    VaultId, Workspace,
+    BrowserReply, BrowserSession, EditVaultError, EntryScope, KEEPASSXC_VERSION, PairingRequest,
+    UnlockSecrets, VaultId, View, Workspace,
 };
 use serde_json::{Value, json};
 use support::extension::{FakeExtension, Sent};
@@ -334,7 +334,7 @@ fn the_browser_deals_with_the_focused_vault() {
     let key = UnlockSecrets::password(PASSWORD);
     workspace.open_vault(&personal_vault(), &key).unwrap();
     let work = workspace.open_vault(&work_vault(), &key).unwrap();
-    workspace.focus_vault(Some(work));
+    workspace.show(View::from(EntryScope::Vault(work)));
     let (extension, mut session) = connected(&workspace);
 
     let request = ask_pairing(&mut session, &workspace, &extension.associate());
@@ -344,7 +344,7 @@ fn the_browser_deals_with_the_focused_vault() {
         .unwrap();
 
     // Looking at all Vaults, the browser deals with the Vault it is paired with.
-    workspace.focus_vault(None);
+    workspace.show(View::from(EntryScope::AllVaults));
     let sent = extension.test_associate("Work browser", &extension.id_key());
     extension.open(&sent, &send(&mut session, &workspace, &sent));
     let personal = workspace.vaults().next().unwrap();

@@ -41,7 +41,15 @@ toml = "1"
 twofish = "0.8"
 url = "2"
 uuid = "1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
+    "Win32_UI_WindowsAndMessaging",
+] }
 winreg = "0.56"
+zbus = "5"
 zeroize = "1"
 gpui = "0.2.2"
 

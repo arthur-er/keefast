@@ -8,13 +8,15 @@ mod clipboard;
 mod clock;
 mod config;
 mod generator;
+mod locking;
+mod os_lock;
 mod storage;
 mod unlock_secrets;
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use secrecy::ExposeSecret;
 
@@ -36,12 +38,18 @@ pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
 pub use generator::{GeneratorMode, GeneratorSettings};
+pub use locking::{LockedVault, UnsavedLock};
+pub use os_lock::watch_os_lock;
+#[cfg(target_os = "linux")]
+pub use os_lock::watch_os_lock_on;
 pub use storage::{
     LocalStorage, Revision, StorageError, StorageProvider, StoredFile, VaultLocation, Watch,
 };
 pub use unlock_secrets::UnlockSecrets;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A Vault the Workspace has open, unlocked or locked. Vaults are numbered in the order they
+/// were opened, and keep their number while locked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VaultId(u64);
 
 /// What the Entry list shows: every open Vault, one Vault, or one Group of a Vault.
@@ -50,6 +58,29 @@ pub enum EntryScope {
     AllVaults,
     Vault(VaultId),
     Group(VaultId, GroupId),
+}
+
+/// Where the user is: what the Entry list shows, and the Entry selected in it, if one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
+    pub scope: EntryScope,
+    pub entry: Option<(VaultId, EntryId)>,
+}
+
+impl From<EntryScope> for View {
+    fn from(scope: EntryScope) -> Self {
+        Self { scope, entry: None }
+    }
+}
+
+impl View {
+    /// The Vault the Entry list is narrowed to, if it is.
+    pub fn vault(&self) -> Option<VaultId> {
+        match self.scope {
+            EntryScope::AllVaults => None,
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(vault),
+        }
+    }
 }
 
 /// An Entry in the Entry list, with the Vault it belongs to.
@@ -131,6 +162,8 @@ pub struct OpenVault {
     /// Whether the Vault file may have changed since it was last checked.
     file_changed: bool,
     watch: Option<Watch>,
+    /// Whether the Vault locks once its unsaved changes are saved, or the user discards them.
+    lock_requested: bool,
 }
 
 impl OpenVault {
@@ -162,6 +195,11 @@ impl OpenVault {
     /// Whether the last save failed and the Vault hasn't been saved since.
     pub fn save_failed(&self) -> bool {
         self.failed_save_at.is_some()
+    }
+
+    /// Whether the Vault is to lock once its unsaved changes are saved or discarded.
+    pub fn is_locking(&self) -> bool {
+        self.lock_requested
     }
 }
 
@@ -315,14 +353,19 @@ pub struct FinishedSave {
 pub struct Workspace {
     storage: Arc<dyn StorageProvider>,
     clock: Arc<dyn Clock>,
+    /// The unlocked Vaults, in the order they were opened.
     vaults: Vec<OpenVault>,
+    /// The locked Vaults, in the order they were opened.
+    locked: Vec<LockedVault>,
     next_id: u64,
     config: AppConfig,
     /// Where the config is kept between runs; `None` keeps it in memory only.
     config_store: Option<Arc<dyn ConfigStore>>,
     config_error: Option<ConfigError>,
-    /// The Vault the user is looking at, which the browser pairs with.
-    focused_vault: Option<VaultId>,
+    /// Where the user is. The browser pairs with the Vault shown.
+    view: View,
+    /// When the user last gave keefast input, for the idle lock.
+    last_activity: SystemTime,
     browser: browser::BrowserConnections,
     browser_hosts: Option<Arc<dyn BrowserHosts>>,
     /// Where the native host was last registered, or why it couldn't be.
@@ -342,15 +385,18 @@ impl Workspace {
     }
 
     pub fn with_clock(storage: Arc<dyn StorageProvider>, clock: Arc<dyn Clock>) -> Self {
+        let last_activity = clock.now();
         Self {
             storage,
             clock,
+            last_activity,
             vaults: Vec::new(),
+            locked: Vec::new(),
             next_id: 0,
             config: AppConfig::default(),
             config_store: None,
             config_error: None,
-            focused_vault: None,
+            view: View::from(EntryScope::AllVaults),
             browser: Default::default(),
             browser_hosts: None,
             browser_hosts_status: None,
@@ -448,10 +494,15 @@ impl Workspace {
         self.config.generator.recipe().generate()
     }
 
-    /// Tells the Workspace which Vault the user is looking at, if one. The browser pairs with
-    /// that Vault.
-    pub fn focus_vault(&mut self, vault: Option<VaultId>) {
-        self.focused_vault = vault;
+    /// Tells the Workspace where the user is, to return them there when a Vault they were in
+    /// is unlocked again. The browser pairs with the Vault shown.
+    pub fn show(&mut self, view: View) {
+        self.view = view;
+    }
+
+    /// Where the user is, as last shown, without what locking took away.
+    pub fn view(&self) -> View {
+        self.view
     }
 
     /// Vault files opened lately, most recent first, whether open now or not.
@@ -459,12 +510,12 @@ impl Workspace {
         &self.config.recent_vaults
     }
 
-    /// The recent Vault files that aren't open now: those offered for reopening.
+    /// The recent Vault files that aren't open now, unlocked or locked: those offered for
+    /// reopening.
     pub fn closed_recent_vaults(&self) -> impl Iterator<Item = &VaultLocation> {
-        self.config
-            .recent_vaults
-            .iter()
-            .filter(|location| self.open_vault_at(location).is_none())
+        self.config.recent_vaults.iter().filter(|location| {
+            self.open_vault_at(location).is_none() && self.locked_vault_at(location).is_none()
+        })
     }
 
     pub fn forget_recent(&mut self, location: &VaultLocation) {
@@ -553,9 +604,9 @@ impl Workspace {
         Ok(self.add_unlocked(pending.unlock()?))
     }
 
-    /// Starts opening a Vault file. Run the returned open off the UI thread, then hand the
-    /// unlocked Vault to [`Self::add_unlocked`]. A Vault file that is already open, under
-    /// whatever path, is refused.
+    /// Starts opening a Vault file, or unlocking it if its Vault is locked. Run the returned
+    /// open off the UI thread, then hand the unlocked Vault to [`Self::add_unlocked`]. A Vault
+    /// file that is already open and unlocked, under whatever path, is refused.
     pub fn begin_open(
         &self,
         location: VaultLocation,
@@ -572,28 +623,46 @@ impl Workspace {
         })
     }
 
-    /// Adds an unlocked Vault and remembers its Vault file as the most recent. If the same
-    /// Vault file was opened meanwhile, that Vault is kept and this one dropped.
+    /// Adds an unlocked Vault, shows it, and remembers its Vault file as the most recent. If
+    /// the same Vault file was opened meanwhile, that Vault is kept and this one dropped. A
+    /// locked Vault unlocked this way keeps its id, and returns the user to where they were in
+    /// it, if they were in it when it locked.
     pub fn add_unlocked(&mut self, unlocked: UnlockedVault) -> VaultId {
         self.remember_recent(&unlocked.location);
         if let Some(open) = self.open_vault_at(&unlocked.location) {
             return open;
         }
-        let id = VaultId(self.next_id);
-        self.next_id += 1;
+        self.last_activity = self.clock.now();
+        let (id, view) = match self.locked_vault_at(&unlocked.location) {
+            Some(id) => (id, self.take_locked(id)),
+            None => {
+                self.next_id += 1;
+                let id = VaultId(self.next_id - 1);
+                (id, Some(View::from(EntryScope::Vault(id))))
+            }
+        };
         let watch = self.watch(id, &unlocked.location);
-        self.vaults.push(OpenVault {
-            id,
-            location: unlocked.location,
-            vault: unlocked.vault,
-            edits: 0,
-            saved_edits: 0,
-            saving: false,
-            failed_save_at: None,
-            revision: Some(unlocked.revision),
-            file_changed: false,
-            watch,
-        });
+        let at = self.vaults.partition_point(|open| open.id < id);
+        self.vaults.insert(
+            at,
+            OpenVault {
+                id,
+                location: unlocked.location,
+                vault: unlocked.vault,
+                edits: 0,
+                saved_edits: 0,
+                saving: false,
+                failed_save_at: None,
+                revision: Some(unlocked.revision),
+                file_changed: false,
+                watch,
+                lock_requested: false,
+            },
+        );
+        if let Some(view) = view {
+            self.restore_view(view);
+        }
+        self.announce_unlocked();
         id
     }
 
@@ -843,7 +912,8 @@ impl Workspace {
     }
 
     /// Records a save's outcome, Merging into the Vault any changes made to its Vault file
-    /// elsewhere that the save found. Edits made while it ran stay unsaved.
+    /// elsewhere that the save found. Edits made while it ran stay unsaved. A Vault waiting to
+    /// lock until it is saved locks now if nothing is left unsaved.
     pub fn finish_save(&mut self, finished: FinishedSave) -> Result<(), SaveVaultError> {
         let Some(open) = self.vaults.iter_mut().find(|open| open.id == finished.id) else {
             return finished.result.map(|_| ());
@@ -859,7 +929,7 @@ impl Workspace {
                 summary,
             });
         }
-        match finished.result {
+        let outcome = match finished.result {
             Ok(synced) => {
                 if let Some(revision) = synced.revision {
                     open.revision = Some(revision);
@@ -874,7 +944,11 @@ impl Workspace {
                 open.failed_save_at = Some(finished.edits);
                 Err(error)
             }
+        };
+        if open.lock_requested && !open.has_unsaved_changes() {
+            self.lock_now(finished.id);
         }
+        outcome
     }
 
     /// Starts saving every Vault with unsaved changes or a failed last save, and checking

@@ -60,7 +60,7 @@ pub fn autosave(workspace: &Entity<Workspace>, cx: &mut App) {
 }
 
 /// Encrypts and writes off the UI thread; edits made meanwhile are autosaved afterwards.
-fn run(workspace: &Entity<Workspace>, saves: Vec<PendingSave>, cx: &mut App) {
+pub fn run(workspace: &Entity<Workspace>, saves: Vec<PendingSave>, cx: &mut App) {
     for save in saves {
         let saving = cx.background_executor().spawn(async move { save.run() });
         let workspace = workspace.clone();

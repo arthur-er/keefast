@@ -15,7 +15,7 @@ use keefast_workspace::{
 };
 use serde_json::Value;
 use support::extension::{FakeExtension, Sent};
-use support::{BROWSER_KDBX, FakeStorage, PASSWORD, personal_vault, work_vault};
+use support::{BROWSER_KDBX, FakeClipboard, FakeStorage, PASSWORD, personal_vault, work_vault};
 
 const FIRST: ConnectionId = ConnectionId(1);
 const SECOND: ConnectionId = ConnectionId(2);
@@ -141,6 +141,39 @@ impl Browser {
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].connection, FIRST);
         titles(&self.extension.open(sent, &replies[0].message))
+    }
+}
+
+impl Browser {
+    /// Saves the Vault, whose Pairing is an unsaved change, and locks it.
+    fn lock(&mut self, vault: VaultId) {
+        self.workspace.save_vault(vault).unwrap();
+        let saves = self
+            .workspace
+            .lock_vault(vault, &mut FakeClipboard::default());
+        assert!(saves.is_empty());
+        assert!(self.workspace.locked_vault(vault).is_some());
+    }
+
+    fn unlock(&mut self, location: &keefast_workspace::VaultLocation) {
+        self.workspace
+            .open_vault(location, &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+    }
+
+    /// The actions of the messages keefast sent the extension unasked.
+    fn announcements(&mut self) -> Vec<String> {
+        self.workspace
+            .take_browser_messages()
+            .into_iter()
+            .map(|outgoing| {
+                assert_eq!(outgoing.connection, FIRST);
+                parse(&outgoing.message)["action"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
     }
 }
 
@@ -477,4 +510,130 @@ fn turning_integration_off_turns_waiting_access_requests_down() {
     assert_eq!(reply["errorCode"], "6");
     assert_eq!(reply["action"], "get-logins");
     assert_eq!(browser.workspace.pending_access(), None);
+}
+
+mod locking {
+    use super::*;
+
+    #[test]
+    fn a_locked_vault_answers_that_keefast_is_locked() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.lock(vault);
+
+        let reply = parse(&browser.request(&browser.get_logins(EXAMPLE)).unwrap());
+
+        assert_eq!(reply["errorCode"], "1");
+        assert_eq!(reply["action"], "get-logins");
+    }
+
+    #[test]
+    fn a_locked_vault_is_invisible_while_another_is_unlocked() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.unlock(&work_vault());
+        browser.lock(vault);
+
+        let reply = parse(&browser.request(&browser.get_logins(EXAMPLE)).unwrap());
+        assert_eq!(
+            reply["errorCode"], "15",
+            "the unpaired Vault offers nothing"
+        );
+        let sent = browser
+            .extension
+            .test_associate(&browser.pairing.0, &browser.pairing.1);
+        let reply = parse(&browser.request(&sent).unwrap());
+        assert_eq!(
+            reply["errorCode"], "8",
+            "the Pairing is in the locked Vault"
+        );
+    }
+
+    #[test]
+    fn an_unlocked_vault_is_paired_with_the_browser_again() {
+        let (mut browser, vault) = Browser::paired(storage());
+        let sent = browser.get_logins(EXAMPLE);
+        browser.ask(&sent);
+        browser.answer_entries(&sent, REMEMBER_ALLOW);
+        browser.lock(vault);
+
+        browser.unlock(&personal_vault());
+
+        let entries = browser.entries_now(&browser.get_logins(EXAMPLE));
+        assert_eq!(entries, ["Example", "Remembered", "Shown again"]);
+    }
+
+    #[test]
+    fn locking_answers_the_requests_waiting_on_the_vault() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.ask(&browser.get_logins(EXAMPLE));
+
+        browser.lock(vault);
+
+        assert_eq!(browser.workspace.pending_access(), None);
+        let replies = browser.workspace.take_browser_messages();
+        let errors: Vec<Value> = replies
+            .iter()
+            .map(|outgoing| parse(&outgoing.message))
+            .filter(|message| message["action"] == "get-logins")
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["errorCode"], "1");
+    }
+
+    #[test]
+    fn locking_turns_down_a_pairing_request_for_the_vault() {
+        let (mut browser, vault) = Browser::paired(storage());
+        assert_eq!(browser.request(&browser.extension.associate()), None);
+        assert!(browser.workspace.pending_pairing().is_some());
+
+        browser.lock(vault);
+
+        assert_eq!(browser.workspace.pending_pairing(), None);
+        let replies = browser.workspace.take_browser_messages();
+        let error = replies
+            .iter()
+            .map(|outgoing| parse(&outgoing.message))
+            .find(|message| message["action"] == "associate")
+            .expect("the Pairing request is answered");
+        assert_eq!(error["errorCode"], "1");
+    }
+
+    #[test]
+    fn requests_waiting_on_other_vaults_stay_pending() {
+        let (mut browser, _) = Browser::paired(storage());
+        let work = browser
+            .workspace
+            .open_vault(&work_vault(), &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+        let pending = browser.ask(&browser.get_logins(EXAMPLE));
+
+        browser.lock(work);
+
+        assert_eq!(browser.workspace.pending_access(), Some(pending));
+    }
+
+    #[test]
+    fn the_extension_hears_when_vaults_lock_and_unlock() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.workspace.take_browser_messages();
+
+        browser.lock(vault);
+        assert_eq!(browser.announcements(), ["database-locked"]);
+
+        browser.unlock(&personal_vault());
+        assert_eq!(browser.announcements(), ["database-unlocked"]);
+    }
+
+    #[test]
+    fn locking_one_of_several_vaults_has_the_extension_reconnect() {
+        let (mut browser, vault) = Browser::paired(storage());
+        browser.unlock(&work_vault());
+        browser.workspace.take_browser_messages();
+
+        browser.lock(vault);
+
+        assert_eq!(
+            browser.announcements(),
+            ["database-locked", "database-unlocked"]
+        );
+    }
 }

@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use keefast_core::{DEFAULT_BROWSER_GROUP, EditError, EntryId, GroupId};
 use keefast_workspace::{
-    AppConfig, ConnectionId, EditVaultError, LoginTarget, Outgoing, PendingLogin, UnlockSecrets,
-    VaultId, VaultLocation, Workspace,
+    AppConfig, ConnectionId, EditVaultError, EntryScope, LoginTarget, Outgoing, PendingLogin,
+    UnlockSecrets, VaultId, VaultLocation, View, Workspace,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -54,6 +54,8 @@ impl Browser {
             workspace.open_vault(&personal_vault(), &key).unwrap(),
             workspace.open_vault(&work_vault(), &key).unwrap(),
         ];
+        // Looking at all Vaults, the browser deals with the first open.
+        workspace.show(View::from(EntryScope::AllVaults));
         workspace.set_browser_integration(true);
         let mut extension = FakeExtension::new();
         let keys = workspace
