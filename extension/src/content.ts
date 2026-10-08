@@ -1,11 +1,11 @@
 // Injected into the page only when the user asks to fill it, from the popup or the shortcut.
-import { fillLogin, findLoginFields } from "./forms";
+import { type Credentials, fillLogin, findLoginFields } from "./forms";
 import type { Page } from "./companion";
 
 export interface PageApi {
   /** The page, or none if the extension doesn't fill pages like it. */
   inspect(): Page | undefined;
-  fill(origin: string, username: string, password: string): boolean;
+  fill(origin: string, credentials: Credentials): boolean;
 }
 
 declare global {
@@ -22,7 +22,7 @@ globalThis.keefast = {
       submitUrl: findLoginFields(document)?.submitUrl,
     };
   },
-  fill(origin, username, password) {
-    return fillLogin(document, origin, username, password);
+  fill(origin, credentials) {
+    return fillLogin(document, origin, credentials);
   },
 };

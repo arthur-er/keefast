@@ -1,6 +1,15 @@
 // Finding a page's login form and filling it. This runs in the page, injected only when the
 // user asks to fill (the popup or the shortcut): nothing is read or filled on page load.
 
+/** What fills a login form: an Entry's username and password. */
+export interface Credentials {
+  username: string;
+  password: string;
+}
+
+/** The smallest a field can be, in pixels each way, for the user to see it. */
+const MIN_VISIBLE_SIZE = 4;
+
 /** A page's login fields. A sign-in split over steps may have only one of them. */
 export interface LoginFields {
   username?: HTMLInputElement;
@@ -41,14 +50,14 @@ export function findLoginFields(document: Document): LoginFields | undefined {
 }
 
 /**
- * Fills the page's login form with a login, if the page is still at `origin`, the origin the
- * login was asked for: the page may have navigated meanwhile. Says whether it filled anything.
+ * Fills the page's login form with an Entry's credentials, if the page is still at `origin`,
+ * the origin the Entry was asked for: the page may have navigated meanwhile. Says whether it
+ * filled anything.
  */
 export function fillLogin(
   document: Document,
   origin: string,
-  username: string,
-  password: string,
+  { username, password }: Credentials,
 ): boolean {
   if (document.location.origin !== origin) {
     return false;
@@ -91,7 +100,22 @@ function fillable(input: HTMLInputElement): boolean {
       return false;
     }
   }
-  return view?.getComputedStyle(input).visibility !== "hidden";
+  if (view?.getComputedStyle(input).visibility === "hidden") {
+    return false;
+  }
+  // A shown field has a box, unless the page isn't laid out (as in tests).
+  const box = input.getClientRects()[0];
+  if (!box) {
+    return true;
+  }
+  const scrollX = view?.scrollX ?? 0;
+  const scrollY = view?.scrollY ?? 0;
+  return (
+    box.width >= MIN_VISIBLE_SIZE &&
+    box.height >= MIN_VISIBLE_SIZE &&
+    box.right + scrollX > 0 &&
+    box.bottom + scrollY > 0
+  );
 }
 
 /** Sets a field's value as typing would, so the page's scripts see the change. */

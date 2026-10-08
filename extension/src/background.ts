@@ -2,6 +2,7 @@
 // shortcut. Nothing runs in pages until the user asks to fill one.
 import { Companion, type Tabs } from "./companion";
 import { HOST_NAME, KeefastClient, KeefastError, type NativePort, type Pairing } from "./keefast";
+import type { Credentials } from "./forms";
 import type { Answer, Answers, Request } from "./messages";
 
 function connectNative(): NativePort {
@@ -30,7 +31,11 @@ const pairings = {
 };
 
 /** Runs `func` in the tab's top frame, with the page script injected first. */
-async function inPage<T>(tab: number, func: (...args: string[]) => T, args: string[] = []) {
+async function inPage<Args extends unknown[], T>(
+  tab: number,
+  func: (...args: Args) => T,
+  args: Args,
+) {
   await chrome.scripting.executeScript({ target: { tabId: tab }, files: ["content.js"] });
   const [result] = await chrome.scripting.executeScript({ target: { tabId: tab }, func, args });
   return result?.result as Awaited<T> | undefined;
@@ -39,18 +44,18 @@ async function inPage<T>(tab: number, func: (...args: string[]) => T, args: stri
 const tabs: Tabs = {
   async inspect(tab) {
     try {
-      return (await inPage(tab, () => globalThis.keefast?.inspect())) ?? undefined;
+      return (await inPage(tab, () => globalThis.keefast?.inspect(), [])) ?? undefined;
     } catch {
       // The browser's own pages, and pages the user didn't open the popup on, can't be filled.
       return undefined;
     }
   },
-  async fill(tab, origin, { login, password }) {
+  async fill(tab, origin, { username, password }) {
     try {
       const filled = await inPage(
         tab,
-        (origin, login, password) => globalThis.keefast?.fill(origin!, login!, password!) ?? false,
-        [origin, login, password],
+        (origin, credentials) => globalThis.keefast?.fill(origin, credentials) ?? false,
+        [origin, { username, password }] as [string, Credentials],
       );
       return filled === true;
     } catch {
@@ -69,8 +74,8 @@ async function answer(request: Request): Promise<Answers[Request["type"]]> {
     case "pair":
       await client.pair();
       return null;
-    case "logins":
-      return (await companion.logins(request.tab)) ?? null;
+    case "entries":
+      return (await companion.entries(request.tab)) ?? null;
     case "fill":
       return companion.fill(request.tab, request.uuid);
   }
@@ -91,9 +96,10 @@ chrome.runtime.onMessage.addListener((request: Request, sender, respond) => {
 });
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command !== "fill-login" || tab?.id === undefined) return;
-  if ((await companion.shortcut(tab.id)) === "choose") {
-    // The popup lists the logins to choose from, or says what's wrong.
+  if (command !== "fill" || tab?.id === undefined) return;
+  const outcome = await companion.shortcut(tab.id).catch(() => "choose" as const);
+  if (outcome === "choose") {
+    // The popup lists the Entries to choose from, or says what's wrong.
     await chrome.action.openPopup().catch(() => {});
   }
 });

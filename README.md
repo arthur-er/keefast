@@ -57,7 +57,7 @@ npm run build
 ```
 
 Click its toolbar button, then "Connect", and name the browser in keefast. On a login page, the
-popup lists the site's logins: click one to fill it, or press Alt+Shift+K to fill the only one.
+popup lists the site's Entries: click one to fill it, or press Alt+Shift+K to fill the only one.
 Nothing is filled until you ask. The extension never asks for a master password: when keefast
 is locked or not running, it says so, and you unlock keefast itself.
 

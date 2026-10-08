@@ -1,6 +1,6 @@
-// What the popup and the shortcut do: ask keefast for the page's logins, and fill the one the
+// What the popup and the shortcut do: ask keefast for the page's Entries, and fill the one the
 // user picks. Passwords stay here, never in the popup, and only until filled.
-import { KeefastError, type KeefastClient, type Login } from "./keefast";
+import { KeefastError, type Entry, type KeefastClient } from "./keefast";
 
 /** A page the extension may fill, as its login form sees it. */
 export interface Page {
@@ -14,23 +14,23 @@ export interface Page {
 export interface Tabs {
   /** The page in a tab, or none if the extension can't fill it. */
   inspect(tab: number): Promise<Page | undefined>;
-  /** Fills a login into the tab's login form, if the tab is still at `origin`. */
-  fill(tab: number, origin: string, login: Login): Promise<boolean>;
+  /** Fills an Entry into the tab's login form, if the tab is still at `origin`. */
+  fill(tab: number, origin: string, entry: Entry): Promise<boolean>;
 }
 
-/** A login as the popup lists it, without its password. */
-export interface LoginSummary {
+/** An Entry as the popup lists it, without its password. */
+export interface EntrySummary {
   uuid: string;
   name: string;
-  login: string;
+  username: string;
 }
 
-/** How long logins keefast gave for a tab are kept for the user to pick one. */
-const KEEP_LOGINS_MS = 2 * 60_000;
+/** How long the Entries keefast gave for a tab are kept for the user to pick one. */
+const KEEP_ENTRIES_MS = 2 * 60_000;
 
 interface Listed {
   origin: string;
-  logins: Login[];
+  entries: Entry[];
   expiry: ReturnType<typeof setTimeout>;
 }
 
@@ -43,32 +43,32 @@ export class Companion {
   ) {}
 
   /**
-   * The logins for the page in `tab`, or none if the extension can't fill the page. Logins
+   * The Entries for the page in `tab`, or none if the extension can't fill the page. Entries
    * listed for the page's site a moment ago are listed again; otherwise keefast is asked, and
    * it may ask the user first. Fails if keefast is locked or not running.
    */
-  async logins(tab: number): Promise<LoginSummary[] | undefined> {
-    const logins = await this.fetch(tab);
-    return logins?.map(({ uuid, name, login }) => ({ uuid, name, login }));
+  async entries(tab: number): Promise<EntrySummary[] | undefined> {
+    const entries = await this.entriesFor(tab);
+    return entries?.map(({ uuid, name, username }) => ({ uuid, name, username }));
   }
 
-  /** Fills the listed login `uuid` into `tab`, and says whether it did. */
+  /** Fills the listed Entry `uuid` into `tab`, and says whether it did. */
   async fill(tab: number, uuid: string): Promise<boolean> {
     const listed = this.listed.get(tab);
-    const login = listed?.logins.find((login) => login.uuid === uuid);
-    if (!listed || !login) return false;
+    const entry = listed?.entries.find((entry) => entry.uuid === uuid);
+    if (!listed || !entry) return false;
     this.forget(tab);
-    return this.tabs.fill(tab, listed.origin, login);
+    return this.tabs.fill(tab, listed.origin, entry);
   }
 
   /**
-   * Fills the page's only login. With several, none, or keefast unavailable, the user should
+   * Fills the page's only Entry. With several, none, or keefast unavailable, the user should
    * see the popup to choose, or to learn what's wrong.
    */
   async shortcut(tab: number): Promise<"filled" | "choose"> {
     try {
-      const logins = await this.fetch(tab);
-      if (logins?.length === 1 && (await this.fill(tab, logins[0]!.uuid))) {
+      const entries = await this.entriesFor(tab);
+      if (entries?.length === 1 && (await this.fill(tab, entries[0]!.uuid))) {
         return "filled";
       }
     } catch (error) {
@@ -77,19 +77,19 @@ export class Companion {
     return "choose";
   }
 
-  private async fetch(tab: number): Promise<Login[] | undefined> {
+  private async entriesFor(tab: number): Promise<Entry[] | undefined> {
     const page = await this.tabs.inspect(tab);
     if (!page) return undefined;
     const listed = this.listed.get(tab);
-    if (listed?.origin === page.origin) return listed.logins;
-    const logins = await this.client.logins(page.url, page.submitUrl);
+    if (listed?.origin === page.origin) return listed.entries;
+    const entries = await this.client.entries(page.url, page.submitUrl);
     this.forget(tab);
     this.listed.set(tab, {
       origin: page.origin,
-      logins,
-      expiry: setTimeout(() => this.forget(tab), KEEP_LOGINS_MS),
+      entries,
+      expiry: setTimeout(() => this.forget(tab), KEEP_ENTRIES_MS),
     });
-    return logins;
+    return entries;
   }
 
   private forget(tab: number): void {

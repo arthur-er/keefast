@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "keefast",
-  "description": "Fills logins from keefast, the KeePass password manager, when you ask.",
+  "description": "Fills sign-in forms with Entries from keefast, the KeePass password manager, when you ask.",
   "version": "0.1.0",
   "minimum_chrome_version": "127",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7VveDeO1OCS7BsWExpznkfg/2h1h0UTo5iS9KQSR1bPVIFmDFh3926LGk/3j2DD6T9Jw2ObOlvzm0KXbzKlznMoGjnYImRI5L5N5sDEcBC9STBYsz5LtB8+9Y9TOPsJZRv1MQqigeXn6BPoJtdUZTOf/owsWqz+RZh23ODPy8GDEtWS8Adpo/R2b4uruwPbko8KUgP/jVBjqaJc+8d3nUHxFaqfCNpgle6MTflCTn6sFveH4P7+PgDyqkTD30143/hdCF52ZU1YauhirxK6+W5XxlK2zULLbwR0lpq7RZS0i6o2aA4mAaGrWWsSIPtdXBp3f2ndmbL2JqfoQBqFlQIDAQAB",
@@ -19,9 +19,9 @@
     "128": "icons/icon-128.png"
   },
   "commands": {
-    "fill-login": {
+    "fill": {
       "suggested_key": { "default": "Alt+Shift+K" },
-      "description": "Fill this page's login"
+      "description": "Fill this page's sign-in form"
     }
   }
 }

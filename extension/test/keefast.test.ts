@@ -22,7 +22,7 @@ beforeEach(() => {
   client = new KeefastClient(keefast.connect, store);
 });
 
-const alice = { login: "alice", name: "Example", password: "s3cret", uuid: "0011" };
+const alice = { uuid: "0011", name: "Example", username: "alice", password: "s3cret" };
 
 describe("status", () => {
   it("is not running when the native host can't reach keefast", async () => {
@@ -48,7 +48,7 @@ describe("status", () => {
   });
 
   it("is unpaired when the stored Pairing is unknown to the open Vault", async () => {
-    store.pairings = [{ id: "Old browser", key: "a2V5", hash: "other" }];
+    store.pairings = [{ id: "Old browser", key: "a2V5" }];
 
     expect(await client.status()).toBe("unpaired");
   });
@@ -58,9 +58,7 @@ describe("pair", () => {
   it("pairs with the open Vault under the name the user gives, and remembers it", async () => {
     await client.pair();
 
-    expect(store.pairings).toEqual([
-      { id: "Chromium", key: keefast.pairings.get("Chromium"), hash: "vault-hash" },
-    ]);
+    expect(store.pairings).toEqual([{ id: "Chromium", key: keefast.pairings.get("Chromium") }]);
     expect(await client.status()).toBe("paired");
   });
 
@@ -81,7 +79,7 @@ describe("pair", () => {
   });
 
   it("keeps Pairings with other Vaults", async () => {
-    store.pairings = [{ id: "Work", key: "d29yaw==", hash: "work-hash" }];
+    store.pairings = [{ id: "Work", key: "d29yaw==" }];
 
     await client.pair();
 
@@ -89,14 +87,14 @@ describe("pair", () => {
   });
 });
 
-describe("logins", () => {
+describe("entries", () => {
   beforeEach(async () => {
     keefast.entries.set("example.com", [alice]);
     await client.pair();
   });
 
   it("gets the Entries for the site from the paired Vaults", async () => {
-    const logins = await client.logins("https://example.com/login", "https://example.com/session");
+    const logins = await client.entries("https://example.com/login", "https://example.com/session");
 
     expect(logins).toEqual([alice]);
     const request = keefast.received.find((m) => m.action === "get-logins")!;
@@ -106,13 +104,13 @@ describe("logins", () => {
   });
 
   it("has none for a site without Entries", async () => {
-    expect(await client.logins("https://elsewhere.org/")).toEqual([]);
+    expect(await client.entries("https://elsewhere.org/")).toEqual([]);
   });
 
   it("waits for the user's Access decision", async () => {
     keefast.holdLogins = true;
     let answered = false;
-    const logins = client.logins("https://example.com/").then((found) => {
+    const logins = client.entries("https://example.com/").then((found) => {
       answered = true;
       return found;
     });
@@ -127,7 +125,7 @@ describe("logins", () => {
   it("fails as locked when keefast was locked meanwhile", async () => {
     keefast.locked = true;
 
-    await expect(client.logins("https://example.com/")).rejects.toMatchObject({
+    await expect(client.entries("https://example.com/")).rejects.toMatchObject({
       reason: "locked",
     });
   });
@@ -135,7 +133,13 @@ describe("logins", () => {
   it("rejects a reply that doesn't answer its request's nonce", async () => {
     keefast.wrongNonce = true;
 
-    await expect(client.logins("https://example.com/")).rejects.toBeInstanceOf(KeefastError);
+    await expect(client.entries("https://example.com/")).rejects.toBeInstanceOf(KeefastError);
+  });
+
+  it("rejects a reply it can't read", async () => {
+    keefast.garbled = true;
+
+    await expect(client.entries("https://example.com/")).rejects.toBeInstanceOf(KeefastError);
   });
 });
 

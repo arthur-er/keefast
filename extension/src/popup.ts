@@ -1,6 +1,7 @@
-// The popup: says whether keefast can fill logins, pairs the browser, and lists the page's
-// logins to fill. It never asks for a master password: keefast is unlocked in keefast (ADR 0001).
-import type { LoginSummary } from "./companion";
+// The popup: says whether keefast can fill sign-in forms, pairs the browser, and lists the
+// page's Entries to fill. It never asks for a master password: keefast is unlocked in keefast
+// itself (ADR 0001).
+import type { EntrySummary } from "./companion";
 import type { FailureReason } from "./keefast";
 import type { Answer, Answers, Request } from "./messages";
 
@@ -52,25 +53,29 @@ async function start(): Promise<void> {
     case "unpaired":
       return offerPairing();
     case "paired":
-      return listLogins();
+      return listEntries();
   }
 }
 
 function offerPairing(): void {
   const connect = element("button", "Connect", "primary");
   connect.addEventListener("click", async () => {
-    message("Approve the connection in keefast.", "keefast asks you to name this browser.");
+    message("Approve the Pairing in keefast.", "keefast asks you to name this browser.");
     const paired = await ask({ type: "pair" });
     if (!paired.ok) {
       failed(paired.reason);
       main.append(retry());
       return;
     }
-    await listLogins();
+    await listEntries();
   });
   show(
     element("p", "Connect this browser to keefast.", "title"),
-    element("p", "You approve it in keefast, which then fills logins on request.", "muted"),
+    element(
+      "p",
+      "You approve the Pairing in keefast, which then fills sign-in forms when you ask.",
+      "muted",
+    ),
     connect,
   );
 }
@@ -86,30 +91,33 @@ async function activeTab(): Promise<number | undefined> {
   return tab?.id;
 }
 
-async function listLogins(): Promise<void> {
+async function listEntries(): Promise<void> {
   const tab = await activeTab();
   if (tab === undefined) return message("keefast can't fill this page.");
-  message("Asking keefast for this site's logins…", "If keefast asks, allow this site there.");
-  const logins = await ask({ type: "logins", tab });
-  if (!logins.ok) return failed(logins.reason);
-  if (logins.value === null) return message("keefast can't fill this page.");
-  if (logins.value.length === 0) return message("No logins for this site.");
+  message("Asking keefast for this site's Entries…", "If keefast asks, allow this site there.");
+  const entries = await ask({ type: "entries", tab });
+  if (!entries.ok) return failed(entries.reason);
+  if (entries.value === null) return message("keefast can't fill this page.");
+  if (entries.value.length === 0) return message("No Entries for this site.");
   const list = element("ul");
-  list.append(...logins.value.map((login) => loginItem(tab, login)));
+  list.append(...entries.value.map((entry) => entryItem(tab, entry)));
   show(list);
   list.querySelector("button")?.focus();
 }
 
-function loginItem(tab: number, login: LoginSummary): HTMLElement {
-  const button = element("button", "", "login");
-  button.append(element("span", login.name || login.login, "title"));
-  if (login.login) button.append(element("span", login.login, "muted"));
+function entryItem(tab: number, entry: EntrySummary): HTMLElement {
+  const button = element("button", "", "entry");
+  button.append(element("span", entry.name || entry.username, "title"));
+  if (entry.username) button.append(element("span", entry.username, "muted"));
   button.addEventListener("click", async () => {
-    const filled = await ask({ type: "fill", tab, uuid: login.uuid });
+    const filled = await ask({ type: "fill", tab, uuid: entry.uuid });
     if (filled.ok && filled.value) {
       window.close();
     } else {
-      message("Nothing was filled.", "This page has no login form, or it changed. Open the popup again.");
+      message(
+        "Nothing was filled.",
+        "This page has no login form, or it changed. Open the popup again.",
+      );
     }
   });
   const item = element("li");

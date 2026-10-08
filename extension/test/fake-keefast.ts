@@ -2,14 +2,7 @@
 // keefast does, so the client can be tested without a browser or the app.
 import nacl from "tweetnacl";
 import { decodeBase64, encodeBase64, incrementNonce } from "../src/crypto";
-import type { NativePort } from "../src/keefast";
-
-export interface FakeEntry {
-  login: string;
-  name: string;
-  password: string;
-  uuid: string;
-}
+import type { Entry, NativePort } from "../src/keefast";
 
 type Message = Record<string, unknown>;
 
@@ -19,11 +12,13 @@ export class FakeKeefast {
   /** Pairings as name and identification key. */
   pairings = new Map<string, string>();
   /** Entries by site host. */
-  entries = new Map<string, FakeEntry[]>();
+  entries = new Map<string, Entry[]>();
   /** The name the user gives the next Pairing, or undefined to deny it. */
   pairingName: string | undefined = "Chromium";
   /** Breaks the nonce of replies, as an impostor would. */
   wrongNonce = false;
+  /** Seals replies that aren't JSON. */
+  garbled = false;
   /** Holds `get-logins` replies until released, as the Access decision prompt does. */
   holdLogins = false;
   connections = 0;
@@ -51,7 +46,7 @@ export class FakeKeefast {
       if (this.wrongNonce) nonce[0] = (nonce[0]! + 7) % 256;
       const message = { ...fields, success: "true", nonce: encodeBase64(nonce), version: "2.7.10" };
       const sealed = nacl.box(
-        new TextEncoder().encode(JSON.stringify(message)),
+        new TextEncoder().encode(this.garbled ? "not json" : JSON.stringify(message)),
         nonce,
         clientKey!,
         keys.secretKey,
@@ -117,7 +112,9 @@ export class FakeKeefast {
         }
         case "test-associate": {
           const paired = this.pairings.get(message.id as string) === message.key;
-          reply(paired ? encrypted(request, { hash: "vault-hash", id: message.id }) : error(request, 8));
+          reply(
+            paired ? encrypted(request, { hash: "vault-hash", id: message.id }) : error(request, 8),
+          );
           return;
         }
         case "get-logins": {
@@ -129,7 +126,17 @@ export class FakeKeefast {
             reply(
               entries.length === 0
                 ? error(request, 15)
-                : encrypted(request, { count: entries.length, entries, hash: "vault-hash", id: "" }),
+                : encrypted(request, {
+                    count: entries.length,
+                    entries: entries.map(({ uuid, name, username, password }) => ({
+                      login: username,
+                      name,
+                      password,
+                      uuid,
+                    })),
+                    hash: "vault-hash",
+                    id: "",
+                  }),
             );
           if (this.holdLogins) this.held.push(answer);
           else answer();

@@ -22,8 +22,6 @@ export interface Pairing {
   id: string;
   /** The identification public key the extension proves itself with, Base64-encoded. */
   key: string;
-  /** The Vault's browser hash, when paired. */
-  hash: string;
 }
 
 /** Where the extension remembers its Pairings. */
@@ -33,14 +31,15 @@ export interface PairingStore {
 }
 
 /** An Entry keefast gave for a site. */
-export interface Login {
-  login: string;
-  name: string;
-  password: string;
+export interface Entry {
   uuid: string;
+  /** The Entry's title. */
+  name: string;
+  username: string;
+  password: string;
 }
 
-/** Whether the extension can fill logins, and what stands in the way. */
+/** Whether the extension can fill sign-in forms, and what stands in the way. */
 export type Status = "not-running" | "locked" | "unpaired" | "paired";
 
 export type FailureReason = "not-running" | "locked" | "denied" | "failed";
@@ -56,6 +55,9 @@ export class KeefastError extends Error {
     this.name = "KeefastError";
   }
 }
+
+const notRunning = () => new KeefastError("not-running", "keefast is not running");
+const unanswered = () => new KeefastError("failed", "keefast's reply doesn't answer the request");
 
 /** How long keefast has to answer a request that doesn't wait for the user. */
 const ANSWER_TIMEOUT_MS = 10_000;
@@ -96,7 +98,7 @@ export class KeefastClient {
   /** Whether keefast is running, unlocked, and paired with the extension. */
   async status(): Promise<Status> {
     try {
-      await this.databaseHash();
+      await this.checkUnlocked();
       for (const pairing of await this.store.load()) {
         if (await this.isPaired(pairing)) return "paired";
       }
@@ -116,14 +118,14 @@ export class KeefastClient {
   async pair(): Promise<Pairing> {
     const idKey = encodeBase64(nacl.box.keyPair().publicKey);
     // The Pairing goes to the Vault keefast deals with the browser in, which this picks.
-    await this.databaseHash();
+    await this.checkUnlocked();
     const session = await this.keyExchange();
-    const reply = await this.encrypted(
+    const reply = await this.sendEncrypted(
       "associate",
       { key: encodeBase64(session.keys.publicKey), idKey },
       { waitsForUser: true },
     );
-    const pairing = { id: String(reply.id), key: idKey, hash: String(reply.hash) };
+    const pairing = { id: String(reply.id), key: idKey };
     const others = (await this.store.load()).filter((other) => other.id !== pairing.id);
     await this.store.save([...others, pairing]);
     return pairing;
@@ -133,10 +135,10 @@ export class KeefastClient {
    * The Entries for the page at `url`, whose form submits to `submitUrl`, from the Vaults the
    * extension is paired with. keefast may ask the user first, so this waits for them.
    */
-  async logins(url: string, submitUrl?: string): Promise<Login[]> {
+  async entries(url: string, submitUrl?: string): Promise<Entry[]> {
     const pairings = await this.store.load();
     try {
-      const reply = await this.encrypted(
+      const reply = await this.sendEncrypted(
         "get-logins",
         {
           url,
@@ -145,24 +147,24 @@ export class KeefastClient {
         },
         { waitsForUser: true },
       );
-      return Array.isArray(reply.entries) ? reply.entries.map(toLogin) : [];
+      return Array.isArray(reply.entries) ? reply.entries.map(toEntry) : [];
     } catch (error) {
       if (error instanceof KeefastError && error.code === NO_LOGINS_FOUND) return [];
       throw error;
     }
   }
 
-  private async databaseHash(): Promise<string> {
+  /** Fails unless keefast is running with a Vault open. */
+  private async checkUnlocked(): Promise<void> {
     const pairings = await this.store.load();
-    const reply = await this.encrypted("get-databasehash", {
+    await this.sendEncrypted("get-databasehash", {
       connectedKeys: pairings.map(({ id }) => id),
     });
-    return String(reply.hash);
   }
 
   private async isPaired(pairing: Pairing): Promise<boolean> {
     try {
-      await this.encrypted("test-associate", { id: pairing.id, key: pairing.key });
+      await this.sendEncrypted("test-associate", { id: pairing.id, key: pairing.key });
       return true;
     } catch (error) {
       if (error instanceof KeefastError && error.reason === "failed") return false;
@@ -171,7 +173,7 @@ export class KeefastClient {
   }
 
   /** Sends an encrypted request, and opens its reply. */
-  private async encrypted(
+  private async sendEncrypted(
     action: string,
     fields: Message,
     { waitsForUser = false } = {},
@@ -191,7 +193,7 @@ export class KeefastClient {
     );
     const expected = encodeBase64(incrementNonce(nonce));
     if (reply.nonce !== expected || typeof reply.message !== "string") {
-      throw new KeefastError("failed", "keefast's reply doesn't answer the request");
+      throw unanswered();
     }
     const opened = nacl.box.open(
       decodeBase64(reply.message),
@@ -202,9 +204,9 @@ export class KeefastClient {
     if (!opened) {
       throw new KeefastError("failed", "keefast's reply can't be opened");
     }
-    const message = JSON.parse(new TextDecoder().decode(opened)) as Message;
-    if (message.nonce !== expected) {
-      throw new KeefastError("failed", "keefast's reply doesn't answer the request");
+    const message = parseMessage(opened);
+    if (message?.nonce !== expected) {
+      throw unanswered();
     }
     return message;
   }
@@ -219,8 +221,10 @@ export class KeefastClient {
         publicKey: encodeBase64(session.keys.publicKey),
         nonce: encodeBase64(nonce),
       }).then((reply) => {
-        if (reply.nonce !== encodeBase64(incrementNonce(nonce)) || typeof reply.publicKey !== "string") {
-          this.close(session, new KeefastError("failed", "keefast's key exchange failed"));
+        if (
+          reply.nonce !== encodeBase64(incrementNonce(nonce)) ||
+          typeof reply.publicKey !== "string"
+        ) {
           throw new KeefastError("failed", "keefast's key exchange failed");
         }
         session.hostKey = decodeBase64(reply.publicKey);
@@ -242,9 +246,7 @@ export class KeefastClient {
     };
     this.session = session;
     session.port.onMessage((reply) => this.receive(session, reply as Message));
-    session.port.onDisconnect(() =>
-      this.close(session, new KeefastError("not-running", "keefast is not running")),
-    );
+    session.port.onDisconnect(() => this.close(session));
     return session;
   }
 
@@ -257,7 +259,7 @@ export class KeefastClient {
     }
     const pending = [...session.pending.values()];
     session.pending.clear();
-    const reason = error ?? new KeefastError("not-running", "keefast is not running");
+    const reason = error ?? notRunning();
     pending.forEach(({ reject }) => reject(reason));
   }
 
@@ -296,6 +298,16 @@ export class KeefastClient {
   }
 }
 
+/** A decrypted message, or none if it isn't a JSON object. */
+function parseMessage(bytes: Uint8Array): Message | undefined {
+  try {
+    const message: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    return typeof message === "object" && message !== null ? (message as Message) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function protocolError(code: string): KeefastError {
   switch (code) {
     case DATABASE_NOT_OPENED:
@@ -309,11 +321,11 @@ function protocolError(code: string): KeefastError {
   }
 }
 
-function toLogin(entry: Record<string, unknown>): Login {
+function toEntry(entry: Record<string, unknown>): Entry {
   return {
-    login: String(entry.login ?? ""),
-    name: String(entry.name ?? ""),
-    password: String(entry.password ?? ""),
     uuid: String(entry.uuid ?? ""),
+    name: String(entry.name ?? ""),
+    username: String(entry.login ?? ""),
+    password: String(entry.password ?? ""),
   };
 }
