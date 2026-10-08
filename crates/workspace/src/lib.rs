@@ -802,10 +802,11 @@ impl Workspace {
             EntryScope::Group(vault, group) => {
                 return self.group(vault, group).map(|_| (vault, group));
             }
-            EntryScope::Vault(vault) => self.vault(vault),
+            EntryScope::Vault(vault) => self.readable_vault(vault),
             EntryScope::AllVaults | EntryScope::Tag(_) | EntryScope::Color(_) => {
-                match self.vaults.as_slice() {
-                    [only] => Some(only),
+                let readable: Vec<&OpenVault> = self.readable_vaults().collect();
+                match readable.as_slice() {
+                    [only] => Some(*only),
                     _ => None,
                 }
             }
@@ -981,8 +982,7 @@ impl Workspace {
     /// case, each once.
     pub fn tags(&self) -> Vec<&str> {
         let mut tags: Vec<&str> = self
-            .vaults
-            .iter()
+            .readable_vaults()
             .flat_map(|open| entries_outside_recycle_bin(&open.vault))
             .flat_map(|entry| entry.tags().iter().map(String::as_str))
             .collect();

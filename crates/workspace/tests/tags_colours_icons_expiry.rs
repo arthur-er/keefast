@@ -13,7 +13,9 @@ use keefast_core::{
 use keefast_workspace::{
     EditVaultError, EntryScope, ImportIconError, UnlockSecrets, VaultId, Workspace,
 };
-use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
+use support::{
+    FakeClipboard, FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault,
+};
 
 const START: u64 = 1_800_000_000;
 
@@ -169,6 +171,39 @@ fn tags_and_colours_have_no_vault_to_add_to_unless_one_is_open() {
     );
     assert_eq!(EntryScope::Color(EntryColor::Red).vault(), None);
     assert_eq!(EntryScope::Vault(h.work).vault(), Some(h.work));
+}
+
+#[test]
+fn a_vault_waiting_to_lock_adds_no_tags_and_takes_no_new_entries() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    h.mark(personal, "GitHub", tagged(&["private-project"]));
+    h.mark(work, "Email", tagged(&["alerts"]));
+    assert!(h.workspace.tags().contains(&"private-project"));
+
+    // The personal Vault has unsaved changes, so it waits to lock, hidden.
+    let saves = h
+        .workspace
+        .lock_vault(personal, &mut FakeClipboard::default());
+    assert!(saves.is_empty());
+    assert!(h.workspace.vault(personal).unwrap().is_locking());
+
+    assert_eq!(h.workspace.tags(), ["alerts"]);
+    assert!(
+        h.listed(EntryScope::Tag("private-project".into()))
+            .is_empty()
+    );
+    assert_eq!(
+        h.workspace.group_for_new_items(EntryScope::Vault(personal)),
+        None
+    );
+    // With the personal Vault hidden, the work Vault is the only one to add to.
+    assert_eq!(
+        h.workspace
+            .group_for_new_items(EntryScope::AllVaults)
+            .map(|(vault, _)| vault),
+        Some(work)
+    );
 }
 
 #[test]
