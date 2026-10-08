@@ -1,7 +1,9 @@
 //! keefast's desktop app: GPUI views that render Workspace state and send it commands.
 
 mod access_dialog;
+mod actions;
 mod browser_integration;
+mod clipboard;
 mod entry_editor;
 mod login_dialog;
 mod pairing_dialog;
@@ -362,6 +364,7 @@ fn main() {
         .nth(1)
         .map(|path| std::path::absolute(&path).unwrap_or_else(|_| PathBuf::from(path)));
     Application::new().run(move |cx: &mut App| {
+        actions::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
         cx.open_window(
             WindowOptions {

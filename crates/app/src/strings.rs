@@ -33,6 +33,9 @@ pub const DETAIL_PASSWORD: &str = "Password";
 pub const DETAIL_URL: &str = "URL";
 pub const DETAIL_NOTES: &str = "Notes";
 pub const UNTITLED: &str = "(untitled)";
+pub const COPIED_USERNAME: &str = "Username copied.";
+pub const COPIED_PASSWORD: &str = "Password copied.";
+pub const COPIED_CLEARS_IN: &str = "The clipboard clears in {seconds} s.";
 pub const HIDDEN_PASSWORD: &str = "••••••••";
 pub const PASSWORD_MASK_CHAR: &str = "•";
 

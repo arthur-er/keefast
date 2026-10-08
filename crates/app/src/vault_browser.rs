@@ -1,13 +1,18 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyDownEvent, PromptLevel, SharedString, Window, div, prelude::*, px, relative,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel,
+    ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
 };
 use keefast_core::{EditError, Entry, EntryFields, EntryId, Group, GroupId, TotpCode};
-use keefast_workspace::{EditVaultError, EntryScope, SaveStatus, VaultId, Workspace};
+use keefast_workspace::{CopyField, EditVaultError, EntryScope, SaveStatus, VaultId, Workspace};
 
+use crate::actions::{
+    self, CopyPassword, CopyUsername, OpenEntry, OpenVault, SaveAll, SelectFirstEntry,
+    SelectLastEntry, SelectNextEntry, SelectPreviousEntry,
+};
 use crate::browser_integration::BrowserIntegration;
+use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::saving;
 use crate::strings;
@@ -33,6 +38,11 @@ pub struct VaultBrowser {
     /// The Entry whose TOTP code was copied last, to say so until another is selected.
     totp_copied: Option<(VaultId, EntryId)>,
     error: Option<SharedString>,
+    /// What the last command did, such as copying a password.
+    notice: Option<SharedString>,
+    entry_list_scroll: ScrollHandle,
+    /// Clears what was last copied from the clipboard when its time comes.
+    clipboard_clear: Option<Task<()>>,
 }
 
 /// What the detail pane shows besides the selected Entry.
@@ -113,6 +123,9 @@ impl VaultBrowser {
             renaming: None,
             totp_copied: None,
             error: None,
+            notice: None,
+            entry_list_scroll: ScrollHandle::new(),
+            clipboard_clear: None,
         };
         browser.select(EntryScope::Vault(vault), cx);
         browser
@@ -140,6 +153,7 @@ impl VaultBrowser {
         self.selected_entry = None;
         self.detail = Detail::Entry;
         self.error = None;
+        self.notice = None;
         cx.notify();
     }
 
@@ -148,6 +162,109 @@ impl VaultBrowser {
         self.detail = Detail::Entry;
         self.totp_copied = None;
         self.error = None;
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// Selects the Entry at the position `pick` chooses in the Entry list, given the selected
+    /// Entry's position, if any, and the list's length, and scrolls it into view.
+    fn select_in_list(
+        &mut self,
+        pick: impl FnOnce(Option<usize>, usize) -> usize,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.read(cx);
+        let entries = workspace.visible_entries(self.scope);
+        if entries.is_empty() {
+            return;
+        }
+        let current = entries
+            .iter()
+            .position(|listed| Some((listed.vault, listed.entry.id())) == self.selected_entry);
+        let ix = pick(current, entries.len()).min(entries.len() - 1);
+        let (vault, entry) = (entries[ix].vault, entries[ix].entry.id());
+        self.select_entry(vault, entry, cx);
+        self.entry_list_scroll.scroll_to_item(ix);
+    }
+
+    fn select_next(&mut self, _: &SelectNextEntry, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_in_list(|current, _| current.map_or(0, |ix| ix + 1), cx);
+    }
+
+    fn select_previous(&mut self, _: &SelectPreviousEntry, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_in_list(
+            |current, len| current.map_or(len - 1, |ix| ix.saturating_sub(1)),
+            cx,
+        );
+    }
+
+    fn select_first(&mut self, _: &SelectFirstEntry, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_in_list(|_, _| 0, cx);
+    }
+
+    fn select_last(&mut self, _: &SelectLastEntry, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_in_list(|_, len| len - 1, cx);
+    }
+
+    fn open_selected(&mut self, _: &OpenEntry, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((vault, entry)) = self.selected_entry {
+            self.open_editor(EditTarget::Existing(vault, entry), window, cx);
+        }
+    }
+
+    fn copy_username(&mut self, _: &CopyUsername, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy(CopyField::Username, cx);
+    }
+
+    fn copy_password(&mut self, _: &CopyPassword, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy(CopyField::Password, cx);
+    }
+
+    /// Copies a field of the selected Entry, and clears it from the clipboard when its time
+    /// comes.
+    fn copy(&mut self, field: CopyField, cx: &mut Context<Self>) {
+        let Some((vault, entry)) = self.selected_entry else {
+            return;
+        };
+        let copied = self.workspace.update(cx, |workspace, cx| {
+            workspace
+                .copy_field(&mut AppClipboard(cx), vault, entry, field)
+                .map(|()| workspace.clipboard_clears_in())
+        });
+        let Ok(clears_in) = copied else {
+            self.error = Some(strings::ERROR_NOT_FOUND.into());
+            cx.notify();
+            return;
+        };
+        let copied = match field {
+            CopyField::Username => strings::COPIED_USERNAME,
+            CopyField::Password => strings::COPIED_PASSWORD,
+        };
+        self.notice = Some(match clears_in {
+            Some(wait) => {
+                // Rounded up: a moment has passed since copying.
+                let seconds = wait.as_secs_f64().ceil().to_string();
+                let clears = strings::COPIED_CLEARS_IN.replace("{seconds}", &seconds);
+                format!("{copied} {clears}").into()
+            }
+            None => copied.into(),
+        });
+        self.error = None;
+        // A new copy replaces the clear waiting for the last one.
+        let workspace = self.workspace.clone();
+        self.clipboard_clear = Some(cx.spawn(async move |_, cx| {
+            while let Ok(Some(wait)) =
+                workspace.read_with(cx, |workspace, _| workspace.clipboard_clears_in())
+            {
+                cx.background_executor().timer(wait).await;
+                let cleared = workspace.update(cx, |workspace, cx| {
+                    workspace.clear_clipboard_if_due(&mut AppClipboard(cx))
+                });
+                if cleared.is_err() {
+                    break;
+                }
+            }
+        }));
         cx.notify();
     }
 
@@ -431,20 +548,6 @@ impl VaultBrowser {
         self.integration.update(cx, |integration, cx| {
             integration.set_enabled(!integration.enabled(cx), cx)
         });
-    }
-
-    fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        if !keystroke.modifiers.secondary() {
-            return;
-        }
-        match keystroke.key.as_str() {
-            "s" => self.save_all(cx),
-            "o" => cx.emit(OpenAnotherVault),
-            "t" => self.copy_totp(cx),
-            _ => return,
-        }
-        cx.stop_propagation();
     }
 
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -791,6 +894,7 @@ impl VaultBrowser {
                     .id("entry-list")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.entry_list_scroll)
                     .when(rows.is_empty(), |this| {
                         this.p_3()
                             .text_color(theme.muted)
@@ -815,6 +919,9 @@ impl VaultBrowser {
             .p_5()
             .when_some(self.error.clone(), |this, error| {
                 this.child(div().text_sm().text_color(theme.error).child(error))
+            })
+            .when_some(self.notice.clone(), |this, notice| {
+                this.child(div().text_sm().text_color(theme.muted).child(notice))
             });
 
         match &self.detail {
@@ -1050,8 +1157,17 @@ impl Render for VaultBrowser {
         let theme = Theme::for_window(window);
         div()
             .id("vault-browser")
+            .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::open_selected))
+            .on_action(cx.listener(Self::copy_username))
+            .on_action(cx.listener(Self::copy_password))
+            .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
+            .on_action(cx.listener(|_, _: &OpenVault, _, cx| cx.emit(OpenAnotherVault)))
             .size_full()
             .flex()
             .bg(theme.background)

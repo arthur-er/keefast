@@ -4,6 +4,7 @@
 mod atomic_file;
 mod browser;
 mod browser_hosts;
+mod clipboard;
 mod clock;
 mod config;
 mod generator;
@@ -11,6 +12,9 @@ mod storage;
 
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
+
+use secrecy::ExposeSecret;
 
 use keefast_core::{
     CompositeKey, EditError, Entry, EntryFields, EntryId, GeneratorError, Group, GroupId,
@@ -26,6 +30,7 @@ pub use browser::{
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,
 };
+pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore};
 pub use generator::{GeneratorMode, GeneratorSettings};
@@ -211,6 +216,7 @@ pub struct Workspace {
     browser_hosts: Option<Arc<dyn BrowserHosts>>,
     /// Where the native host was last registered, or why it couldn't be.
     browser_hosts_status: Option<io::Result<Vec<Browser>>>,
+    clipboard: clipboard::PendingClear,
 }
 
 impl Workspace {
@@ -234,6 +240,7 @@ impl Workspace {
             browser: Default::default(),
             browser_hosts: None,
             browser_hosts_status: None,
+            clipboard: Default::default(),
         }
     }
 
@@ -357,6 +364,44 @@ impl Workspace {
         recent.insert(0, location.clone());
         recent.truncate(Self::MAX_RECENT_VAULTS);
         self.save_config();
+    }
+
+    /// Copies an Entry's username or password to the clipboard, to be cleared after the
+    /// configured wait (see [`Self::clear_clipboard_if_due`]).
+    pub fn copy_field(
+        &mut self,
+        clipboard: &mut dyn Clipboard,
+        vault: VaultId,
+        entry: EntryId,
+        field: CopyField,
+    ) -> Result<(), CopyError> {
+        let clear_at = self
+            .config
+            .clipboard_clear_after
+            .map(|after| self.clock.now() + after);
+        let entry = self
+            .vaults
+            .iter()
+            .find(|open| open.id == vault)
+            .and_then(|open| open.vault.entry(entry))
+            .ok_or(CopyError::NotFound)?;
+        let text = match field {
+            CopyField::Username => entry.username(),
+            CopyField::Password => entry.password().expose_secret(),
+        };
+        self.clipboard.copy(clipboard, text, clear_at);
+        Ok(())
+    }
+
+    /// How long until what keefast last copied is cleared from the clipboard, if it will be.
+    pub fn clipboard_clears_in(&self) -> Option<Duration> {
+        self.clipboard.clears_in(self.clock.now())
+    }
+
+    /// Clears what keefast last copied from the clipboard once its wait is over, unless
+    /// something else has been copied since. Call it when [`Self::clipboard_clears_in`] says.
+    pub fn clear_clipboard_if_due(&mut self, clipboard: &mut dyn Clipboard) {
+        self.clipboard.clear_if_due(clipboard, self.clock.now());
     }
 
     /// Reads, decrypts and adds a Vault in one blocking call.

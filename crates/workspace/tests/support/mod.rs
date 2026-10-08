@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keefast_workspace::{
-    AppConfig, Browser, BrowserHosts, Clock, ConfigError, ConfigStore, StorageError,
+    AppConfig, Browser, BrowserHosts, Clipboard, Clock, ConfigError, ConfigStore, StorageError,
     StorageProvider, VaultLocation,
 };
 
@@ -88,6 +88,31 @@ impl FakeClock {
 impl Clock for FakeClock {
     fn now(&self) -> SystemTime {
         *self.0.lock().unwrap()
+    }
+}
+
+/// A clipboard that holds text in memory, like the system clipboard would.
+#[derive(Default)]
+pub struct FakeClipboard(Option<String>);
+
+impl FakeClipboard {
+    pub fn text(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
+    /// Something else puts `text` on the clipboard, as when the user copies elsewhere.
+    pub fn copy_elsewhere(&mut self, text: &str) {
+        self.0 = Some(text.to_owned());
+    }
+}
+
+impl Clipboard for FakeClipboard {
+    fn read_text(&self) -> Option<String> {
+        self.0.clone()
+    }
+
+    fn write_text(&mut self, text: &str) {
+        self.0 = Some(text.to_owned());
     }
 }
 

@@ -4,6 +4,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,7 @@ use crate::atomic_file;
 use crate::generator::{GeneratorMode, GeneratorSettings};
 use crate::storage::VaultLocation;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     /// Vault files opened lately, most recent first.
     pub recent_vaults: Vec<VaultLocation>,
@@ -23,6 +24,25 @@ pub struct AppConfig {
     pub generator: GeneratorSettings,
     /// The Vault file the user last saved a captured login to, offered first next time.
     pub last_login_vault: Option<VaultLocation>,
+    /// How long copied usernames and passwords stay on the clipboard; `None` keeps them.
+    pub clipboard_clear_after: Option<Duration>,
+}
+
+impl AppConfig {
+    pub const DEFAULT_CLIPBOARD_CLEAR_AFTER: Duration = Duration::from_secs(30);
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            recent_vaults: Vec::new(),
+            autosave: false,
+            browser_integration: false,
+            generator: GeneratorSettings::default(),
+            last_login_vault: None,
+            clipboard_clear_after: Some(Self::DEFAULT_CLIPBOARD_CLEAR_AFTER),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -92,14 +112,22 @@ impl ConfigStore for FileConfigStore {
 /// provider from a newer version, say) is skipped rather than failing the whole file. Generator
 /// settings this version doesn't understand (a new mode, say) don't fail the file either: the
 /// generator goes back to its defaults.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct ConfigFile {
     autosave: bool,
     browser_integration: bool,
+    /// 0 keeps copied secrets on the clipboard.
+    clipboard_clear_seconds: u64,
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
+}
+
+impl Default for ConfigFile {
+    fn default() -> Self {
+        Self::from(&AppConfig::default())
+    }
 }
 
 /// A Vault file's location, tagged with its Storage provider:
@@ -126,6 +154,10 @@ impl From<ConfigFile> for AppConfig {
                 .map(GeneratorSettings::from)
                 .unwrap_or_default(),
             last_login_vault: file.last_login_vault.and_then(read_location),
+            clipboard_clear_after: match file.clipboard_clear_seconds {
+                0 => None,
+                seconds => Some(Duration::from_secs(seconds)),
+            },
         }
     }
 }
@@ -135,6 +167,9 @@ impl From<&AppConfig> for ConfigFile {
         Self {
             autosave: config.autosave,
             browser_integration: config.browser_integration,
+            clipboard_clear_seconds: config
+                .clipboard_clear_after
+                .map_or(0, |after| after.as_secs().max(1)),
             recent_vaults: config
                 .recent_vaults
                 .iter()

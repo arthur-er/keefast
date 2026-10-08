@@ -4,6 +4,7 @@ use gpui::{
 };
 use zeroize::Zeroizing;
 
+use crate::actions;
 use crate::strings;
 use crate::theme::Theme;
 
@@ -166,6 +167,7 @@ impl Render for TextField {
 
         div()
             .id("text-field")
+            .key_context(actions::TEXT_FIELD_CONTEXT)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .w_full()

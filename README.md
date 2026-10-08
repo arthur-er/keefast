@@ -36,6 +36,13 @@ nix develop .#corpus -c scripts/make-fixtures.sh
 nix develop .#corpus -c scripts/check-interop.sh
 ```
 
+## Keyboard
+
+In the Entry list, Up/Down (Home/End) select an Entry and Enter opens it for editing.
+Ctrl+B copies the selected Entry's username and Ctrl+C its password. keefast clears what it
+copied from the clipboard after 30 seconds, unless you have copied something else since; set
+`clipboard_clear_seconds` in `keefast/config.toml` to change the wait (0 never clears).
+
 ## Browser integration
 
 keefast speaks the KeePassXC-Browser protocol (ADR 0003) with its Companion extension, and the
