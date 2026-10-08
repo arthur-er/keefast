@@ -155,7 +155,7 @@ impl EntryEditor {
     fn toggle_expires(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.expires = !self.expires;
         if self.expires {
-            let today = Timestamp::from_system_time(std::time::SystemTime::now()).to_date();
+            let today = self.workspace.read(cx).now().to_date();
             self.expiry_date.update(cx, |field, cx| {
                 if field.text().trim().is_empty() {
                     field.set_text(&today, cx);
@@ -314,11 +314,10 @@ impl EntryEditor {
         if !self.expires {
             return Ok(None);
         }
-        let date = self.expiry_date.read(cx).text().trim();
-        match self.original_expiry {
-            Some(original) if original.to_date() == date => Ok(Some(original)),
-            _ => Timestamp::parse_date(date).map(Some).ok_or(()),
-        }
+        let date = self.expiry_date.read(cx).text();
+        Timestamp::expiry_on(date, self.original_expiry)
+            .map(Some)
+            .ok_or(())
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {

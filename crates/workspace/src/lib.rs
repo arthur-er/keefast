@@ -857,53 +857,37 @@ impl Workspace {
         search: &EntrySearch,
         sort: EntrySort,
     ) -> Vec<ListedEntry<'_>> {
-        let entries: Vec<ListedEntry<'_>> = match scope {
-            EntryScope::Tag(_) | EntryScope::Color(_) => {
-                let marked = |entry: &Entry| match &scope {
-                    EntryScope::Tag(tag) => entry.tags().contains(tag),
-                    EntryScope::Color(color) => entry.color() == Some(*color),
-                    _ => true,
-                };
-                self.readable_vaults()
-                    .flat_map(|open| {
-                        entries_outside_recycle_bin(&open.vault)
-                            .filter(|entry| marked(entry))
-                            .map(|entry| ListedEntry {
-                                vault: open.id,
-                                entry,
-                            })
-                    })
-                    .collect()
-            }
-            EntryScope::AllVaults => self.entries_under(
-                self.readable_vaults()
-                    .map(|open| (open.id, open.vault.root()))
-                    .collect(),
-            ),
-            EntryScope::Vault(vault) => self.entries_under(
-                self.readable_vault(vault)
-                    .map(|open| (vault, open.vault.root()))
-                    .into_iter()
-                    .collect(),
-            ),
-            EntryScope::Group(vault, group) => self.entries_under(
-                self.group(vault, group)
-                    .map(|group| (vault, group))
-                    .into_iter()
-                    .collect(),
-            ),
+        let entries = match scope {
+            EntryScope::Tag(tag) => self.marked_entries(|entry| entry.tags().contains(&tag)),
+            EntryScope::Color(color) => self.marked_entries(|entry| entry.color() == Some(color)),
+            EntryScope::AllVaults => self
+                .readable_vaults()
+                .flat_map(|open| listed(open.id, open.vault.root()))
+                .collect(),
+            EntryScope::Vault(vault) => self
+                .readable_vault(vault)
+                .into_iter()
+                .flat_map(|open| listed(vault, open.vault.root()))
+                .collect(),
+            EntryScope::Group(vault, group) => self
+                .group(vault, group)
+                .into_iter()
+                .flat_map(|group| listed(vault, group))
+                .collect(),
         };
         search.rank(entries, |listed| listed.entry, sort)
     }
 
-    /// Every Entry in the Groups, including those in their subgroups.
-    fn entries_under<'a>(&'a self, groups: Vec<(VaultId, &'a Group)>) -> Vec<ListedEntry<'a>> {
-        groups
-            .into_iter()
-            .flat_map(|(vault, group)| {
-                group
-                    .all_entries()
-                    .map(move |entry| ListedEntry { vault, entry })
+    /// The Entries outside the Recycle Bin of every open Vault that `marked` picks.
+    fn marked_entries(&self, marked: impl Fn(&Entry) -> bool) -> Vec<ListedEntry<'_>> {
+        self.readable_vaults()
+            .flat_map(|open| {
+                entries_outside_recycle_bin(&open.vault)
+                    .filter(|entry| marked(entry))
+                    .map(|entry| ListedEntry {
+                        vault: open.id,
+                        entry,
+                    })
             })
             .collect()
     }
@@ -1023,19 +1007,18 @@ impl Workspace {
             return Err(EditVaultError::VaultNotOpen.into());
         }
         let png = read_icon(path).map_err(ImportIconError::Unreadable)?;
-        if let Some(icon) = self.vault(vault).and_then(|open| {
-            open.vault
-                .custom_icons()
-                .iter()
-                .find(|icon| icon.data() == png)
-        }) {
-            return Ok(icon.id());
+        // Not an edit when the Vault already has the image, so it isn't left with unsaved changes.
+        let existing = self
+            .vault(vault)
+            .and_then(|open| open.vault.custom_icon_with(&png));
+        if let Some(icon) = existing {
+            return Ok(icon);
         }
         Ok(self.edit(vault, |vault, _| vault.add_custom_icon(&png))?)
     }
 
     /// The time at the Workspace's clock.
-    fn now(&self) -> Timestamp {
+    pub fn now(&self) -> Timestamp {
         Timestamp::from_system_time(self.clock.now())
     }
 
@@ -1187,6 +1170,13 @@ impl Workspace {
             autosave && open.has_unsaved_changes() && open.failed_save_at != Some(open.edits)
         })
     }
+}
+
+/// Every Entry in `group` and its subgroups, listed as from `vault`.
+fn listed(vault: VaultId, group: &Group) -> impl Iterator<Item = ListedEntry<'_>> {
+    group
+        .all_entries()
+        .map(move |entry| ListedEntry { vault, entry })
 }
 
 /// The Entries of a Vault, except those in its Recycle Bin.

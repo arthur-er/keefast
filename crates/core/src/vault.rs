@@ -406,6 +406,7 @@ impl Entry {
         self.color
     }
 
+    /// The icon the Entry is shown with.
     pub fn icon(&self) -> EntryIcon {
         self.icon
     }

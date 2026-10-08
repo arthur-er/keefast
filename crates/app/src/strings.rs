@@ -110,7 +110,7 @@ pub const EXPIRED_BADGE: &str = "Expired";
 pub const ERROR_EXPIRY_DATE: &str = "Type the expiry date as YYYY-MM-DD, such as 2027-01-31.";
 pub const ERROR_ICON_NOT_FOUND: &str = "That icon is no longer in this Vault.";
 pub const ERROR_ICON_NOT_PNG: &str = "An icon must be a PNG image.";
-pub const ERROR_ICON_TOO_LARGE: &str = "That image is too large for an icon (256 KB at most).";
+pub const ERROR_ICON_TOO_LARGE: &str = "That image is too large for an icon.";
 pub const ERROR_ICON_UNREADABLE: &str = "The image could not be read.";
 pub const ERROR_PICKER: &str = "The file picker could not be opened.";
 

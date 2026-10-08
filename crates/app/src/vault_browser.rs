@@ -135,12 +135,13 @@ impl VaultBrowser {
         })
         .detach();
         cx.observe(&integration, |_, _, cx| cx.notify()).detach();
-        // Keeps the shown TOTP code and its countdown current.
+        // Keeps the shown TOTP code and its countdown current, and flags Entries as they
+        // expire within a minute.
         cx.spawn(async move |this, cx| {
-            loop {
+            for second in 1u64.. {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let shown = this.update(cx, |this, cx| {
-                    if this.shows_totp(cx) {
+                    if this.shows_totp(cx) || second % 60 == 0 {
                         cx.notify();
                     }
                 });

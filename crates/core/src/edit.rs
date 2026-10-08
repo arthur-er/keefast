@@ -129,7 +129,7 @@ impl EntryFields {
     }
 
     /// Whether these fields are the Entry's, as far as keefast edits them.
-    fn are_those_of(&self, entry: &Entry) -> bool {
+    fn match_entry(&self, entry: &Entry) -> bool {
         let current = EntryFields::from(entry);
         current.values() == self.values()
             && current.custom_fields == self.custom_fields
@@ -215,7 +215,7 @@ impl Vault {
         push(&mut entry, auto_type);
         push(&mut entry, Element::new("History"));
         // The new Entry has no tags or colour, the default icon, and doesn't expire.
-        update_appearance(&mut entry, &EntryFields::default(), fields);
+        update_marks_and_expiry(&mut entry, &EntryFields::default(), fields);
 
         insert_entry(self.at_mut(&path), entry);
         self.refresh();
@@ -234,7 +234,7 @@ impl Vault {
         let path = self.path_to(Kind::Entry, entry.0)?;
         fields.check(self)?;
         let current = self.entry(entry).expect("the path leads to it");
-        if fields.are_those_of(current) {
+        if fields.match_entry(current) {
             return Ok(());
         }
         let current = EntryFields::from(current);
@@ -245,7 +245,7 @@ impl Vault {
             set_string(element, key, value, protect);
         }
         set_custom_fields(element, &fields.custom_fields);
-        update_appearance(element, &current, fields);
+        update_marks_and_expiry(element, &current, fields);
         set_time(element, "LastModificationTime", now);
         set_time(element, "LastAccessTime", now);
         self.refresh();
@@ -651,9 +651,9 @@ pub(crate) fn set_value(element: &mut Element, value: &str, protect: bool) {
     }
 }
 
-/// Changes an Entry element's tags, colour, icon and expiry from `current` to `new`, leaving
+/// Changes an Entry element's marks (tags, colour and icon) and expiry from `current` to `new`, leaving
 /// alone those that don't change, so they stay as the client that wrote them put them.
-fn update_appearance(entry: &mut Element, current: &EntryFields, new: &EntryFields) {
+fn update_marks_and_expiry(entry: &mut Element, current: &EntryFields, new: &EntryFields) {
     let tags = new.tags();
     if current.tags != tags {
         set_value(

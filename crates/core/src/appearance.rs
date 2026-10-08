@@ -1,4 +1,4 @@
-//! How an Entry looks in the list: its tags, colour and icon.
+//! How an Entry is marked to find it in the list: its tags, colour and icon.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -118,6 +118,7 @@ pub const MAX_CUSTOM_ICON_BYTES: usize = 256 * 1024;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
+/// A custom icon of a Vault, known by its UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CustomIconId(pub(crate) Uuid);
 
@@ -212,8 +213,15 @@ impl Vault {
         &self.custom_icons
     }
 
+    /// The Vault's custom icon `id`, if it has it.
     pub fn custom_icon(&self, id: CustomIconId) -> Option<&CustomIcon> {
         self.custom_icons.iter().find(|icon| icon.id == id)
+    }
+
+    /// The custom icon the Vault already has for this image, if any.
+    pub fn custom_icon_with(&self, png: &[u8]) -> Option<CustomIconId> {
+        let icon = self.custom_icons.iter().find(|icon| icon.data == png)?;
+        Some(icon.id)
     }
 
     /// Adds a PNG image to the Vault's custom icons, for Entries to use. An image the Vault
@@ -225,8 +233,8 @@ impl Vault {
         if png.len() > MAX_CUSTOM_ICON_BYTES {
             return Err(EditError::IconTooLarge);
         }
-        if let Some(icon) = self.custom_icons.iter().find(|icon| icon.data == png) {
-            return Ok(icon.id);
+        if let Some(icon) = self.custom_icon_with(png) {
+            return Ok(icon);
         }
         let uuid = crate::edit::new_uuid();
         let mut icon = Element::new("Icon");

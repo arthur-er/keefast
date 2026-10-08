@@ -70,6 +70,15 @@ impl Timestamp {
             .then(|| Self::from_unix_seconds(days * 86_400))
     }
 
+    /// The expiry for a date typed as `2026-10-07`: `current`, to the second, when it falls on
+    /// that date, so an expiry set by another client keeps its time; else the start of the date.
+    pub fn expiry_on(date: &str, current: Option<Self>) -> Option<Self> {
+        match current {
+            Some(current) if current.to_date() == date.trim() => Some(current),
+            _ => Self::parse_date(date),
+        }
+    }
+
     pub(crate) fn decode(text: &str) -> Option<Self> {
         let bytes = BASE64.decode(text.trim()).ok()?;
         Some(Self(i64::from_le_bytes(bytes.try_into().ok()?)))
@@ -145,6 +154,24 @@ mod tests {
         ] {
             assert_eq!(Timestamp::parse_date(invalid), None, "{invalid}");
         }
+    }
+
+    #[test]
+    fn an_expiry_keeps_its_time_on_its_own_date() {
+        let current = Timestamp::from_unix_seconds(1_791_414_922);
+        assert_eq!(
+            Timestamp::expiry_on("2026-10-07", Some(current)),
+            Some(current)
+        );
+        assert_eq!(
+            Timestamp::expiry_on("2026-10-08", Some(current)),
+            Timestamp::parse_date("2026-10-08")
+        );
+        assert_eq!(
+            Timestamp::expiry_on("2026-10-07", None),
+            Timestamp::parse_date("2026-10-07")
+        );
+        assert_eq!(Timestamp::expiry_on("soon", Some(current)), None);
     }
 
     #[test]
