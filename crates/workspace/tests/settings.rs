@@ -1,5 +1,5 @@
 //! The settings screen's settings: the theme, lock and clipboard timings and favicon download,
-//! changed through the Workspace and kept in the app config.
+//! changed through the Workspace and kept in the app config, and the Vault browser's pane widths.
 
 mod support;
 
@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_workspace::{
-    AppConfig, ConfigStore, CopyField, EntryScope, FileConfigStore, ThemeSetting, UnlockSecrets,
-    Workspace,
+    AppConfig, ConfigStore, CopyField, EntryScope, FileConfigStore, PaneWidths, ThemeSetting,
+    UnlockSecrets, Workspace,
 };
 use support::{
     FakeClipboard, FakeClock, FakeConfigStore, FakeStorage, KEEPASSXC_KDBX4, PASSWORD,
@@ -150,4 +150,49 @@ fn favicon_download_is_off_until_turned_on() {
 
     assert!(workspace.downloads_favicons());
     assert!(store.saved().unwrap().download_favicons);
+}
+
+#[test]
+fn pane_widths_are_remembered_as_dragged() {
+    let store = Arc::new(FakeConfigStore::default());
+    let (mut workspace, _) = workspace_with(store.clone());
+    assert_eq!(workspace.pane_widths(), PaneWidths::default());
+
+    let widths = PaneWidths {
+        sidebar: 260,
+        entry_list: 400,
+    };
+    workspace.set_pane_widths(widths);
+
+    assert_eq!(workspace.pane_widths(), widths);
+    assert_eq!(store.saved().unwrap().pane_widths, widths);
+}
+
+#[test]
+fn pane_widths_are_kept_in_the_config_file() {
+    assert_eq!(load("").pane_widths, PaneWidths::default());
+    assert_eq!(
+        load("sidebar_width = 260\nentry_list_width = 400\n").pane_widths,
+        PaneWidths {
+            sidebar: 260,
+            entry_list: 400,
+        }
+    );
+    // A width of 0 is the default.
+    assert_eq!(
+        load("sidebar_width = 0\n").pane_widths,
+        PaneWidths::default()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileConfigStore::new(dir.path().join("config.toml"));
+    let config = AppConfig {
+        pane_widths: PaneWidths {
+            sidebar: 180,
+            entry_list: 500,
+        },
+        ..AppConfig::default()
+    };
+    store.save(&config).unwrap();
+    assert_eq!(store.load().unwrap(), config);
 }
