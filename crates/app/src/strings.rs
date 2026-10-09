@@ -73,7 +73,6 @@ pub const COPIED_CLEARS_IN: &str = "The clipboard clears in {seconds} s.";
 pub const HIDDEN_PASSWORD: &str = "••••••••";
 pub const PASSWORD_MASK_CHAR: &str = "•";
 
-pub const CARET: &str = "▏";
 pub const CANCEL: &str = "Cancel";
 pub const FIELD_TITLE: &str = "Title";
 pub const EDITOR_DONE: &str = "Done";

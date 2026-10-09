@@ -99,7 +99,8 @@ pub fn bind_keys(cx: &mut App) {
     let list_without_fields =
         format!("{CONTEXT} && !{TEXT_FIELD_CONTEXT} && !{CUSTOM_FIELD_CONTEXT}");
     let list_without_fields = Some(list_without_fields.as_str());
-    let custom_field = format!("{CONTEXT} && {CUSTOM_FIELD_CONTEXT}");
+    // Not while its value is being changed in place, where they type and copy text.
+    let custom_field = format!("{CONTEXT} && {CUSTOM_FIELD_CONTEXT} && !{TEXT_FIELD_CONTEXT}");
     let custom_field = Some(custom_field.as_str());
     let anywhere = Some(CONTEXT);
     let search = format!("{CONTEXT} && {SEARCH_CONTEXT}");
