@@ -417,8 +417,8 @@ impl TextField {
             }
             "enter" => cx.emit(TextFieldEvent::Submit),
             "escape" => cx.emit(TextFieldEvent::Cancel),
-            "tab" if modifiers.shift => window.focus_prev(),
-            "tab" => window.focus_next(),
+            "tab" if modifiers.shift => window.focus_prev(cx),
+            "tab" => window.focus_next(cx),
             "backspace" => {
                 if selection.is_empty() {
                     self.anchor = if by_word {
@@ -624,7 +624,7 @@ mod tests {
         });
         cx.update(|window, cx| {
             window.activate_window();
-            window.focus(&field.focus_handle(cx));
+            window.focus(&field.focus_handle(cx), cx);
         });
         cx.run_until_parked();
         (field, cx)

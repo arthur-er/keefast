@@ -88,7 +88,7 @@ impl CommandPalette {
             }
         })
         .detach();
-        window.focus(&query.focus_handle(cx));
+        window.focus(&query.focus_handle(cx), cx);
 
         let mut palette = Self {
             focus,
@@ -108,7 +108,7 @@ impl CommandPalette {
     /// Closes the palette and gives the focus back to what had it before.
     pub fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(previous) = &self.previous {
-            window.focus(previous);
+            window.focus(previous, cx);
         }
         self.close(cx);
     }
@@ -476,7 +476,10 @@ mod tests {
         cx.update(|window, cx| {
             // Focus changes are reported only in the active window.
             window.activate_window();
-            window.focus(&view.read(cx).focus);
+            {
+                let focus = view.read(cx).focus.clone();
+                window.focus(&focus, cx)
+            };
         });
         cx.run_until_parked();
         (view, cx)
@@ -629,7 +632,10 @@ mod tests {
     fn closes_when_something_else_takes_the_focus(cx: &mut TestAppContext) {
         let (view, cx) = open_view(cx);
         cx.simulate_keystrokes("ctrl-shift-p");
-        cx.update(|window, cx| window.focus(&view.read(cx).focus));
+        cx.update(|window, cx| {
+            let focus = view.read(cx).focus.clone();
+            window.focus(&focus, cx)
+        });
         cx.run_until_parked();
         assert!(view.read_with(cx, |view, _| view.palette.is_none()));
     }

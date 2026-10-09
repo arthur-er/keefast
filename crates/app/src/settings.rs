@@ -146,7 +146,7 @@ impl SettingsView {
             cx.emit(SettingsChangeVaultKey(vault))
         })
         .detach();
-        window.focus(&settings.read(cx).initial_focus(cx));
+        window.focus(&settings.read(cx).initial_focus(cx), cx);
         self.page = Page::Vault(settings);
         self.scroll.set_offset(gpui::Point::default());
         cx.notify();
@@ -156,7 +156,7 @@ impl SettingsView {
     fn show_section(&mut self, section: usize, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.page, Page::Vault(_)) {
             self.page = Page::General;
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
         }
         // The page's header comes before the sections.
         self.scroll.scroll_to_top_of_item(section + 1);
@@ -262,9 +262,9 @@ impl SettingsView {
         let keystroke = &event.keystroke;
         if keystroke.key == "tab" && !keystroke.modifiers.secondary() {
             if keystroke.modifiers.shift {
-                window.focus_prev();
+                window.focus_prev(cx);
             } else {
-                window.focus_next();
+                window.focus_next(cx);
             }
             cx.stop_propagation();
         }

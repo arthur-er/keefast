@@ -505,7 +505,7 @@ impl VaultBrowser {
     }
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.search.focus_handle(cx));
+        window.focus(&self.search.focus_handle(cx), cx);
     }
 
     /// A new search selects its best match, unless an Entry is being edited or set up.
@@ -546,11 +546,11 @@ impl VaultBrowser {
         match event {
             TextFieldEvent::Submit => {
                 self.select_in_list(|current, _| current.unwrap_or(0), cx);
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             TextFieldEvent::Cancel => {
                 if self.search.read(cx).text().is_empty() {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                 }
                 self.search.update(cx, |search, cx| search.set_text("", cx));
             }
@@ -699,16 +699,13 @@ impl VaultBrowser {
         let workspace = self.workspace.clone();
         self.clipboard_clear = clears_in.map(|_| {
             cx.spawn(async move |this, cx| {
-                while let Ok(Some(wait)) =
+                while let Some(wait) =
                     workspace.read_with(cx, |workspace, _| workspace.clipboard_clears_in())
                 {
                     cx.background_executor().timer(wait).await;
-                    let cleared = workspace.update(cx, |workspace, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         workspace.clear_clipboard_if_due(&mut AppClipboard(cx))
                     });
-                    if cleared.is_err() {
-                        return;
-                    }
                 }
                 // The notice about the copy is out of date now.
                 this.update(cx, |this, cx| {
@@ -761,7 +758,7 @@ impl VaultBrowser {
         let setup = cx.new(|cx| TotpSetup::new(totp.as_ref(), &title, &username, cx));
         cx.subscribe_in(&setup, window, Self::on_totp_setup_event)
             .detach();
-        window.focus(&setup.focus_handle(cx));
+        window.focus(&setup.focus_handle(cx), cx);
         self.detail = Detail::Totp {
             setup,
             vault,
@@ -794,7 +791,7 @@ impl VaultBrowser {
             }
             TotpSetupEvent::Cancel => self.detail = Detail::Entry,
         }
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -815,7 +812,7 @@ impl VaultBrowser {
         let history = cx.new(|cx| EntryHistory::new(workspace, vault, entry, cx));
         cx.subscribe_in(&history, window, Self::on_history_event)
             .detach();
-        window.focus(&history.focus_handle(cx));
+        window.focus(&history.focus_handle(cx), cx);
         self.detail = Detail::History {
             view: history,
             vault,
@@ -868,7 +865,7 @@ impl VaultBrowser {
             }
             EntryHistoryEvent::Close => self.detail = Detail::Entry,
         }
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -969,7 +966,7 @@ impl VaultBrowser {
         let modifiers = keystroke.modifiers;
         match keystroke.key.as_str() {
             "space" if !modifiers.modified() => self.toggle_field_reveal(index, cx),
-            "escape" => window.focus(&self.focus),
+            "escape" => window.focus(&self.focus, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -1045,7 +1042,7 @@ impl VaultBrowser {
                 TextFieldEvent::Submit => this.finish_inline_edit(cx),
                 TextFieldEvent::Cancel => this.inline_edit = None,
             }
-            window.focus(&this.focus);
+            window.focus(&this.focus, cx);
             cx.notify();
         })
         .detach();
@@ -1053,7 +1050,7 @@ impl VaultBrowser {
         let blur = cx.on_blur(&input.focus_handle(cx), window, |this, _, cx| {
             this.finish_inline_edit(cx)
         });
-        window.focus(&input.focus_handle(cx));
+        window.focus(&input.focus_handle(cx), cx);
         self.inline_edit = Some(InlineEdit {
             vault,
             entry,
@@ -1166,7 +1163,7 @@ impl VaultBrowser {
         let editor = cx.new(|cx| EntryEditor::new(&fields, vault, self.workspace.clone(), cx));
         cx.subscribe_in(&editor, window, Self::on_editor_event)
             .detach();
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
         self.detail = Detail::Editing { editor, target };
         self.error = None;
         cx.notify();
@@ -1214,8 +1211,8 @@ impl VaultBrowser {
         }
         // A refused save leaves the form open to fix what the error says.
         match &self.detail {
-            Detail::Editing { editor, .. } => window.focus(&editor.focus_handle(cx)),
-            _ => window.focus(&self.focus),
+            Detail::Editing { editor, .. } => window.focus(&editor.focus_handle(cx), cx),
+            _ => window.focus(&self.focus, cx),
         }
         cx.notify();
     }
@@ -1257,11 +1254,11 @@ impl VaultBrowser {
                 this.edit(cx, |workspace| workspace.rename_group(vault, group, &name));
             }
             this.renaming = None;
-            window.focus(&this.focus);
+            window.focus(&this.focus, cx);
             cx.notify();
         })
         .detach();
-        window.focus(&field.focus_handle(cx));
+        window.focus(&field.focus_handle(cx), cx);
         self.renaming = Some((vault, group, field));
         cx.notify();
     }
@@ -1347,11 +1344,11 @@ impl VaultBrowser {
         let form = cx.new(|cx| VaultKeyForm::for_vault(self.workspace.clone(), vault, cx));
         cx.subscribe_in(&form, window, |this, _, _: &VaultKeyEvent, window, cx| {
             this.detail = Detail::Entry;
-            window.focus(&this.focus);
+            window.focus(&this.focus, cx);
             cx.notify();
         })
         .detach();
-        window.focus(&form.focus_handle(cx));
+        window.focus(&form.focus_handle(cx), cx);
         self.detail = Detail::VaultKey { form, vault };
         self.error = None;
         cx.notify();
@@ -1371,9 +1368,9 @@ impl VaultBrowser {
         let keystroke = &event.keystroke;
         if keystroke.key == "tab" && !keystroke.modifiers.secondary() {
             if keystroke.modifiers.shift {
-                window.focus_prev();
+                window.focus_prev(cx);
             } else {
-                window.focus_next();
+                window.focus_next(cx);
             }
             cx.stop_propagation();
         }
@@ -1990,7 +1987,7 @@ impl VaultBrowser {
                 button("close-group", strings::EDITOR_DONE, theme).on_click(cx.listener(
                     |this, _, window, cx| {
                         this.detail = Detail::Entry;
-                        window.focus(&this.focus);
+                        window.focus(&this.focus, cx);
                         cx.notify();
                     },
                 )),
@@ -2110,7 +2107,7 @@ impl VaultBrowser {
                     .child(row)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // So the keyboard shortcuts act on the Entry just picked.
-                        window.focus(&this.focus);
+                        window.focus(&this.focus, cx);
                         this.select_entry(vault, id, cx)
                     }))
                     .into_any_element()
@@ -2238,7 +2235,7 @@ impl VaultBrowser {
                     }),
                 )
                 .flex_1()
-                .track_scroll(self.entry_list_scroll.clone())
+                .track_scroll(&self.entry_list_scroll)
                 .into_any_element()
             } else {
                 div()
@@ -3298,7 +3295,10 @@ mod tests {
 
         edit_in_place(&browser, (vault, entry), InlineField::Password, cx);
         cx.simulate_keystrokes("x");
-        cx.update(|window, cx| window.focus(&browser.read(cx).focus));
+        cx.update(|window, cx| {
+            let focus = browser.read(cx).focus.clone();
+            window.focus(&focus, cx)
+        });
         cx.run_until_parked();
         assert_eq!(password(&browser, (vault, entry), cx), format!("{before}x"));
     }

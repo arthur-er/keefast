@@ -44,18 +44,16 @@ pub fn watch(workspace: &Entity<Workspace>, cx: &mut App) {
     cx.spawn(async move |cx| {
         // With no idle lock due, look again now and then: a Vault may be unlocked meanwhile.
         const AT_MOST: Duration = Duration::from_secs(60);
-        while let Ok(wait) = idle.read_with(cx, |workspace, _| workspace.idle_lock_in()) {
+        loop {
+            let wait = idle.read_with(cx, |workspace, _| workspace.idle_lock_in());
             cx.background_executor()
                 .timer(wait.unwrap_or(AT_MOST).min(AT_MOST))
                 .await;
-            let locked = cx.update(|cx| {
+            cx.update(|cx| {
                 lock_with(&idle, cx, |workspace, clipboard| {
                     workspace.lock_if_idle(clipboard)
                 })
             });
-            if locked.is_err() {
-                return;
-            }
         }
     })
     .detach();
@@ -71,14 +69,11 @@ pub fn watch(workspace: &Entity<Workspace>, cx: &mut App) {
     let workspace = workspace.clone();
     cx.spawn(async move |cx| {
         while os_locks.recv().await.is_ok() {
-            let locked = cx.update(|cx| {
+            cx.update(|cx| {
                 lock_with(&workspace, cx, |workspace, clipboard| {
                     workspace.os_locked(clipboard)
                 })
             });
-            if locked.is_err() {
-                return;
-            }
         }
     })
     .detach();
