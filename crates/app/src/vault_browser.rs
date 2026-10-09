@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, DragMoveEvent, EmptyView, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, PromptLevel, ScrollHandle,
-    SharedString, Task, Window, anchored, deferred, div, prelude::*, px, relative,
+    FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, PromptLevel, ScrollStrategy,
+    SharedString, Task, UniformListScrollHandle, Window, anchored, deferred, div, prelude::*, px,
+    relative, uniform_list,
 };
 use keefast_core::{
     AccessDecision, AttachmentPreview, EditError, Entry, EntryColor, EntryFields, EntryIcon,
@@ -70,7 +71,7 @@ pub struct VaultBrowser {
     error: Option<SharedString>,
     /// What the last command did, such as copying a password.
     notice: Option<SharedString>,
-    entry_list_scroll: ScrollHandle,
+    entry_list_scroll: UniformListScrollHandle,
     /// Clears what was last copied from the clipboard when its time comes.
     clipboard_clear: Option<Task<()>>,
     /// One per custom field of the selected Entry, so each can be reached with Tab and copied.
@@ -261,7 +262,7 @@ impl VaultBrowser {
             totp_copied: None,
             error: None,
             notice: None,
-            entry_list_scroll: ScrollHandle::new(),
+            entry_list_scroll: UniformListScrollHandle::new(),
             clipboard_clear: None,
             custom_field_focus: Vec::new(),
             revealed_fields: Vec::new(),
@@ -467,7 +468,8 @@ impl VaultBrowser {
                     self.show(View { scope, entry: None }, cx);
                 }
             }
-            self.entry_list_scroll.scroll_to_item(0);
+            self.entry_list_scroll
+                .scroll_to_item(0, ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -498,7 +500,8 @@ impl VaultBrowser {
     fn sort_by(&mut self, sort: EntrySort, cx: &mut Context<Self>) {
         self.sort = sort;
         if let Some(ix) = self.selected_position(cx) {
-            self.entry_list_scroll.scroll_to_item(ix);
+            self.entry_list_scroll
+                .scroll_to_item(ix, ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -549,7 +552,8 @@ impl VaultBrowser {
         let ix = pick(current, entries.len()).min(entries.len() - 1);
         let (vault, entry) = (entries[ix].vault, entries[ix].entry.id());
         self.select_entry(vault, entry, cx);
-        self.entry_list_scroll.scroll_to_item(ix);
+        self.entry_list_scroll
+            .scroll_to_item(ix, ScrollStrategy::Top);
     }
 
     fn select_next(&mut self, _: &SelectNextEntry, _: &mut Window, cx: &mut Context<Self>) {
@@ -1808,73 +1812,28 @@ impl VaultBrowser {
             .into_any_element()
     }
 
-    fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        // Built first, as they need `cx` the rest borrows.
-        let adding = self.target_group(cx);
-        let icon_button = |id: &'static str, icon: UiIcon, open: bool| {
-            div()
-                .id(id)
-                .flex_none()
-                .p_1p5()
-                .rounded_md()
-                .cursor_pointer()
-                .when(open, |this| this.bg(theme.sidebar_selection))
-                .hover(|this| this.bg(theme.sidebar_selection))
-                .child(icons::ui_icon(icon, px(16.), theme.text))
-        };
-        let add_menu = (self.menu == Some(ListMenu::Add))
-            .then_some(adding)
-            .flatten()
-            .map(|(vault, group)| {
-                self.render_menu(
-                    vec![
-                        MenuItem::new(strings::MENU_NEW_ENTRY, false, move |this, window, cx| {
-                            this.open_editor(EditTarget::New(vault, group), window, cx)
-                        }),
-                        MenuItem::new(strings::MENU_NEW_GROUP, false, |this, window, cx| {
-                            this.new_group(window, cx)
-                        }),
-                    ],
-                    theme,
-                    cx,
-                )
-            });
-        let sort_menu = (self.menu == Some(ListMenu::Sort)).then(|| {
-            let items = EntrySort::ALL
-                .into_iter()
-                .map(|sort| {
-                    MenuItem::new(sort_label(sort), sort == self.sort, move |this, _, cx| {
-                        this.sort_by(sort, cx)
-                    })
-                })
-                .collect();
-            self.render_menu(items, theme, cx)
-        });
+    /// The rows of the Entry list in `range`: only those scrolled into view are built, so a
+    /// long list scrolls as fast as a short one.
+    fn render_entry_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let workspace = self.workspace.read(cx);
         let View {
             scope,
             entry: selected_entry,
         } = workspace.view();
         let entries = self.listed_entries(workspace);
-        let searching = !self.query.is_empty();
-        let locked = match &scope {
-            EntryScope::Vault(vault) => workspace.locked_vault(*vault),
-            _ => None,
-        };
-        // The Vault shown is waiting to lock, so the list has nothing in it.
-        let locking = match &scope {
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => workspace
-                .vault(*vault)
-                .is_some_and(|open| open.is_locking()),
-            _ => false,
-        };
         // Across several Vaults, each Entry says which Vault it is from.
         let label_vaults = scope.vault().is_none() && workspace.vaults().nth(1).is_some();
-
-        let rows: Vec<AnyElement> = entries
+        entries
+            .get(range.clone())
+            .unwrap_or_default()
             .iter()
-            .enumerate()
-            .map(|(ix, listed)| {
+            .zip(range)
+            .map(|(listed, ix)| {
                 let (vault, entry) = (listed.vault, listed.entry);
                 let id = entry.id();
                 let selected = selected_entry == Some((vault, id));
@@ -1890,13 +1849,11 @@ impl VaultBrowser {
                 } else {
                     theme.muted
                 };
-                div()
-                    .id(("entry", ix))
+                // Padding, not margins, spaces the rows, as the list measures a row's box.
+                let row = div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .mx_1p5()
-                    .my_0p5()
                     .px_2()
                     .py_1p5()
                     .rounded_md()
@@ -1959,7 +1916,12 @@ impl VaultBrowser {
                                         this.child(div().flex_none().text_xs().child(name))
                                     }),
                             ),
-                    )
+                    );
+                div()
+                    .id(("entry", ix))
+                    .px_1p5()
+                    .py_0p5()
+                    .child(row)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // So the keyboard shortcuts act on the Entry just picked.
                         window.focus(&this.focus);
@@ -1967,7 +1929,66 @@ impl VaultBrowser {
                     }))
                     .into_any_element()
             })
-            .collect();
+            .collect()
+    }
+
+    fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        // Built first, as they need `cx` the rest borrows.
+        let adding = self.target_group(cx);
+        let icon_button = |id: &'static str, icon: UiIcon, open: bool| {
+            div()
+                .id(id)
+                .flex_none()
+                .p_1p5()
+                .rounded_md()
+                .cursor_pointer()
+                .when(open, |this| this.bg(theme.sidebar_selection))
+                .hover(|this| this.bg(theme.sidebar_selection))
+                .child(icons::ui_icon(icon, px(16.), theme.text))
+        };
+        let add_menu = (self.menu == Some(ListMenu::Add))
+            .then_some(adding)
+            .flatten()
+            .map(|(vault, group)| {
+                self.render_menu(
+                    vec![
+                        MenuItem::new(strings::MENU_NEW_ENTRY, false, move |this, window, cx| {
+                            this.open_editor(EditTarget::New(vault, group), window, cx)
+                        }),
+                        MenuItem::new(strings::MENU_NEW_GROUP, false, |this, window, cx| {
+                            this.new_group(window, cx)
+                        }),
+                    ],
+                    theme,
+                    cx,
+                )
+            });
+        let sort_menu = (self.menu == Some(ListMenu::Sort)).then(|| {
+            let items = EntrySort::ALL
+                .into_iter()
+                .map(|sort| {
+                    MenuItem::new(sort_label(sort), sort == self.sort, move |this, _, cx| {
+                        this.sort_by(sort, cx)
+                    })
+                })
+                .collect();
+            self.render_menu(items, theme, cx)
+        });
+        let workspace = self.workspace.read(cx);
+        let scope = workspace.view().scope;
+        let entry_count = self.listed_entries(workspace).len();
+        let searching = !self.query.is_empty();
+        let locked = match &scope {
+            EntryScope::Vault(vault) => workspace.locked_vault(*vault),
+            _ => None,
+        };
+        // The Vault shown is waiting to lock, so the list has nothing in it.
+        let locking = match &scope {
+            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => workspace
+                .vault(*vault)
+                .is_some_and(|open| open.is_locking()),
+            _ => false,
+        };
 
         div()
             .w(self.entry_list_width)
@@ -2022,13 +2043,21 @@ impl VaultBrowser {
                             .children(sort_menu),
                     ),
             )
-            .child(
+            .child(if entry_count > 0 {
+                uniform_list(
+                    "entry-list",
+                    entry_count,
+                    cx.processor(move |this, range, _, cx| {
+                        this.render_entry_rows(range, theme, cx)
+                    }),
+                )
+                .flex_1()
+                .track_scroll(self.entry_list_scroll.clone())
+                .into_any_element()
+            } else {
                 div()
-                    .id("entry-list")
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.entry_list_scroll)
-                    .when(rows.is_empty() && locked.is_none(), |this| {
+                    .when(locked.is_none(), |this| {
                         this.p_3().text_color(theme.muted).child(if locking {
                             strings::LOCKING_NOTE
                         } else if searching {
@@ -2053,8 +2082,8 @@ impl VaultBrowser {
                                     })),
                             )
                     })
-                    .children(rows),
-            )
+                    .into_any_element()
+            })
     }
 
     fn render_detail(&self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
