@@ -46,7 +46,7 @@ pub use browser_hosts::{
 pub use cache::{CachedFile, FileVaultCache, VaultCache};
 pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
-pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, ThemeSetting};
+pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, PaneWidths, ThemeSetting};
 pub use dropbox::{
     Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig, DropboxError,
     DropboxItem,
@@ -784,6 +784,18 @@ impl Workspace {
     pub fn set_theme(&mut self, theme: ThemeSetting) {
         self.config.theme = theme;
         self.save_config();
+    }
+
+    pub fn pane_widths(&self) -> PaneWidths {
+        self.config.pane_widths
+    }
+
+    /// Changes how wide the Vault browser's panes are, and remembers it in the app config.
+    pub fn set_pane_widths(&mut self, widths: PaneWidths) {
+        if self.config.pane_widths != widths {
+            self.config.pane_widths = widths;
+            self.save_config();
+        }
     }
 
     /// Changes how passwords are generated, and remembers it in the app config. Returns

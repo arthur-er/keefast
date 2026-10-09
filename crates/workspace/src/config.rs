@@ -37,6 +37,24 @@ pub struct AppConfig {
     /// Whether the favicons of Entry URLs' sites are downloaded. Off unless the user turns it
     /// on, as keefast makes no network requests they haven't agreed to.
     pub download_favicons: bool,
+    pub pane_widths: PaneWidths,
+}
+
+/// How wide the Vault browser's sidebar and Entry list are, in logical pixels, as the user
+/// last dragged them. The Entry detail takes the rest of the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneWidths {
+    pub sidebar: u32,
+    pub entry_list: u32,
+}
+
+impl Default for PaneWidths {
+    fn default() -> Self {
+        Self {
+            sidebar: 220,
+            entry_list: 320,
+        }
+    }
 }
 
 /// Which colours the app is drawn in.
@@ -68,6 +86,7 @@ impl Default for AppConfig {
             dropbox_app_key: None,
             theme: ThemeSetting::System,
             download_favicons: false,
+            pane_widths: PaneWidths::default(),
         }
     }
 }
@@ -152,6 +171,9 @@ struct ConfigFile {
     /// `system`, `light` or `dark`.
     theme: String,
     download_favicons: bool,
+    /// 0 is the default width.
+    sidebar_width: u32,
+    entry_list_width: u32,
     recent_vaults: Vec<toml::Value>,
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
@@ -200,6 +222,10 @@ impl From<ConfigFile> for AppConfig {
                 _ => ThemeSetting::System,
             },
             download_favicons: file.download_favicons,
+            pane_widths: PaneWidths {
+                sidebar: read_width(file.sidebar_width, PaneWidths::default().sidebar),
+                entry_list: read_width(file.entry_list_width, PaneWidths::default().entry_list),
+            },
         }
     }
 }
@@ -219,6 +245,8 @@ impl From<&AppConfig> for ConfigFile {
             }
             .to_owned(),
             download_favicons: config.download_favicons,
+            sidebar_width: config.pane_widths.sidebar,
+            entry_list_width: config.pane_widths.entry_list,
             recent_vaults: config
                 .recent_vaults
                 .iter()
@@ -318,6 +346,11 @@ fn wait_from_seconds(seconds: u64) -> Option<Duration> {
 /// A wait as whole seconds, where 0 is never, so a wait under a second is kept as one.
 fn wait_to_seconds(wait: Option<Duration>) -> u64 {
     wait.map_or(0, |wait| wait.as_secs().max(1))
+}
+
+/// A pane width from the file, where 0 is the default.
+fn read_width(width: u32, default: u32) -> u32 {
+    if width > 0 { width } else { default }
 }
 
 fn read_location(value: toml::Value) -> Option<VaultLocation> {

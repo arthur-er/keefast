@@ -1,16 +1,17 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
-    PromptLevel, ScrollHandle, SharedString, Task, Window, div, prelude::*, px, relative,
+    AnyElement, App, ClickEvent, Context, DragMoveEvent, EmptyView, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyDownEvent, Pixels, PromptLevel, ScrollHandle, SharedString, Task,
+    Window, div, prelude::*, px, relative,
 };
 use keefast_core::{
     AccessDecision, AttachmentPreview, EditError, Entry, EntryColor, EntryFields, EntryIcon,
     EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
-    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, SaveStatus, SyncStatus, VaultId,
-    View, Workspace,
+    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, PaneWidths, SaveStatus,
+    SyncStatus, VaultId, View, Workspace,
 };
 use secrecy::ExposeSecret;
 
@@ -82,7 +83,29 @@ pub struct VaultBrowser {
     merge_notice: Option<SharedString>,
     /// Counts the notices shown, so a timeout only hides the one it was set for.
     merge_notice_generation: u64,
+    /// How wide the sidebar and the Entry list are, as dragged.
+    sidebar_width: Pixels,
+    entry_list_width: Pixels,
+    /// Remembers the pane widths once the user stops dragging them.
+    pane_widths_save: Option<Task<()>>,
 }
+
+/// The edge between two panes, dragged to resize the pane on its left.
+#[derive(Clone, Copy)]
+enum PaneEdge {
+    Sidebar,
+    EntryList,
+}
+
+/// How narrow and wide the sidebar and Entry list can be dragged, and how much the Entry detail
+/// keeps of the window.
+const SIDEBAR_WIDTHS: (f32, f32) = (160., 480.);
+const ENTRY_LIST_WIDTHS: (f32, f32) = (220., 720.);
+const DETAIL_MIN_WIDTH: f32 = 320.;
+/// How wide the grab area of a pane edge is, centred on the edge.
+const PANE_EDGE_GRAB: f32 = 6.;
+/// How long after the last drag of a pane edge the widths are remembered.
+const PANE_WIDTHS_SAVE_DELAY: Duration = Duration::from_millis(500);
 
 /// How long a Merge notice stays up, and how many Merges it lists at most.
 const MERGE_NOTICE_TIME: Duration = Duration::from_secs(15);
@@ -181,6 +204,7 @@ impl VaultBrowser {
         cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
+        let widths = workspace.read(cx).pane_widths();
         Self {
             workspace,
             integration,
@@ -201,6 +225,9 @@ impl VaultBrowser {
             attachment_preview: None,
             merge_notice: None,
             merge_notice_generation: 0,
+            sidebar_width: px(widths.sidebar as f32),
+            entry_list_width: px(widths.entry_list as f32),
+            pane_widths_save: None,
         }
     }
 
@@ -1157,6 +1184,89 @@ impl VaultBrowser {
         }
     }
 
+    /// Resizes the pane left of the dragged edge to follow the mouse, leaving the panes right
+    /// of it room to show.
+    fn on_pane_edge_drag(
+        &mut self,
+        event: &DragMoveEvent<PaneEdge>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let x = f32::from(event.event.position.x - event.bounds.left());
+        let width = f32::from(event.bounds.size.width);
+        let sidebar = f32::from(self.sidebar_width);
+        let entry_list = f32::from(self.entry_list_width);
+        match *event.drag(cx) {
+            PaneEdge::Sidebar => {
+                let room = width - entry_list - DETAIL_MIN_WIDTH;
+                self.sidebar_width = px(clamp(x, SIDEBAR_WIDTHS, room));
+            }
+            PaneEdge::EntryList => {
+                let room = width - sidebar - DETAIL_MIN_WIDTH;
+                self.entry_list_width = px(clamp(x - sidebar, ENTRY_LIST_WIDTHS, room));
+            }
+        }
+        self.save_pane_widths_soon(cx);
+        cx.notify();
+    }
+
+    /// Puts a pane back to its default width.
+    fn reset_pane_width(&mut self, edge: PaneEdge, cx: &mut Context<Self>) {
+        let defaults = PaneWidths::default();
+        match edge {
+            PaneEdge::Sidebar => self.sidebar_width = px(defaults.sidebar as f32),
+            PaneEdge::EntryList => self.entry_list_width = px(defaults.entry_list as f32),
+        }
+        self.save_pane_widths_soon(cx);
+        cx.notify();
+    }
+
+    /// Remembers the pane widths in the app config once they have stopped changing, so a drag
+    /// doesn't write the config at every step.
+    fn save_pane_widths_soon(&mut self, cx: &mut Context<Self>) {
+        self.pane_widths_save = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(PANE_WIDTHS_SAVE_DELAY).await;
+            this.update(cx, |this, cx| {
+                let widths = PaneWidths {
+                    sidebar: f32::from(this.sidebar_width).round() as u32,
+                    entry_list: f32::from(this.entry_list_width).round() as u32,
+                };
+                this.workspace
+                    .update(cx, |workspace, _| workspace.set_pane_widths(widths));
+            })
+            .ok();
+        }));
+    }
+
+    /// The grab area of the edge right of a pane, which ends `right` from the window's left.
+    fn render_pane_edge(
+        &self,
+        edge: PaneEdge,
+        right: Pixels,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = match edge {
+            PaneEdge::Sidebar => "sidebar-edge",
+            PaneEdge::EntryList => "entry-list-edge",
+        };
+        div()
+            .id(id)
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(right - px(PANE_EDGE_GRAB / 2.))
+            .w(px(PANE_EDGE_GRAB))
+            .cursor_ew_resize()
+            .hover(|this| this.bg(theme.border))
+            .on_drag(edge, |_, _, _, cx| cx.new(|_| EmptyView))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                if event.click_count() == 2 {
+                    this.reset_pane_width(edge, cx);
+                }
+            }))
+    }
+
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
@@ -1357,7 +1467,7 @@ impl VaultBrowser {
         );
 
         div()
-            .w(px(220.))
+            .w(self.sidebar_width)
             .h_full()
             .flex_none()
             .flex()
@@ -1666,7 +1776,7 @@ impl VaultBrowser {
         }
 
         div()
-            .w(px(320.))
+            .w(self.entry_list_width)
             .h_full()
             .flex_none()
             .flex()
@@ -2342,6 +2452,7 @@ impl Render for VaultBrowser {
                 }),
             )
             .on_action(cx.listener(Self::open_settings))
+            .on_drag_move(cx.listener(Self::on_pane_edge_drag))
             .size_full()
             .relative()
             .flex()
@@ -2350,8 +2461,21 @@ impl Render for VaultBrowser {
             .child(self.render_sidebar(theme, cx))
             .child(self.render_entry_list(theme, cx))
             .child(self.render_detail(theme, cx))
+            // After the panes, so the edges are grabbed over the panes either side of them.
+            .child(self.render_pane_edge(PaneEdge::Sidebar, self.sidebar_width, theme, cx))
+            .child(self.render_pane_edge(
+                PaneEdge::EntryList,
+                self.sidebar_width + self.entry_list_width,
+                theme,
+                cx,
+            ))
             .children(self.render_merge_notice(theme, cx))
     }
+}
+
+/// `width` within `(min, max)` and no wider than `room`, though never under `min`.
+fn clamp(width: f32, (min, max): (f32, f32), room: f32) -> f32 {
+    width.min(max).min(room).max(min)
 }
 
 pub fn describe(error: &EditVaultError) -> &'static str {
@@ -2477,5 +2601,124 @@ pub fn title_of(entry: &Entry) -> SharedString {
     match entry.title() {
         "" => strings::UNTITLED.into(),
         title => title.to_owned().into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, VisualTestContext,
+        point, size,
+    };
+    use keefast_workspace::{ConfigStore, FileConfigStore, LocalStorage};
+
+    use super::*;
+
+    fn open_browser(
+        cx: &mut TestAppContext,
+        config: PathBuf,
+    ) -> (Entity<VaultBrowser>, &mut VisualTestContext) {
+        let store = Arc::new(FileConfigStore::new(config));
+        let workspace = cx.new(|_| Workspace::new(Arc::new(LocalStorage)).with_config(store));
+        let (browser, cx) = cx.add_window_view(move |window, cx| {
+            let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
+            VaultBrowser::new(workspace, integration, window, cx)
+        });
+        cx.simulate_resize(size(px(1200.), px(800.)));
+        cx.run_until_parked();
+        (browser, cx)
+    }
+
+    fn drag(cx: &mut VisualTestContext, from: f32, to: f32) {
+        let at = |x: f32| point(px(x), px(400.));
+        cx.simulate_mouse_down(at(from), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(at(from + 5.), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(at(to), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(at(to), MouseButton::Left, Modifiers::none());
+    }
+
+    fn widths(browser: &Entity<VaultBrowser>, cx: &mut VisualTestContext) -> (f32, f32) {
+        browser.read_with(cx, |browser, _| {
+            (
+                f32::from(browser.sidebar_width),
+                f32::from(browser.entry_list_width),
+            )
+        })
+    }
+
+    #[gpui::test]
+    fn dragging_a_pane_edge_resizes_the_pane_and_is_remembered(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        let (browser, cx) = open_browser(cx, config.clone());
+        assert_eq!(widths(&browser, cx), (220., 320.));
+
+        drag(cx, 220., 300.);
+        assert_eq!(widths(&browser, cx), (300., 320.));
+        // The Entry list's edge moved with the sidebar's.
+        drag(cx, 620., 700.);
+        assert_eq!(widths(&browser, cx), (300., 400.));
+
+        cx.executor().advance_clock(PANE_WIDTHS_SAVE_DELAY);
+        cx.run_until_parked();
+        assert_eq!(
+            FileConfigStore::new(config.clone())
+                .load()
+                .unwrap()
+                .pane_widths,
+            PaneWidths {
+                sidebar: 300,
+                entry_list: 400,
+            }
+        );
+
+        // A Vault browser opened later starts at the remembered widths.
+        let (browser, cx) = open_browser(cx, config);
+        assert_eq!(widths(&browser, cx), (300., 400.));
+    }
+
+    #[gpui::test]
+    fn panes_stay_within_their_widths_and_leave_the_entry_detail_room(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (browser, cx) = open_browser(cx, dir.path().join("config.toml"));
+
+        drag(cx, 220., 20.);
+        assert_eq!(widths(&browser, cx).0, SIDEBAR_WIDTHS.0);
+        drag(cx, 480., 1190.);
+        assert_eq!(widths(&browser, cx), (160., 720.));
+        // The window is 1200 wide, so the 720 of the Entry list and the 320 the Entry detail
+        // keeps leave the sidebar no room to widen.
+        drag(cx, 160., 1190.);
+        assert_eq!(widths(&browser, cx), (160., 720.));
+    }
+
+    #[gpui::test]
+    fn double_clicking_a_pane_edge_puts_the_pane_back_to_its_default_width(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let (browser, cx) = open_browser(cx, dir.path().join("config.toml"));
+        drag(cx, 220., 300.);
+
+        let position = point(px(300.), px(400.));
+        for click_count in [1, 2] {
+            cx.simulate_event(MouseDownEvent {
+                position,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                position,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count,
+            });
+        }
+        assert_eq!(widths(&browser, cx), (220., 320.));
     }
 }
