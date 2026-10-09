@@ -120,12 +120,12 @@ impl UnlockView {
                     this.clear_password(cx);
                     cx.emit(UnlockEvent::Unlocked);
                 }
-                VaultKeyEvent::Cancelled => window.focus(&this.password.focus_handle(cx)),
+                VaultKeyEvent::Cancelled => window.focus(&this.password.focus_handle(cx), cx),
             }
             cx.notify();
         })
         .detach();
-        window.focus(&form.focus_handle(cx));
+        window.focus(&form.focus_handle(cx), cx);
         self.dropbox = None;
         self.new_vault = Some(form);
         cx.notify();
@@ -167,7 +167,7 @@ impl UnlockView {
     fn select(&mut self, location: VaultLocation, window: &mut Window, cx: &mut Context<Self>) {
         self.location = Some(location);
         self.error = None;
-        window.focus(&self.password.focus_handle(cx));
+        window.focus(&self.password.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -199,11 +199,11 @@ impl UnlockView {
                 this.error = None;
             }
             this.dropbox = None;
-            window.focus(&this.password.focus_handle(cx));
+            window.focus(&this.password.focus_handle(cx), cx);
             cx.notify();
         })
         .detach();
-        window.focus(&panel.focus_handle(cx));
+        window.focus(&panel.focus_handle(cx), cx);
         self.dropbox = Some(panel);
         cx.notify();
     }

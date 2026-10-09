@@ -56,7 +56,11 @@ windows-sys = { version = "0.61", features = [
 winreg = "0.56"
 zbus = "5"
 zeroize = "1"
-gpui = "0.2.2"
+# Zed's GPUI as gpui-kit builds on it: published as gpui-pre, with the platforms split out.
+gpui = { package = "gpui-pre", version = "=0.3.8" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-component = "0.7.1"
+gpui-kit-assets = "0.7.1"
 
 # Key derivation (AES-KDF, Argon2) is unbearably slow unoptimised, even in tests and debug builds.
 [profile.dev.package]

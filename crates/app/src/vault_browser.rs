@@ -4,8 +4,8 @@ use std::time::Duration;
 use gpui::{
     AnyElement, App, ClickEvent, Context, DragMoveEvent, EmptyView, Entity, EventEmitter,
     FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, PromptLevel, ScrollStrategy,
-    SharedString, Task, UniformListScrollHandle, Window, anchored, deferred, div, prelude::*, px,
-    relative, uniform_list,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, anchored, deferred, div,
+    prelude::*, px, relative, uniform_list,
 };
 use keefast_core::{
     AccessDecision, AttachmentPreview, EditError, Entry, EntryColor, EntryFields, EntryIcon,
@@ -15,7 +15,7 @@ use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, PaneWidths, SyncStatus, VaultId,
     View, Workspace,
 };
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::actions::{
     self, ChangeMasterKey, CopyCustomField, CopyPassword, CopyTotp, CopyUsername, FocusSearch,
@@ -30,7 +30,7 @@ use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::entry_history::{EntryHistory, EntryHistoryEvent};
 use crate::favicons;
-use crate::icons::{self, UiIcon};
+use crate::icons::{self, IconName};
 use crate::locking;
 use crate::merge_notice;
 use crate::saving;
@@ -66,6 +66,8 @@ pub struct VaultBrowser {
     detail: Detail,
     /// The Group being renamed in the sidebar, with its name field.
     renaming: Option<(VaultId, GroupId, Entity<TextField>)>,
+    /// The field of the selected Entry being changed where it's shown.
+    inline_edit: Option<InlineEdit>,
     /// The Entry whose TOTP code was copied last, to say so until another is selected.
     totp_copied: Option<(VaultId, EntryId)>,
     error: Option<SharedString>,
@@ -190,6 +192,56 @@ enum EditTarget {
     New(VaultId, GroupId),
 }
 
+/// A field of an Entry changed where the Entry detail shows it, KeeWeb's way: clicked, it
+/// turns into a text field, a password shown, and is saved on Enter or on clicking away.
+struct InlineEdit {
+    vault: VaultId,
+    entry: EntryId,
+    field: InlineField,
+    input: Entity<TextField>,
+    _blur: Subscription,
+}
+
+/// The fields of an Entry that can be changed where they're shown.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InlineField {
+    Title,
+    Username,
+    Password,
+    Url,
+    Notes,
+    /// The value of a custom field, by index.
+    Custom(usize),
+}
+
+impl InlineField {
+    fn value(self, entry: &Entry) -> Option<&str> {
+        Some(match self {
+            Self::Title => entry.title(),
+            Self::Username => entry.username(),
+            Self::Password => entry.password().expose_secret(),
+            Self::Url => entry.url(),
+            Self::Notes => entry.notes(),
+            Self::Custom(index) => entry.custom_fields().get(index)?.value.expose_secret(),
+        })
+    }
+
+    fn set(self, fields: &mut EntryFields, value: String) {
+        match self {
+            Self::Title => fields.title = value,
+            Self::Username => fields.username = value,
+            Self::Password => fields.password = SecretString::from(value),
+            Self::Url => fields.url = value,
+            Self::Notes => fields.notes = value,
+            Self::Custom(index) => {
+                if let Some(custom) = fields.custom_fields.get_mut(index) {
+                    custom.value = SecretString::from(value);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Subject {
     Entry(VaultId, EntryId),
@@ -245,8 +297,8 @@ impl VaultBrowser {
             }
         })
         .detach();
-        let search =
-            cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(UiIcon::Search));
+        let search = cx
+            .new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(IconName::Search));
         cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
@@ -259,6 +311,7 @@ impl VaultBrowser {
             sort: EntrySort::default(),
             detail: Detail::Entry,
             renaming: None,
+            inline_edit: None,
             totp_copied: None,
             error: None,
             notice: None,
@@ -381,6 +434,13 @@ impl VaultBrowser {
         {
             self.renaming = None;
         }
+        if self
+            .inline_edit
+            .as_ref()
+            .is_some_and(|edit| locked(edit.vault))
+        {
+            self.inline_edit = None;
+        }
         if self.totp_copied.is_some_and(|(vault, _)| locked(vault)) {
             self.totp_copied = None;
         }
@@ -445,7 +505,7 @@ impl VaultBrowser {
     }
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.search.focus_handle(cx));
+        window.focus(&self.search.focus_handle(cx), cx);
     }
 
     /// A new search selects its best match, unless an Entry is being edited or set up.
@@ -486,11 +546,11 @@ impl VaultBrowser {
         match event {
             TextFieldEvent::Submit => {
                 self.select_in_list(|current, _| current.unwrap_or(0), cx);
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             TextFieldEvent::Cancel => {
                 if self.search.read(cx).text().is_empty() {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                 }
                 self.search.update(cx, |search, cx| search.set_text("", cx));
             }
@@ -515,6 +575,7 @@ impl VaultBrowser {
     }
 
     fn select_entry(&mut self, vault: VaultId, entry: EntryId, cx: &mut Context<Self>) {
+        self.finish_inline_edit(cx);
         let scope = self.scope(cx);
         self.show(
             View {
@@ -638,16 +699,13 @@ impl VaultBrowser {
         let workspace = self.workspace.clone();
         self.clipboard_clear = clears_in.map(|_| {
             cx.spawn(async move |this, cx| {
-                while let Ok(Some(wait)) =
+                while let Some(wait) =
                     workspace.read_with(cx, |workspace, _| workspace.clipboard_clears_in())
                 {
                     cx.background_executor().timer(wait).await;
-                    let cleared = workspace.update(cx, |workspace, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         workspace.clear_clipboard_if_due(&mut AppClipboard(cx))
                     });
-                    if cleared.is_err() {
-                        return;
-                    }
                 }
                 // The notice about the copy is out of date now.
                 this.update(cx, |this, cx| {
@@ -700,7 +758,7 @@ impl VaultBrowser {
         let setup = cx.new(|cx| TotpSetup::new(totp.as_ref(), &title, &username, cx));
         cx.subscribe_in(&setup, window, Self::on_totp_setup_event)
             .detach();
-        window.focus(&setup.focus_handle(cx));
+        window.focus(&setup.focus_handle(cx), cx);
         self.detail = Detail::Totp {
             setup,
             vault,
@@ -733,7 +791,7 @@ impl VaultBrowser {
             }
             TotpSetupEvent::Cancel => self.detail = Detail::Entry,
         }
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -754,7 +812,7 @@ impl VaultBrowser {
         let history = cx.new(|cx| EntryHistory::new(workspace, vault, entry, cx));
         cx.subscribe_in(&history, window, Self::on_history_event)
             .detach();
-        window.focus(&history.focus_handle(cx));
+        window.focus(&history.focus_handle(cx), cx);
         self.detail = Detail::History {
             view: history,
             vault,
@@ -807,7 +865,7 @@ impl VaultBrowser {
             }
             EntryHistoryEvent::Close => self.detail = Detail::Entry,
         }
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -908,7 +966,7 @@ impl VaultBrowser {
         let modifiers = keystroke.modifiers;
         match keystroke.key.as_str() {
             "space" if !modifiers.modified() => self.toggle_field_reveal(index, cx),
-            "escape" => window.focus(&self.focus),
+            "escape" => window.focus(&self.focus, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -952,7 +1010,132 @@ impl VaultBrowser {
         }
     }
 
+    /// Turns a field of the selected Entry into a text field to change it with, saving the one
+    /// changed before.
+    fn start_inline_edit(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        field: InlineField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_inline_edit(cx);
+        let workspace = self.workspace.read(cx);
+        let Some(value) = workspace
+            .entry(vault, entry)
+            .and_then(|entry| field.value(entry))
+        else {
+            return;
+        };
+        let value = zeroize::Zeroizing::new(value.to_owned());
+        let input = cx.new(|cx| {
+            let mut input = TextField::new("", cx);
+            if field == InlineField::Notes {
+                input = input.multiline();
+            }
+            input.set_text(&value, cx);
+            input
+        });
+        cx.subscribe_in(&input, window, |this, _, event, window, cx| {
+            match event {
+                TextFieldEvent::Submit => this.finish_inline_edit(cx),
+                TextFieldEvent::Cancel => this.inline_edit = None,
+            }
+            window.focus(&this.focus, cx);
+            cx.notify();
+        })
+        .detach();
+        // Clicking away saves, as Enter does.
+        let blur = cx.on_blur(&input.focus_handle(cx), window, |this, _, cx| {
+            this.finish_inline_edit(cx)
+        });
+        window.focus(&input.focus_handle(cx), cx);
+        self.inline_edit = Some(InlineEdit {
+            vault,
+            entry,
+            field,
+            input,
+            _blur: blur,
+        });
+        cx.notify();
+    }
+
+    /// Saves the field being changed in place, if it was changed.
+    fn finish_inline_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.inline_edit.take() else {
+            return;
+        };
+        cx.notify();
+        let value = edit.input.read(cx).text().to_owned();
+        let Some(entry) = self.workspace.read(cx).entry(edit.vault, edit.entry) else {
+            return;
+        };
+        if edit.field.value(entry) == Some(value.as_str()) {
+            return;
+        }
+        let mut fields = EntryFields::from(entry);
+        edit.field.set(&mut fields, value);
+        self.edit(cx, |workspace| {
+            workspace.update_entry(edit.vault, edit.entry, &fields)
+        });
+    }
+
+    /// The text field of `field` of the Entry shown, if it's being changed in place.
+    fn inline_input(
+        &self,
+        vault: VaultId,
+        entry: EntryId,
+        field: InlineField,
+    ) -> Option<Entity<TextField>> {
+        self.inline_edit
+            .as_ref()
+            .filter(|edit| (edit.vault, edit.entry, edit.field) == (vault, entry, field))
+            .map(|edit| edit.input.clone())
+    }
+
+    /// `value` shown as a field of the Entry detail, which a click turns into a text field
+    /// to change it with.
+    fn editable_value(
+        &self,
+        vault: VaultId,
+        entry: EntryId,
+        field: InlineField,
+        value: impl IntoElement,
+        theme: Theme,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        // Both offset by the text field's padding and border, so the text stays put.
+        let place = div().flex_1().min_w_0().mx(px(-9.)).my(px(-7.));
+        if let Some(input) = self.inline_input(vault, entry, field) {
+            return place.child(input).into_any_element();
+        }
+        let id = match field {
+            InlineField::Title => ("edit-title", 0),
+            InlineField::Username => ("edit-username", 0),
+            InlineField::Password => ("edit-password", 0),
+            InlineField::Url => ("edit-url", 0),
+            InlineField::Notes => ("edit-notes", 0),
+            InlineField::Custom(index) => ("edit-custom-field", index),
+        };
+        place
+            .id(id)
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .hover(|style| style.border_color(theme.border))
+            .cursor_text()
+            .child(value)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.start_inline_edit(vault, entry, field, window, cx)
+            }))
+            .into_any_element()
+    }
+
     fn open_editor(&mut self, target: EditTarget, window: &mut Window, cx: &mut Context<Self>) {
+        self.inline_edit = None;
         let (EditTarget::Existing(vault, _) | EditTarget::New(vault, _)) = target;
         let fields = match &target {
             EditTarget::Existing(vault, id) => self
@@ -980,7 +1163,7 @@ impl VaultBrowser {
         let editor = cx.new(|cx| EntryEditor::new(&fields, vault, self.workspace.clone(), cx));
         cx.subscribe_in(&editor, window, Self::on_editor_event)
             .detach();
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
         self.detail = Detail::Editing { editor, target };
         self.error = None;
         cx.notify();
@@ -1028,8 +1211,8 @@ impl VaultBrowser {
         }
         // A refused save leaves the form open to fix what the error says.
         match &self.detail {
-            Detail::Editing { editor, .. } => window.focus(&editor.focus_handle(cx)),
-            _ => window.focus(&self.focus),
+            Detail::Editing { editor, .. } => window.focus(&editor.focus_handle(cx), cx),
+            _ => window.focus(&self.focus, cx),
         }
         cx.notify();
     }
@@ -1071,11 +1254,11 @@ impl VaultBrowser {
                 this.edit(cx, |workspace| workspace.rename_group(vault, group, &name));
             }
             this.renaming = None;
-            window.focus(&this.focus);
+            window.focus(&this.focus, cx);
             cx.notify();
         })
         .detach();
-        window.focus(&field.focus_handle(cx));
+        window.focus(&field.focus_handle(cx), cx);
         self.renaming = Some((vault, group, field));
         cx.notify();
     }
@@ -1161,11 +1344,11 @@ impl VaultBrowser {
         let form = cx.new(|cx| VaultKeyForm::for_vault(self.workspace.clone(), vault, cx));
         cx.subscribe_in(&form, window, |this, _, _: &VaultKeyEvent, window, cx| {
             this.detail = Detail::Entry;
-            window.focus(&this.focus);
+            window.focus(&this.focus, cx);
             cx.notify();
         })
         .detach();
-        window.focus(&form.focus_handle(cx));
+        window.focus(&form.focus_handle(cx), cx);
         self.detail = Detail::VaultKey { form, vault };
         self.error = None;
         cx.notify();
@@ -1185,9 +1368,9 @@ impl VaultBrowser {
         let keystroke = &event.keystroke;
         if keystroke.key == "tab" && !keystroke.modifiers.secondary() {
             if keystroke.modifiers.shift {
-                window.focus_prev();
+                window.focus_prev(cx);
             } else {
-                window.focus_next();
+                window.focus_next(cx);
             }
             cx.stop_propagation();
         }
@@ -1281,7 +1464,7 @@ impl VaultBrowser {
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
         let icon =
-            |icon: UiIcon, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
+            |icon: IconName, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
         let folder = |color| Some(icons::standard_icon(FOLDER_ICON, px(14.), color));
         let mut rows: Vec<AnyElement> = Vec::new();
 
@@ -1291,7 +1474,7 @@ impl VaultBrowser {
                 strings::SIDEBAR_ALL_ITEMS.into(),
                 0,
                 scope == EntryScope::AllVaults,
-                icon(UiIcon::AllItems, theme.text),
+                icon(IconName::LayoutGrid, theme.text),
                 theme,
             )
             .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
@@ -1301,7 +1484,7 @@ impl VaultBrowser {
         rows.push(sidebar_separator(theme));
         rows.push(sidebar_heading(
             strings::SIDEBAR_COLORS,
-            UiIcon::Colors,
+            IconName::Bookmark,
             theme,
         ));
         let dots = EntryColor::ALL.into_iter().map(|color| {
@@ -1331,7 +1514,11 @@ impl VaultBrowser {
         );
 
         rows.push(sidebar_separator(theme));
-        rows.push(sidebar_heading(strings::SIDEBAR_TAGS, UiIcon::Tags, theme));
+        rows.push(sidebar_heading(
+            strings::SIDEBAR_TAGS,
+            IconName::Tags,
+            theme,
+        ));
         for tag in workspace.tags() {
             let tag_scope = EntryScope::Tag(tag.to_owned());
             let selected = scope == tag_scope;
@@ -1373,7 +1560,7 @@ impl VaultBrowser {
                         name.into(),
                         0,
                         selected,
-                        icon(UiIcon::Lock, theme.muted),
+                        icon(IconName::Lock, theme.muted),
                         theme,
                     )
                     .text_color(theme.muted)
@@ -1390,7 +1577,7 @@ impl VaultBrowser {
                         format!("{}{}", open.display_name(), strings::LOCKING_MARKER).into(),
                         0,
                         false,
-                        icon(UiIcon::Lock, theme.muted),
+                        icon(IconName::Lock, theme.muted),
                         theme,
                     )
                     .text_color(theme.muted)
@@ -1491,7 +1678,7 @@ impl VaultBrowser {
                         label.into(),
                         0,
                         scope == EntryScope::Group(vault, bin),
-                        icon(UiIcon::Trash, theme.text),
+                        icon(IconName::Trash, theme.text),
                         theme,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1561,7 +1748,7 @@ impl VaultBrowser {
                         .unwrap_or_default();
                     return item
                         .text_color(theme.muted)
-                        .child(icons::ui_icon(UiIcon::Lock, px(14.), theme.muted))
+                        .child(icons::ui_icon(IconName::Lock, px(14.), theme.muted))
                         .child(name)
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(UnlockLockedVault(vault))))
                         .into_any_element();
@@ -1582,7 +1769,7 @@ impl VaultBrowser {
                         SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
                     })
                 };
-                item.child(icons::ui_icon(UiIcon::Unlocked, px(14.), theme.text))
+                item.child(icons::ui_icon(IconName::LockOpen, px(14.), theme.text))
                     .child(name)
                     .children(
                         status
@@ -1592,7 +1779,7 @@ impl VaultBrowser {
                     .into_any_element()
             });
         let can_lock = workspace.vaults().next().is_some();
-        let command = |id: &'static str, icon: UiIcon, color| {
+        let command = |id: &'static str, icon: IconName, color| {
             div()
                 .id(id)
                 .p_1p5()
@@ -1627,23 +1814,23 @@ impl VaultBrowser {
                     .cursor_pointer()
                     .text_color(theme.muted)
                     .hover(|this| this.bg(theme.sidebar_selection))
-                    .child(icons::ui_icon(UiIcon::Open, px(14.), theme.muted))
+                    .child(icons::ui_icon(IconName::Plus, px(14.), theme.muted))
                     .child(strings::FOOTER_OPEN)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
             )
             .child(div().flex_1())
             .child(
-                command("footer-help", UiIcon::Help, theme.text).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(ToggleCommandPalette), cx)
-                }),
+                command("footer-help", IconName::CircleQuestionMark, theme.text).on_click(
+                    |_, window, cx| window.dispatch_action(Box::new(ToggleCommandPalette), cx),
+                ),
             )
             .child(
-                command("footer-settings", UiIcon::Settings, theme.text)
+                command("footer-settings", IconName::Settings, theme.text)
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )
             .when(can_lock, |this| {
                 this.child(
-                    command("footer-lock", UiIcon::LockAll, theme.text).on_click(
+                    command("footer-lock", IconName::LogOut, theme.text).on_click(
                         cx.listener(|this, _, _, cx| locking::lock_all(&this.workspace, cx)),
                     ),
                 )
@@ -1804,7 +1991,7 @@ impl VaultBrowser {
                 button("close-group", strings::EDITOR_DONE, theme).on_click(cx.listener(
                     |this, _, window, cx| {
                         this.detail = Detail::Entry;
-                        window.focus(&this.focus);
+                        window.focus(&this.focus, cx);
                         cx.notify();
                     },
                 )),
@@ -1924,7 +2111,7 @@ impl VaultBrowser {
                     .child(row)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // So the keyboard shortcuts act on the Entry just picked.
-                        window.focus(&this.focus);
+                        window.focus(&this.focus, cx);
                         this.select_entry(vault, id, cx)
                     }))
                     .into_any_element()
@@ -1935,7 +2122,7 @@ impl VaultBrowser {
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         // Built first, as they need `cx` the rest borrows.
         let adding = self.target_group(cx);
-        let icon_button = |id: &'static str, icon: UiIcon, open: bool| {
+        let icon_button = |id: &'static str, icon: IconName, open: bool| {
             div()
                 .id(id)
                 .flex_none()
@@ -2018,12 +2205,11 @@ impl VaultBrowser {
                                 .flex()
                                 .flex_col()
                                 .child(
-                                    icon_button("add", UiIcon::Open, add_menu.is_some()).on_click(
-                                        cx.listener(|this, _, _, cx| {
+                                    icon_button("add", IconName::Plus, add_menu.is_some())
+                                        .on_click(cx.listener(|this, _, _, cx| {
                                             this.menu = Some(ListMenu::Add);
                                             cx.notify();
-                                        }),
-                                    ),
+                                        })),
                                 )
                                 .children(add_menu),
                         )
@@ -2033,12 +2219,17 @@ impl VaultBrowser {
                             .flex()
                             .flex_col()
                             .child(
-                                icon_button("sort", UiIcon::Sort, sort_menu.is_some()).on_click(
-                                    cx.listener(|this, _, _, cx| {
+                                icon_button(
+                                    "sort",
+                                    IconName::ArrowDownWideNarrow,
+                                    sort_menu.is_some(),
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
                                         this.menu = Some(ListMenu::Sort);
                                         cx.notify();
-                                    }),
-                                ),
+                                    },
+                                )),
                             )
                             .children(sort_menu),
                     ),
@@ -2052,7 +2243,7 @@ impl VaultBrowser {
                     }),
                 )
                 .flex_1()
-                .track_scroll(self.entry_list_scroll.clone())
+                .track_scroll(&self.entry_list_scroll)
                 .into_any_element()
             } else {
                 div()
@@ -2153,8 +2344,8 @@ impl VaultBrowser {
                     .child(label),
             )
         };
-        let field = |label: &'static str, value: SharedString| {
-            labelled(label).child(div().flex_1().min_w_0().child(value))
+        let field = |label: &'static str, field: InlineField, value: SharedString| {
+            labelled(label).child(self.editable_value(vault, id, field, value, theme, cx))
         };
         let expired = workspace.is_expired(entry);
         let icon = entry_mark(workspace, vault, entry, px(32.), theme.text);
@@ -2167,6 +2358,7 @@ impl VaultBrowser {
                 .gap_2()
                 .child(
                     div()
+                        .flex_1()
                         .flex()
                         .items_center()
                         .gap_3()
@@ -2174,10 +2366,19 @@ impl VaultBrowser {
                         .children(icon)
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
                                 .text_3xl()
                                 .font_weight(gpui::FontWeight::BOLD)
-                                .truncate()
-                                .child(title_of(entry)),
+                                .child(self.editable_value(
+                                    vault,
+                                    id,
+                                    InlineField::Title,
+                                    div().truncate().child(title_of(entry)),
+                                    theme,
+                                    cx,
+                                )),
                         )
                         .when_some(entry.color(), |this, color| {
                             this.child(icons::color_dot(color, px(10.)))
@@ -2223,10 +2424,12 @@ impl VaultBrowser {
         )
         .child(field(
             strings::DETAIL_USERNAME,
+            InlineField::Username,
             entry.username().to_owned().into(),
         ))
         .child(field(
             strings::DETAIL_PASSWORD,
+            InlineField::Password,
             strings::HIDDEN_PASSWORD.into(),
         ))
         .when_some(workspace.totp_code(vault, id), |this, code| {
@@ -2251,9 +2454,14 @@ impl VaultBrowser {
                     .into_any_element(),
             })
         })
-        .child(field(strings::DETAIL_URL, entry.url().to_owned().into()))
+        .child(field(
+            strings::DETAIL_URL,
+            InlineField::Url,
+            entry.url().to_owned().into(),
+        ))
         .child(field(
             strings::DETAIL_NOTES,
+            InlineField::Notes,
             entry.notes().to_owned().into(),
         ))
         .when(!entry.tags().is_empty(), |this| {
@@ -2375,7 +2583,14 @@ impl VaultBrowser {
                                         ),
                                 ),
                         )
-                        .child(div().child(value))
+                        .child(self.editable_value(
+                            vault,
+                            id,
+                            InlineField::Custom(index),
+                            value,
+                            theme,
+                            cx,
+                        ))
                 }),
         )
         .when_some(
@@ -2754,7 +2969,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
 
 /// A heading above a section of the sidebar.
 /// A heading of the sidebar, with its icon.
-fn sidebar_heading(label: &'static str, icon: UiIcon, theme: Theme) -> AnyElement {
+fn sidebar_heading(label: &'static str, icon: IconName, theme: Theme) -> AnyElement {
     div()
         .mx_1p5()
         .px_1p5()
@@ -2780,7 +2995,7 @@ fn edit_mark(id: (&'static str, usize), theme: Theme) -> gpui::Stateful<gpui::Di
         .rounded_sm()
         .cursor_pointer()
         .hover(|this| this.bg(theme.border))
-        .child(icons::ui_icon(UiIcon::Edit, px(12.), theme.muted))
+        .child(icons::ui_icon(IconName::Pencil, px(12.), theme.muted))
 }
 
 fn expired_badge(theme: Theme) -> impl IntoElement {
@@ -2987,5 +3202,112 @@ mod tests {
             });
         }
         assert_eq!(widths(&browser, cx), (220., 320.));
+    }
+
+    const FIXTURE: &[u8] = include_bytes!("../../../fixtures/keepassxc-kdbx4.kdbx");
+
+    /// A browser over the fixture Vault with its first Entry selected, and that Entry.
+    fn open_entry<'a>(
+        cx: &'a mut TestAppContext,
+        dir: &std::path::Path,
+    ) -> (
+        Entity<VaultBrowser>,
+        VaultId,
+        EntryId,
+        &'a mut VisualTestContext,
+    ) {
+        let path = dir.join("Personal.kdbx");
+        std::fs::write(&path, FIXTURE).unwrap();
+        let mut workspace = Workspace::new(Arc::new(LocalStorage));
+        let vault = workspace
+            .open_vault(
+                &keefast_workspace::VaultLocation::Local(path),
+                &keefast_workspace::UnlockSecrets::password("fixture-password"),
+            )
+            .unwrap();
+        let entry = workspace.find_entries(
+            EntryScope::Vault(vault),
+            &EntrySearch::default(),
+            EntrySort::default(),
+        )[0]
+        .entry
+        .id();
+        let workspace = cx.new(|_| workspace);
+        let (browser, cx) = cx.add_window_view(move |window, cx| {
+            let integration = cx.new(|cx| BrowserIntegration::new(workspace.clone(), cx));
+            VaultBrowser::new(workspace, integration, window, cx)
+        });
+        cx.update(|window, cx| {
+            // Focus changes are reported only in the active window.
+            window.activate_window();
+            browser.update(cx, |browser, cx| browser.select_entry(vault, entry, cx));
+        });
+        cx.run_until_parked();
+        (browser, vault, entry, cx)
+    }
+
+    fn edit_in_place(
+        browser: &Entity<VaultBrowser>,
+        (vault, entry): (VaultId, EntryId),
+        field: InlineField,
+        cx: &mut VisualTestContext,
+    ) {
+        browser.update_in(cx, |browser, window, cx| {
+            browser.start_inline_edit(vault, entry, field, window, cx)
+        });
+        cx.run_until_parked();
+    }
+
+    fn password(
+        browser: &Entity<VaultBrowser>,
+        at: (VaultId, EntryId),
+        cx: &mut VisualTestContext,
+    ) -> String {
+        browser.read_with(cx, |browser, cx| {
+            let entry = browser.workspace.read(cx).entry(at.0, at.1).unwrap();
+            entry.password().expose_secret().to_owned()
+        })
+    }
+
+    #[gpui::test]
+    fn a_password_changed_in_place_is_shown_while_typed_and_saved_on_enter(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let (browser, vault, entry, cx) = open_entry(cx, dir.path());
+        let before = password(&browser, (vault, entry), cx);
+        edit_in_place(&browser, (vault, entry), InlineField::Password, cx);
+        let input = browser.read_with(cx, |browser, _| {
+            browser
+                .inline_input(vault, entry, InlineField::Password)
+                .unwrap()
+        });
+        assert_eq!(
+            input.read_with(cx, |input, _| input.text().to_owned()),
+            before
+        );
+
+        cx.simulate_keystrokes("ctrl-a n e w enter");
+        assert_eq!(password(&browser, (vault, entry), cx), "new");
+        assert!(browser.read_with(cx, |browser, _| browser.inline_edit.is_none()));
+    }
+
+    #[gpui::test]
+    fn escape_leaves_a_field_as_it_was_and_clicking_away_saves_it(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (browser, vault, entry, cx) = open_entry(cx, dir.path());
+        let before = password(&browser, (vault, entry), cx);
+        edit_in_place(&browser, (vault, entry), InlineField::Password, cx);
+        cx.simulate_keystrokes("x escape");
+        assert_eq!(password(&browser, (vault, entry), cx), before);
+
+        edit_in_place(&browser, (vault, entry), InlineField::Password, cx);
+        cx.simulate_keystrokes("x");
+        cx.update(|window, cx| {
+            let focus = browser.read(cx).focus.clone();
+            window.focus(&focus, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(password(&browser, (vault, entry), cx), format!("{before}x"));
     }
 }

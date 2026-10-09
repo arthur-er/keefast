@@ -167,7 +167,7 @@ impl EntryEditor {
                     field.set_text(&today, cx);
                 }
             });
-            window.focus(&self.expiry_date.focus_handle(cx));
+            window.focus(&self.expiry_date.focus_handle(cx), cx);
         }
         cx.notify();
     }
@@ -240,7 +240,7 @@ impl EntryEditor {
             protected: false,
         };
         let row = Self::custom_field_row(&empty, cx);
-        window.focus(&row.name.focus_handle(cx));
+        window.focus(&row.name.focus_handle(cx), cx);
         self.custom_fields.push(row);
         cx.notify();
     }
@@ -331,7 +331,7 @@ impl EntryEditor {
                 .update(cx, |field, cx| field.set_text(password.expose_secret(), cx));
         }
         self.generator = None;
-        window.focus(&self.password.focus_handle(cx));
+        window.focus(&self.password.focus_handle(cx), cx);
         cx.notify();
     }
 

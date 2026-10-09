@@ -34,9 +34,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, Entity, FocusHandle, Focusable, PromptLevel,
-    Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba,
-    size,
+    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, PromptLevel, Subscription,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba, size,
 };
 use keefast_workspace::{
     BrowserHosts, Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons,
@@ -130,7 +129,7 @@ impl KeefastWindow {
         let unlock = cx.new(|cx| UnlockView::new(workspace.clone(), location, args.key_file, cx));
         cx.subscribe_in(&unlock, window, Self::on_unlock_event)
             .detach();
-        window.focus(&unlock.focus_handle(cx));
+        window.focus(&unlock.focus_handle(cx), cx);
         Self {
             workspace,
             integration,
@@ -173,7 +172,7 @@ impl KeefastWindow {
 
     fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(settings) = self.show_settings(window, cx) {
-            window.focus(&settings.focus_handle(cx));
+            window.focus(&settings.focus_handle(cx), cx);
         }
     }
 
@@ -314,8 +313,7 @@ impl KeefastWindow {
                 // Asked again if the Vault is still waiting, as after a failed save.
                 this.update(cx, |this, _| this.asking_lock = None).ok();
                 locking::answer(&workspace, vault, answer, cx);
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -340,7 +338,7 @@ impl KeefastWindow {
                 if let Some(palette) = self.palette.take() {
                     palette.update(cx, |palette, cx| palette.close(cx));
                 }
-                window.focus(&focus);
+                window.focus(&focus, cx);
                 // The user is in the browser when it asks, so keefast comes to the front.
                 window.activate_window();
             }
@@ -524,12 +522,12 @@ impl KeefastWindow {
 
     fn focus_screen(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(settings) = &self.settings {
-            window.focus(&settings.focus_handle(cx));
+            window.focus(&settings.focus_handle(cx), cx);
             return;
         }
         match (&self.browser, self.showing_unlock) {
-            (Some(browser), false) => window.focus(&browser.focus_handle(cx)),
-            _ => window.focus(&self.unlock.focus_handle(cx)),
+            (Some(browser), false) => window.focus(&browser.focus_handle(cx), cx),
+            _ => window.focus(&self.unlock.focus_handle(cx), cx),
         }
     }
 
@@ -575,7 +573,7 @@ impl KeefastWindow {
         cx: &mut Context<Self>,
     ) {
         self.unlock.update(cx, |unlock, cx| unlock.reset(cx));
-        window.focus(&self.unlock.focus_handle(cx));
+        window.focus(&self.unlock.focus_handle(cx), cx);
         self.showing_unlock = true;
         cx.notify();
     }
@@ -604,7 +602,7 @@ impl KeefastWindow {
     ) {
         self.unlock
             .update(cx, |unlock, cx| unlock.unlock_locked(vault, cx));
-        window.focus(&self.unlock.focus_handle(cx));
+        window.focus(&self.unlock.focus_handle(cx), cx);
         self.showing_unlock = true;
         cx.notify();
     }
@@ -743,9 +741,10 @@ fn main() {
     if args.unregister_browser_hosts {
         unregister_browser_hosts();
     }
-    Application::new()
+    gpui_platform::application()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
+            gpui_component::init(cx);
             actions::bind_keys(cx);
             let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
             cx.open_window(
@@ -758,10 +757,14 @@ fn main() {
                     app_id: Some(strings::APP_NAME.into()),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| KeefastWindow::new(args, window, cx)),
+                |window, cx| {
+                    let keefast = cx.new(|cx| KeefastWindow::new(args, window, cx));
+                    // gpui-kit's root, which hosts its dialogs, sheets, notifications and tooltips.
+                    cx.new(|cx| gpui_component::Root::new(keefast, window, cx))
+                },
             )
             .expect("failed to open the main window");
-            cx.on_window_closed(|cx| cx.quit()).detach();
+            cx.on_window_closed(|cx, _| cx.quit()).detach();
             cx.activate(true);
         });
 }

@@ -17,17 +17,15 @@ pub fn sync_online_vaults(workspace: &Entity<Workspace>, cx: &mut App) {
         // With no check due, look again soon: a Vault may be opened or unlocked meanwhile,
         // with a save made offline to upload at once.
         const AT_MOST: Duration = Duration::from_secs(5);
-        while let Ok(wait) = workspace.read_with(cx, |workspace, _| workspace.sync_in()) {
+        loop {
+            let wait = workspace.read_with(cx, |workspace, _| workspace.sync_in());
             cx.background_executor()
                 .timer(wait.unwrap_or(AT_MOST).min(AT_MOST))
                 .await;
-            let synced = cx.update(|cx| {
+            cx.update(|cx| {
                 let syncs = workspace.update(cx, |workspace, _| workspace.begin_syncs());
                 run(&workspace, syncs, cx);
             });
-            if synced.is_err() {
-                return;
-            }
         }
     })
     .detach();
@@ -60,7 +58,7 @@ pub fn watch_vault_files(workspace: &Entity<Workspace>, cx: &mut App) {
                 }
                 changed.extend(more);
             }
-            let updated = cx.update(|cx| {
+            cx.update(|cx| {
                 workspace.update(cx, |workspace, _| {
                     for vault in changed {
                         workspace.vault_file_changed(vault);
@@ -68,9 +66,6 @@ pub fn watch_vault_files(workspace: &Entity<Workspace>, cx: &mut App) {
                 });
                 autosave(&workspace, cx);
             });
-            if updated.is_err() {
-                break;
-            }
         }
     })
     .detach();
@@ -109,8 +104,7 @@ pub fn run(workspace: &Entity<Workspace>, saves: Vec<PendingSave>, cx: &mut App)
                     workspace.finish_save(finished)
                 });
                 autosave(&workspace, cx);
-            })
-            .ok();
+            });
         })
         .detach();
     }
