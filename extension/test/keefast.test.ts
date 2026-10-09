@@ -96,7 +96,7 @@ describe("entries", () => {
   it("gets the Entries for the site from the paired Vaults", async () => {
     const logins = await client.entries("https://example.com/login", "https://example.com/session");
 
-    expect(logins).toEqual([{ ...alice, hasTotp: false }]);
+    expect(logins).toEqual([{ ...alice, hasTotp: false, group: "Passwords" }]);
     const request = keefast.received.find((m) => m.action === "get-logins")!;
     expect(request.url).toBe("https://example.com/login");
     expect(request.submitUrl).toBe("https://example.com/session");
@@ -119,7 +119,7 @@ describe("entries", () => {
 
     keefast.release();
 
-    expect(await logins).toEqual([{ ...alice, hasTotp: false }]);
+    expect(await logins).toEqual([{ ...alice, hasTotp: false, group: "Passwords" }]);
   });
 
   it("fails as locked when keefast was locked meanwhile", async () => {
@@ -251,6 +251,66 @@ describe("generatePassword", () => {
     keefast.running = false;
 
     await expect(client.generatePassword()).rejects.toMatchObject({ reason: "not-running" });
+  });
+});
+
+describe("search", () => {
+  beforeEach(async () => {
+    keefast.entries.set("other.test", [{ ...alice, group: "Work / Email", totp: "123456" }]);
+    await client.pair();
+  });
+
+  it("finds Entries in the paired Vaults whatever their site, without passwords", async () => {
+    const found = await client.search("https://example.com/login", undefined, "alice");
+
+    expect(found).toEqual([
+      {
+        uuid: "0011",
+        name: "Example",
+        username: "alice",
+        url: "",
+        group: "Work / Email",
+        hasTotp: true,
+      },
+    ]);
+    const request = keefast.received.find((m) => m.action === "keefast-search-entries")!;
+    expect(request.url).toBe("https://example.com/login");
+    expect(request.submitUrl).toBe("https://example.com/login");
+    expect(request.query).toBe("alice");
+    expect(request.keys).toEqual([{ id: "Chromium", key: keefast.pairings.get("Chromium") }]);
+  });
+
+  it("fails as locked when keefast is locked", async () => {
+    keefast.locked = true;
+
+    await expect(client.search("https://example.com/", undefined, "a")).rejects.toMatchObject({
+      reason: "locked",
+    });
+  });
+});
+
+describe("pick", () => {
+  beforeEach(async () => {
+    keefast.entries.set("other.test", [{ ...alice, totp: "123456" }]);
+    await client.pair();
+  });
+
+  it("gets the picked Entry with its password and current TOTP code", async () => {
+    const entry = await client.pick("0011", "https://example.com/login", undefined, false);
+
+    expect(entry).toEqual({ ...alice, hasTotp: true, group: "Passwords", totp: "123456" });
+  });
+
+  it("asks keefast to add the site to the Entry when told to", async () => {
+    await client.pick("0011", "https://example.com/login", undefined, true);
+
+    expect(keefast.picked).toEqual([
+      { uuid: "0011", url: "https://example.com/login", addUrl: true },
+    ]);
+  });
+
+  it("has none for an Entry keefast doesn't give", async () => {
+    expect(await client.pick("9999", "https://example.com/", undefined, false)).toBeUndefined();
   });
 });
 

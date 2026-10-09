@@ -7,7 +7,7 @@ import type { Entry, NativePort } from "../src/keefast";
 type Message = Record<string, unknown>;
 
 /** An Entry as keefast has it, with the current code of its TOTP if it has one. */
-export type FakeEntry = Omit<Entry, "hasTotp"> & { totp?: string };
+export type FakeEntry = Omit<Entry, "hasTotp" | "group"> & { totp?: string; group?: string };
 
 export class FakeKeefast {
   running = true;
@@ -30,6 +30,8 @@ export class FakeKeefast {
   savesLogins = true;
   /** The logins the user saved. */
   saved: Message[] = [];
+  /** The Entries the user picked in the command palette, with whether to add the site. */
+  picked: { uuid: string; url: string; addUrl: boolean }[] = [];
   connections = 0;
   received: Message[] = [];
   private held: (() => void)[] = [];
@@ -143,11 +145,12 @@ export class FakeKeefast {
                 ? error(request, 15)
                 : encrypted(request, {
                     count: entries.length,
-                    entries: entries.map(({ uuid, name, username, password, totp }) => ({
+                    entries: entries.map(({ uuid, name, username, password, totp, group }) => ({
                       login: username,
                       name,
                       password,
                       uuid,
+                      group: group ?? "Passwords",
                       ...(totp === undefined ? {} : { totp }),
                     })),
                     hash: "vault-hash",
@@ -177,6 +180,60 @@ export class FakeKeefast {
           reply(encrypted(request, { totp: (given.has(uuid) && entry?.totp) || "" }));
           return;
         }
+        case "keefast-search-entries": {
+          const keys = message.keys as { id: string; key: string }[];
+          const paired = keys.some(({ id, key }) => this.pairings.get(id) === key);
+          const query = String(message.query).trim().toLowerCase();
+          const found =
+            !paired || query === ""
+              ? []
+              : this.allEntries().filter(({ name, username }) =>
+                  `${name} ${username}`.toLowerCase().includes(query),
+                );
+          reply(
+            encrypted(request, {
+              count: found.length,
+              entries: found.map(({ uuid, name, username, totp, group }) => ({
+                uuid,
+                name,
+                login: username,
+                url: "",
+                group: group ?? "",
+                hasTotp: totp !== undefined,
+              })),
+            }),
+          );
+          return;
+        }
+        case "keefast-pick-entry": {
+          const keys = message.keys as { id: string; key: string }[];
+          const paired = keys.some(({ id, key }) => this.pairings.get(id) === key);
+          const uuid = message.uuid as string;
+          const entry = paired ? this.allEntries().find((entry) => entry.uuid === uuid) : undefined;
+          if (!entry) {
+            reply(error(request, 15));
+            return;
+          }
+          this.picked.push({ uuid, url: message.url as string, addUrl: message.addUrl === true });
+          reply(
+            encrypted(request, {
+              count: 1,
+              entries: [
+                {
+                  login: entry.username,
+                  name: entry.name,
+                  password: entry.password,
+                  uuid,
+                  group: entry.group ?? "Passwords",
+                  ...(entry.totp === undefined ? {} : { totp: entry.totp }),
+                },
+              ],
+              hash: "vault-hash",
+              id: "",
+            }),
+          );
+          return;
+        }
         case "generate-password":
           reply(
             this.generated === undefined
@@ -198,6 +255,10 @@ export class FakeKeefast {
       },
     };
   };
+
+  private allEntries(): FakeEntry[] {
+    return [...this.entries.values()].flat();
+  }
 
   /** Answers the held `get-logins` requests. */
   release(): void {
