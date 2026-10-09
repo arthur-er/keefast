@@ -561,8 +561,8 @@ impl EntryEditor {
                 } else {
                     gpui::transparent_black().into()
                 })
-                .when(selected, |this| this.bg(theme.selection))
-                .hover(|this| this.bg(theme.selection))
+                .when(selected, |this| this.bg(theme.sidebar_selection))
+                .hover(|this| this.bg(theme.sidebar_selection))
                 .cursor_pointer()
         };
         let current = vault.map(|vault| icons::entry_icon(self.icon, vault, px(20.), theme.text));

@@ -1,5 +1,6 @@
 //! How Entries' icons and colours are drawn: KeePass's standard icons as pictures bundled with
-//! the app (from Lucide, see `assets/icons/standard/LICENSE`), custom icons from the Vault.
+//! the app (from Lucide, see `assets/icons/standard/LICENSE`), custom icons from the Vault. The
+//! app's own buttons draw Lucide icons too (`assets/icons/ui`).
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -31,11 +32,106 @@ const STANDARD_PREFIX: &str = "icons/standard/";
 /// The standard icon of a key, KeePass's first.
 const KEY_ICON: u32 = 0;
 
+/// The icons of the app's own buttons and sidebar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiIcon {
+    AllItems,
+    Colors,
+    Tags,
+    Trash,
+    Lock,
+    Unlocked,
+    Open,
+    Help,
+    Settings,
+    LockAll,
+    Search,
+    Sort,
+    Edit,
+    Back,
+}
+
+impl UiIcon {
+    pub const ALL: [UiIcon; 14] = [
+        Self::AllItems,
+        Self::Colors,
+        Self::Tags,
+        Self::Trash,
+        Self::Lock,
+        Self::Unlocked,
+        Self::Open,
+        Self::Help,
+        Self::Settings,
+        Self::LockAll,
+        Self::Search,
+        Self::Sort,
+        Self::Edit,
+        Self::Back,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::AllItems => "layout-grid",
+            Self::Colors => "bookmark",
+            Self::Tags => "tags",
+            Self::Trash => "trash",
+            Self::Lock => "lock",
+            Self::Unlocked => "lock-open",
+            Self::Open => "plus",
+            Self::Help => "help",
+            Self::Settings => "settings",
+            Self::LockAll => "log-out",
+            Self::Search => "search",
+            Self::Sort => "arrow-down-wide-narrow",
+            Self::Edit => "pencil",
+            Self::Back => "circle-arrow-left",
+        }
+    }
+
+    fn svg(self) -> &'static [u8] {
+        match self {
+            Self::AllItems => include_bytes!("../assets/icons/ui/layout-grid.svg"),
+            Self::Colors => include_bytes!("../assets/icons/ui/bookmark.svg"),
+            Self::Tags => include_bytes!("../assets/icons/ui/tags.svg"),
+            Self::Trash => include_bytes!("../assets/icons/ui/trash.svg"),
+            Self::Lock => include_bytes!("../assets/icons/ui/lock.svg"),
+            Self::Unlocked => include_bytes!("../assets/icons/ui/lock-open.svg"),
+            Self::Open => include_bytes!("../assets/icons/ui/plus.svg"),
+            Self::Help => include_bytes!("../assets/icons/ui/help.svg"),
+            Self::Settings => include_bytes!("../assets/icons/ui/settings.svg"),
+            Self::LockAll => include_bytes!("../assets/icons/ui/log-out.svg"),
+            Self::Search => include_bytes!("../assets/icons/ui/search.svg"),
+            Self::Sort => include_bytes!("../assets/icons/ui/arrow-down-wide-narrow.svg"),
+            Self::Edit => include_bytes!("../assets/icons/ui/pencil.svg"),
+            Self::Back => include_bytes!("../assets/icons/ui/circle-arrow-left.svg"),
+        }
+    }
+
+    fn path(self) -> SharedString {
+        format!("{UI_PREFIX}{}.svg", self.name()).into()
+    }
+}
+
+const UI_PREFIX: &str = "icons/ui/";
+
+/// One of the app's own icons, `size` square, drawn in `color`.
+pub fn ui_icon(icon: UiIcon, size: Pixels, color: Rgba) -> gpui::Svg {
+    svg()
+        .path(icon.path())
+        .size(size)
+        .flex_none()
+        .text_color(color)
+}
+
 /// The pictures the app draws, which GPUI loads by path.
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path.starts_with(UI_PREFIX) {
+            let icon = UiIcon::ALL.into_iter().find(|icon| icon.path() == path);
+            return Ok(icon.map(|icon| Cow::Borrowed(icon.svg())));
+        }
         let icon = path
             .strip_prefix(STANDARD_PREFIX)
             .and_then(|name| name.strip_suffix(".svg"))
@@ -47,6 +143,7 @@ impl AssetSource for Assets {
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok((0..STANDARD_ICON_COUNT)
             .map(standard_icon_path)
+            .chain(UiIcon::ALL.into_iter().map(UiIcon::path))
             .filter(|icon| icon.starts_with(path))
             .collect())
     }
@@ -119,8 +216,17 @@ mod tests {
         }
         assert!(Assets.load("icons/standard/69.svg").unwrap().is_none());
         assert_eq!(
-            Assets.list("icons/").unwrap().len(),
+            Assets.list("icons/standard/").unwrap().len(),
             STANDARD_ICON_COUNT as usize
         );
+    }
+
+    #[test]
+    fn every_ui_icon_has_a_picture() {
+        for icon in UiIcon::ALL {
+            let svg = Assets.load(&icon.path()).unwrap().expect("bundled");
+            assert!(svg.starts_with(b"<svg"), "{icon:?}");
+        }
+        assert_eq!(Assets.list("icons/ui/").unwrap().len(), UiIcon::ALL.len());
     }
 }

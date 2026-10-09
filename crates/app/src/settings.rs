@@ -2,20 +2,43 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, SharedString, Stateful, Window, div, prelude::*, px,
+    KeyDownEvent, ScrollHandle, SharedString, Stateful, Window, WindowAppearance, div, prelude::*,
+    px,
 };
-use keefast_workspace::{ThemeSetting, Workspace};
+use keefast_workspace::{ThemeSetting, VaultId, Workspace};
 
 use crate::actions::{self, CloseSettings};
 use crate::browser_integration::{self, BrowserIntegration};
+use crate::icons::{self, UiIcon};
 use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::saving;
 use crate::strings;
 use crate::theme::{self, Theme};
-use crate::widgets::button;
+use crate::vault_browser::{sidebar_row, sidebar_separator};
+use crate::vault_settings::{VaultSettings, VaultSettingsChangeKey, VaultSettingsClosed};
 
 /// Emitted when the user is done with the settings.
 pub struct SettingsClosed;
+
+/// Emitted when the user asks to change a Vault's master key, which the Vault browser asks for.
+pub struct SettingsChangeVaultKey(pub VaultId);
+
+/// What the settings screen shows: the app's settings, or one Vault's.
+enum Page {
+    General,
+    Vault(Entity<VaultSettings>),
+}
+
+/// The sections of the app's settings, in the order they are drawn, each listed under General.
+const SECTIONS: [&str; 7] = [
+    strings::SETTINGS_APPEARANCE,
+    strings::SETTINGS_LOCKING,
+    strings::SETTINGS_CLIPBOARD,
+    strings::SETTINGS_SAVING,
+    strings::SETTINGS_GENERATOR,
+    strings::SETTINGS_BROWSER,
+    strings::SETTINGS_NETWORK,
+];
 
 /// The waits offered for the idle lock and for clearing the clipboard; `None` is never.
 const IDLE_LOCK_WAITS: [Option<u64>; 7] = [
@@ -49,8 +72,10 @@ enum Change {
     DownloadFavicons,
 }
 
-/// The settings screen: the app config's machine-local preferences, each changed and kept as
-/// soon as it is picked. Every control is reached with Tab and picked with Enter or Space.
+/// The settings screen, KeeWeb's way: a menu of the app's settings and the open Vaults beside
+/// the page picked. The app's settings are the app config's machine-local preferences, each
+/// changed and kept as soon as it is picked. Every control is reached with Tab and picked with
+/// Enter or Space.
 pub struct SettingsView {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -58,9 +83,13 @@ pub struct SettingsView {
     focus: FocusHandle,
     /// One per control, in the order they are drawn.
     controls: Vec<FocusHandle>,
+    page: Page,
+    /// Scrolls the page, and to a section picked in the menu.
+    scroll: ScrollHandle,
 }
 
 impl EventEmitter<SettingsClosed> for SettingsView {}
+impl EventEmitter<SettingsChangeVaultKey> for SettingsView {}
 
 impl Focusable for SettingsView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -74,7 +103,17 @@ impl SettingsView {
         integration: Entity<BrowserIntegration>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
+        cx.observe(&workspace, |this, workspace, cx| {
+            // A Vault's page goes when it locks.
+            if let Page::Vault(settings) = &this.page {
+                let vault = settings.read(cx).vault();
+                if workspace.read(cx).vault(vault).is_none() {
+                    this.page = Page::General;
+                }
+            }
+            cx.notify()
+        })
+        .detach();
         cx.observe(&integration, |_, _, cx| cx.notify()).detach();
         let generator = cx.new(|cx| PasswordGenerator::for_settings(workspace.clone(), cx));
         cx.subscribe(&generator, |_, _, event, cx| {
@@ -90,7 +129,98 @@ impl SettingsView {
             generator,
             focus: cx.focus_handle(),
             controls: Vec::new(),
+            page: Page::General,
+            scroll: ScrollHandle::new(),
         }
+    }
+
+    /// Shows `vault`'s settings.
+    pub fn show_vault(&mut self, vault: VaultId, window: &mut Window, cx: &mut Context<Self>) {
+        let (workspace, integration) = (self.workspace.clone(), self.integration.clone());
+        let settings = cx.new(|cx| VaultSettings::new(workspace, integration, vault, cx));
+        cx.subscribe(&settings, |_, _, _: &VaultSettingsClosed, cx| {
+            cx.emit(SettingsClosed)
+        })
+        .detach();
+        cx.subscribe(&settings, move |_, _, _: &VaultSettingsChangeKey, cx| {
+            cx.emit(SettingsChangeVaultKey(vault))
+        })
+        .detach();
+        window.focus(&settings.read(cx).initial_focus(cx));
+        self.page = Page::Vault(settings);
+        self.scroll.set_offset(gpui::Point::default());
+        cx.notify();
+    }
+
+    /// Shows the app's settings, at `section`.
+    fn show_section(&mut self, section: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Vault(_)) {
+            self.page = Page::General;
+            window.focus(&self.focus);
+        }
+        // The page's header comes before the sections.
+        self.scroll.scroll_to_top_of_item(section + 1);
+        cx.notify();
+    }
+
+    /// The menu beside the page: the app's settings and their sections, then the open Vaults.
+    fn render_menu(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.workspace.read(cx);
+        let shown_vault = match &self.page {
+            Page::General => None,
+            Page::Vault(settings) => Some(settings.read(cx).vault()),
+        };
+        let icon =
+            |icon: UiIcon| Some(icons::ui_icon(icon, px(14.), theme.text).into_any_element());
+        let sections = SECTIONS.iter().enumerate().map(|(ix, &title)| {
+            sidebar_row(
+                ("settings-section", ix),
+                title.into(),
+                1,
+                false,
+                None,
+                theme,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| this.show_section(ix, window, cx)))
+        });
+        let vaults = workspace.vaults().enumerate().map(|(ix, open)| {
+            let vault = open.id();
+            sidebar_row(
+                ("settings-vault", ix),
+                open.display_name().into(),
+                0,
+                shown_vault == Some(vault),
+                icon(UiIcon::Unlocked),
+                theme,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| this.show_vault(vault, window, cx)))
+        });
+        div()
+            .id("settings-menu")
+            .w(px(220.))
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .py_1p5()
+            .overflow_y_scroll()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                sidebar_row(
+                    ("settings-general", 0),
+                    strings::SETTINGS_GENERAL.into(),
+                    0,
+                    shown_vault.is_none(),
+                    icon(UiIcon::Settings),
+                    theme,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.show_section(0, window, cx))),
+            )
+            .children(sections)
+            .child(sidebar_separator(theme))
+            .children(vaults)
     }
 
     fn change(&mut self, change: Change, cx: &mut Context<Self>) {
@@ -170,6 +300,56 @@ impl SettingsView {
                     cx.stop_propagation();
                 }
             }))
+    }
+
+    /// A preview of `setting`, KeeWeb's way: a card in its background and text colours with a
+    /// button in its action colour.
+    fn theme_card(
+        &mut self,
+        index: &mut usize,
+        setting: ThemeSetting,
+        chosen: bool,
+        appearance: WindowAppearance,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let preview = Theme::of(setting, appearance);
+        self.control(index, Change::Theme(setting), theme, cx)
+            .w(px(140.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .pt_1p5()
+            .pb_3()
+            .border_2()
+            .border_color(if chosen { theme.accent } else { preview.border })
+            .bg(preview.background)
+            .text_color(preview.text)
+            .text_sm()
+            .child(
+                div()
+                    .w(px(110.))
+                    .pb_1()
+                    .border_b_1()
+                    .border_color(preview.border)
+                    .text_center()
+                    .truncate()
+                    .child(theme_name(setting)),
+            )
+            .child(
+                div()
+                    .w(px(84.))
+                    .h(px(40.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .bg(preview.accent)
+                    .text_color(preview.accent_text)
+                    .child(strings::THEME_PREVIEW_BUTTON),
+            )
+            .into_any_element()
     }
 
     fn checkbox(
@@ -269,21 +449,79 @@ fn describe_wait(wait: Option<Duration>) -> String {
     template.replace("{n}", &n.to_string())
 }
 
-fn section(title: &'static str, theme: Theme) -> gpui::Div {
+fn theme_name(setting: ThemeSetting) -> &'static str {
+    match setting {
+        ThemeSetting::System => strings::THEME_SYSTEM,
+        ThemeSetting::Dark => strings::THEME_DARK,
+        ThemeSetting::Light => strings::THEME_LIGHT,
+        ThemeSetting::SolarizedDark => strings::THEME_SOLARIZED_DARK,
+        ThemeSetting::SolarizedLight => strings::THEME_SOLARIZED_LIGHT,
+        ThemeSetting::DarkBlue => strings::THEME_DARK_BLUE,
+        ThemeSetting::LightBlue => strings::THEME_LIGHT_BLUE,
+        ThemeSetting::DarkBrown => strings::THEME_DARK_BROWN,
+        ThemeSetting::LightBrown => strings::THEME_LIGHT_BROWN,
+        ThemeSetting::Terminal => strings::THEME_TERMINAL,
+        ThemeSetting::TerminalLight => strings::THEME_TERMINAL_LIGHT,
+        ThemeSetting::DarkContrast => strings::THEME_DARK_CONTRAST,
+        ThemeSetting::HighContrast => strings::THEME_HIGH_CONTRAST,
+    }
+}
+
+fn section(title: &'static str) -> gpui::Div {
     div()
         .flex()
         .flex_col()
         .gap_2()
+        .pb_6()
+        .child(div().text_xl().font_weight(FontWeight::BOLD).child(title))
+}
+
+/// The title of a settings page, with the way back to the Vaults.
+fn page_header(
+    icon: AnyElement,
+    title: impl Into<SharedString>,
+    theme: Theme,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
         .pb_4()
-        .border_b_1()
-        .border_color(theme.border)
         .child(
             div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.muted)
-                .child(title),
+                .flex()
+                .items_center()
+                .gap_3()
+                .min_w_0()
+                .child(icon)
+                .child(
+                    div()
+                        .text_3xl()
+                        .font_weight(FontWeight::BOLD)
+                        .truncate()
+                        .child(title.into()),
+                ),
         )
+        .child(
+            div()
+                .id("close-settings")
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .text_sm()
+                .hover(|this| this.bg(theme.sidebar_selection))
+                .child(strings::SETTINGS_CLOSE)
+                .child(icons::ui_icon(UiIcon::Back, px(16.), theme.text))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsClosed))),
+        )
+        .into_any_element()
 }
 
 fn label(text: &'static str) -> gpui::Div {
@@ -309,13 +547,15 @@ impl Render for SettingsView {
         let browsers = browser_integration::status(&self.integration, cx);
 
         let mut index = 0;
-        let themes = [
-            (ThemeSetting::System, strings::THEME_SYSTEM.into()),
-            (ThemeSetting::Light, strings::THEME_LIGHT.into()),
-            (ThemeSetting::Dark, strings::THEME_DARK.into()),
-        ];
-        let theme_choices =
-            self.choices(&mut index, &themes, chosen_theme, Change::Theme, theme, cx);
+        let appearance = window.appearance();
+        let theme_cards: Vec<AnyElement> = ThemeSetting::ALL
+            .into_iter()
+            .map(|setting| {
+                let chosen = setting == chosen_theme;
+                self.theme_card(&mut index, setting, chosen, appearance, theme, cx)
+            })
+            .collect();
+        let theme_choices = div().flex().flex_wrap().gap_2().children(theme_cards);
         let idle_choices = self.choices(
             &mut index,
             &waits(&IDLE_LOCK_WAITS, idle_lock_after),
@@ -365,6 +605,69 @@ impl Render for SettingsView {
             cx,
         );
 
+        let page = match &self.page {
+            Page::Vault(settings) => {
+                let name = self
+                    .workspace
+                    .read(cx)
+                    .vault(settings.read(cx).vault())
+                    .map(|open| open.display_name())
+                    .unwrap_or_default();
+                vec![
+                    page_header(
+                        icons::ui_icon(UiIcon::Unlocked, px(28.), theme.text).into_any_element(),
+                        name,
+                        theme,
+                        cx,
+                    ),
+                    settings.clone().into_any_element(),
+                ]
+            }
+            Page::General => vec![
+                page_header(
+                    icons::ui_icon(UiIcon::Settings, px(28.), theme.text).into_any_element(),
+                    strings::SETTINGS,
+                    theme,
+                    cx,
+                ),
+                section(strings::SETTINGS_APPEARANCE)
+                    .child(label(strings::SETTINGS_THEME))
+                    .child(theme_choices)
+                    .into_any_element(),
+                section(strings::SETTINGS_LOCKING)
+                    .child(label(strings::SETTINGS_IDLE_LOCK))
+                    .child(idle_choices)
+                    .child(os_lock)
+                    .into_any_element(),
+                section(strings::SETTINGS_CLIPBOARD)
+                    .child(label(strings::SETTINGS_CLIPBOARD_CLEAR))
+                    .child(clipboard_choices)
+                    .into_any_element(),
+                section(strings::SETTINGS_SAVING)
+                    .child(autosave)
+                    .when(config_error, |this| {
+                        this.child(note(strings::CONFIG_ERROR, theme).text_color(theme.error))
+                    })
+                    .into_any_element(),
+                section(strings::SETTINGS_GENERATOR)
+                    .child(note(strings::SETTINGS_GENERATOR_NOTE, theme))
+                    .child(self.generator.clone())
+                    .into_any_element(),
+                section(strings::SETTINGS_BROWSER)
+                    .child(browser)
+                    .when_some(browsers, |this, (summary, failed)| {
+                        this.child(
+                            note(summary, theme).when(failed, |this| this.text_color(theme.error)),
+                        )
+                    })
+                    .into_any_element(),
+                section(strings::SETTINGS_NETWORK)
+                    .child(favicons)
+                    .child(note(strings::SETTINGS_FAVICONS_NOTE, theme))
+                    .into_any_element(),
+            ],
+        };
+
         div()
             .id("settings")
             .key_context(actions::SETTINGS_CONTEXT)
@@ -372,76 +675,24 @@ impl Render for SettingsView {
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(|_, _: &CloseSettings, _, cx| cx.emit(SettingsClosed)))
             .size_full()
-            .overflow_y_scroll()
+            .flex()
             .bg(theme.background)
             .text_color(theme.text)
+            .child(self.render_menu(theme, cx))
             .child(
                 div()
-                    .w(px(640.))
-                    .mx_auto()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .p_6()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(div().text_xl().child(strings::SETTINGS))
-                            .child(
-                                button("close-settings", strings::SETTINGS_CLOSE, theme)
-                                    .bg(theme.accent)
-                                    .text_color(theme.accent_text)
-                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsClosed))),
-                            ),
-                    )
-                    .when(config_error, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.error)
-                                .child(strings::CONFIG_ERROR),
-                        )
-                    })
-                    .child(
-                        section(strings::SETTINGS_APPEARANCE, theme)
-                            .child(label(strings::SETTINGS_THEME))
-                            .child(theme_choices),
-                    )
-                    .child(
-                        section(strings::SETTINGS_LOCKING, theme)
-                            .child(label(strings::SETTINGS_IDLE_LOCK))
-                            .child(idle_choices)
-                            .child(os_lock),
-                    )
-                    .child(
-                        section(strings::SETTINGS_CLIPBOARD, theme)
-                            .child(label(strings::SETTINGS_CLIPBOARD_CLEAR))
-                            .child(clipboard_choices),
-                    )
-                    .child(section(strings::SETTINGS_SAVING, theme).child(autosave))
-                    .child(
-                        section(strings::SETTINGS_GENERATOR, theme)
-                            .child(note(strings::SETTINGS_GENERATOR_NOTE, theme))
-                            .child(self.generator.clone()),
-                    )
-                    .child(
-                        section(strings::SETTINGS_BROWSER, theme)
-                            .child(browser)
-                            .when_some(browsers, |this, (summary, failed)| {
-                                this.child(
-                                    note(summary, theme)
-                                        .when(failed, |this| this.text_color(theme.error)),
-                                )
-                            }),
-                    )
-                    .child(
-                        section(strings::SETTINGS_NETWORK, theme)
-                            .border_b_0()
-                            .child(favicons)
-                            .child(note(strings::SETTINGS_FAVICONS_NOTE, theme)),
-                    ),
+                    .id("settings-page")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .px_8()
+                    .py_6()
+                    // The header spans the page, its sections keep to a readable width.
+                    .children(page.into_iter().enumerate().map(|(ix, part)| {
+                        div().when(ix > 0, |this| this.max_w(px(760.))).child(part)
+                    })),
             )
     }
 }

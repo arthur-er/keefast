@@ -351,7 +351,9 @@ impl UnlockView {
                     .gap_2()
                     .pr_2()
                     .rounded_md()
-                    .when(selected, |this| this.bg(theme.selection))
+                    .when(selected, |this| {
+                        this.bg(theme.selection).text_color(theme.selection_text)
+                    })
                     .child(
                         div()
                             .id((id, ix))
@@ -367,7 +369,7 @@ impl UnlockView {
                                 div()
                                     .truncate()
                                     .text_xs()
-                                    .text_color(theme.muted)
+                                    .when(!selected, |this| this.text_color(theme.muted))
                                     .child(description),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -670,7 +672,7 @@ impl Render for UnlockView {
                             .justify_end()
                             .gap_2()
                             .child(
-                                button("open-settings", strings::SETTINGS, theme)
+                                button("open-settings", strings::OPEN_SETTINGS, theme)
                                     .mr_auto()
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(Box::new(OpenSettings), cx)

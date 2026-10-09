@@ -51,9 +51,12 @@ use crate::clipboard::AppClipboard;
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::login_dialog::{LoginDialog, LoginDialogEvent};
 use crate::pairing_dialog::{PairingDialog, PairingDialogEvent};
-use crate::settings::{SettingsClosed, SettingsView};
+use crate::settings::{SettingsChangeVaultKey, SettingsClosed, SettingsView};
+use crate::theme::Theme;
 use crate::unlock::{UnlockEvent, UnlockView};
-use crate::vault_browser::{CreateVault, OpenAnotherVault, UnlockLockedVault, VaultBrowser};
+use crate::vault_browser::{
+    CreateVault, OpenAnotherVault, ShowVaultSettings, UnlockLockedVault, VaultBrowser,
+};
 
 /// The main window: the unlock dialog until a Vault is open, then the three panes, with the
 /// unlock dialog shown again to open another Vault, or to unlock one, and whenever every Vault
@@ -169,18 +172,59 @@ impl KeefastWindow {
     }
 
     fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
-        // A browser request is answered first.
+        if let Some(settings) = self.show_settings(window, cx) {
+            window.focus(&settings.focus_handle(cx));
+        }
+    }
+
+    /// Shows the settings screen, unless a browser request is to be answered first.
+    fn show_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SettingsView>> {
         if self.dialog(cx).is_some() {
-            return;
+            return None;
         }
         let settings = self.settings.get_or_insert_with(|| {
             let settings = cx
                 .new(|cx| SettingsView::new(self.workspace.clone(), self.integration.clone(), cx));
             cx.subscribe_in(&settings, window, Self::on_settings_closed)
                 .detach();
+            cx.subscribe_in(&settings, window, Self::on_change_vault_key)
+                .detach();
             settings
         });
-        window.focus(&settings.focus_handle(cx));
+        cx.notify();
+        Some(settings.clone())
+    }
+
+    fn on_show_vault_settings(
+        &mut self,
+        _: &Entity<VaultBrowser>,
+        &ShowVaultSettings(vault): &ShowVaultSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(settings) = self.show_settings(window, cx) {
+            settings.update(cx, |settings, cx| settings.show_vault(vault, window, cx));
+        }
+    }
+
+    /// Leaves the settings for the Vault browser's form to change a Vault's master key.
+    fn on_change_vault_key(
+        &mut self,
+        _: &Entity<SettingsView>,
+        &SettingsChangeVaultKey(vault): &SettingsChangeVaultKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings = None;
+        if let Some(browser) = &self.browser {
+            browser.update(cx, |browser, cx| {
+                browser.open_vault_key(Some(vault), window, cx)
+            });
+        }
         cx.notify();
     }
 
@@ -512,6 +556,8 @@ impl KeefastWindow {
                     .detach();
                 cx.subscribe_in(&browser, window, Self::on_create_vault)
                     .detach();
+                cx.subscribe_in(&browser, window, Self::on_show_vault_settings)
+                    .detach();
                 self.browser = Some(browser);
             }
         }
@@ -565,9 +611,23 @@ impl KeefastWindow {
 }
 
 impl Render for KeefastWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let screen = match (&self.settings, &self.browser, self.showing_unlock) {
-            (Some(settings), ..) => settings.clone().into_any_element(),
+            // As in KeeWeb, the footer with the Vaults stays under the settings.
+            (Some(settings), Some(browser), _) => {
+                let theme = Theme::for_window(window, cx);
+                let footer = browser.update(cx, |browser, cx| {
+                    browser.render_footer(theme, cx).into_any_element()
+                });
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().child(settings.clone()))
+                    .child(footer)
+                    .into_any_element()
+            }
+            (Some(settings), None, _) => settings.clone().into_any_element(),
             (None, Some(browser), false) => browser.clone().into_any_element(),
             _ => self.unlock.clone().into_any_element(),
         };

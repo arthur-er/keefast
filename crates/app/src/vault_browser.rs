@@ -1,17 +1,18 @@
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, DragMoveEvent, EmptyView, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyDownEvent, Pixels, PromptLevel, ScrollHandle, SharedString, Task,
-    Window, div, prelude::*, px, relative,
+    FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, PromptLevel, ScrollHandle,
+    SharedString, Task, Window, anchored, deferred, div, prelude::*, px, relative,
 };
 use keefast_core::{
     AccessDecision, AttachmentPreview, EditError, Entry, EntryColor, EntryFields, EntryIcon,
     EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
 };
 use keefast_workspace::{
-    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, PaneWidths, SaveStatus,
-    SyncStatus, VaultId, View, Workspace,
+    CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, PaneWidths, SyncStatus, VaultId,
+    View, Workspace,
 };
 use secrecy::ExposeSecret;
 
@@ -20,6 +21,7 @@ use crate::actions::{
     LockAll, NewVault, OpenEntry, OpenSettings, OpenVault, OpenVaultSettings, SaveAll,
     SelectFirstEntry, SelectLastEntry, SelectNextEntry, SelectPreviousEntry, ShowEntryHistory,
     SortByCreated, SortByModified, SortByTitle, SortByUrl, SortByUsername, SyncNow,
+    ToggleCommandPalette,
 };
 use crate::attachments::{self, Preview};
 use crate::browser_integration::BrowserIntegration;
@@ -27,7 +29,7 @@ use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::entry_history::{EntryHistory, EntryHistoryEvent};
 use crate::favicons;
-use crate::icons;
+use crate::icons::{self, UiIcon};
 use crate::locking;
 use crate::merge_notice;
 use crate::saving;
@@ -36,7 +38,6 @@ use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
 use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
-use crate::vault_settings::{VaultSettings, VaultSettingsChangeKey, VaultSettingsClosed};
 use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
@@ -48,12 +49,13 @@ pub struct CreateVault;
 /// Emitted when the user asks to unlock a locked Vault.
 pub struct UnlockLockedVault(pub VaultId);
 
-/// The KeeWeb-style three panes: Vaults and Groups sidebar → Entry list → Entry detail, with
-/// commands to edit Entries and Groups and to save the Vaults.
+/// Emitted when the user asks for a Vault's settings, which the settings screen shows.
+pub struct ShowVaultSettings(pub VaultId);
+
+/// The KeeWeb-style three panes: Vaults and Groups sidebar → Entry list → Entry detail, over a
+/// footer with the Vaults and the app's commands.
 pub struct VaultBrowser {
     workspace: Entity<Workspace>,
-    /// What a Vault's settings pane sends browser changes through.
-    integration: Entity<BrowserIntegration>,
     focus: FocusHandle,
     /// Narrows the Entry list to the Entries matching what is typed in it.
     search: Entity<TextField>,
@@ -88,6 +90,40 @@ pub struct VaultBrowser {
     entry_list_width: Pixels,
     /// Remembers the pane widths once the user stops dragging them.
     pane_widths_save: Option<Task<()>>,
+    /// The Entry list's menu open, if one is.
+    menu: Option<ListMenu>,
+}
+
+/// What picking a menu's choice does.
+type MenuAction = Rc<dyn Fn(&mut VaultBrowser, &mut Window, &mut Context<VaultBrowser>)>;
+
+/// A choice in one of the Entry list's menus.
+struct MenuItem {
+    label: &'static str,
+    checked: bool,
+    action: MenuAction,
+}
+
+impl MenuItem {
+    fn new(
+        label: &'static str,
+        checked: bool,
+        action: impl Fn(&mut VaultBrowser, &mut Window, &mut Context<VaultBrowser>) + 'static,
+    ) -> Self {
+        Self {
+            label,
+            checked,
+            action: Rc::new(action),
+        }
+    }
+}
+
+/// The menus of the Entry list's buttons.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListMenu {
+    /// What to add: an Entry or a Group.
+    Add,
+    Sort,
 }
 
 /// The edge between two panes, dragged to resize the pane on its left.
@@ -106,6 +142,13 @@ const DETAIL_MIN_WIDTH: f32 = 320.;
 const PANE_EDGE_GRAB: f32 = 6.;
 /// How long after the last drag of a pane edge the widths are remembered.
 const PANE_WIDTHS_SAVE_DELAY: Duration = Duration::from_millis(500);
+
+/// How wide the column of labels in the Entry detail is.
+const DETAIL_LABEL_WIDTH: Pixels = px(90.);
+
+/// The standard icons of a key, drawn for a Vault, and of a folder, drawn for a Group.
+const KEY_ICON: u32 = 0;
+const FOLDER_ICON: u32 = 48;
 
 /// How long a Merge notice stays up, and how many Merges it lists at most.
 const MERGE_NOTICE_TIME: Duration = Duration::from_secs(15);
@@ -132,8 +175,8 @@ enum Detail {
         vault: VaultId,
         entry: EntryId,
     },
-    /// A Vault's settings.
-    Settings(Entity<VaultSettings>),
+    /// What can be done with a Group: renaming, moving and deleting it, and more.
+    Group(VaultId, GroupId),
     /// Changing a Vault's master key and encryption.
     VaultKey {
         form: Entity<VaultKeyForm>,
@@ -163,6 +206,7 @@ impl Subject {
 impl EventEmitter<OpenAnotherVault> for VaultBrowser {}
 impl EventEmitter<UnlockLockedVault> for VaultBrowser {}
 impl EventEmitter<CreateVault> for VaultBrowser {}
+impl EventEmitter<ShowVaultSettings> for VaultBrowser {}
 
 impl Focusable for VaultBrowser {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -200,14 +244,14 @@ impl VaultBrowser {
             }
         })
         .detach();
-        let search = cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx));
+        let search =
+            cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(UiIcon::Search));
         cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
         let widths = workspace.read(cx).pane_widths();
         Self {
             workspace,
-            integration,
             focus: cx.focus_handle(),
             search,
             query: EntrySearch::default(),
@@ -228,6 +272,7 @@ impl VaultBrowser {
             sidebar_width: px(widths.sidebar as f32),
             entry_list_width: px(widths.entry_list as f32),
             pane_widths_save: None,
+            menu: None,
         }
     }
 
@@ -323,7 +368,7 @@ impl VaultBrowser {
             Detail::Moving(subject) => Some(subject.vault()),
             Detail::Totp { vault, .. } | Detail::VaultKey { vault, .. } => Some(*vault),
             Detail::History { vault, .. } => Some(*vault),
-            Detail::Settings(settings) => Some(settings.read(cx).vault()),
+            Detail::Group(vault, _) => Some(*vault),
         };
         if detail_vault.is_some_and(locked) {
             self.detail = Detail::Entry;
@@ -716,13 +761,9 @@ impl VaultBrowser {
         cx.notify();
     }
 
-    /// Shows the settings of the Vault shown, or of the selected Entry's, or of the first Vault.
-    fn open_settings(
-        &mut self,
-        _: &OpenVaultSettings,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Asks for the settings of the Vault shown, or of the selected Entry's, or of the first
+    /// Vault.
+    fn open_settings(&mut self, _: &OpenVaultSettings, _: &mut Window, cx: &mut Context<Self>) {
         let vault = self.scope(cx).vault().or_else(|| {
             self.selected_entry(cx).map(|(vault, _)| vault).or_else(|| {
                 self.workspace
@@ -733,36 +774,8 @@ impl VaultBrowser {
             })
         });
         if let Some(vault) = vault {
-            self.show_settings(vault, window, cx);
+            cx.emit(ShowVaultSettings(vault));
         }
-    }
-
-    fn show_settings(&mut self, vault: VaultId, window: &mut Window, cx: &mut Context<Self>) {
-        let (workspace, integration) = (self.workspace.clone(), self.integration.clone());
-        let settings = cx.new(|cx| VaultSettings::new(workspace, integration, vault, cx));
-        cx.subscribe_in(
-            &settings,
-            window,
-            |this, _, _: &VaultSettingsClosed, window, cx| {
-                this.detail = Detail::Entry;
-                window.focus(&this.focus);
-                cx.notify();
-            },
-        )
-        .detach();
-        cx.subscribe_in(
-            &settings,
-            window,
-            move |this, _, _: &VaultSettingsChangeKey, window, cx| {
-                this.open_vault_key(Some(vault), window, cx)
-            },
-        )
-        .detach();
-        window.focus(&settings.read(cx).initial_focus(cx));
-        self.detail = Detail::Settings(settings);
-        self.error = None;
-        self.notice = None;
-        cx.notify();
     }
 
     fn on_history_event(
@@ -1132,7 +1145,7 @@ impl VaultBrowser {
 
     /// Opens the form for the master key and encryption of `vault`, or else of the Vault
     /// shown, in the detail pane.
-    fn open_vault_key(
+    pub fn open_vault_key(
         &mut self,
         vault: Option<VaultId>,
         window: &mut Window,
@@ -1161,14 +1174,6 @@ impl VaultBrowser {
 
     fn start_autosaves(&mut self, cx: &mut Context<Self>) {
         saving::autosave(&self.workspace, cx);
-    }
-
-    fn toggle_autosave(&mut self, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.set_autosave(!workspace.autosave());
-            cx.notify();
-        });
-        self.start_autosaves(cx);
     }
 
     /// Tab moves between the Entry's custom fields and the other controls.
@@ -1267,10 +1272,79 @@ impl VaultBrowser {
             }))
     }
 
+    /// KeeWeb's menu: All Items, Colours and Tags, then each Vault's Groups, and the Trash.
     fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
+        let icon =
+            |icon: UiIcon, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
+        let folder = |color| Some(icons::standard_icon(FOLDER_ICON, px(14.), color));
         let mut rows: Vec<AnyElement> = Vec::new();
+
+        rows.push(
+            sidebar_row(
+                ("all-items", 0),
+                strings::SIDEBAR_ALL_ITEMS.into(),
+                0,
+                scope == EntryScope::AllVaults,
+                icon(UiIcon::AllItems, theme.text),
+                theme,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
+            .into_any_element(),
+        );
+
+        rows.push(sidebar_separator(theme));
+        rows.push(sidebar_heading(
+            strings::SIDEBAR_COLORS,
+            UiIcon::Colors,
+            theme,
+        ));
+        let dots = EntryColor::ALL.into_iter().map(|color| {
+            let selected = scope == EntryScope::Color(color);
+            div()
+                .id(("color", color as usize))
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor_pointer()
+                .when(selected, |this| this.bg(theme.sidebar_selection))
+                .child(icons::color_dot(color, px(12.)))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.select(EntryScope::Color(color), cx)),
+                )
+        });
+        rows.push(
+            div()
+                .flex()
+                .gap_1()
+                .pl(px(30.))
+                .pb_1()
+                .children(dots)
+                .into_any_element(),
+        );
+
+        rows.push(sidebar_separator(theme));
+        rows.push(sidebar_heading(strings::SIDEBAR_TAGS, UiIcon::Tags, theme));
+        for tag in workspace.tags() {
+            let tag_scope = EntryScope::Tag(tag.to_owned());
+            let selected = scope == tag_scope;
+            rows.push(
+                sidebar_row(
+                    ("tag", rows.len()),
+                    tag.to_owned().into(),
+                    1,
+                    selected,
+                    None,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.select(tag_scope.clone(), cx)))
+                .into_any_element(),
+            );
+        }
+
         // Unlocked and locked Vaults, in the order they were opened.
         let mut vaults: Vec<VaultId> = workspace
             .vaults()
@@ -1278,21 +1352,9 @@ impl VaultBrowser {
             .chain(workspace.locked_vaults().map(|locked| locked.id()))
             .collect();
         vaults.sort();
-        if vaults.len() > 1 {
-            rows.push(
-                sidebar_row(
-                    ("vault", rows.len()),
-                    strings::SIDEBAR_ALL_VAULTS.into(),
-                    0,
-                    scope == EntryScope::AllVaults,
-                    theme,
-                )
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
-                .into_any_element(),
-            );
-        }
+        let mut bins = Vec::new();
         for vault in vaults {
+            rows.push(sidebar_separator(theme));
             let selected = scope == EntryScope::Vault(vault);
             let select =
                 cx.listener(move |this, _, _, cx| this.select(EntryScope::Vault(vault), cx));
@@ -1304,12 +1366,12 @@ impl VaultBrowser {
                 rows.push(
                     sidebar_row(
                         ("vault", rows.len()),
-                        format!("{name}{}", strings::LOCKED_MARKER).into(),
+                        name.into(),
                         0,
                         selected,
+                        icon(UiIcon::Lock, theme.muted),
                         theme,
                     )
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.muted)
                     .on_click(select)
                     .into_any_element(),
@@ -1324,70 +1386,51 @@ impl VaultBrowser {
                         format!("{}{}", open.display_name(), strings::LOCKING_MARKER).into(),
                         0,
                         false,
+                        icon(UiIcon::Lock, theme.muted),
                         theme,
                     )
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.muted)
-                    .on_click(select)
                     .into_any_element(),
                 );
                 continue;
             }
-            let name = match open.has_unsaved_changes() {
-                true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
-                false => open.display_name(),
-            };
-            let sync = open.sync_status().map(|status| match status {
-                SyncStatus::Synced => (strings::SYNC_SYNCED, theme.muted),
-                SyncStatus::Syncing => (strings::SYNC_SYNCING, theme.muted),
-                SyncStatus::Offline => (strings::SYNC_OFFLINE, theme.muted),
-                SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
-            });
             rows.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .pr_2()
-                    .when(selected, |this| this.bg(theme.selection))
-                    .child(
-                        sidebar_row(("vault", rows.len()), name.into(), 0, false, theme)
-                            .flex_1()
-                            .min_w_0()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .on_click(select),
-                    )
-                    .children(sync.map(|(status, color)| {
-                        div()
-                            .id(("sync-status", rows.len()))
-                            .flex_none()
-                            .mr_2()
-                            .text_xs()
-                            .text_color(color)
-                            .child(status)
-                    }))
-                    .child(
-                        tool_button(("vault-key", rows.len()), strings::CHANGE_KEY_BUTTON, theme)
-                            .mr_1()
-                            .text_xs()
-                            .text_color(theme.muted)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_vault_key(Some(vault), window, cx)
-                            })),
-                    )
-                    .child(
-                        tool_button(("lock-vault", rows.len()), strings::LOCK, theme)
-                            .text_xs()
-                            .text_color(theme.muted)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                locking::lock_vault(&this.workspace, vault, cx)
-                            })),
-                    )
-                    .into_any_element(),
+                sidebar_row(
+                    ("vault", rows.len()),
+                    open.display_name().into(),
+                    0,
+                    selected,
+                    Some(icons::standard_icon(KEY_ICON, px(14.), theme.text)),
+                    theme,
+                )
+                .when(selected, |this| {
+                    this.child(edit_mark(("vault-settings", rows.len()), theme).on_click(
+                        cx.listener(move |_, _, _, cx| {
+                            // Not the row's click as well.
+                            cx.stop_propagation();
+                            cx.emit(ShowVaultSettings(vault))
+                        }),
+                    ))
+                })
+                .on_click(select)
+                .into_any_element(),
             );
+            let bin = open.vault().recycle_bin();
+            bins.extend(bin.map(|bin| (vault, bin, open.display_name())));
             let mut groups = Vec::new();
             flatten_groups(open.vault().root().groups(), 1, &mut groups);
+            let mut in_bin_below = None;
             for (group, depth) in groups {
                 let id = group.id();
+                // The Trash and what it holds are at the bottom of the sidebar instead.
+                if in_bin_below.is_some_and(|bin_depth| depth > bin_depth) {
+                    continue;
+                }
+                in_bin_below = None;
+                if Some(id) == bin {
+                    in_bin_below = Some(depth);
+                    continue;
+                }
                 if let Some((.., field)) = self
                     .renaming
                     .as_ref()
@@ -1409,8 +1452,18 @@ impl VaultBrowser {
                         group.name().to_owned().into(),
                         depth,
                         selected,
+                        folder(theme.text),
                         theme,
                     )
+                    .when(selected, |this| {
+                        this.child(edit_mark(("group-actions", rows.len()), theme).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.detail = Detail::Group(vault, id);
+                                cx.notify();
+                            }),
+                        ))
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select(EntryScope::Group(vault, id), cx)
                     }))
@@ -1418,53 +1471,29 @@ impl VaultBrowser {
                 );
             }
         }
-        let can_lock = workspace.vaults().next().is_some();
 
-        let shown = workspace.view().scope;
-        let tags = workspace.tags();
-        if !tags.is_empty() {
-            rows.push(sidebar_heading(strings::SIDEBAR_TAGS, theme));
-        }
-        for tag in tags {
-            let scope = EntryScope::Tag(tag.to_owned());
-            let selected = shown == scope;
-            rows.push(
-                sidebar_row(
-                    ("tag", rows.len()),
-                    tag.to_owned().into(),
-                    0,
-                    selected,
-                    theme,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.select(scope.clone(), cx)))
-                .into_any_element(),
-            );
-        }
-        rows.push(sidebar_heading(strings::SIDEBAR_COLORS, theme));
-        let dots = EntryColor::ALL.into_iter().map(|color| {
-            let selected = shown == EntryScope::Color(color);
-            div()
-                .id(("color", color as usize))
-                .size(px(22.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .cursor_pointer()
-                .when(selected, |this| this.bg(theme.selection))
-                .child(icons::color_dot(color, px(12.)))
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.select(EntryScope::Color(color), cx)),
-                )
-        });
-        rows.push(
-            div()
-                .flex()
-                .gap_1()
-                .px_2()
-                .children(dots)
-                .into_any_element(),
-        );
+        let several_bins = bins.len() > 1;
+        let any_bin = !bins.is_empty();
+        let trash =
+            bins.into_iter()
+                .enumerate()
+                .map(|(ix, (vault, bin, name))| {
+                    let label = match several_bins {
+                        true => strings::SIDEBAR_TRASH_OF.replace("{vault}", &name),
+                        false => strings::SIDEBAR_TRASH.to_owned(),
+                    };
+                    sidebar_row(
+                        ("trash", ix),
+                        label.into(),
+                        0,
+                        scope == EntryScope::Group(vault, bin),
+                        icon(UiIcon::Trash, theme.text),
+                        theme,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select(EntryScope::Group(vault, bin), cx)
+                    }))
+                });
 
         div()
             .w(self.sidebar_width)
@@ -1477,114 +1506,350 @@ impl VaultBrowser {
             .border_color(theme.border)
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .pt_2()
-                    .text_sm()
-                    .text_color(theme.muted)
-                    .child(strings::SIDEBAR_VAULTS)
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .when(can_lock, |this| {
-                                this.child(
-                                    tool_button("lock-all", strings::LOCK_ALL, theme).on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            locking::lock_all(&this.workspace, cx)
-                                        }),
-                                    ),
-                                )
-                            })
-                            .child(
-                                tool_button("open-vault", strings::OPEN_VAULT, theme)
-                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
-                            ),
-                    ),
-            )
-            .child(
-                div()
                     .id("sidebar")
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .py_2()
+                    .py_1p5()
                     .overflow_y_scroll()
                     .children(rows),
             )
-            .child(self.render_save_bar(theme, cx))
+            .when(any_bin, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .py_1p5()
+                        .border_t_1()
+                        .border_color(theme.border)
+                        .children(trash),
+                )
+            })
     }
 
-    fn render_save_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// KeeWeb's footer: the Vaults, each opening its settings, and the app's commands.
+    pub fn render_footer(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
-        let status = workspace.save_status();
-        let failed = status == SaveStatus::Failed;
-        let status = match status {
-            SaveStatus::Saving => strings::STATUS_SAVING,
-            SaveStatus::Failed => strings::STATUS_SAVE_FAILED,
-            SaveStatus::Unsaved => strings::STATUS_UNSAVED,
-            SaveStatus::Saved => strings::STATUS_SAVED,
+        let mut vaults: Vec<(VaultId, bool)> = workspace
+            .vaults()
+            .map(|open| (open.id(), true))
+            .chain(workspace.locked_vaults().map(|locked| (locked.id(), false)))
+            .collect();
+        vaults.sort();
+        let items = vaults
+            .into_iter()
+            .enumerate()
+            .map(|(ix, (vault, unlocked))| {
+                let item = div()
+                    .id(("footer-vault", ix))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|this| this.bg(theme.sidebar_selection));
+                let Some(open) = workspace.vault(vault).filter(|_| unlocked) else {
+                    let name = workspace
+                        .locked_vault(vault)
+                        .map(|locked| locked.display_name())
+                        .unwrap_or_default();
+                    return item
+                        .text_color(theme.muted)
+                        .child(icons::ui_icon(UiIcon::Lock, px(14.), theme.muted))
+                        .child(name)
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(UnlockLockedVault(vault))))
+                        .into_any_element();
+                };
+                let name = match open.has_unsaved_changes() {
+                    true => format!("{}{}", open.display_name(), strings::UNSAVED_MARKER),
+                    false => open.display_name(),
+                };
+                let status = if open.is_saving() {
+                    Some((strings::STATUS_SAVING, theme.muted))
+                } else if open.save_failed() {
+                    Some((strings::STATUS_SAVE_FAILED, theme.error))
+                } else {
+                    open.sync_status().map(|status| match status {
+                        SyncStatus::Synced => (strings::SYNC_SYNCED, theme.muted),
+                        SyncStatus::Syncing => (strings::SYNC_SYNCING, theme.muted),
+                        SyncStatus::Offline => (strings::SYNC_OFFLINE, theme.muted),
+                        SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
+                    })
+                };
+                item.child(icons::ui_icon(UiIcon::Unlocked, px(14.), theme.text))
+                    .child(name)
+                    .children(
+                        status
+                            .map(|(status, color)| div().text_xs().text_color(color).child(status)),
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(ShowVaultSettings(vault))))
+                    .into_any_element()
+            });
+        let can_lock = workspace.vaults().next().is_some();
+        let command = |id: &'static str, icon: UiIcon, color| {
+            div()
+                .id(id)
+                .p_1p5()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|this| this.bg(theme.sidebar_selection))
+                .child(icons::ui_icon(icon, px(16.), color))
         };
-        let autosave = workspace.autosave();
-        let config_error = workspace.config_error().is_some();
 
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .bg(theme.sidebar)
+            .text_color(theme.text)
+            .border_t_1()
+            .border_color(theme.border)
+            .children(items)
+            .child(
+                div()
+                    .id("footer-open")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(theme.muted)
+                    .hover(|this| this.bg(theme.sidebar_selection))
+                    .child(icons::ui_icon(UiIcon::Open, px(14.), theme.muted))
+                    .child(strings::FOOTER_OPEN)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
+            )
+            .child(div().flex_1())
+            .child(
+                command("footer-help", UiIcon::Help, theme.text).on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(ToggleCommandPalette), cx)
+                }),
+            )
+            .child(
+                command("footer-settings", UiIcon::Settings, theme.text)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+            )
+            .when(can_lock, |this| {
+                this.child(
+                    command("footer-lock", UiIcon::LockAll, theme.text).on_click(
+                        cx.listener(|this, _, _, cx| locking::lock_all(&this.workspace, cx)),
+                    ),
+                )
+            })
+    }
+
+    /// A menu under the button it belongs to, drawn over the panes.
+    fn render_menu(
+        &self,
+        items: Vec<MenuItem>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rows = items.into_iter().enumerate().map(|(ix, item)| {
+            let action = item.action;
+            div()
+                .id(("menu-item", ix))
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .cursor_pointer()
+                .hover(|this| this.bg(theme.sidebar_selection))
+                .child(
+                    div()
+                        .w(px(12.))
+                        .when(item.checked, |this| this.child(strings::MENU_CHECKED)),
+                )
+                .child(item.label)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.menu = None;
+                    action(this, window, cx);
+                    cx.notify();
+                }))
+        });
+        // Anchored where this empty box sits, under the button: an anchored element alone would
+        // sit at the top of its parent.
+        div()
+            .child(
+                deferred(
+                    anchored().snap_to_window_with_margin(px(8.)).child(
+                        div()
+                            .id("list-menu")
+                            .occlude()
+                            .mt_1()
+                            .min_w(px(160.))
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.panel)
+                            .text_color(theme.text)
+                            .text_sm()
+                            .shadow_md()
+                            .children(rows),
+                    ),
+                )
+                .with_priority(1),
+            )
+            .into_any_element()
+    }
+
+    /// What can be done with a Group, from its pencil in the sidebar.
+    fn render_group(
+        &self,
+        vault: VaultId,
+        group: GroupId,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let workspace = self.workspace.read(cx);
+        let Some(found) = workspace.group(vault, group) else {
+            return div().into_any_element();
+        };
+        let subject = Subject::Group(vault, group);
+        let is_browser_group = workspace.browser_group(vault) == Some(group);
+        let in_bin = workspace
+            .vault(vault)
+            .is_none_or(|open| open.vault().is_group_in_recycle_bin(group) != Ok(false));
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .p_3()
-            .border_t_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .id("save-status")
-                    .text_sm()
-                    .text_color(if failed { theme.error } else { theme.muted })
-                    .child(status),
-            )
-            .when(config_error, |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted)
-                        .child(strings::CONFIG_ERROR),
-                )
-            })
+            .gap_4()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap_3()
+                    .child(icons::standard_icon(FOLDER_ICON, px(32.), theme.text))
                     .child(
                         div()
-                            .id("autosave")
-                            .flex()
-                            .gap_1()
-                            .text_sm()
-                            .cursor_pointer()
-                            .child(if autosave {
-                                strings::CHECKBOX_ON
-                            } else {
-                                strings::CHECKBOX_OFF
-                            })
-                            .child(strings::AUTOSAVE)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_autosave(cx))),
-                    )
-                    .child(
-                        tool_button("save", strings::SAVE, theme)
-                            .on_click(cx.listener(|this, _, _, cx| this.save_all(cx))),
+                            .text_3xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .truncate()
+                            .child(found.name().to_owned()),
                     ),
             )
             .child(
-                tool_button("open-settings", strings::SETTINGS, theme)
-                    .text_center()
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(
+                        tool_button("group-new-entry", strings::NEW_ENTRY, theme).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.open_editor(EditTarget::New(vault, group), window, cx)
+                            }),
+                        ),
+                    )
+                    .child(
+                        tool_button("group-new-group", strings::NEW_GROUP, theme).on_click(
+                            cx.listener(|this, _, window, cx| this.new_group(window, cx)),
+                        ),
+                    )
+                    .child(
+                        tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
+                            move |this, _, window, cx| this.start_rename(vault, group, window, cx),
+                        )),
+                    )
+                    .child(
+                        tool_button("move-group", strings::MOVE, theme).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.detail = Detail::Moving(subject);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        tool_button("delete-group", strings::DELETE, theme).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.delete(subject, window, cx)
+                            }),
+                        ),
+                    ),
             )
+            .when(!in_bin, |this| {
+                this.child(match is_browser_group {
+                    true => div()
+                        .text_sm()
+                        .text_color(theme.muted)
+                        .child(strings::BROWSER_GROUP_MARK)
+                        .into_any_element(),
+                    false => div()
+                        .flex()
+                        .child(
+                            tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.edit(cx, |workspace| {
+                                        workspace.set_browser_group(vault, group)
+                                    });
+                                })),
+                        )
+                        .into_any_element(),
+                })
+            })
+            .child(div().flex().justify_end().child(
+                button("close-group", strings::EDITOR_DONE, theme).on_click(cx.listener(
+                    |this, _, window, cx| {
+                        this.detail = Detail::Entry;
+                        window.focus(&this.focus);
+                        cx.notify();
+                    },
+                )),
+            ))
+            .into_any_element()
     }
 
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        // Built first, as they need `cx` the rest borrows.
+        let adding = self.target_group(cx);
+        let icon_button = |id: &'static str, icon: UiIcon, open: bool| {
+            div()
+                .id(id)
+                .flex_none()
+                .p_1p5()
+                .rounded_md()
+                .cursor_pointer()
+                .when(open, |this| this.bg(theme.sidebar_selection))
+                .hover(|this| this.bg(theme.sidebar_selection))
+                .child(icons::ui_icon(icon, px(16.), theme.text))
+        };
+        let add_menu = (self.menu == Some(ListMenu::Add))
+            .then_some(adding)
+            .flatten()
+            .map(|(vault, group)| {
+                self.render_menu(
+                    vec![
+                        MenuItem::new(strings::MENU_NEW_ENTRY, false, move |this, window, cx| {
+                            this.open_editor(EditTarget::New(vault, group), window, cx)
+                        }),
+                        MenuItem::new(strings::MENU_NEW_GROUP, false, |this, window, cx| {
+                            this.new_group(window, cx)
+                        }),
+                    ],
+                    theme,
+                    cx,
+                )
+            });
+        let sort_menu = (self.menu == Some(ListMenu::Sort)).then(|| {
+            let items = EntrySort::ALL
+                .into_iter()
+                .map(|sort| {
+                    MenuItem::new(sort_label(sort), sort == self.sort, move |this, _, cx| {
+                        this.sort_by(sort, cx)
+                    })
+                })
+                .collect();
+            self.render_menu(items, theme, cx)
+        });
         let workspace = self.workspace.read(cx);
         let View {
             scope,
@@ -1603,21 +1868,6 @@ impl VaultBrowser {
                 .is_some_and(|open| open.is_locking()),
             _ => false,
         };
-        let header = match &scope {
-            EntryScope::AllVaults => Some(strings::SIDEBAR_ALL_VAULTS.to_owned()),
-            EntryScope::Vault(vault) => workspace
-                .vault(*vault)
-                .map(|open| open.display_name())
-                .or_else(|| locked.map(|locked| locked.display_name())),
-            EntryScope::Group(vault, group) => workspace
-                .group(*vault, *group)
-                .map(|group| group.name().to_owned()),
-            EntryScope::Tag(tag) => Some(strings::TAG_HEADER.replace("{tag}", tag)),
-            EntryScope::Color(color) => {
-                Some(strings::COLOR_HEADER.replace("{color}", strings::color_name(*color)))
-            }
-        }
-        .unwrap_or_default();
         // Across several Vaults, each Entry says which Vault it is from.
         let label_vaults = scope.vault().is_none() && workspace.vaults().nth(1).is_some();
 
@@ -1634,18 +1884,27 @@ impl VaultBrowser {
                     .flatten();
                 let expired = workspace.is_expired(entry);
                 let tags = (!entry.tags().is_empty()).then(|| entry.tags().join(", "));
+                // The picked Entry is drawn all in the selection's text colour.
+                let muted = if selected {
+                    theme.selection_text
+                } else {
+                    theme.muted
+                };
                 div()
                     .id(("entry", ix))
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_3()
+                    .mx_1p5()
+                    .my_0p5()
+                    .px_2()
                     .py_1p5()
-                    .border_b_1()
-                    .border_color(theme.border)
+                    .rounded_md()
                     .cursor_pointer()
-                    .when(selected, |this| this.bg(theme.selection))
-                    .children(entry_mark(workspace, vault, entry, px(18.), theme.muted))
+                    .when(selected, |this| {
+                        this.bg(theme.selection).text_color(theme.selection_text)
+                    })
+                    .children(entry_mark(workspace, vault, entry, px(18.), muted))
                     .child(
                         div()
                             .flex_1()
@@ -1676,7 +1935,7 @@ impl VaultBrowser {
                                     .flex()
                                     .gap_2()
                                     .text_sm()
-                                    .text_color(theme.muted)
+                                    .text_color(muted)
                                     .child(
                                         div()
                                             .flex_1()
@@ -1690,7 +1949,9 @@ impl VaultBrowser {
                                                 .max_w(px(120.))
                                                 .truncate()
                                                 .text_xs()
-                                                .text_color(theme.accent)
+                                                .when(!selected, |this| {
+                                                    this.text_color(theme.accent)
+                                                })
                                                 .child(tags),
                                         )
                                     })
@@ -1708,73 +1969,6 @@ impl VaultBrowser {
             })
             .collect();
 
-        let mut toolbar = div().flex().flex_wrap().gap_1();
-        if let Some((vault, group)) = self.target_group(cx) {
-            toolbar = toolbar
-                .child(
-                    tool_button("new-entry", strings::NEW_ENTRY, theme).on_click(cx.listener(
-                        move |this, _, window, cx| {
-                            this.open_editor(EditTarget::New(vault, group), window, cx)
-                        },
-                    )),
-                )
-                .child(
-                    tool_button("new-group", strings::NEW_GROUP, theme)
-                        .on_click(cx.listener(|this, _, window, cx| this.new_group(window, cx))),
-                );
-        }
-        if let EntryScope::Vault(vault) = scope {
-            toolbar = toolbar.child(
-                tool_button("vault-settings", strings::VAULT_SETTINGS, theme).on_click(
-                    cx.listener(move |this, _, window, cx| this.show_settings(vault, window, cx)),
-                ),
-            );
-        }
-        if let EntryScope::Group(vault, group) = scope {
-            let subject = Subject::Group(vault, group);
-            let is_browser_group = workspace.browser_group(vault) == Some(group);
-            let in_bin = workspace
-                .vault(vault)
-                .is_none_or(|open| open.vault().is_group_in_recycle_bin(group) != Ok(false));
-            toolbar = toolbar
-                .child(
-                    tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
-                        move |this, _, window, cx| this.start_rename(vault, group, window, cx),
-                    )),
-                )
-                .child(
-                    tool_button("move-group", strings::MOVE, theme).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.detail = Detail::Moving(subject);
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(
-                    tool_button("delete-group", strings::DELETE, theme).on_click(
-                        cx.listener(move |this, _, window, cx| this.delete(subject, window, cx)),
-                    ),
-                )
-                .when(!in_bin, |toolbar| {
-                    toolbar.child(match is_browser_group {
-                        true => div()
-                            .px_2()
-                            .py_0p5()
-                            .text_sm()
-                            .text_color(theme.muted)
-                            .child(strings::BROWSER_GROUP_MARK)
-                            .into_any_element(),
-                        false => tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.edit(cx, |workspace| {
-                                    workspace.set_browser_group(vault, group)
-                                });
-                            }))
-                            .into_any_element(),
-                    })
-                });
-        }
-
         div()
             .w(self.entry_list_width)
             .h_full()
@@ -1786,42 +1980,46 @@ impl VaultBrowser {
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
-                    .px_3()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
                     .py_2()
-                    .border_b_1()
-                    .border_color(theme.border)
                     .child(
                         div()
-                            .truncate()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(header),
+                            .flex_1()
+                            .min_w_0()
+                            .key_context(actions::SEARCH_CONTEXT)
+                            .child(self.search.clone()),
                     )
-                    .child(toolbar)
+                    .when(adding.is_some(), |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    icon_button("add", UiIcon::Open, add_menu.is_some()).on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.menu = Some(ListMenu::Add);
+                                            cx.notify();
+                                        }),
+                                    ),
+                                )
+                                .children(add_menu),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap_1()
+                            .flex_col()
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .key_context(actions::SEARCH_CONTEXT)
-                                    .child(self.search.clone()),
+                                icon_button("sort", UiIcon::Sort, sort_menu.is_some()).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.menu = Some(ListMenu::Sort);
+                                        cx.notify();
+                                    }),
+                                ),
                             )
-                            .child(
-                                tool_button(
-                                    "sort",
-                                    format!("{}{}", strings::SORT_PREFIX, sort_label(self.sort)),
-                                    theme,
-                                )
-                                .flex_none()
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| this.sort_by(next_sort(this.sort), cx),
-                                )),
-                            ),
+                            .children(sort_menu),
                     ),
             )
             .child(
@@ -1867,10 +2065,10 @@ impl VaultBrowser {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .bg(theme.panel)
+            .bg(theme.background)
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_3()
             .p_5()
             .when_some(self.error.clone(), |this, error| {
                 this.child(div().text_sm().text_color(theme.error).child(error))
@@ -1883,7 +2081,9 @@ impl VaultBrowser {
             Detail::Editing { editor, .. } => pane.child(editor.clone()).into_any_element(),
             Detail::Totp { setup, .. } => pane.child(setup.clone()).into_any_element(),
             Detail::History { view, .. } => pane.child(view.clone()).into_any_element(),
-            Detail::Settings(settings) => pane.child(settings.clone()).into_any_element(),
+            Detail::Group(vault, group) => pane
+                .child(self.render_group(*vault, *group, theme, cx))
+                .into_any_element(),
             Detail::VaultKey { form, .. } => pane.child(form.clone()).into_any_element(),
             Detail::Moving(item) => pane
                 .child(self.render_move_picker(*item, theme, cx))
@@ -1913,16 +2113,22 @@ impl VaultBrowser {
         };
         let id = entry.id();
 
+        // KeeWeb's way: each label right-aligned in a column before its value.
+        let labelled = |label: &'static str| {
+            div().flex().gap_4().child(
+                div()
+                    .w(DETAIL_LABEL_WIDTH)
+                    .flex_none()
+                    .text_right()
+                    .text_color(theme.muted)
+                    .child(label),
+            )
+        };
         let field = |label: &'static str, value: SharedString| {
-            div()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .child(div().text_sm().text_color(theme.muted).child(label))
-                .child(div().child(value))
+            labelled(label).child(div().flex_1().min_w_0().child(value))
         };
         let expired = workspace.is_expired(entry);
-        let icon = entry_mark(workspace, vault, entry, px(24.), theme.text);
+        let icon = entry_mark(workspace, vault, entry, px(32.), theme.text);
 
         pane.child(
             div()
@@ -1934,10 +2140,16 @@ impl VaultBrowser {
                     div()
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .gap_3()
                         .min_w_0()
                         .children(icon)
-                        .child(div().text_xl().truncate().child(title_of(entry)))
+                        .child(
+                            div()
+                                .text_3xl()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .truncate()
+                                .child(title_of(entry)),
+                        )
                         .when_some(entry.color(), |this, color| {
                             this.child(icons::color_dot(color, px(10.)))
                         }),
@@ -2022,47 +2234,28 @@ impl VaultBrowser {
                     .id(("detail-tag", ix))
                     .px_2()
                     .rounded_full()
-                    .bg(theme.selection)
+                    .bg(theme.sidebar_selection)
                     .text_sm()
                     .cursor_pointer()
                     .child(tag.clone())
                     .on_click(cx.listener(move |this, _, _, cx| this.select(scope.clone(), cx)))
             });
             this.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_0p5()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted)
-                            .child(strings::DETAIL_TAGS),
-                    )
-                    .child(div().flex().flex_wrap().gap_1().children(tags)),
+                labelled(strings::DETAIL_TAGS)
+                    .child(div().flex_1().flex().flex_wrap().gap_1().children(tags)),
             )
         })
         .when_some(entry.expires(), |this, expires| {
             this.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_0p5()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted)
-                            .child(strings::DETAIL_EXPIRES),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when(expired, |this| this.text_color(theme.error))
-                            .child(expires.to_date())
-                            .when(expired, |this| this.child(expired_badge(theme))),
-                    ),
+                labelled(strings::DETAIL_EXPIRES).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .when(expired, |this| this.text_color(theme.error))
+                        .child(expires.to_date())
+                        .when(expired, |this| this.child(expired_badge(theme))),
+                ),
             )
         })
         .children(
@@ -2377,9 +2570,9 @@ impl VaultBrowser {
                 } else {
                     group.name().to_owned().into()
                 };
-                sidebar_row(("move-target", ix), name, depth, false, theme)
+                sidebar_row(("move-target", ix), name, depth, false, None, theme)
                     .rounded_md()
-                    .hover(|this| this.bg(theme.selection))
+                    .hover(|this| this.bg(theme.sidebar_selection))
                     .on_click(cx.listener(move |this, _, _, cx| this.move_to(item, to, cx)))
                     .into_any_element()
             })
@@ -2452,24 +2645,50 @@ impl Render for VaultBrowser {
                 }),
             )
             .on_action(cx.listener(Self::open_settings))
-            .on_drag_move(cx.listener(Self::on_pane_edge_drag))
             .size_full()
-            .relative()
             .flex()
+            .flex_col()
             .bg(theme.background)
             .text_color(theme.text)
-            .child(self.render_sidebar(theme, cx))
-            .child(self.render_entry_list(theme, cx))
-            .child(self.render_detail(theme, cx))
-            // After the panes, so the edges are grabbed over the panes either side of them.
-            .child(self.render_pane_edge(PaneEdge::Sidebar, self.sidebar_width, theme, cx))
-            .child(self.render_pane_edge(
-                PaneEdge::EntryList,
-                self.sidebar_width + self.entry_list_width,
-                theme,
-                cx,
-            ))
-            .children(self.render_merge_notice(theme, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .on_drag_move(cx.listener(Self::on_pane_edge_drag))
+                    .child(self.render_sidebar(theme, cx))
+                    .child(self.render_entry_list(theme, cx))
+                    .child(self.render_detail(theme, cx))
+                    // After the panes, so the edges are grabbed over the panes either side of
+                    // them.
+                    .child(self.render_pane_edge(PaneEdge::Sidebar, self.sidebar_width, theme, cx))
+                    .child(self.render_pane_edge(
+                        PaneEdge::EntryList,
+                        self.sidebar_width + self.entry_list_width,
+                        theme,
+                        cx,
+                    ))
+                    .children(self.render_merge_notice(theme, cx)),
+            )
+            .child(self.render_footer(theme, cx))
+            .when(self.menu.is_some(), |this| {
+                // Clicking anywhere beside an open menu closes it.
+                this.child(
+                    div()
+                        .id("menu-backdrop")
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.menu = None;
+                                cx.notify();
+                            }),
+                        ),
+                )
+            })
     }
 }
 
@@ -2505,15 +2724,34 @@ pub fn describe(error: &EditVaultError) -> &'static str {
 }
 
 /// A heading above a section of the sidebar.
-fn sidebar_heading(label: &'static str, theme: Theme) -> AnyElement {
+/// A heading of the sidebar, with its icon.
+fn sidebar_heading(label: &'static str, icon: UiIcon, theme: Theme) -> AnyElement {
     div()
-        .px_3()
-        .pt_3()
-        .pb_1()
-        .text_sm()
-        .text_color(theme.muted)
+        .mx_1p5()
+        .px_1p5()
+        .py_1()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(icons::ui_icon(icon, px(14.), theme.text))
         .child(label)
         .into_any_element()
+}
+
+pub fn sidebar_separator(theme: Theme) -> AnyElement {
+    div().h_px().my_1p5().bg(theme.border).into_any_element()
+}
+
+/// The pencil at the end of a picked sidebar row, opening what can be done with it.
+fn edit_mark(id: (&'static str, usize), theme: Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .p_0p5()
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|this| this.bg(theme.border))
+        .child(icons::ui_icon(UiIcon::Edit, px(12.), theme.muted))
 }
 
 fn expired_badge(theme: Theme) -> impl IntoElement {
@@ -2528,22 +2766,29 @@ fn expired_badge(theme: Theme) -> impl IntoElement {
         .child(strings::EXPIRED_BADGE)
 }
 
-fn sidebar_row(
+/// A row of the sidebar, `depth` Groups in, after its icon.
+pub fn sidebar_row(
     id: (&'static str, usize),
     label: SharedString,
     depth: usize,
     selected: bool,
+    icon: Option<AnyElement>,
     theme: Theme,
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .pl(px(12. + 14. * depth as f32))
-        .pr_3()
+        .mx_1p5()
+        .pl(px(6. + 14. * depth as f32))
+        .pr_1p5()
         .py_1()
-        .truncate()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_md()
         .cursor_pointer()
-        .when(selected, |this| this.bg(theme.selection))
-        .child(label)
+        .when(selected, |this| this.bg(theme.sidebar_selection))
+        .children(icon)
+        .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
 pub fn flatten_groups<'a>(groups: &'a [Group], depth: usize, out: &mut Vec<(&'a Group, usize)>) {
@@ -2588,13 +2833,6 @@ fn sort_label(sort: EntrySort) -> &'static str {
         EntrySort::Created => strings::SORT_CREATED,
         EntrySort::Modified => strings::SORT_MODIFIED,
     }
-}
-
-/// The sort the sort button switches to next.
-fn next_sort(sort: EntrySort) -> EntrySort {
-    let all = EntrySort::ALL;
-    let ix = all.iter().position(|&each| each == sort).unwrap_or(0);
-    all[(ix + 1) % all.len()]
 }
 
 pub fn title_of(entry: &Entry) -> SharedString {
