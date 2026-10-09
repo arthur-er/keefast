@@ -672,7 +672,7 @@ impl Render for UnlockView {
                             .justify_end()
                             .gap_2()
                             .child(
-                                button("open-settings", strings::SETTINGS, theme)
+                                button("open-settings", strings::OPEN_SETTINGS, theme)
                                     .mr_auto()
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(Box::new(OpenSettings), cx)

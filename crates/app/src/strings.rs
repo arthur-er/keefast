@@ -39,12 +39,7 @@ pub const RECENT_FORGET: &str = "×";
 pub const CONFIG_ERROR: &str =
     "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
 
-pub const SIDEBAR_VAULTS: &str = "Vaults";
-pub const SIDEBAR_ALL_VAULTS: &str = "All Vaults";
-pub const OPEN_VAULT: &str = "+ Vault";
 pub const LOCK: &str = "Lock";
-pub const LOCK_ALL: &str = "Lock all";
-pub const LOCKED_MARKER: &str = " (locked)";
 pub const LOCKING_MARKER: &str = " (locking…)";
 pub const LOCKING_NOTE: &str = "This Vault is about to lock. Save or discard its changes to continue; nothing in it is shown until then.";
 pub const VAULT_LOCKED: &str = "This Vault is locked.";
@@ -58,7 +53,6 @@ pub const LOCK_DISCARD: &str = "Discard";
 pub const LIST_EMPTY: &str = "No Entries";
 pub const LIST_NO_MATCHES: &str = "No Entries match the search";
 pub const SEARCH_PLACEHOLDER: &str = "Search";
-pub const SORT_PREFIX: &str = "Sort: ";
 pub const SORT_TITLE: &str = "Title";
 pub const SORT_USERNAME: &str = "Username";
 pub const SORT_URL: &str = "URL";
@@ -134,22 +128,16 @@ pub const ERROR_ICON_UNREADABLE: &str = "The image could not be read.";
 pub const ERROR_PICKER: &str = "The file picker could not be opened.";
 
 pub const SIDEBAR_TAGS: &str = "Tags";
+pub const MENU_NEW_ENTRY: &str = "Entry";
+pub const MENU_NEW_GROUP: &str = "Group";
+/// Before the choice in force in a menu.
+pub const MENU_CHECKED: &str = "✓";
+pub const SIDEBAR_ALL_ITEMS: &str = "All Items";
+pub const SIDEBAR_TRASH: &str = "Trash";
+pub const SIDEBAR_TRASH_OF: &str = "Trash of {vault}";
+/// The footer's command to open or create another Vault.
+pub const FOOTER_OPEN: &str = "Open / New";
 pub const SIDEBAR_COLORS: &str = "Colours";
-pub const TAG_HEADER: &str = "Tag: {tag}";
-pub const COLOR_HEADER: &str = "Colour: {color}";
-
-/// Each colour's name, as [`keefast_core::EntryColor`] lists them.
-pub fn color_name(color: keefast_core::EntryColor) -> &'static str {
-    use keefast_core::EntryColor;
-    match color {
-        EntryColor::Red => "Red",
-        EntryColor::Orange => "Orange",
-        EntryColor::Yellow => "Yellow",
-        EntryColor::Green => "Green",
-        EntryColor::Blue => "Blue",
-        EntryColor::Violet => "Violet",
-    }
-}
 
 pub const NEW_ENTRY: &str = "+ Entry";
 pub const NEW_GROUP: &str = "+ Group";
@@ -162,10 +150,10 @@ pub const DELETE: &str = "Delete";
 pub const MOVE_TO: &str = "Move to:";
 
 pub const SAVE: &str = "Save";
+pub const VAULT_FILE: &str = "Vault file";
 pub const UNSAVED_MARKER: &str = " •";
 pub const CHECKBOX_ON: &str = "☑";
 pub const CHECKBOX_OFF: &str = "☐";
-pub const AUTOSAVE: &str = "Autosave";
 pub const STATUS_SAVED: &str = "All changes saved";
 pub const STATUS_UNSAVED: &str = "Unsaved changes";
 pub const STATUS_SAVING: &str = "Saving…";
@@ -228,7 +216,6 @@ pub const NEW_VAULT_ERROR_ENCRYPT: &str = "The Vault could not be encrypted with
 pub const CHANGE_KEY_TITLE: &str = "Master key and encryption of “{vault}”";
 pub const CHANGE_KEY_TOGGLE: &str = "Set a new master key";
 pub const CHANGE_KEY_APPLY: &str = "Save changes";
-pub const CHANGE_KEY_BUTTON: &str = "Key…";
 pub const VAULT_SETTINGS_CHANGE_KEY: &str = "Change master key and encryption…";
 pub const MASTER_KEY: &str = "Master key";
 pub const KEY_CONFIRM_LABEL: &str = "Repeat the master password";
@@ -294,8 +281,6 @@ pub const ACCESS_DENIED: &str = "Denied";
 pub const ACCESS_FORGET: &str = "Forget";
 pub const ACCESS_FORGET_ALL: &str = "Forget all";
 
-pub const VAULT_SETTINGS: &str = "Settings";
-pub const VAULT_SETTINGS_TITLE: &str = "Settings for {vault}";
 pub const DEFAULT_ACCESS_POLICY: &str = "Default access policy";
 pub const DEFAULT_ACCESS_POLICY_NOTE: &str = "When a site asks for an Entry you haven't decided \
 on for it. A decision remembered on the Entry always comes first.";
@@ -413,8 +398,10 @@ pub const ERROR_IN_RECYCLE_BIN: &str = "Logins can't be saved in the Recycle Bin
 pub const ERROR_NOT_PAIRED: &str = "The browser is not paired with this Vault.";
 
 /// The app-wide settings, kept on this machine, as opposed to a Vault's own settings.
-pub const SETTINGS: &str = "App settings";
-pub const SETTINGS_CLOSE: &str = "Done";
+pub const SETTINGS: &str = "General Settings";
+pub const SETTINGS_GENERAL: &str = "General";
+pub const OPEN_SETTINGS: &str = "Settings";
+pub const SETTINGS_CLOSE: &str = "return to app";
 pub const SETTINGS_APPEARANCE: &str = "Appearance";
 pub const SETTINGS_THEME: &str = "Theme";
 pub const THEME_SYSTEM: &str = "System";

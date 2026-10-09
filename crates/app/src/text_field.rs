@@ -1,10 +1,11 @@
 use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, KeyDownEvent, SharedString, Window, div,
-    prelude::*,
+    prelude::*, px,
 };
 use zeroize::Zeroizing;
 
 use crate::actions;
+use crate::icons::{self, UiIcon};
 use crate::strings;
 use crate::theme::Theme;
 
@@ -27,6 +28,8 @@ pub struct TextField {
     placeholder: SharedString,
     multiline: bool,
     masked: bool,
+    /// Drawn before the text, as a search field's magnifier.
+    icon: Option<UiIcon>,
 }
 
 impl EventEmitter<TextFieldEvent> for TextField {}
@@ -46,7 +49,13 @@ impl TextField {
             placeholder: placeholder.into(),
             multiline: false,
             masked: false,
+            icon: None,
         }
+    }
+
+    pub fn with_icon(mut self, icon: UiIcon) -> Self {
+        self.icon = Some(icon);
+        self
     }
 
     pub fn multiline(mut self) -> Self {
@@ -180,6 +189,13 @@ impl Render for TextField {
             .when(self.multiline, |this| this.min_h_20())
             .when(self.text.is_empty() && !focused, |this| {
                 this.text_color(theme.muted)
+            })
+            .when_some(self.icon, |this, icon| {
+                this.flex().items_center().gap_1p5().child(icons::ui_icon(
+                    icon,
+                    px(14.),
+                    theme.muted,
+                ))
             })
             .child(content)
     }

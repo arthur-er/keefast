@@ -93,16 +93,28 @@ with its keys.
 In the Entry list, Up/Down (Home/End) select an Entry and Enter opens it for editing.
 Ctrl+B copies the selected Entry's username, Ctrl+C its password and Ctrl+T its TOTP code.
 keefast clears what it copied from the clipboard after 30 seconds, unless you have copied something else since;
-change the wait in App settings.
+change the wait in the settings.
 
-## App settings
+## Layout
 
-App settings (Ctrl+, or "App settings" in the sidebar and the unlock dialog) hold the preferences
-kept on this machine, in `keefast/config.toml` in the OS config directory: the theme (the
-system's light/dark setting, or always light or dark), the idle lock and locking with the OS, how
-long copied secrets stay on the clipboard, autosave, the password generator, browser integration
-and favicon download. Tab moves between the settings and Enter or Space picks one; Escape closes
-them.
+keefast is laid out like KeeWeb. The sidebar lists All Items, the colours and tags, then each
+Vault with its Groups, and the Trash (each Vault's Recycle Bin) at the bottom. A Group's pencil
+opens what can be done with it: new Entries and Groups in it, renaming, moving and deleting it.
+The Entry list's search box is beside its `+` (a new Entry or Group) and sort buttons. The
+footer lists the open and locked Vaults, with *Open / New* to open another, and the help (the
+command palette), settings and lock-all buttons.
+
+## Settings
+
+The settings (Ctrl+, or the gear in the footer and "Settings" in the unlock dialog) have a menu
+of their sections and the open Vaults. **General** holds the preferences kept on this machine, in
+`keefast/config.toml` in the OS config directory: the theme (one of KeeWeb's: Dark, Light,
+Solarized dark and light, Dark and Light blue, Dark and Light brown, Terminal, Terminal light,
+Dark contrast and High contrast, or System, following the OS's light/dark setting), the idle lock
+and locking with the OS, how long copied secrets stay on the clipboard, autosave, the password
+generator, browser integration and favicon download. Each Vault's page (also reached by clicking
+it in the footer) saves or locks it, changes its master key, and holds its Default access policy
+and Pairings. Tab moves between the settings and Enter or Space picks one; Escape closes them.
 
 Favicon download is off by default, as keefast makes no network requests you haven't agreed to.
 Turned on, keefast asks each Entry's site for `/favicon.ico`, or the icon its home page links
@@ -122,7 +134,7 @@ KeePassXC, KeePass and KeeWeb store them, so those clients show them too.
 ## Browser integration
 
 keefast speaks the KeePassXC-Browser protocol (ADR 0003) with its Companion extension, and the
-stock KeePassXC-Browser extension works with it too. Turn on browser integration in keefast's App settings:
+stock KeePassXC-Browser extension works with it too. Turn on browser integration in keefast's settings:
 it registers `keefast-native-host`, installed next to the `keefast` binary, with Chrome,
 Chromium, Brave, Edge and Vivaldi. It registers under KeePassXC's host name, so it takes over
 from a KeePassXC registered for the same browsers; turning it off removes only keefast's
@@ -204,7 +216,7 @@ Vault file, which keefast finds and Merges in within 30 seconds.
   Vault's key, never anything decrypted. Without a network a cached Vault still opens, and
   saves go to the cache. They're uploaded, with a Merge, as soon as Dropbox is reachable
   again, even after a restart or a lock.
-- **Sync status**: the sidebar shows each Dropbox Vault as *Synced*, *Syncing…*, *Offline* or
+- **Sync status**: the footer shows each Dropbox Vault as *Synced*, *Syncing…*, *Offline* or
   *Sync error* (for instance, its Vault file was deleted from Dropbox).
 
 The cache is keyed by Dropbox path, not by account. Connecting a different Dropbox account

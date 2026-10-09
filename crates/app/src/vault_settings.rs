@@ -6,10 +6,12 @@ use keefast_core::DefaultAccessPolicy;
 use keefast_workspace::{VaultId, Workspace};
 
 use crate::browser_integration::BrowserIntegration;
+use crate::locking;
+use crate::saving;
 use crate::strings;
 use crate::theme::Theme;
 use crate::vault_browser::describe;
-use crate::widgets::{button, tool_button};
+use crate::widgets::tool_button;
 
 /// Emitted when the user closes the settings.
 pub struct VaultSettingsClosed;
@@ -24,8 +26,8 @@ const POLICIES: [(DefaultAccessPolicy, &str); 3] = [
     (DefaultAccessPolicy::AlwaysDeny, strings::POLICY_DENY),
 ];
 
-/// A Vault's settings, shown in the detail pane: its Default access policy and its Pairings,
-/// which can be revoked. Tab moves between the choices, and Enter or Space picks one.
+/// A Vault's settings, shown on the settings screen: saving and locking it, its master key, its
+/// Default access policy and its Pairings, which can be revoked. Tab moves between the choices, and Enter or Space picks one.
 pub struct VaultSettings {
     workspace: Entity<Workspace>,
     integration: Entity<BrowserIntegration>,
@@ -171,14 +173,27 @@ impl Render for VaultSettings {
         let Some(open) = self.workspace.read(cx).vault(self.vault) else {
             return div().into_any_element();
         };
-        let title = strings::VAULT_SETTINGS_TITLE.replace("{vault}", &open.display_name());
+        let status = if open.is_saving() {
+            strings::STATUS_SAVING
+        } else if open.save_failed() {
+            strings::STATUS_SAVE_FAILED
+        } else if open.has_unsaved_changes() {
+            strings::STATUS_UNSAVED
+        } else {
+            strings::STATUS_SAVED
+        };
+        let save_failed = open.save_failed();
         let current = open.vault().default_access_policy();
         let pairings = self.pairing_names(cx);
         while self.revoke_focus.len() < pairings.len() {
             self.revoke_focus.push(cx.focus_handle().tab_stop(true));
         }
-        let heading =
-            |text: &'static str| div().font_weight(gpui::FontWeight::SEMIBOLD).child(text);
+        let heading = |text: &'static str| {
+            div()
+                .text_xl()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(text)
+        };
         let note = |text: &'static str| div().text_sm().text_color(theme.muted).child(text);
 
         let policies = POLICIES.iter().zip(&self.policy_focus).enumerate().map(
@@ -238,11 +253,42 @@ impl Render for VaultSettings {
             .on_key_down(cx.listener(Self::on_key_down))
             .flex()
             .flex_col()
-            .gap_4()
-            .child(div().text_lg().child(title))
+            .gap_6()
             .when_some(self.error.clone(), |this, error| {
                 this.child(div().text_sm().text_color(theme.error).child(error))
             })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(heading(strings::VAULT_FILE))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(if save_failed {
+                                theme.error
+                            } else {
+                                theme.muted
+                            })
+                            .child(status),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(tool_button("save-vault", strings::SAVE, theme).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    saving::save(&this.workspace, this.vault, cx)
+                                }),
+                            ))
+                            .child(tool_button("lock-vault", strings::LOCK, theme).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    locking::lock_vault(&this.workspace, this.vault, cx)
+                                }),
+                            )),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -280,12 +326,6 @@ impl Render for VaultSettings {
                         this.child(note(strings::PAIRINGS_NONE))
                     })
                     .children(pairing_rows),
-            )
-            .child(
-                div().flex().justify_end().child(
-                    button("close-vault-settings", strings::EDITOR_DONE, theme)
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(VaultSettingsClosed))),
-                ),
             )
             .into_any_element()
     }
