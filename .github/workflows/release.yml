@@ -41,15 +41,18 @@ jobs:
         working-directory: extension
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: extension/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-      - run: cd dist && zip -r "../keefast-companion-${GITHUB_REF_NAME#v}.zip" .
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm zip
+      - run: mv .output/keefast-companion-*.zip "keefast-companion-${GITHUB_REF_NAME#v}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: extension

@@ -39,6 +39,26 @@ export interface Entry {
   password: string;
   /** Whether the Entry has TOTP, whose code {@link KeefastClient.totp} gets. */
   hasTotp: boolean;
+  /** The name of the Group the Entry is in. */
+  group: string;
+}
+
+/** An Entry the user picked in the command palette, with its current TOTP code if it has one. */
+export interface PickedEntry extends Entry {
+  totp?: string;
+}
+
+/** An Entry the command palette found searching the paired Vaults: never its password. */
+export interface FoundEntry {
+  uuid: string;
+  /** The Entry's title. */
+  name: string;
+  username: string;
+  /** The Entry's URL, as the user wrote it. */
+  url: string;
+  /** The Groups from the top of its Vault down to the Entry's, as in `Work / Email`. */
+  group: string;
+  hasTotp: boolean;
 }
 
 /** A login the user submitted, for keefast to save. */
@@ -161,6 +181,53 @@ export class KeefastClient {
       return Array.isArray(reply.entries) ? reply.entries.map(toEntry) : [];
     } catch (error) {
       if (error instanceof KeefastError && error.code === NO_LOGINS_FOUND) return [];
+      throw error;
+    }
+  }
+
+  /**
+   * The Entries in the paired Vaults matching `query`, best match first, for the user to pick
+   * one for the page at `url` in the command palette. keefast's own protocol extension
+   * (ADR 0007): it gives no passwords, and finds nothing for an empty query.
+   */
+  async search(url: string, submitUrl: string | undefined, query: string): Promise<FoundEntry[]> {
+    const pairings = await this.store.load();
+    const reply = await this.sendEncrypted("keefast-search-entries", {
+      url,
+      submitUrl: submitUrl ?? url,
+      query,
+      keys: pairings.map(({ id, key }) => ({ id, key })),
+    });
+    return Array.isArray(reply.entries) ? reply.entries.map(toFoundEntry) : [];
+  }
+
+  /**
+   * Gives the page at `url` the Entry `uuid` the user picked in the command palette. keefast
+   * remembers the pick as the Entry's Access decision for the site, and with `addUrl` adds the
+   * site to the Entry's URLs. None if keefast no longer has the Entry for the extension.
+   */
+  async pick(
+    uuid: string,
+    url: string,
+    submitUrl: string | undefined,
+    addUrl: boolean,
+  ): Promise<PickedEntry | undefined> {
+    const pairings = await this.store.load();
+    try {
+      const reply = await this.sendEncrypted("keefast-pick-entry", {
+        uuid,
+        url,
+        submitUrl: submitUrl ?? url,
+        addUrl,
+        id: "",
+        keys: pairings.map(({ id, key }) => ({ id, key })),
+      });
+      const [entry] = Array.isArray(reply.entries) ? (reply.entries as Message[]) : [];
+      if (!entry) return undefined;
+      const totp = typeof entry.totp === "string" && entry.totp !== "" ? entry.totp : undefined;
+      return { ...toEntry(entry), totp };
+    } catch (error) {
+      if (error instanceof KeefastError && error.code === NO_LOGINS_FOUND) return undefined;
       throw error;
     }
   }
@@ -402,5 +469,17 @@ function toEntry(entry: Record<string, unknown>): Entry {
     username: String(entry.login ?? ""),
     password: String(entry.password ?? ""),
     hasTotp: typeof entry.totp === "string" && entry.totp !== "",
+    group: String(entry.group ?? ""),
+  };
+}
+
+function toFoundEntry(entry: Record<string, unknown>): FoundEntry {
+  return {
+    uuid: String(entry.uuid ?? ""),
+    name: String(entry.name ?? ""),
+    username: String(entry.login ?? ""),
+    url: String(entry.url ?? ""),
+    group: String(entry.group ?? ""),
+    hasTotp: entry.hasTotp === true,
   };
 }

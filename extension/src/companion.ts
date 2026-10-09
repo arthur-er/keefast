@@ -1,13 +1,15 @@
-// What the popup and the shortcut do: ask keefast for the page's Entries, and fill the one the
-// user picks, with its TOTP code on a 2FA step; or fill a password keefast's generator made.
-// Entries' passwords and TOTP codes stay here, never in the popup, and only until filled; the
-// popup shows only a generated password, for the user to see what they sign up with. Then,
-// what the page does: offer keefast the logins the user submits there that it doesn't have yet.
+// What the popup, the command palette, the icons in sign-in fields and the shortcut do: ask
+// keefast for the page's Entries, and fill the one the user picks, with its TOTP code on a 2FA
+// step; search the paired Vaults for one when none is for the site, and fill the one picked; or
+// fill a password keefast's generator made. Entries' passwords and TOTP codes stay here, never
+// in the popup or the palette, and only until filled; they show only a generated password, for
+// the user to see what they sign up with. Then, what the page does: offer keefast the logins
+// the user submits there that it doesn't have yet.
 import nacl from "tweetnacl";
 import type { SubmittedLogin } from "./capture";
 import { encodeBase64 } from "./crypto";
 import { type Credentials, type PageFields, isTwoFactorStep } from "./forms";
-import { KeefastError, type Entry, type KeefastClient } from "./keefast";
+import { KeefastError, type Entry, type FoundEntry, type KeefastClient } from "./keefast";
 
 /** A page the extension may fill, as its login form sees it. */
 export interface Page {
@@ -36,12 +38,14 @@ export interface Tabs {
   fillNewPassword(tab: number, origin: string, password: string): Promise<boolean>;
 }
 
-/** An Entry as the popup lists it, without its password. */
+/** An Entry as the popup and the palette list it, without its password. */
 export interface EntrySummary {
   uuid: string;
   name: string;
   username: string;
   hasTotp: boolean;
+  /** The name of the Group the Entry is in. */
+  group: string;
 }
 
 /** The Entries that can fill a page, and what the page has to fill. */
@@ -123,11 +127,12 @@ export class Companion {
     const listed = await this.listFor(tab);
     if (!listed) return undefined;
     return {
-      entries: entriesFilling(listed).map(({ uuid, name, username, hasTotp }) => ({
+      entries: entriesFilling(listed).map(({ uuid, name, username, hasTotp, group }) => ({
         uuid,
         name,
         username,
         hasTotp,
+        group,
       })),
       fields: listed.fields,
     };
@@ -153,6 +158,43 @@ export class Companion {
     const filled = await this.tabs.fill(tab, origin, credentials);
     const known = this.known.get(tab);
     if (filled && known?.origin === origin) known.filled = entry.uuid;
+    return filled;
+  }
+
+  /**
+   * The Entries in the paired Vaults matching `query`, for the user to pick one for the page in
+   * `tab` in the command palette; none if the extension can't fill the page.
+   */
+  async search(tab: number, query: string): Promise<FoundEntry[] | undefined> {
+    const page = await this.tabs.inspect(tab);
+    if (!page) return undefined;
+    if (query.trim() === "") return [];
+    return this.client.search(page.url, page.submitUrl, query);
+  }
+
+  /**
+   * Fills the Entry `uuid` the user picked in the command palette, found by {@link search},
+   * into `tab`, with its TOTP code if the page has a 2FA field, and says whether it did.
+   * keefast remembers the pick for the site, and with `addUrl` adds the site to the Entry.
+   */
+  async fillPicked(tab: number, uuid: string, addUrl: boolean): Promise<boolean> {
+    const page = await this.tabs.inspect(tab);
+    if (!page) return false;
+    const entry = await this.client.pick(uuid, page.url, page.submitUrl, addUrl);
+    if (!entry) return false;
+    // The site's Entries listed a moment ago may no longer be all it has.
+    this.forget(tab);
+    const { origin, fields } = page;
+    const credentials: Credentials = { username: entry.username, password: entry.password };
+    // The code came with the Entry, a moment ago.
+    if (fields.totp && entry.totp !== undefined) credentials.totp = entry.totp;
+    if (isTwoFactorStep(fields) && credentials.totp === undefined) return false;
+    const filled = await this.tabs.fill(tab, origin, credentials);
+    const known = this.knownAt(tab, origin);
+    if (!known.entries.some((other) => other.uuid === entry.uuid)) {
+      known.entries.push(this.knownEntry(entry));
+    }
+    if (filled) known.filled = entry.uuid;
     return filled;
   }
 
@@ -186,7 +228,7 @@ export class Companion {
 
   /**
    * Fills the page's only Entry. With several, none, or keefast unavailable, the user should
-   * see the popup to choose, or to learn what's wrong.
+   * see the palette or the popup to choose, or to learn what's wrong.
    */
   async shortcut(tab: number): Promise<"filled" | "choose"> {
     try {
@@ -269,12 +311,7 @@ export class Companion {
     }
     const entries = await this.client.entries(page.url, page.submitUrl);
     this.forget(tab);
-    this.knownAt(tab, page.origin).entries = entries.map(({ uuid, username, password }) => ({
-      uuid,
-      username,
-      loginHash: this.fingerprint(username, password),
-      passwordHash: this.fingerprint("", password),
-    }));
+    this.knownAt(tab, page.origin).entries = entries.map((entry) => this.knownEntry(entry));
     const listed: Listed = {
       origin: page.origin,
       entries,
@@ -297,6 +334,15 @@ export class Companion {
     known.expiry = setTimeout(() => this.known.delete(tab), KNOW_ENTRIES_MS);
     this.known.set(tab, known);
     return known;
+  }
+
+  private knownEntry({ uuid, username, password }: Entry): KnownEntry {
+    return {
+      uuid,
+      username,
+      loginHash: this.fingerprint(username, password),
+      passwordHash: this.fingerprint("", password),
+    };
   }
 
   /** A salted hash of a login, to compare it without keeping its password. */

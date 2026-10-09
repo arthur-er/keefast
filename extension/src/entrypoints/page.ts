@@ -1,6 +1,9 @@
-// Injected into the page only when the user asks to fill it, from the popup or the shortcut.
-// From then on, until the page goes, it also tells the extension the logins submitted there.
-import { type SubmittedLogin, submitsLogin, submittedLogin } from "./capture";
+// Injected into the page only when the user asks to fill it: from the popup, the shortcut, the
+// command palette or keefast's icon in a field. From then on, until the page goes, it tells the
+// extension the logins submitted there, and frames the command palette when asked.
+import { browser } from "wxt/browser";
+import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
+import { type SubmittedLogin, submitsLogin, submittedLogin } from "../capture";
 import {
   type Credentials,
   fillLogin,
@@ -8,9 +11,10 @@ import {
   fillTotp,
   findLoginFields,
   pageFields,
-} from "./forms";
-import type { InspectedPage } from "./companion";
-import type { PageMessage } from "./messages";
+} from "../forms";
+import type { InspectedPage } from "../companion";
+import type { PageMessage } from "../messages";
+import { hostPalette } from "../palette-host";
 
 export interface PageApi {
   /** The page, or none if the extension doesn't fill pages like it. */
@@ -36,7 +40,7 @@ function tell(scope: HTMLFormElement | Document): void {
     submitUrl: scope instanceof HTMLFormElement ? scope.action : undefined,
   };
   // The extension may be gone, reloaded or updated, meanwhile.
-  chrome.runtime.sendMessage(message).catch(() => {});
+  browser.runtime.sendMessage(message).catch(() => {});
 }
 
 /**
@@ -87,10 +91,7 @@ function watchSubmissions(): void {
   );
 }
 
-// Injected again on every fill: the page keeps one watcher.
-if (!globalThis.keefast) watchSubmissions();
-
-globalThis.keefast = {
+const pageApi: PageApi = {
   inspect() {
     if (location.protocol !== "https:" && location.protocol !== "http:") return undefined;
     return {
@@ -109,3 +110,10 @@ globalThis.keefast = {
     return fillNewPassword(document, origin, password);
   },
 };
+
+export default defineUnlistedScript(() => {
+  // Injected again on every fill: the page keeps one watcher.
+  if (!globalThis.keefast) watchSubmissions();
+  hostPalette();
+  globalThis.keefast = pageApi;
+});

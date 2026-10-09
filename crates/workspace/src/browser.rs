@@ -6,10 +6,15 @@
 //! Pairing needs the user's approval, so `associate` requests wait in a queue, one put to the
 //! user at a time, until approved with a name or denied. Likewise a `get-logins` request for
 //! Entries the user hasn't decided on for that site waits for an Access decision, and a
-//! `set-login` request waits for the user to say where the login goes.
+//! `set-login` request waits for the user to say where the login goes. keefast's own
+//! `keefast-search-entries` and `keefast-pick-entry` serve the Companion extension's command
+//! palette (ADR 0007).
 
 mod generate_password;
 mod get_totp;
+mod search_entries;
+
+pub use search_entries::PickRequest;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -87,6 +92,8 @@ pub enum BrowserReply {
     AskAccess(AccessRequest),
     /// Ask the user where a captured login goes, then answer the request.
     AskLogin(LoginRequest),
+    /// Give the site the Entry the user picked in the command palette.
+    Pick(PickRequest),
 }
 
 /// An extension asking to be paired with a Vault, waiting for the user's answer.
@@ -270,6 +277,8 @@ impl BrowserSession {
             "set-login" => self.set_login(workspace, &request),
             "get-totp" => self.get_totp(workspace, &request),
             "generate-password" => self.generate_password(workspace, &request),
+            "keefast-search-entries" => self.search_entries(workspace, &request),
+            "keefast-pick-entry" => self.pick_entry(workspace, &request),
             _ => Err(ProtocolError::IncorrectAction),
         };
         reply.unwrap_or_else(fail)
@@ -807,6 +816,16 @@ impl Workspace {
                 self.browser.next_login += 1;
                 self.browser.logins.push_back((id, connection, request));
                 None
+            }
+            BrowserReply::Pick(pick) => {
+                let session = self
+                    .browser
+                    .sessions
+                    .remove(&connection)
+                    .unwrap_or_default();
+                let reply = self.give_picked_entry(&session, &pick);
+                self.browser.sessions.insert(connection, session);
+                Some(reply)
             }
         }
     }

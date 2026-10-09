@@ -147,6 +147,38 @@ impl FakeExtension {
         self.encrypted("set-login", message)
     }
 
+    /// Searches the paired Vaults for `query` from the command palette on the page at `url`,
+    /// proving the Pairings in `keys` (name and key).
+    pub fn search_entries(&self, query: &str, url: &str, keys: &[(&str, &str)]) -> Sent {
+        self.encrypted(
+            "keefast-search-entries",
+            json!({
+                "action": "keefast-search-entries",
+                "query": query,
+                "url": url,
+                "submitUrl": url,
+                "keys": key_list(keys),
+            }),
+        )
+    }
+
+    /// Picks the Entry `uuid` in the command palette for the page at `url`, asking keefast to
+    /// add the site to its URLs if `add_url`.
+    pub fn pick_entry(&self, uuid: &str, url: &str, keys: &[(&str, &str)], add_url: bool) -> Sent {
+        self.encrypted(
+            "keefast-pick-entry",
+            json!({
+                "action": "keefast-pick-entry",
+                "id": "",
+                "uuid": uuid,
+                "url": url,
+                "submitUrl": url,
+                "keys": key_list(keys),
+                "addUrl": add_url,
+            }),
+        )
+    }
+
     /// Opens an encrypted reply, checking it answers `sent`, and returns its message.
     pub fn open(&self, sent: &Sent, reply: &str) -> Value {
         let reply: Value = serde_json::from_str(reply).unwrap();
@@ -165,6 +197,12 @@ impl FakeExtension {
         assert_eq!(message["nonce"], sent.expected_nonce);
         message
     }
+}
+
+fn key_list(keys: &[(&str, &str)]) -> Vec<Value> {
+    keys.iter()
+        .map(|(id, key)| json!({ "id": id, "key": key }))
+        .collect()
 }
 
 fn increment(mut nonce: [u8; 24]) -> [u8; 24] {

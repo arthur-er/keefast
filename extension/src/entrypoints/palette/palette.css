@@ -1,0 +1,10 @@
+/* The palette is framed over the page, which shows through around it. */
+html,
+body {
+  color-scheme: normal;
+  background: transparent;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+}

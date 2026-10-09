@@ -83,7 +83,9 @@ describe("from the popup", () => {
     const logins = await companion.entries(1);
 
     expect(logins).toEqual({
-      entries: [{ uuid: "0011", name: "Example", username: "alice", hasTotp: false }],
+      entries: [
+        { uuid: "0011", name: "Example", username: "alice", hasTotp: false, group: "Passwords" },
+      ],
       fields: signIn,
     });
     expect(getLoginsRequests()[0]).toMatchObject({
@@ -128,7 +130,15 @@ describe("a 2FA step", () => {
 
   it("lists only the Entries with TOTP", async () => {
     expect(await companion.entries(1)).toEqual({
-      entries: [{ uuid: "0033", name: "Example (2FA)", username: "carol", hasTotp: true }],
+      entries: [
+        {
+          uuid: "0033",
+          name: "Example (2FA)",
+          username: "carol",
+          hasTotp: true,
+          group: "Passwords",
+        },
+      ],
       fields: twoFactor,
     });
   });
@@ -250,6 +260,83 @@ describe("from the shortcut", () => {
 
     expect(await companion.shortcut(1)).toBe("choose");
     expect(tabs.filled).toEqual([]);
+  });
+});
+
+describe("from the palette's search", () => {
+  beforeEach(() => {
+    keefast.entries.set("other.test", [bob, carol]);
+  });
+
+  it("finds Entries in the paired Vaults for the page", async () => {
+    const found = await companion.search(1, "bob");
+
+    expect(found?.map(({ uuid }) => uuid)).toEqual(["0022"]);
+    const request = keefast.received.find((m) => m.action === "keefast-search-entries")!;
+    expect(request.url).toBe("https://example.com/login");
+    expect(request.submitUrl).toBe("https://example.com/session");
+  });
+
+  it("doesn't ask keefast for nothing typed", async () => {
+    expect(await companion.search(1, "  ")).toEqual([]);
+    expect(keefast.received.some((m) => m.action === "keefast-search-entries")).toBe(false);
+  });
+
+  it("finds nothing for a page it can't fill", async () => {
+    expect(await companion.search(2, "bob")).toBeUndefined();
+  });
+
+  it("fills the Entry the user picks, and tells keefast whether to add the site", async () => {
+    expect(await companion.fillPicked(1, "0022", true)).toBe(true);
+
+    expect(tabs.filled).toEqual([
+      { tab: 1, origin: "https://example.com", credentials: withPassword(bob) },
+    ]);
+    expect(keefast.picked).toEqual([
+      { uuid: "0022", url: "https://example.com/login", addUrl: true },
+    ]);
+  });
+
+  it("fills a 2FA step with the code that came with the picked Entry", async () => {
+    tabs.pages.set(1, at("https://example.com/2fa", twoFactor));
+
+    expect(await companion.fillPicked(1, "0033", false)).toBe(true);
+
+    expect(tabs.filled[0]?.credentials.totp).toBe("123456");
+    expect(keefast.received.some((m) => m.action === "get-totp")).toBe(false);
+  });
+
+  it("doesn't fill a 2FA step with an Entry without TOTP", async () => {
+    tabs.pages.set(1, at("https://example.com/2fa", twoFactor));
+
+    expect(await companion.fillPicked(1, "0022", false)).toBe(false);
+    expect(tabs.filled).toEqual([]);
+  });
+
+  it("fills nothing keefast doesn't give", async () => {
+    expect(await companion.fillPicked(1, "9999", false)).toBe(false);
+    expect(tabs.filled).toEqual([]);
+  });
+
+  it("asks keefast for the site's Entries again afterwards", async () => {
+    await companion.entries(1);
+    await companion.fillPicked(1, "0022", true);
+
+    await companion.entries(1);
+
+    expect(getLoginsRequests()).toHaveLength(2);
+  });
+
+  it("doesn't offer the picked Entry to save once signed in with it", async () => {
+    await companion.fillPicked(1, "0022", false);
+
+    await companion.submitted(
+      1,
+      { url: "https://example.com/login", origin: "https://example.com" },
+      { username: "bob", password: "hunter2" },
+    );
+
+    expect(setLoginRequests()).toEqual([]);
   });
 });
 
@@ -382,10 +469,12 @@ describe("a submitted login", () => {
     expect((await companion.entries(1))?.entries).toEqual([]);
 
     await companion.submitted(1, loginPage, { username: "carol", password: "pa55" });
-    keefast.entries.set("example.com", [{ uuid: "0033", name: "", username: "carol", password: "pa55" }]);
+    keefast.entries.set("example.com", [
+      { uuid: "0033", name: "", username: "carol", password: "pa55" },
+    ]);
 
     expect((await companion.entries(1))?.entries).toEqual([
-      { uuid: "0033", name: "", username: "carol", hasTotp: false },
+      { uuid: "0033", name: "", username: "carol", hasTotp: false, group: "Passwords" },
     ]);
   });
 

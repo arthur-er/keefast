@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 use crate::edit::{Kind, child_or_insert, push, set_time, text_element};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node};
-use crate::{EditError, Entry, EntryFields, EntryId, Group, GroupId, Site, Timestamp, Vault};
+use crate::{
+    CustomField, EditError, Entry, EntryFields, EntryId, Group, GroupId, Site, Timestamp, Vault,
+};
 
 /// KeePassXC stores each Pairing's identification key under this prefix plus the Pairing's name.
 const PAIRING_KEY_PREFIX: &str = "KPXC_BROWSER_";
@@ -28,6 +30,9 @@ const ACCESS_KEY: &str = "KeePassXC-Browser Settings";
 /// An Entry, or a Group's Entries and subgroups, are hidden from browsers when their custom data
 /// has this key set to `true`. A Group with it set to anything else shows its subgroups again.
 const HIDE_KEY: &str = "BrowserHideEntry";
+/// KeePassXC stores an Entry's additional URLs in fields named this, then this with `_1`, `_2`
+/// and so on.
+const ADDITIONAL_URL_KEY: &str = "KP2A_URL";
 /// The Browser group chosen for the Vault, as its UUID in the Vault's custom data. KeePassXC
 /// has no such setting, so the key is keefast's own.
 const BROWSER_GROUP_KEY: &str = "keefast_BROWSER_GROUP";
@@ -129,6 +134,16 @@ impl DefaultAccessPolicy {
 pub struct SiteEntry<'a> {
     pub entry: &'a Entry,
     pub group: &'a Group,
+}
+
+/// An Entry offered to browsers, whatever its site, with the Group it is in.
+#[derive(Debug, Clone)]
+pub struct BrowserEntry<'a> {
+    pub entry: &'a Entry,
+    pub group: &'a Group,
+    /// The names of the Groups from the top of the Vault down to the Entry's, the root left
+    /// out.
+    pub group_path: Vec<&'a str>,
 }
 
 /// A browser profile's Companion extension trusted by a Vault.
@@ -274,10 +289,20 @@ impl Vault {
     /// The Entries offered to `site`, in Vault file order: those whose URL or one of whose
     /// additional URLs is for it, leaving out Entries hidden from browsers and the Recycle Bin.
     pub fn entries_for_site(&self, site: &Site) -> Vec<SiteEntry<'_>> {
+        self.entries_for_browsers()
+            .into_iter()
+            .filter(|found| found.entry.is_for(site))
+            .map(|BrowserEntry { entry, group, .. }| SiteEntry { entry, group })
+            .collect()
+    }
+
+    /// Every Entry browsers may be offered, in Vault file order: all but those hidden from
+    /// browsers and those in the Recycle Bin.
+    pub fn entries_for_browsers(&self) -> Vec<BrowserEntry<'_>> {
         let mut found = Vec::new();
         let bin = self.recycle_bin();
-        let mut groups = vec![(self.root(), false)];
-        while let Some((group, hidden)) = groups.pop() {
+        let mut groups = vec![(self.root(), false, Vec::new())];
+        while let Some((group, hidden, path)) = groups.pop() {
             if Some(group.id()) == bin {
                 continue;
             }
@@ -290,13 +315,49 @@ impl Vault {
                     group
                         .entries()
                         .iter()
-                        .filter(|entry| !entry.is_hidden_from_browser() && entry.is_for(site))
-                        .map(|entry| SiteEntry { entry, group }),
+                        .filter(|entry| !entry.is_hidden_from_browser())
+                        .map(|entry| BrowserEntry {
+                            entry,
+                            group,
+                            group_path: path.clone(),
+                        }),
                 );
             }
-            groups.extend(group.groups().iter().rev().map(|child| (child, hidden)));
+            groups.extend(group.groups().iter().rev().map(|child| {
+                let mut path = path.clone();
+                path.push(child.name());
+                (child, hidden, path)
+            }));
         }
         found
+    }
+
+    /// Adds `site` to the Entry's additional URLs, as KeePassXC stores them, so the Entry is
+    /// offered to the site from now on. Says whether it did: an Entry already for the site is
+    /// left as it is.
+    pub fn add_site_url(
+        &mut self,
+        entry: EntryId,
+        site: &Site,
+        now: Timestamp,
+    ) -> Result<bool, EditError> {
+        let current = self.entry(entry).ok_or(EditError::EntryNotFound)?;
+        if current.is_for(site) {
+            return Ok(false);
+        }
+        let mut fields = EntryFields::from(current);
+        let taken = |name: &str| fields.custom_fields.iter().any(|field| field.name == name);
+        let name = std::iter::once(ADDITIONAL_URL_KEY.to_owned())
+            .chain((1..).map(|n| format!("{ADDITIONAL_URL_KEY}_{n}")))
+            .find(|name| !taken(name))
+            .expect("some name is free");
+        fields.custom_fields.push(CustomField {
+            name,
+            value: SecretString::from(site.origin()),
+            protected: false,
+        });
+        self.update_entry(entry, &fields, now)?;
+        Ok(true)
     }
 
     /// Remembers `decision` on the Entry for each of `hosts`, replacing any earlier decision

@@ -30,8 +30,8 @@ pub use appearance::{
 };
 pub use attachment::{Attachment, AttachmentPreview, ImageFormat};
 pub use browser::{
-    AccessDecision, CapturedLogin, DEFAULT_BROWSER_GROUP, DefaultAccessPolicy, Pairing,
-    RememberedAccess, SiteEntry,
+    AccessDecision, BrowserEntry, CapturedLogin, DEFAULT_BROWSER_GROUP, DefaultAccessPolicy,
+    Pairing, RememberedAccess, SiteEntry,
 };
 pub use edit::{EditError, EntryFields};
 pub use encryption::{Argon2, Cipher, Encryption, EncryptionError, Kdf};

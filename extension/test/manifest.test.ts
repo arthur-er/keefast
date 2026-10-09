@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import config from "../wxt.config";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -11,16 +12,20 @@ function extensionId(key: string): string {
 }
 
 describe("manifest", () => {
-  const manifest = JSON.parse(read("../static/manifest.json"));
+  const manifest = config.manifest as Record<string, unknown>;
 
   it("may start keefast's native host", () => {
     const hosts = read("../../crates/workspace/src/browser_hosts.rs");
 
-    expect(hosts).toContain(`"chrome-extension://${extensionId(manifest.key)}/"`);
+    expect(hosts).toContain(`"chrome-extension://${extensionId(manifest.key as string)}/"`);
   });
 
   it("injects nothing into pages by itself", () => {
     expect(manifest.content_scripts).toBeUndefined();
     expect(manifest.host_permissions).toBeUndefined();
+  });
+
+  it("runs in every page only once the user allows it", () => {
+    expect(manifest.optional_host_permissions).toEqual(["<all_urls>"]);
   });
 });
