@@ -126,9 +126,9 @@ every Vault locks: a cache on disk would list your sites in the clear.
 Edit an Entry to give it tags (separated by commas), a colour, an icon and an expiry date. The
 sidebar lists every tag and colour; click one to list the Entries with it across the open
 Vaults. Expired Entries are struck through and flagged in the Entry list. Icons are KeePass's
-standard icons, drawn with [Lucide](https://lucide.dev) pictures (ISC, see
-`crates/app/assets/icons/standard/LICENSE`; `scripts/make-standard-icons.mjs` regenerates
-them), or PNG images imported into the Vault as custom icons. All of these are stored as
+standard icons, drawn with [Lucide](https://lucide.dev) icons (ISC) from
+[gpui-kit](https://gpui-kit.com)'s catalog, or PNG images imported into the Vault as custom
+icons. All of these are stored as
 KeePassXC, KeePass and KeeWeb store them, so those clients show them too.
 
 ## Browser integration

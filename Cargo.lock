@@ -3750,6 +3750,7 @@ dependencies = [
  "async-channel",
  "dirs",
  "gpui-component",
+ "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
  "keefast-core",

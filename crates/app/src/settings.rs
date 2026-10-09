@@ -9,7 +9,7 @@ use keefast_workspace::{ThemeSetting, VaultId, Workspace};
 
 use crate::actions::{self, CloseSettings};
 use crate::browser_integration::{self, BrowserIntegration};
-use crate::icons::{self, UiIcon};
+use crate::icons::{self, IconName};
 use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::saving;
 use crate::strings;
@@ -171,7 +171,7 @@ impl SettingsView {
             Page::Vault(settings) => Some(settings.read(cx).vault()),
         };
         let icon =
-            |icon: UiIcon| Some(icons::ui_icon(icon, px(14.), theme.text).into_any_element());
+            |icon: IconName| Some(icons::ui_icon(icon, px(14.), theme.text).into_any_element());
         let sections = SECTIONS.iter().enumerate().map(|(ix, &title)| {
             sidebar_row(
                 ("settings-section", ix),
@@ -190,7 +190,7 @@ impl SettingsView {
                 open.display_name().into(),
                 0,
                 shown_vault == Some(vault),
-                icon(UiIcon::Unlocked),
+                icon(IconName::LockOpen),
                 theme,
             )
             .on_click(cx.listener(move |this, _, window, cx| this.show_vault(vault, window, cx)))
@@ -213,7 +213,7 @@ impl SettingsView {
                     strings::SETTINGS_GENERAL.into(),
                     0,
                     shown_vault.is_none(),
-                    icon(UiIcon::Settings),
+                    icon(IconName::Settings),
                     theme,
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.show_section(0, window, cx))),
@@ -518,7 +518,11 @@ fn page_header(
                 .text_sm()
                 .hover(|this| this.bg(theme.sidebar_selection))
                 .child(strings::SETTINGS_CLOSE)
-                .child(icons::ui_icon(UiIcon::Back, px(16.), theme.text))
+                .child(icons::ui_icon(
+                    IconName::CircleArrowLeft,
+                    px(16.),
+                    theme.text,
+                ))
                 .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsClosed))),
         )
         .into_any_element()
@@ -615,7 +619,7 @@ impl Render for SettingsView {
                     .unwrap_or_default();
                 vec![
                     page_header(
-                        icons::ui_icon(UiIcon::Unlocked, px(28.), theme.text).into_any_element(),
+                        icons::ui_icon(IconName::LockOpen, px(28.), theme.text).into_any_element(),
                         name,
                         theme,
                         cx,
@@ -625,7 +629,7 @@ impl Render for SettingsView {
             }
             Page::General => vec![
                 page_header(
-                    icons::ui_icon(UiIcon::Settings, px(28.), theme.text).into_any_element(),
+                    icons::ui_icon(IconName::Settings, px(28.), theme.text).into_any_element(),
                     strings::SETTINGS,
                     theme,
                     cx,

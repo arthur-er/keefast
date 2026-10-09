@@ -9,7 +9,7 @@ use gpui::{
 use zeroize::Zeroizing;
 
 use crate::actions;
-use crate::icons::{self, UiIcon};
+use crate::icons::{self, IconName};
 use crate::strings;
 use crate::theme::Theme;
 
@@ -37,7 +37,7 @@ pub struct TextField {
     multiline: bool,
     masked: bool,
     /// Drawn before the text, as a search field's magnifier.
-    icon: Option<UiIcon>,
+    icon: Option<IconName>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     /// What the last change was, so a run of typing or deleting undoes as one.
@@ -89,7 +89,7 @@ impl TextField {
         }
     }
 
-    pub fn with_icon(mut self, icon: UiIcon) -> Self {
+    pub fn with_icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
         self
     }

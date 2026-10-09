@@ -30,7 +30,7 @@ use crate::clipboard::AppClipboard;
 use crate::entry_editor::{EntryEditor, EntryEditorEvent};
 use crate::entry_history::{EntryHistory, EntryHistoryEvent};
 use crate::favicons;
-use crate::icons::{self, UiIcon};
+use crate::icons::{self, IconName};
 use crate::locking;
 use crate::merge_notice;
 use crate::saving;
@@ -297,8 +297,8 @@ impl VaultBrowser {
             }
         })
         .detach();
-        let search =
-            cx.new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(UiIcon::Search));
+        let search = cx
+            .new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(IconName::Search));
         cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
@@ -1464,7 +1464,7 @@ impl VaultBrowser {
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
         let icon =
-            |icon: UiIcon, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
+            |icon: IconName, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
         let folder = |color| Some(icons::standard_icon(FOLDER_ICON, px(14.), color));
         let mut rows: Vec<AnyElement> = Vec::new();
 
@@ -1474,7 +1474,7 @@ impl VaultBrowser {
                 strings::SIDEBAR_ALL_ITEMS.into(),
                 0,
                 scope == EntryScope::AllVaults,
-                icon(UiIcon::AllItems, theme.text),
+                icon(IconName::LayoutGrid, theme.text),
                 theme,
             )
             .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
@@ -1484,7 +1484,7 @@ impl VaultBrowser {
         rows.push(sidebar_separator(theme));
         rows.push(sidebar_heading(
             strings::SIDEBAR_COLORS,
-            UiIcon::Colors,
+            IconName::Bookmark,
             theme,
         ));
         let dots = EntryColor::ALL.into_iter().map(|color| {
@@ -1514,7 +1514,11 @@ impl VaultBrowser {
         );
 
         rows.push(sidebar_separator(theme));
-        rows.push(sidebar_heading(strings::SIDEBAR_TAGS, UiIcon::Tags, theme));
+        rows.push(sidebar_heading(
+            strings::SIDEBAR_TAGS,
+            IconName::Tags,
+            theme,
+        ));
         for tag in workspace.tags() {
             let tag_scope = EntryScope::Tag(tag.to_owned());
             let selected = scope == tag_scope;
@@ -1556,7 +1560,7 @@ impl VaultBrowser {
                         name.into(),
                         0,
                         selected,
-                        icon(UiIcon::Lock, theme.muted),
+                        icon(IconName::Lock, theme.muted),
                         theme,
                     )
                     .text_color(theme.muted)
@@ -1573,7 +1577,7 @@ impl VaultBrowser {
                         format!("{}{}", open.display_name(), strings::LOCKING_MARKER).into(),
                         0,
                         false,
-                        icon(UiIcon::Lock, theme.muted),
+                        icon(IconName::Lock, theme.muted),
                         theme,
                     )
                     .text_color(theme.muted)
@@ -1674,7 +1678,7 @@ impl VaultBrowser {
                         label.into(),
                         0,
                         scope == EntryScope::Group(vault, bin),
-                        icon(UiIcon::Trash, theme.text),
+                        icon(IconName::Trash, theme.text),
                         theme,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1744,7 +1748,7 @@ impl VaultBrowser {
                         .unwrap_or_default();
                     return item
                         .text_color(theme.muted)
-                        .child(icons::ui_icon(UiIcon::Lock, px(14.), theme.muted))
+                        .child(icons::ui_icon(IconName::Lock, px(14.), theme.muted))
                         .child(name)
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(UnlockLockedVault(vault))))
                         .into_any_element();
@@ -1765,7 +1769,7 @@ impl VaultBrowser {
                         SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
                     })
                 };
-                item.child(icons::ui_icon(UiIcon::Unlocked, px(14.), theme.text))
+                item.child(icons::ui_icon(IconName::LockOpen, px(14.), theme.text))
                     .child(name)
                     .children(
                         status
@@ -1775,7 +1779,7 @@ impl VaultBrowser {
                     .into_any_element()
             });
         let can_lock = workspace.vaults().next().is_some();
-        let command = |id: &'static str, icon: UiIcon, color| {
+        let command = |id: &'static str, icon: IconName, color| {
             div()
                 .id(id)
                 .p_1p5()
@@ -1810,23 +1814,23 @@ impl VaultBrowser {
                     .cursor_pointer()
                     .text_color(theme.muted)
                     .hover(|this| this.bg(theme.sidebar_selection))
-                    .child(icons::ui_icon(UiIcon::Open, px(14.), theme.muted))
+                    .child(icons::ui_icon(IconName::Plus, px(14.), theme.muted))
                     .child(strings::FOOTER_OPEN)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
             )
             .child(div().flex_1())
             .child(
-                command("footer-help", UiIcon::Help, theme.text).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(ToggleCommandPalette), cx)
-                }),
+                command("footer-help", IconName::CircleQuestionMark, theme.text).on_click(
+                    |_, window, cx| window.dispatch_action(Box::new(ToggleCommandPalette), cx),
+                ),
             )
             .child(
-                command("footer-settings", UiIcon::Settings, theme.text)
+                command("footer-settings", IconName::Settings, theme.text)
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )
             .when(can_lock, |this| {
                 this.child(
-                    command("footer-lock", UiIcon::LockAll, theme.text).on_click(
+                    command("footer-lock", IconName::LogOut, theme.text).on_click(
                         cx.listener(|this, _, _, cx| locking::lock_all(&this.workspace, cx)),
                     ),
                 )
@@ -2118,7 +2122,7 @@ impl VaultBrowser {
     fn render_entry_list(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         // Built first, as they need `cx` the rest borrows.
         let adding = self.target_group(cx);
-        let icon_button = |id: &'static str, icon: UiIcon, open: bool| {
+        let icon_button = |id: &'static str, icon: IconName, open: bool| {
             div()
                 .id(id)
                 .flex_none()
@@ -2201,12 +2205,11 @@ impl VaultBrowser {
                                 .flex()
                                 .flex_col()
                                 .child(
-                                    icon_button("add", UiIcon::Open, add_menu.is_some()).on_click(
-                                        cx.listener(|this, _, _, cx| {
+                                    icon_button("add", IconName::Plus, add_menu.is_some())
+                                        .on_click(cx.listener(|this, _, _, cx| {
                                             this.menu = Some(ListMenu::Add);
                                             cx.notify();
-                                        }),
-                                    ),
+                                        })),
                                 )
                                 .children(add_menu),
                         )
@@ -2216,12 +2219,17 @@ impl VaultBrowser {
                             .flex()
                             .flex_col()
                             .child(
-                                icon_button("sort", UiIcon::Sort, sort_menu.is_some()).on_click(
-                                    cx.listener(|this, _, _, cx| {
+                                icon_button(
+                                    "sort",
+                                    IconName::ArrowDownWideNarrow,
+                                    sort_menu.is_some(),
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
                                         this.menu = Some(ListMenu::Sort);
                                         cx.notify();
-                                    }),
-                                ),
+                                    },
+                                )),
                             )
                             .children(sort_menu),
                     ),
@@ -2961,7 +2969,7 @@ pub fn describe(error: &EditVaultError) -> &'static str {
 
 /// A heading above a section of the sidebar.
 /// A heading of the sidebar, with its icon.
-fn sidebar_heading(label: &'static str, icon: UiIcon, theme: Theme) -> AnyElement {
+fn sidebar_heading(label: &'static str, icon: IconName, theme: Theme) -> AnyElement {
     div()
         .mx_1p5()
         .px_1p5()
@@ -2987,7 +2995,7 @@ fn edit_mark(id: (&'static str, usize), theme: Theme) -> gpui::Stateful<gpui::Di
         .rounded_sm()
         .cursor_pointer()
         .hover(|this| this.bg(theme.border))
-        .child(icons::ui_icon(UiIcon::Edit, px(12.), theme.muted))
+        .child(icons::ui_icon(IconName::Pencil, px(12.), theme.muted))
 }
 
 fn expired_badge(theme: Theme) -> impl IntoElement {

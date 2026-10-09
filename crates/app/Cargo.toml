@@ -14,6 +14,7 @@ keefast-workspace.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
+gpui-kit-assets.workspace = true
 dirs.workspace = true
 secrecy.workspace = true
 zeroize = "1"

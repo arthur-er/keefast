@@ -60,6 +60,7 @@ zeroize = "1"
 gpui = { package = "gpui-pre", version = "=0.3.8" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 gpui-component = "0.7.1"
+gpui-kit-assets = "0.7.1"
 
 # Key derivation (AES-KDF, Argon2) is unbearably slow unoptimised, even in tests and debug builds.
 [profile.dev.package]
