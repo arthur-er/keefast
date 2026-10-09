@@ -226,7 +226,9 @@ impl CommandPalette {
             .px_3()
             .py_1p5()
             .cursor_pointer()
-            .when(ix == self.selected, |this| this.bg(theme.selection))
+            .when(ix == self.selected, |this| {
+                this.bg(theme.selection).text_color(theme.selection_text)
+            })
             .child(
                 div()
                     .flex_1()

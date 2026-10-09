@@ -200,8 +200,8 @@ impl Render for LoginDialog {
                 Some(target) => line
                     .cursor_pointer()
                     .map(|this| match target == self.chosen {
-                        true => this.bg(theme.selection),
-                        false => this.hover(|this| this.bg(theme.sidebar)),
+                        true => this.bg(theme.selection).text_color(theme.selection_text),
+                        false => this.hover(|this| this.bg(theme.sidebar_selection)),
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.choose(target, cx))),
             }

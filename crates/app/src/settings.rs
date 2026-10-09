@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, SharedString, Stateful, Window, div, prelude::*, px,
+    KeyDownEvent, SharedString, Stateful, Window, WindowAppearance, div, prelude::*, px,
 };
 use keefast_workspace::{ThemeSetting, Workspace};
 
@@ -172,6 +172,56 @@ impl SettingsView {
             }))
     }
 
+    /// A preview of `setting`, KeeWeb's way: a card in its background and text colours with a
+    /// button in its action colour.
+    fn theme_card(
+        &mut self,
+        index: &mut usize,
+        setting: ThemeSetting,
+        chosen: bool,
+        appearance: WindowAppearance,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let preview = Theme::of(setting, appearance);
+        self.control(index, Change::Theme(setting), theme, cx)
+            .w(px(140.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .pt_1p5()
+            .pb_3()
+            .border_2()
+            .border_color(if chosen { theme.accent } else { preview.border })
+            .bg(preview.background)
+            .text_color(preview.text)
+            .text_sm()
+            .child(
+                div()
+                    .w(px(110.))
+                    .pb_1()
+                    .border_b_1()
+                    .border_color(preview.border)
+                    .text_center()
+                    .truncate()
+                    .child(theme_name(setting)),
+            )
+            .child(
+                div()
+                    .w(px(84.))
+                    .h(px(40.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .bg(preview.accent)
+                    .text_color(preview.accent_text)
+                    .child(strings::THEME_PREVIEW_BUTTON),
+            )
+            .into_any_element()
+    }
+
     fn checkbox(
         &mut self,
         index: &mut usize,
@@ -269,6 +319,24 @@ fn describe_wait(wait: Option<Duration>) -> String {
     template.replace("{n}", &n.to_string())
 }
 
+fn theme_name(setting: ThemeSetting) -> &'static str {
+    match setting {
+        ThemeSetting::System => strings::THEME_SYSTEM,
+        ThemeSetting::Dark => strings::THEME_DARK,
+        ThemeSetting::Light => strings::THEME_LIGHT,
+        ThemeSetting::SolarizedDark => strings::THEME_SOLARIZED_DARK,
+        ThemeSetting::SolarizedLight => strings::THEME_SOLARIZED_LIGHT,
+        ThemeSetting::DarkBlue => strings::THEME_DARK_BLUE,
+        ThemeSetting::LightBlue => strings::THEME_LIGHT_BLUE,
+        ThemeSetting::DarkBrown => strings::THEME_DARK_BROWN,
+        ThemeSetting::LightBrown => strings::THEME_LIGHT_BROWN,
+        ThemeSetting::Terminal => strings::THEME_TERMINAL,
+        ThemeSetting::TerminalLight => strings::THEME_TERMINAL_LIGHT,
+        ThemeSetting::DarkContrast => strings::THEME_DARK_CONTRAST,
+        ThemeSetting::HighContrast => strings::THEME_HIGH_CONTRAST,
+    }
+}
+
 fn section(title: &'static str, theme: Theme) -> gpui::Div {
     div()
         .flex()
@@ -309,13 +377,15 @@ impl Render for SettingsView {
         let browsers = browser_integration::status(&self.integration, cx);
 
         let mut index = 0;
-        let themes = [
-            (ThemeSetting::System, strings::THEME_SYSTEM.into()),
-            (ThemeSetting::Light, strings::THEME_LIGHT.into()),
-            (ThemeSetting::Dark, strings::THEME_DARK.into()),
-        ];
-        let theme_choices =
-            self.choices(&mut index, &themes, chosen_theme, Change::Theme, theme, cx);
+        let appearance = window.appearance();
+        let theme_cards: Vec<AnyElement> = ThemeSetting::ALL
+            .into_iter()
+            .map(|setting| {
+                let chosen = setting == chosen_theme;
+                self.theme_card(&mut index, setting, chosen, appearance, theme, cx)
+            })
+            .collect();
+        let theme_choices = div().flex().flex_wrap().gap_2().children(theme_cards);
         let idle_choices = self.choices(
             &mut index,
             &waits(&IDLE_LOCK_WAITS, idle_lock_after),

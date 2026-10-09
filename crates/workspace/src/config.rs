@@ -57,14 +57,61 @@ impl Default for PaneWidths {
     }
 }
 
-/// Which colours the app is drawn in.
+/// Which colours the app is drawn in: KeeWeb's themes, or the OS's light/dark setting.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
     /// Follow the OS light/dark setting.
     #[default]
     System,
-    Light,
     Dark,
+    Light,
+    SolarizedDark,
+    SolarizedLight,
+    DarkBlue,
+    LightBlue,
+    DarkBrown,
+    LightBrown,
+    Terminal,
+    TerminalLight,
+    DarkContrast,
+    HighContrast,
+}
+
+impl ThemeSetting {
+    pub const ALL: [ThemeSetting; 13] = [
+        Self::System,
+        Self::Dark,
+        Self::Light,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::DarkBlue,
+        Self::LightBlue,
+        Self::DarkBrown,
+        Self::LightBrown,
+        Self::Terminal,
+        Self::TerminalLight,
+        Self::DarkContrast,
+        Self::HighContrast,
+    ];
+
+    /// The name the config file keeps it by.
+    fn key(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::SolarizedDark => "solarized-dark",
+            Self::SolarizedLight => "solarized-light",
+            Self::DarkBlue => "dark-blue",
+            Self::LightBlue => "light-blue",
+            Self::DarkBrown => "dark-brown",
+            Self::LightBrown => "light-brown",
+            Self::Terminal => "terminal",
+            Self::TerminalLight => "terminal-light",
+            Self::DarkContrast => "dark-contrast",
+            Self::HighContrast => "high-contrast",
+        }
+    }
 }
 
 impl AppConfig {
@@ -216,11 +263,10 @@ impl From<ConfigFile> for AppConfig {
             idle_lock_after: wait_from_seconds(file.idle_lock_seconds),
             lock_on_os_lock: file.lock_on_os_lock,
             dropbox_app_key: file.dropbox_app_key.filter(|key| !key.is_empty()),
-            theme: match file.theme.as_str() {
-                "light" => ThemeSetting::Light,
-                "dark" => ThemeSetting::Dark,
-                _ => ThemeSetting::System,
-            },
+            theme: ThemeSetting::ALL
+                .into_iter()
+                .find(|theme| theme.key() == file.theme)
+                .unwrap_or_default(),
             download_favicons: file.download_favicons,
             pane_widths: PaneWidths {
                 sidebar: read_width(file.sidebar_width, PaneWidths::default().sidebar),
@@ -238,12 +284,7 @@ impl From<&AppConfig> for ConfigFile {
             clipboard_clear_seconds: wait_to_seconds(config.clipboard_clear_after),
             idle_lock_seconds: wait_to_seconds(config.idle_lock_after),
             lock_on_os_lock: config.lock_on_os_lock,
-            theme: match config.theme {
-                ThemeSetting::System => "system",
-                ThemeSetting::Light => "light",
-                ThemeSetting::Dark => "dark",
-            }
-            .to_owned(),
+            theme: config.theme.key().to_owned(),
             download_favicons: config.download_favicons,
             sidebar_width: config.pane_widths.sidebar,
             entry_list_width: config.pane_widths.entry_list,

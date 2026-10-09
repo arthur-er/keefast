@@ -1347,10 +1347,13 @@ impl VaultBrowser {
                 div()
                     .flex()
                     .items_center()
-                    .pr_2()
-                    .when(selected, |this| this.bg(theme.selection))
+                    .mx_1p5()
+                    .pr_1()
+                    .rounded_md()
+                    .when(selected, |this| this.bg(theme.sidebar_selection))
                     .child(
                         sidebar_row(("vault", rows.len()), name.into(), 0, false, theme)
+                            .mx_0()
                             .flex_1()
                             .min_w_0()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -1451,7 +1454,7 @@ impl VaultBrowser {
                 .justify_center()
                 .rounded_full()
                 .cursor_pointer()
-                .when(selected, |this| this.bg(theme.selection))
+                .when(selected, |this| this.bg(theme.sidebar_selection))
                 .child(icons::color_dot(color, px(12.)))
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.select(EntryScope::Color(color), cx)),
@@ -1634,18 +1637,27 @@ impl VaultBrowser {
                     .flatten();
                 let expired = workspace.is_expired(entry);
                 let tags = (!entry.tags().is_empty()).then(|| entry.tags().join(", "));
+                // The picked Entry is drawn all in the selection's text colour.
+                let muted = if selected {
+                    theme.selection_text
+                } else {
+                    theme.muted
+                };
                 div()
                     .id(("entry", ix))
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_3()
+                    .mx_1p5()
+                    .my_0p5()
+                    .px_2()
                     .py_1p5()
-                    .border_b_1()
-                    .border_color(theme.border)
+                    .rounded_md()
                     .cursor_pointer()
-                    .when(selected, |this| this.bg(theme.selection))
-                    .children(entry_mark(workspace, vault, entry, px(18.), theme.muted))
+                    .when(selected, |this| {
+                        this.bg(theme.selection).text_color(theme.selection_text)
+                    })
+                    .children(entry_mark(workspace, vault, entry, px(18.), muted))
                     .child(
                         div()
                             .flex_1()
@@ -1676,7 +1688,7 @@ impl VaultBrowser {
                                     .flex()
                                     .gap_2()
                                     .text_sm()
-                                    .text_color(theme.muted)
+                                    .text_color(muted)
                                     .child(
                                         div()
                                             .flex_1()
@@ -1690,7 +1702,9 @@ impl VaultBrowser {
                                                 .max_w(px(120.))
                                                 .truncate()
                                                 .text_xs()
-                                                .text_color(theme.accent)
+                                                .when(!selected, |this| {
+                                                    this.text_color(theme.accent)
+                                                })
                                                 .child(tags),
                                         )
                                     })
@@ -1867,7 +1881,7 @@ impl VaultBrowser {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .bg(theme.panel)
+            .bg(theme.background)
             .flex()
             .flex_col()
             .gap_4()
@@ -2022,7 +2036,7 @@ impl VaultBrowser {
                     .id(("detail-tag", ix))
                     .px_2()
                     .rounded_full()
-                    .bg(theme.selection)
+                    .bg(theme.sidebar_selection)
                     .text_sm()
                     .cursor_pointer()
                     .child(tag.clone())
@@ -2379,7 +2393,7 @@ impl VaultBrowser {
                 };
                 sidebar_row(("move-target", ix), name, depth, false, theme)
                     .rounded_md()
-                    .hover(|this| this.bg(theme.selection))
+                    .hover(|this| this.bg(theme.sidebar_selection))
                     .on_click(cx.listener(move |this, _, _, cx| this.move_to(item, to, cx)))
                     .into_any_element()
             })
@@ -2537,12 +2551,14 @@ fn sidebar_row(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .pl(px(12. + 14. * depth as f32))
+        .mx_1p5()
+        .pl(px(6. + 14. * depth as f32))
         .pr_3()
         .py_1()
+        .rounded_md()
         .truncate()
         .cursor_pointer()
-        .when(selected, |this| this.bg(theme.selection))
+        .when(selected, |this| this.bg(theme.sidebar_selection))
         .child(label)
 }
 

@@ -270,9 +270,16 @@ impl Render for EntryHistory {
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .when(picked, |this| this.bg(theme.selection))
+                .when(picked, |this| {
+                    this.bg(theme.selection).text_color(theme.selection_text)
+                })
                 .child(div().flex_none().child(time))
-                .child(div().text_color(theme.muted).truncate().child(summary))
+                .child(
+                    div()
+                        .when(!picked, |this| this.text_color(theme.muted))
+                        .truncate()
+                        .child(summary),
+                )
         };
         let current = row(
             usize::MAX,
@@ -293,7 +300,9 @@ impl Render for EntryHistory {
                     selected == Some(index),
                 )
                 .cursor_pointer()
-                .hover(|this| this.bg(theme.selection))
+                .when(selected != Some(index), |this| {
+                    this.hover(|this| this.bg(theme.sidebar_selection))
+                })
                 .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             });
         let picked = selected.map(|index| (index, &entry.history()[index]));
