@@ -1,0 +1,21 @@
+[package]
+name = "keefast"
+description = "keefast desktop app: GPUI views over the Workspace."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-channel = "2"
+keefast-native-host.workspace = true
+keefast-core.workspace = true
+keefast-workspace.workspace = true
+gpui.workspace = true
+dirs.workspace = true
+secrecy.workspace = true
+zeroize = "1"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

@@ -1,0 +1,21 @@
+# Strict KDBX round-trip fidelity, KDBX 4 writes only
+
+keefast reads KDBX 3.1 and 4.x but always writes KDBX 4.x, and every save must preserve data we don't model ourselves (unknown XML, custom data, history, icons, attachments), so Vault files stay interchangeable with KeePassXC, KeePass2 and KeeWeb. KDBX handling starts on the `keepass` crate behind our own domain layer, and that layer is gated by a round-trip test corpus of real files. If the crate fails the corpus, we fork it or replace it.
+
+## Update 2026-10-07: the `keepass` crate is replaced
+
+The `keepass` crate (0.15) failed the round-trip corpus, so keefast reads and writes KDBX itself (`crates/core/src/kdbx/`, `xml.rs`). The crate maps the XML onto typed structs, which can't carry what they don't declare:
+
+- It rejects Vault files with unknown XML outright (`unknown variant FutureGroupSetting`), so it can't even open them, let alone save them unchanged.
+- Opening a KDBX 3.1 file with several attachments keeps only the last one, because every attachment gets ID 0.
+- Saving rebuilds the XML from its structs, so any element or attribute it doesn't model would be dropped.
+
+Forking wouldn't fix this cheaply, because the typed model is the crate's core. Instead keefast keeps the whole decrypted XML document as a tree and builds its domain model from it. Saving writes the tree back with fresh seeds, the same cipher, compression and KDF settings, and header fields passed through. Opening a KDBX 3.1 file converts it to KDBX 4 form in memory: attachments move into the binary pool, timestamps change encoding, and `HeaderHash` is dropped. The crypto comes from the RustCrypto crates and `rust-argon2`. Writes are KDBX 4 only.
+
+The corpus (`fixtures/`, written by `scripts/make-fixtures.sh` with KeePassXC, KeePass2, KeeWeb's kdbxweb and pykeepass) covers KDBX 3.1/4.0/4.1, AES/ChaCha20, AES-KDF/Argon2d/Argon2id, attachments, history, custom icons, plugin custom data and unknown XML. `crates/core/tests/round_trip.rs` gates it in CI, and still uses the `keepass` crate as an independent reader on the files it parses correctly. `scripts/check-interop.sh` checks keefast's saves with the real clients: KeePassXC, KeePass2 and KeeWeb each read every re-saved corpus file the same as the original. It needs those clients, so it doesn't run in CI.
+
+One thing a save does not keep verbatim: characters XML 1.0 doesn't allow (an escape character pasted from a terminal into a note, say) are dropped when the document is written, as KeePassXC and KeePass2 drop them when they write. Their XML readers reject a document that holds one as corrupt, which would make the Vault file unreadable to them, so keeping such a character would break the interchange this ADR is for.
+
+## Update 2026-10-08: unreferenced attachments go with the next edit
+
+A plain open and save keeps the binary pool exactly as read. An edit that can drop attachment references (changing an Entry's attachments, trimming history, deleting for good) also drops pool contents nothing refers to any more, and references to contents the pool doesn't have, renumbering the rest. KeePass and KeePassXC do the same on every save. Without it, removed attachments would stay in the file for good, and a dangling reference would point at the next attachment added to the pool.

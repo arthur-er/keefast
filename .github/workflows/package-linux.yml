@@ -1,0 +1,54 @@
+# Builds the Linux tarball and AppImage, smoke-checks them on X11 and Wayland, and uploads them
+# as the `linux-<arch>` artifacts. Called by the release workflow; run it by hand to try a build.
+name: Package for Linux
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: Package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported runner, so the binaries need the oldest glibc. The scripts
+          # also package aarch64 (on ubuntu-22.04-arm), once the repository can use Arm runners.
+          - arch: x86_64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install GPUI system libraries and the smoke check's displays
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig-dev libfreetype-dev libvulkan-dev \
+            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            mesa-vulkan-drivers xvfb sway
+
+      - name: Build
+        run: cargo build --release --locked -p keefast -p keefast-native-host
+
+      - name: Package
+        run: scripts/package-linux.sh target/release dist
+
+      - name: Smoke check the AppImage on X11 and Wayland
+        run: scripts/smoke-linux.sh dist/keefast-*.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error

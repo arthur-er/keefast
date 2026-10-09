@@ -1,0 +1,40 @@
+[package]
+name = "keefast-workspace"
+description = "keefast headless app model. No GPUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+crypto_box.workspace = true
+dirs.workspace = true
+getrandom.workspace = true
+image.workspace = true
+keefast-core.workspace = true
+keyring.workspace = true
+notify.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+ureq.workspace = true
+url.workspace = true
+zeroize = { workspace = true, features = ["serde"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+winreg.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+crypto_box.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tiny_http.workspace = true
