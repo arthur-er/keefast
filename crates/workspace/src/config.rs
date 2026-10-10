@@ -51,8 +51,8 @@ pub struct PaneWidths {
 impl Default for PaneWidths {
     fn default() -> Self {
         Self {
-            sidebar: 220,
-            entry_list: 320,
+            sidebar: 232,
+            entry_list: 360,
         }
     }
 }
