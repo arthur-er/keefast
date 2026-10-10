@@ -22,9 +22,9 @@ use std::sync::{Mutex, PoisonError};
 use wasmtime::Engine;
 
 pub use bundled::{bundled_by_release_key, bundled_key, is_release_key};
-pub use manifest::{API_VERSION, Capability, Facet, FieldKind, Manifest, OwnedField};
+pub use manifest::{API_VERSION, Capability, Editor, Facet, FieldKind, Manifest, OwnedField};
 pub use package::{Package, PackageError, PublisherKey};
-pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, Problem, Severity};
+pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, MonthYear, Problem, Severity};
 pub use store::{InstallError, InstalledPlugin, Offer, PluginStore, Publisher};
 
 use bundled::bundled_plugins;
@@ -267,18 +267,20 @@ impl PluginHost {
             .format(facet, key, value)
     }
 
-    /// What the Plugin says is wrong with a value for an Owned field.
+    /// What the Plugin says is wrong with a value for an Owned field. `today` is the month it is
+    /// now: Plugins have no clock.
     pub fn validate(
         &self,
         plugin: &str,
         facet: &str,
         key: &str,
         value: &str,
+        today: MonthYear,
     ) -> Result<Option<Problem>, PluginError> {
         let mut problem = self
             .facet_of(plugin, facet)?
             .runtime()
-            .validate(facet, key, value)?;
+            .validate(facet, key, value, today)?;
         if let Some(problem) = &mut problem {
             problem.message = shorten_to(&problem.message, 200);
         }

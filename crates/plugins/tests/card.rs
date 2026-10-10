@@ -1,6 +1,6 @@
 //! The Card Plugin, compiled into keefast, run through the host as the app runs it.
 
-use keefast_plugins::{EntryField, FieldKind, PluginError, PluginHost, Severity};
+use keefast_plugins::{EntryField, FieldKind, MonthYear, PluginError, PluginHost, Severity};
 
 const MANIFEST: &str = include_str!("../../../plugins/card/plugin.json");
 const COMPONENT: &[u8] = include_bytes!("../../../plugins/card/card.wasm");
@@ -93,13 +93,32 @@ fn format_and_validate_run_the_plugins_hooks() {
     assert_eq!(format("expiry", "0831"), "08/31");
     assert_eq!(format("holder", "Arthur"), "Arthur");
 
-    let validate = |key, value| host.validate("keefast.card", "card", key, value).unwrap();
+    let today = MonthYear {
+        year: 2026,
+        month: 10,
+    };
+    let validate = |key, value| {
+        host.validate("keefast.card", "card", key, value, today)
+            .unwrap()
+    };
     assert!(validate("number", "4111 1111 1111 1111").is_none());
     let problem = validate("number", "4111 1111 1111 1112").unwrap();
     assert_eq!(problem.severity, Severity::Warning);
+    // Problems with the expiry are warnings too: the user may know better.
     assert_eq!(
         validate("expiry", "13/31").unwrap().severity,
-        Severity::Error
+        Severity::Warning
+    );
+    assert!(validate("expiry", "12/26").is_none());
+    assert_eq!(
+        validate("expiry", "11/26").unwrap().message,
+        "This card expires soon."
+    );
+    assert!(
+        validate("expiry", "09/26")
+            .unwrap()
+            .message
+            .contains("expired")
     );
 
     assert!(matches!(

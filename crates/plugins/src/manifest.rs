@@ -75,6 +75,21 @@ pub struct Facet {
     pub detect: Detect,
     /// In the order the section shows them.
     pub fields: Vec<OwnedField>,
+    /// Its section in the Entry editor, if it has one: without it, its Owned fields are edited
+    /// as custom fields.
+    #[serde(default)]
+    pub editor: Option<Editor>,
+}
+
+/// A facet's section in the Entry editor, and the actions that add it to an Entry and take it
+/// off again.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Editor {
+    /// The action adding the facet, such as "Add card".
+    pub add: String,
+    /// The action removing it with its Owned fields, such as "Remove card".
+    pub remove: String,
 }
 
 /// When an Entry has a facet: when it has a custom field of each of these names.
@@ -98,6 +113,9 @@ pub struct OwnedField {
     /// Whether the value is kept protected, like a password.
     #[serde(default)]
     pub protected: bool,
+    /// What its input shows while empty in the Entry editor, such as "MM/YY".
+    #[serde(default)]
+    pub placeholder: Option<String>,
 }
 
 /// What an Owned field holds, which says how keefast's kit shows and edits it.
@@ -108,7 +126,7 @@ pub enum FieldKind {
     /// Digits, typed on a number pad and shown in a monospace font.
     Digits,
     /// A month as `MM/YY`, such as a card's expiry: the host says when it has passed or is near,
-    /// since Plugins have no clock.
+    /// since Plugins have no clock (`validate` is passed the month, to warn about it).
     MonthYear,
 }
 
@@ -172,6 +190,14 @@ impl Manifest {
             if facet.fields.is_empty() {
                 return invalid(format!("facet \"{}\" has no fields", facet.id));
             }
+            if let Some(editor) = &facet.editor
+                && (editor.add.trim().is_empty() || editor.remove.trim().is_empty())
+            {
+                return invalid(format!(
+                    "facet \"{}\" needs its editor's actions named",
+                    facet.id
+                ));
+            }
             let mut keys = HashSet::new();
             for field in &facet.fields {
                 if !is_id(&field.key, false) || !keys.insert(field.key.as_str()) {
@@ -229,6 +255,27 @@ mod tests {
         assert_eq!(names, ["Card number", "Cardholder", "Expiry", "CVV", "PIN"]);
         assert_eq!(card.fields[2].kind, FieldKind::MonthYear);
         assert!(card.fields[0].protected && !card.fields[1].protected);
+        let editor = card.editor.as_ref().unwrap();
+        assert_eq!(
+            (editor.add.as_str(), editor.remove.as_str()),
+            ("Add card", "Remove card")
+        );
+        assert_eq!(card.fields[2].placeholder.as_deref(), Some("MM/YY"));
+    }
+
+    #[test]
+    fn editor_actions_are_named() {
+        let result = with(|json| json["contributions"]["facets"][0]["editor"]["add"] = " ".into());
+        assert!(result.is_err());
+        let result = with(|json| json["contributions"]["facets"][0]["editor"]["icon"] = "x".into());
+        assert!(result.is_err());
+        let without = with(|json| {
+            json["contributions"]["facets"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("editor");
+        });
+        assert_eq!(without.unwrap().facet("card").unwrap().editor, None);
     }
 
     #[test]

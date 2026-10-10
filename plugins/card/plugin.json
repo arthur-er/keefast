@@ -13,12 +13,13 @@
         "icon": "credit-card",
         "detect": { "fields": ["Card number"] },
         "fields": [
-          { "key": "number", "name": "Card number", "label": "Number", "kind": "digits", "protected": true },
-          { "key": "holder", "name": "Cardholder", "label": "Cardholder", "kind": "text", "protected": false },
-          { "key": "expiry", "name": "Expiry", "label": "Expiry", "kind": "monthYear", "protected": false },
-          { "key": "cvv", "name": "CVV", "label": "CVV", "kind": "digits", "protected": true },
-          { "key": "pin", "name": "PIN", "label": "PIN", "kind": "digits", "protected": true }
-        ]
+          { "key": "number", "name": "Card number", "label": "Number", "kind": "digits", "protected": true, "placeholder": "1234 5678 9012 3456" },
+          { "key": "holder", "name": "Cardholder", "label": "Cardholder", "kind": "text", "protected": false, "placeholder": "Name as on the card" },
+          { "key": "expiry", "name": "Expiry", "label": "Expiry", "kind": "monthYear", "protected": false, "placeholder": "MM/YY" },
+          { "key": "cvv", "name": "CVV", "label": "CVV", "kind": "digits", "protected": true, "placeholder": "3 or 4 digits" },
+          { "key": "pin", "name": "PIN", "label": "PIN", "kind": "digits", "protected": true, "placeholder": "Optional" }
+        ],
+        "editor": { "add": "Add card", "remove": "Remove card" }
       }
     ]
   }

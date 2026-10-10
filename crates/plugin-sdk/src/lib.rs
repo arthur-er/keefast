@@ -41,6 +41,8 @@
 use std::marker::PhantomData;
 
 #[doc(hidden)]
+// The host's `validate` takes its arguments flattened: eight of them.
+#[allow(clippy::too_many_arguments)]
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../plugins/wit",
@@ -67,7 +69,8 @@ pub trait Plugin {
     }
 
     /// What is wrong with a value for an Owned field, if anything: an error keeps it from being
-    /// saved, a warning doesn't. The default finds nothing wrong.
+    /// saved, a warning doesn't. `input.today` is the month it is now, since a Plugin has no
+    /// clock: say when a date has passed or is near by it. The default finds nothing wrong.
     fn validate(input: &Input) -> Option<Problem> {
         let _ = input;
         None
@@ -94,11 +97,25 @@ pub struct Input<'a> {
     /// The Owned field's `key` in the manifest.
     pub key: &'a str,
     pub value: &'a str,
+    /// The month it is now, in UTC, which keefast gives [`Plugin::validate`] (a Plugin has no
+    /// clock); `None` in [`Plugin::format`].
+    pub today: Option<MonthYear>,
 }
 
 impl<'a> Input<'a> {
     pub fn new(facet: &'a str, key: &'a str, value: &'a str) -> Self {
-        Self { facet, key, value }
+        Self {
+            facet,
+            key,
+            value,
+            today: None,
+        }
+    }
+
+    /// The same input, on `today`: as [`Plugin::validate`] gets it, for tests.
+    pub fn with_today(mut self, today: MonthYear) -> Self {
+        self.today = Some(today);
+        self
     }
 }
 
@@ -248,8 +265,17 @@ impl<P: Plugin> bindings::Guest for Exports<P> {
         P::format(&Input::new(&facet, &key, &value))
     }
 
-    fn validate(facet: String, key: String, value: String) -> Option<Problem> {
-        P::validate(&Input::new(&facet, &key, &value))
+    fn validate(
+        facet: String,
+        key: String,
+        value: String,
+        today: bindings::keefast::plugin::types::MonthYear,
+    ) -> Option<Problem> {
+        let today = MonthYear {
+            year: today.year,
+            month: today.month,
+        };
+        P::validate(&Input::new(&facet, &key, &value).with_today(today))
     }
 
     fn derive(facet: String, fields: Vec<Field>) -> Derived {
@@ -280,6 +306,11 @@ mod tests {
             input.value.to_uppercase()
         }
 
+        fn validate(input: &Input) -> Option<Problem> {
+            let today = input.today?;
+            (today.year < 2027).then(|| Problem::warning(format!("Today is {today}.")))
+        }
+
         fn derive(facet: &str, fields: &Fields) -> Derived {
             Derived::new()
                 .label(fields.text("name").map(|name| format!("{facet}: {name}")))
@@ -291,7 +322,15 @@ mod tests {
     fn hooks_reach_the_plugin() {
         type Hooks = Exports<Shouting>;
         assert_eq!(Hooks::format("f".into(), "k".into(), "abc".into()), "ABC");
-        assert_eq!(Hooks::validate("f".into(), "k".into(), "abc".into()), None);
+        let month = |year, month| bindings::keefast::plugin::types::MonthYear { year, month };
+        assert_eq!(
+            Hooks::validate("f".into(), "k".into(), "abc".into(), month(2026, 10)),
+            Some(Problem::warning("Today is 10/26."))
+        );
+        assert_eq!(
+            Hooks::validate("f".into(), "k".into(), "abc".into(), month(2027, 1)),
+            None
+        );
         let fields = vec![Field {
             key: "name".into(),
             value: Some("Ada".into()),

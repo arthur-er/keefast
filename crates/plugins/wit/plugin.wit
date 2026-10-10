@@ -4,7 +4,8 @@
 // no filesystem, network or clock; a later API version adds imports for the Plugin capabilities
 // that grant them. Its hooks are pure: each gets the values of a facet's Owned fields on one
 // Entry, and gives back values for the host to write or text for the host to show. A Plugin
-// never sees the Workspace.
+// never sees the Workspace. What a hook needs to know of the time, the host passes in, as
+// `validate`'s `today`.
 package keefast:plugin@1.0.0;
 
 /// What the hooks take and give.
@@ -33,6 +34,14 @@ interface types {
         fields: list<field-text>,
     }
 
+    /// A month of a year, such as the one `validate` is called in.
+    record month-year {
+        /// Four digits, such as 2026.
+        year: u16,
+        /// 1 to 12.
+        month: u8,
+    }
+
     enum severity {
         /// Probably a mistake; the value can still be kept.
         warning,
@@ -49,14 +58,15 @@ interface types {
 }
 
 world plugin {
-    use types.{field, derived, problem};
+    use types.{field, derived, month-year, problem};
 
     /// A value as the user typed it, formatted as the field keeps it (digits in groups, a slash
     /// in a date). Unknown keys come back unchanged.
     export format: func(facet: string, key: string, value: string) -> string;
 
-    /// What is wrong with a value, if anything.
-    export validate: func(facet: string, key: string, value: string) -> option<problem>;
+    /// What is wrong with a value, if anything. `today` is the month it is now, in UTC, so a
+    /// Plugin can say a date has passed or is near without a clock.
+    export validate: func(facet: string, key: string, value: string, today: month-year) -> option<problem>;
 
     /// The facet's label and its fields' texts on one Entry, from its Owned fields' values.
     export derive: func(facet: string, fields: list<field>) -> derived;

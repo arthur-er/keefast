@@ -130,30 +130,53 @@ pub fn is_month_year(text: &str) -> bool {
         && matches!(text[..2].parse::<u8>(), Ok(1..=12))
 }
 
-/// What is wrong with a field's value, if anything: `(is an error, message)`.
-pub fn problem(key: &str, value: &str) -> Option<(bool, &'static str)> {
+/// The month an `MM/YY` expiry is, as `(year, month)`, if it is one.
+pub fn month_year(text: &str) -> Option<(u16, u8)> {
+    is_month_year(text).then(|| {
+        let month = text[..2].parse().expect("checked to be digits");
+        let year: u16 = text[3..].parse().expect("checked to be digits");
+        (2000 + year, month)
+    })
+}
+
+/// Months from `today` to `month`: 0 for this month, negative for one that has passed.
+fn months_until(month: (u16, u8), today: (u16, u8)) -> i32 {
+    let index = |(year, month): (u16, u8)| i32::from(year) * 12 + i32::from(month);
+    index(month) - index(today)
+}
+
+/// What is wrong with a field's value, if anything: `(is an error, message)`. `today` is the
+/// month it is now, `(year, month)`, which the host passes `validate`: a Plugin has no clock.
+/// Without it, only an expiry's shape is checked. A card is good through the last day of its
+/// expiry month, and expires soon in that month or the one before. Everything here is a
+/// warning: the user may know better, and saving still works.
+pub fn problem(key: &str, value: &str, today: Option<(u16, u8)>) -> Option<(bool, &'static str)> {
     let value = value.trim();
     if value.is_empty() {
         return None;
     }
     let only_digits =
         |allowed: fn(char) -> bool| value.chars().all(|c| c.is_ascii_digit() || allowed(c));
+    let warning = |message| Some((false, message));
     match key {
         "number" if !only_digits(|c| c == ' ' || c == '-') => {
-            Some((true, "A card number has only digits."))
+            warning("A card number has only digits.")
         }
-        "number" if !(12..=19).contains(&digits(value).len()) || !luhn(value) => Some((
-            false,
-            "Doesn't look like a valid card number. Check the digits.",
-        )),
-        "expiry" if !is_month_year(value) => {
-            Some((true, "Type the expiry as MM/YY, such as 08/31."))
+        "number" if !(12..=19).contains(&digits(value).len()) || !luhn(value) => {
+            warning("Doesn't look like a valid card number. Check the digits.")
         }
+        "expiry" => match month_year(value).map(|month| today.map(|today| months_until(month, today))) {
+            None => warning("Type the expiry as MM/YY, such as 08/31."),
+            Some(None) => None,
+            Some(Some(..0)) => warning("This card has expired. Type the new card's expiry."),
+            Some(Some(0..=1)) => warning("This card expires soon."),
+            Some(_) => None,
+        },
         "cvv" if !only_digits(|_| false) || !(3..=4).contains(&value.len()) => {
-            Some((false, "A CVV is 3 or 4 digits."))
+            warning("A CVV is 3 or 4 digits.")
         }
         "pin" if !only_digits(|_| false) || !(4..=12).contains(&value.len()) => {
-            Some((false, "A PIN is 4 to 12 digits."))
+            warning("A PIN is 4 to 12 digits.")
         }
         _ => None,
     }
@@ -222,16 +245,19 @@ mod tests {
         assert!(!is_month_year("8/31"));
     }
 
+    const TODAY: Option<(u16, u8)> = Some((2026, 10));
+
     #[test]
     fn problems_say_what_to_fix() {
+        let problem = |key, value| problem(key, value, TODAY);
         assert_eq!(problem("number", "4111 1111 1111 1111"), None);
         assert_eq!(
             problem("number", "4111 1111 1111 1112").map(|p| p.0),
             Some(false)
         );
-        assert_eq!(problem("number", "4111 abcd").map(|p| p.0), Some(true));
+        assert_eq!(problem("number", "4111 abcd").map(|p| p.0), Some(false));
         assert_eq!(problem("expiry", "08/31"), None);
-        assert_eq!(problem("expiry", "8/31").map(|p| p.0), Some(true));
+        assert_eq!(problem("expiry", "8/31").map(|p| p.0), Some(false));
         assert_eq!(
             problem("cvv", "12"),
             Some((false, "A CVV is 3 or 4 digits."))
@@ -239,5 +265,24 @@ mod tests {
         assert_eq!(problem("pin", "8271"), None);
         assert_eq!(problem("holder", "anything"), None);
         assert_eq!(problem("cvv", ""), None);
+    }
+
+    #[test]
+    fn an_expiry_is_checked_against_today() {
+        let message = |value| problem("expiry", value, TODAY).map(|p| p.1);
+        assert_eq!(
+            message("09/26"),
+            Some("This card has expired. Type the new card's expiry.")
+        );
+        assert_eq!(message("12/25"), message("09/26"));
+        assert_eq!(message("10/26"), Some("This card expires soon."));
+        assert_eq!(message("11/26"), Some("This card expires soon."));
+        assert_eq!(message("12/26"), None);
+        assert_eq!(
+            problem("expiry", "01/27", Some((2026, 12))).map(|p| p.1),
+            Some("This card expires soon.")
+        );
+        assert_eq!(month_year("08/31"), Some((2031, 8)));
+        assert_eq!(month_year("13/31"), None);
     }
 }

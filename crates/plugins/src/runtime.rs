@@ -14,7 +14,7 @@ mod bindings {
     });
 }
 
-pub use bindings::keefast::plugin::types::{Derived, Field, Problem, Severity};
+pub use bindings::keefast::plugin::types::{Derived, Field, MonthYear, Problem, Severity};
 
 /// The most linear memory an instance may have.
 pub const MEMORY_CAP: usize = 16 << 20;
@@ -101,8 +101,9 @@ impl Runtime {
         facet: &str,
         key: &str,
         value: &str,
+        today: MonthYear,
     ) -> Result<Option<Problem>, PluginError> {
-        self.call(|hooks, store| hooks.call_validate(store, facet, key, value))
+        self.call(|hooks, store| hooks.call_validate(store, facet, key, value, today))
     }
 
     pub fn derive(&mut self, facet: &str, fields: &[Field]) -> Result<Derived, PluginError> {

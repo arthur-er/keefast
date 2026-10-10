@@ -8,8 +8,12 @@ fields, so any KeePass app reads it: `Card number` (protected), `Cardholder`, `E
 - `plugin.json`: the manifest. The facet `card` is detected by a `Card number` field.
 - `src/card.rs`: brands, number and expiry formatting, Luhn, and what `validate` reports.
 - `src/lib.rs`: the hooks, written with keefast's Plugin SDK (`crates/plugin-sdk`), as a
-  third-party Plugin is. `derive` labels the number "Visa •••• 1111"; it has no clock, so the host
-  says whether the `Expiry` (a `monthYear` field) has passed.
+  third-party Plugin is. `derive` labels the number "Visa •••• 1111"; `format` groups the number
+  and adds the slash in `MM/YY`; `validate` warns about a number failing the Luhn check and an
+  expiry that has passed, expires soon or isn't `MM/YY`. It has no clock: the host passes
+  `validate` the month it is.
+- `plugin.json`'s `editor` gives the Card its section in the Entry editor, with "Add card" and
+  "Remove card".
 - `card.wasm`: the built component, committed. keefast's build signs it into a package and
   compiles that in (`crates/plugins/build.rs`), and keefast reads and checks that package at every
   start like any installed one. The mock UI runs `card.wasm` through jco

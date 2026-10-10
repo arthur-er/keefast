@@ -1,7 +1,7 @@
 //! keefast's Card Plugin: payment cards kept on an Entry in plain custom fields (`Card number`,
 //! `Cardholder`, `Expiry`, `CVV`, `PIN`), as `plugin.json` declares. Its hooks give the number's
-//! label ("Visa •••• 1111"), format what the user types, and check it. It has no clock, so
-//! whether a card has expired is for the host to say, from the `monthYear` Owned field.
+//! label ("Visa •••• 1111"), format what the user types, and check it. It has no clock: the host
+//! passes `validate` the month it is, so it can say a card has expired or expires soon.
 //!
 //! It is written with keefast's Plugin SDK, as a third-party Plugin is.
 
@@ -26,7 +26,8 @@ impl Plugin for Card {
         if input.facet != FACET {
             return None;
         }
-        card::problem(input.key, input.value).map(|(error, message)| {
+        let today = input.today.map(|today| (today.year, today.month));
+        card::problem(input.key, input.value, today).map(|(error, message)| {
             if error {
                 Problem::error(message)
             } else {
@@ -50,6 +51,8 @@ keefast_plugin_sdk::export!(Card);
 
 #[cfg(test)]
 mod tests {
+    use keefast_plugin_sdk::{MonthYear, Severity};
+
     use super::*;
 
     #[test]
@@ -74,5 +77,22 @@ mod tests {
         );
         assert!(Card::validate(&Input::new(FACET, "number", "4111111111111112")).is_some());
         assert!(Card::validate(&Input::new("other", "number", "1")).is_none());
+    }
+
+    #[test]
+    fn validate_checks_the_expiry_against_the_month_the_host_gives() {
+        let today = MonthYear {
+            year: 2026,
+            month: 10,
+        };
+        let expiry = |value| Card::validate(&Input::new(FACET, "expiry", value).with_today(today));
+        assert!(expiry("12/26").is_none());
+        assert_eq!(
+            expiry("11/26").map(|p| p.message),
+            Some("This card expires soon.".to_owned())
+        );
+        assert_eq!(expiry("09/26").map(|p| p.severity), Some(Severity::Warning));
+        // Without the month, only the shape is checked.
+        assert!(Card::validate(&Input::new(FACET, "expiry", "09/26")).is_none());
     }
 }
