@@ -24,18 +24,18 @@ mod strings;
 mod text_field;
 mod theme;
 mod totp_setup;
+mod ui;
 mod unlock;
 mod vault_browser;
 mod vault_key;
 mod vault_settings;
-mod widgets;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, PromptLevel, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgba, size,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, relative, size,
 };
 use keefast_workspace::{
     BrowserHosts, Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons,
@@ -110,7 +110,7 @@ impl KeefastWindow {
         .detach();
         theme::choose(workspace.read(cx).theme(), cx);
         // The theme may follow the OS, so the window is drawn again when the OS changes it.
-        cx.observe_window_appearance(window, |_, window, _| window.refresh())
+        cx.observe_window_appearance(window, |_, window, cx| theme::follow_appearance(window, cx))
             .detach();
         saving::watch_vault_files(&workspace, cx);
         favicons::watch(&workspace, cx);
@@ -630,9 +630,15 @@ impl Render for KeefastWindow {
             _ => self.unlock.clone().into_any_element(),
         };
         let dialog = self.dialog(cx).map(|(view, _)| view);
+        let theme = Theme::for_window(window, cx);
         div()
             .size_full()
             .relative()
+            .font_family(theme::UI_FONT)
+            .text_size(px(13.))
+            .line_height(relative(1.45))
+            .bg(theme.bg_0)
+            .text_color(theme.fg_0)
             .on_action(cx.listener(Self::toggle_command_palette))
             .on_action(cx.listener(Self::open_settings))
             // Clicks and scrolling anywhere in keefast count as activity.
@@ -674,7 +680,7 @@ impl Render for KeefastWindow {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgba(0x00000080))
+                        .bg(theme.scrim)
                         .child(dialog),
                 )
             })
@@ -745,8 +751,9 @@ fn main() {
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            theme::load_fonts(cx);
             actions::bind_keys(cx);
-            let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
+            let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),

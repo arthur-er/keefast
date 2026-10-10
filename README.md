@@ -86,7 +86,7 @@ nix develop .#corpus -c scripts/check-interop.sh
 
 ## Keyboard
 
-Ctrl+Shift+P opens the command palette: type part of a command's name, pick one with Up/Down and
+Ctrl+K (or Ctrl+Shift+P) opens the command palette: type part of a command's name, pick one with Up/Down and
 press Enter to run it, or Escape to close the palette. It lists every action of what has focus,
 with its keys.
 
@@ -108,9 +108,9 @@ command palette), settings and lock-all buttons.
 
 The settings (Ctrl+, or the gear in the footer and "Settings" in the unlock dialog) have a menu
 of their sections and the open Vaults. **General** holds the preferences kept on this machine, in
-`keefast/config.toml` in the OS config directory: the theme (one of KeeWeb's: Dark, Light,
-Solarized dark and light, Dark and Light blue, Dark and Light brown, Terminal, Terminal light,
-Dark contrast and High contrast, or System, following the OS's light/dark setting), the idle lock
+`keefast/config.toml` in the OS config directory: the theme (Dark, Light, or System,
+following the OS's light/dark setting; the KeeWeb themes of earlier versions become Dark or
+Light), the idle lock
 and locking with the OS, how long copied secrets stay on the clipboard, autosave, the password
 generator, browser integration and favicon download. Each Vault's page (also reached by clicking
 it in the footer) saves or locks it, changes its master key, and holds its Default access policy
@@ -244,3 +244,8 @@ KEEFAST_DROPBOX_TEST_APP_KEY=<key> cargo test -p keefast-workspace --test dropbo
 
 Passphrases are made from the [EFF large word list](https://www.eff.org/dice) by the Electronic
 Frontier Foundation, licensed under [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/).
+
+keefast draws its interface in [Inter](https://rsms.me/inter/) by the Inter Project Authors and
+its secrets in [JetBrains Mono](https://www.jetbrains.com/lp/mono/) by the JetBrains Mono Project
+Authors, both licensed under the [SIL Open Font License 1.1](https://openfontlicense.org)
+(`crates/app/assets/fonts/`).

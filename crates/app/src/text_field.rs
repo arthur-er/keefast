@@ -38,6 +38,10 @@ pub struct TextField {
     masked: bool,
     /// Drawn before the text, as a search field's magnifier.
     icon: Option<IconName>,
+    /// Drawn as a search box: sunk into the pane, with no edge until focused.
+    search: bool,
+    /// Drawn in the mono face, as secrets and codes are.
+    mono: bool,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     /// What the last change was, so a run of typing or deleting undoes as one.
@@ -81,6 +85,8 @@ impl TextField {
             multiline: false,
             masked: false,
             icon: None,
+            search: false,
+            mono: false,
             undo: Vec::new(),
             redo: Vec::new(),
             last_edit: None,
@@ -91,6 +97,12 @@ impl TextField {
 
     pub fn with_icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Draws it as a search box.
+    pub fn search(mut self) -> Self {
+        self.search = true;
         self
     }
 
@@ -523,13 +535,7 @@ impl Render for TextField {
         };
         let selection = self.selection();
         let highlight = HighlightStyle {
-            background_color: Some(
-                gpui::Rgba {
-                    a: 0.35,
-                    ..theme.accent
-                }
-                .into(),
-            ),
+            background_color: Some(theme.accent_bg.into()),
             ..HighlightStyle::default()
         };
         let selected = (focused && !selection.is_empty()).then(|| {
@@ -552,7 +558,7 @@ impl Render for TextField {
                 if let Some(caret) = caret.and_then(|caret| layout.position_for_index(caret)) {
                     window.paint_quad(fill(
                         Bounds::new(caret, size(px(1.5), layout.line_height())),
-                        theme.text,
+                        theme.fg_0,
                     ));
                 }
                 let dragged = field.clone();
@@ -579,20 +585,38 @@ impl Render for TextField {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .cursor(CursorStyle::IBeam)
             .w_full()
-            .px_2()
-            .py_1p5()
-            .rounded_md()
+            .flex()
+            .gap(px(8.))
+            .px(px(10.))
+            .rounded(px(6.))
             .border_1()
-            .border_color(if focused { theme.accent } else { theme.border })
-            .bg(theme.background)
-            .when(self.multiline, |this| this.min_h_20())
-            .when(self.text.is_empty(), |this| this.text_color(theme.muted))
+            .text_size(px(13.))
+            .text_color(theme.fg_0)
+            .map(|this| {
+                if self.multiline {
+                    this.items_start().py(px(7.)).min_h(px(72.))
+                } else {
+                    this.items_center()
+                        .h(if self.search { px(30.) } else { px(32.) })
+                }
+            })
+            .map(|this| match (focused, self.search) {
+                (true, _) => this
+                    .bg(theme.bg_1)
+                    .border_color(theme.accent)
+                    .shadow(theme.focus_ring()),
+                (false, true) => this
+                    .bg(theme.bg_hover)
+                    .border_color(gpui::transparent_black()),
+                (false, false) => this.bg(theme.bg_1).border_color(theme.border_strong),
+            })
+            .when(
+                (self.masked || self.mono) && !self.text.is_empty(),
+                |this| this.font_family(crate::theme::MONO_FONT),
+            )
+            .when(self.text.is_empty(), |this| this.text_color(theme.fg_2))
             .when_some(self.icon, |this, icon| {
-                this.flex().items_center().gap_1p5().child(icons::ui_icon(
-                    icon,
-                    px(14.),
-                    theme.muted,
-                ))
+                this.child(icons::ui_icon(icon, px(14.), theme.fg_2))
             })
             .child(
                 div()

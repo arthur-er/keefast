@@ -17,8 +17,8 @@ use crate::dropbox_panel::{self, DropboxPanel, DropboxPanelEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::ui::{Button, Kbd, Typography};
 use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
-use crate::widgets::{button, tool_button};
 
 pub enum UnlockEvent {
     /// A Vault has been decrypted and added to the Workspace, or was open already. The
@@ -352,7 +352,7 @@ impl UnlockView {
                     .pr_2()
                     .rounded_md()
                     .when(selected, |this| {
-                        this.bg(theme.selection).text_color(theme.selection_text)
+                        this.bg(theme.bg_active).text_color(theme.fg_0)
                     })
                     .child(
                         div()
@@ -368,8 +368,8 @@ impl UnlockView {
                             .child(
                                 div()
                                     .truncate()
-                                    .text_xs()
-                                    .when(!selected, |this| this.text_color(theme.muted))
+                                    .text_micro()
+                                    .when(!selected, |this| this.text_color(theme.fg_1))
                                     .child(description),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -378,8 +378,9 @@ impl UnlockView {
                     )
                     .when(forgettable, |this| {
                         this.child(
-                            tool_button(("forget-recent", ix), strings::RECENT_FORGET, theme)
-                                .text_color(theme.muted)
+                            Button::new(("forget-recent", ix), strings::RECENT_FORGET)
+                                .small()
+                                .ghost()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.forget(forget.clone(), cx)
                                 })),
@@ -393,7 +394,7 @@ impl UnlockView {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().text_color(theme.muted).child(title))
+                .child(div().text_secondary().text_color(theme.fg_1).child(title))
                 .child(
                     div()
                         .id(id)
@@ -508,8 +509,8 @@ impl Render for UnlockView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(theme.background)
-                .text_color(theme.text)
+                .bg(theme.bg_0)
+                .text_color(theme.fg_0)
                 .child(
                     div()
                         .id("new-vault-card")
@@ -520,7 +521,7 @@ impl Render for UnlockView {
                         .rounded_lg()
                         .border_1()
                         .border_color(theme.border)
-                        .bg(theme.panel)
+                        .bg(theme.bg_1)
                         .child(form),
                 );
         }
@@ -530,8 +531,8 @@ impl Render for UnlockView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(theme.background)
-                .text_color(theme.text)
+                .bg(theme.bg_0)
+                .text_color(theme.fg_0)
                 .child(dropbox);
         }
         let has_dropbox = self.workspace.read(cx).dropbox().is_some();
@@ -542,8 +543,8 @@ impl Render for UnlockView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(theme.background)
-            .text_color(theme.text)
+            .bg(theme.bg_0)
+            .text_color(theme.fg_0)
             .child(
                 div()
                     .w(px(460.))
@@ -554,15 +555,15 @@ impl Render for UnlockView {
                     .rounded_lg()
                     .border_1()
                     .border_color(theme.border)
-                    .bg(theme.panel)
-                    .child(div().text_xl().child(strings::UNLOCK_TITLE))
+                    .bg(theme.bg_1)
+                    .child(div().text_title().child(strings::UNLOCK_TITLE))
                     .children(locked)
                     .children(recents)
                     .child(
                         div()
                             .truncate()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(file_label),
                     )
                     .child(
@@ -572,33 +573,33 @@ impl Render for UnlockView {
                             .gap_2()
                             .when(has_dropbox, |this| {
                                 this.child(
-                                    button("from-dropbox", strings::UNLOCK_FROM_DROPBOX, theme)
+                                    Button::new("from-dropbox", strings::UNLOCK_FROM_DROPBOX)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.choose_from_dropbox(window, cx)
                                         })),
                                 )
                             })
                             .child(
-                                button("new-vault", strings::UNLOCK_NEW_VAULT, theme).on_click(
+                                Button::new("new-vault", strings::UNLOCK_NEW_VAULT).on_click(
                                     cx.listener(|this, _, window, cx| this.new_vault(window, cx)),
                                 ),
                             )
                             .child(
-                                button("choose-file", strings::UNLOCK_CHOOSE_FILE, theme)
+                                Button::new("choose-file", strings::UNLOCK_CHOOSE_FILE)
                                     .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx))),
                             ),
                     )
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(strings::UNLOCK_PASSWORD_LABEL),
                     )
                     .child(self.password.clone())
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(strings::UNLOCK_KEY_FILE_LABEL),
                     )
                     .child(
@@ -610,27 +611,24 @@ impl Render for UnlockView {
                                 div()
                                     .flex_1()
                                     .truncate()
-                                    .text_sm()
+                                    .text_secondary()
                                     .when(self.key_file.is_none(), |this| {
-                                        this.text_color(theme.muted)
+                                        this.text_color(theme.fg_1)
                                     })
                                     .child(key_file_label),
                             )
                             .when(self.key_file.is_some(), |this| {
                                 this.child(
-                                    tool_button(
-                                        "clear-key-file",
-                                        strings::UNLOCK_CLEAR_KEY_FILE,
-                                        theme,
-                                    )
-                                    .text_color(theme.muted)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.clear_key_file(cx)),
-                                    ),
+                                    Button::new("clear-key-file", strings::UNLOCK_CLEAR_KEY_FILE)
+                                        .small()
+                                        .ghost()
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.clear_key_file(cx)),
+                                        ),
                                 )
                             })
                             .child(
-                                button("choose-key-file", strings::UNLOCK_CHOOSE_KEY_FILE, theme)
+                                Button::new("choose-key-file", strings::UNLOCK_CHOOSE_KEY_FILE)
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.choose_key_file(cx)),
                                     ),
@@ -639,8 +637,8 @@ impl Render for UnlockView {
                     .when(self.unlocking.is_some(), |this| {
                         this.child(progress_bar(theme)).child(
                             div()
-                                .text_xs()
-                                .text_color(theme.muted)
+                                .text_micro()
+                                .text_color(theme.fg_1)
                                 .child(strings::UNLOCK_PROGRESS),
                         )
                     })
@@ -650,10 +648,15 @@ impl Render for UnlockView {
                                 .flex()
                                 .flex_col()
                                 .gap_0p5()
-                                .child(div().text_sm().text_color(theme.error).child(error.message))
+                                .child(
+                                    div()
+                                        .text_secondary()
+                                        .text_color(theme.danger)
+                                        .child(error.message),
+                                )
                                 .when_some(error.detail, |this, detail| {
                                     this.child(
-                                        div().text_xs().text_color(theme.muted).child(detail),
+                                        div().text_micro().text_color(theme.fg_1).child(detail),
                                     )
                                 }),
                         )
@@ -661,8 +664,8 @@ impl Render for UnlockView {
                     .when(config_error, |this| {
                         this.child(
                             div()
-                                .text_xs()
-                                .text_color(theme.muted)
+                                .text_micro()
+                                .text_color(theme.fg_1)
                                 .child(strings::CONFIG_ERROR),
                         )
                     })
@@ -672,31 +675,32 @@ impl Render for UnlockView {
                             .justify_end()
                             .gap_2()
                             .child(
-                                button("open-settings", strings::OPEN_SETTINGS, theme)
-                                    .mr_auto()
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(Box::new(OpenSettings), cx)
-                                    }),
+                                div().flex_1().flex().child(
+                                    Button::new("open-settings", strings::OPEN_SETTINGS)
+                                        .ghost()
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(OpenSettings), cx)
+                                        }),
+                                ),
                             )
                             .when(can_cancel, |this| {
                                 this.child(
-                                    button("cancel-unlock", strings::CANCEL, theme)
+                                    Button::new("cancel-unlock", strings::CANCEL)
                                         .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
                                 )
                             })
                             .child(
-                                button(
+                                Button::new(
                                     "unlock",
                                     if self.unlocking.is_some() {
                                         strings::UNLOCK_IN_PROGRESS
                                     } else {
                                         strings::UNLOCK_BUTTON
                                     },
-                                    theme,
                                 )
-                                .bg(theme.accent)
-                                .text_color(theme.accent_text)
-                                .when(!can_unlock, |this| this.opacity(0.5))
+                                .primary()
+                                .kbd(Some(Kbd::new([strings::KEY_ENTER])))
+                                .disabled(!can_unlock)
                                 .on_click(cx.listener(|this, _, _, cx| this.unlock(cx))),
                             ),
                     ),

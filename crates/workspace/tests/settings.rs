@@ -46,10 +46,6 @@ fn the_theme_is_kept_in_the_config_file() {
     assert_eq!(load("").theme, ThemeSetting::System);
     assert_eq!(load("theme = \"light\"\n").theme, ThemeSetting::Light);
     assert_eq!(load("theme = \"dark\"\n").theme, ThemeSetting::Dark);
-    assert_eq!(
-        load("theme = \"solarized-dark\"\n").theme,
-        ThemeSetting::SolarizedDark
-    );
     // A theme from a newer version doesn't fail the file.
     let config = load("theme = \"neon\"\nautosave = true\n");
     assert_eq!(config.theme, ThemeSetting::System);
@@ -58,12 +54,40 @@ fn the_theme_is_kept_in_the_config_file() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileConfigStore::new(dir.path().join("config.toml"));
     let config = AppConfig {
-        theme: ThemeSetting::HighContrast,
+        theme: ThemeSetting::Light,
         download_favicons: true,
         ..AppConfig::default()
     };
     store.save(&config).unwrap();
     assert_eq!(store.load().unwrap(), config);
+}
+
+#[test]
+fn the_keeweb_themes_of_earlier_versions_become_dark_or_light() {
+    for dark in [
+        "solarized-dark",
+        "dark-blue",
+        "dark-brown",
+        "terminal",
+        "dark-contrast",
+    ] {
+        assert_eq!(
+            load(&format!("theme = \"{dark}\"\n")).theme,
+            ThemeSetting::Dark
+        );
+    }
+    for light in [
+        "solarized-light",
+        "light-blue",
+        "light-brown",
+        "terminal-light",
+        "high-contrast",
+    ] {
+        assert_eq!(
+            load(&format!("theme = \"{light}\"\n")).theme,
+            ThemeSetting::Light
+        );
+    }
 }
 
 #[test]

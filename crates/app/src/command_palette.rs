@@ -1,7 +1,7 @@
 use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, KeyDownEvent, KeybindingKeystroke, MouseButton, ScrollHandle, SharedString,
-    StyledText, Window, div, prelude::*, px,
+    HighlightStyle, KeyDownEvent, MouseButton, ScrollHandle, SharedString, StyledText, Window, div,
+    prelude::*, px,
 };
 use keefast_core::fuzzy_match;
 
@@ -9,6 +9,7 @@ use crate::actions::{self, SelectNextCommand, SelectPreviousCommand};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::ui::{self, Kbd};
 
 /// Emitted when the palette closes, after running a command or not.
 pub struct Dismissed;
@@ -32,7 +33,8 @@ pub struct CommandPalette {
 struct Command {
     action: Box<dyn Action>,
     name: SharedString,
-    keys: Option<SharedString>,
+    /// The names of the keys of each keystroke bound to it, if any are.
+    keys: Option<Vec<Vec<String>>>,
 }
 
 struct Match {
@@ -65,7 +67,7 @@ impl CommandPalette {
                             .bindings_for_action_in(action.as_ref(), previous)
                             .pop()
                     })
-                    .map(|binding| keys_label(binding.keystrokes()).into());
+                    .map(|binding| ui::key_names(binding.keystrokes()));
                 Command {
                     name: command_name(action.name()).into(),
                     action,
@@ -75,7 +77,7 @@ impl CommandPalette {
             .collect();
         commands.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let query = cx.new(|cx| TextField::new(strings::PALETTE_PLACEHOLDER, cx));
+        let query = cx.new(|cx| TextField::new(strings::PALETTE_PLACEHOLDER, cx).search());
         cx.subscribe_in(&query, window, Self::on_query_event)
             .detach();
         cx.observe(&query, |this, _, cx| this.filter(cx)).detach();
@@ -208,8 +210,8 @@ impl CommandPalette {
     ) -> AnyElement {
         let command = &self.commands[found.command];
         let matched = HighlightStyle {
-            color: Some(theme.accent.into()),
-            font_weight: Some(FontWeight::BOLD),
+            color: Some(theme.accent_fg.into()),
+            font_weight: Some(FontWeight::SEMIBOLD),
             ..Default::default()
         };
         let highlights = found.positions.iter().map(|&start| {
@@ -222,12 +224,14 @@ impl CommandPalette {
         div()
             .id(("command", ix))
             .flex()
+            .items_center()
             .gap_4()
-            .px_3()
-            .py_1p5()
+            .h(px(34.))
+            .px(px(10.))
+            .rounded(px(6.))
             .cursor_pointer()
             .when(ix == self.selected, |this| {
-                this.bg(theme.selection).text_color(theme.selection_text)
+                this.bg(theme.bg_active).text_color(theme.fg_0)
             })
             .child(
                 div()
@@ -236,13 +240,7 @@ impl CommandPalette {
                     .child(StyledText::new(command.name.clone()).with_highlights(highlights)),
             )
             .when_some(command.keys.clone(), |this, keys| {
-                this.child(
-                    div()
-                        .flex_none()
-                        .text_sm()
-                        .text_color(theme.muted)
-                        .child(keys),
-                )
+                this.child(Kbd::new(keys.into_iter().flatten()))
             })
             .on_click(cx.listener(move |this, _, window, cx| this.run(ix, window, cx)))
             .into_any_element()
@@ -272,18 +270,17 @@ impl Render for CommandPalette {
                     cx.stop_propagation();
                 }
             })
-            .w(px(480.))
+            .w(px(560.))
             .flex()
             .flex_col()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.panel)
-            .text_color(theme.text)
-            .shadow_lg()
+            .rounded(px(12.))
+            .bg(theme.bg_popover)
+            .text_color(theme.fg_0)
+            .shadow(theme.shadow_dialog())
+            .overflow_hidden()
             .child(
                 div()
-                    .p_2()
+                    .p(px(8.))
                     .border_b_1()
                     .border_color(theme.border)
                     .child(self.query.clone()),
@@ -291,14 +288,14 @@ impl Render for CommandPalette {
             .child(
                 div()
                     .id("command-list")
-                    .max_h(px(320.))
-                    .py_1()
+                    .max_h(px(360.))
+                    .p(px(6.))
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .when(rows.is_empty(), |this| {
                         this.px_3()
                             .py_1p5()
-                            .text_color(theme.muted)
+                            .text_color(theme.fg_1)
                             .child(strings::PALETTE_NO_MATCHES)
                     })
                     .children(rows),
@@ -334,36 +331,6 @@ fn command_name(action_name: &str) -> String {
         previous = Some(ch);
     }
     words.join(" ")
-}
-
-/// How the keys of a binding are written: `Ctrl+Shift+P`, `Down`.
-fn keys_label(keystrokes: &[KeybindingKeystroke]) -> String {
-    keystrokes
-        .iter()
-        .map(|keystroke| {
-            let modifiers = keystroke.modifiers();
-            let mut parts: Vec<String> = Vec::new();
-            let named = [
-                (modifiers.control, strings::KEY_CTRL),
-                (modifiers.alt, strings::KEY_ALT),
-                (modifiers.platform, strings::KEY_SUPER),
-                (modifiers.shift, strings::KEY_SHIFT),
-            ];
-            parts.extend(
-                named
-                    .into_iter()
-                    .filter(|(held, _)| *held)
-                    .map(|(_, name)| name.to_owned()),
-            );
-            let mut key = keystroke.key().chars();
-            parts.push(match key.next() {
-                Some(first) => first.to_uppercase().chain(key).collect(),
-                None => String::new(),
-            });
-            parts.join("+")
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]
@@ -405,10 +372,15 @@ mod tests {
 
     #[test]
     fn writes_keys_out() {
-        let keys =
-            |keys: &str| keys_label(KeyBinding::new(keys, ToggleCommandPalette, None).keystrokes());
+        let keys = |keys: &str| {
+            keys_label(&ui::key_names(
+                KeyBinding::new(keys, ToggleCommandPalette, None).keystrokes(),
+            ))
+        };
         assert_eq!(keys("ctrl-shift-p"), "Ctrl+Shift+P");
-        assert_eq!(keys("down"), "Down");
+        // Arrows and Escape are drawn as their key caps read.
+        assert_eq!(keys("down"), "↓");
+        assert_eq!(keys("escape"), "Esc");
         assert_eq!(keys("ctrl-k ctrl-s"), "Ctrl+K Ctrl+S");
     }
 
@@ -500,7 +472,7 @@ mod tests {
                     let command = &palette.commands[found.command];
                     (
                         command.name.to_string(),
-                        command.keys.as_ref().map(ToString::to_string),
+                        command.keys.as_deref().map(keys_label),
                     )
                 })
                 .collect()
@@ -519,6 +491,15 @@ mod tests {
                 .name
                 .to_string()
         })
+    }
+
+    /// How the keys of a binding read: `Ctrl+Shift+P`, `Down`.
+    fn keys_label(strokes: &[Vec<String>]) -> String {
+        strokes
+            .iter()
+            .map(|keys| keys.join("+"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn view_focused(view: &Entity<TestView>, cx: &mut VisualTestContext) -> bool {
@@ -598,6 +579,16 @@ mod tests {
         // Its keys act on the view again.
         cx.simulate_keystrokes("ctrl-s");
         assert_eq!(view.read_with(cx, |view, _| view.ran.clone()), vec!["save"]);
+    }
+
+    #[gpui::test]
+    fn ctrl_k_opens_and_closes_it_too(cx: &mut TestAppContext) {
+        let (view, cx) = open_view(cx);
+        cx.simulate_keystrokes("ctrl-k");
+        assert!(view.read_with(cx, |view, _| view.palette.is_some()));
+        cx.simulate_keystrokes("ctrl-k");
+        assert!(view.read_with(cx, |view, _| view.palette.is_none()));
+        assert!(view_focused(&view, cx));
     }
 
     #[gpui::test]

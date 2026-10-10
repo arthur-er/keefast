@@ -13,6 +13,7 @@ use keefast_workspace::{read_attachment, write_attachment};
 
 use crate::strings;
 use crate::theme::Theme;
+use crate::ui::Typography;
 
 /// How much of a text attachment a preview shows.
 const PREVIEW_TEXT_LIMIT: usize = 16 * 1024;
@@ -48,10 +49,10 @@ pub fn row(attachment: &Attachment, links: impl IntoElement, theme: Theme) -> Di
             div()
                 .flex()
                 .gap_3()
-                .text_sm()
+                .text_secondary()
                 .child(
                     div()
-                        .text_color(theme.muted)
+                        .text_color(theme.fg_1)
                         .child(size_label(attachment.size())),
                 )
                 .child(links),
@@ -108,7 +109,7 @@ impl Preview {
             .rounded_md()
             .border_1()
             .border_color(theme.border)
-            .bg(theme.background);
+            .bg(theme.bg_0);
         match &self.content {
             PreviewContent::Image(image) => frame
                 .child(
@@ -128,15 +129,15 @@ impl Preview {
                 .child(
                     div()
                         .font_family("monospace")
-                        .text_sm()
+                        .text_secondary()
                         .whitespace_normal()
                         .child(shown.clone()),
                 )
                 .when(*cut, |this| {
                     this.child(
                         div()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(strings::ATTACHMENT_PREVIEW_CUT),
                     )
                 })

@@ -123,7 +123,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-s", SaveAll, anywhere),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
         KeyBinding::new("secondary-shift-n", NewVault, anywhere),
+        // Bound last, Ctrl+K is the one menus and hints show.
         KeyBinding::new("secondary-shift-p", ToggleCommandPalette, None),
+        KeyBinding::new("secondary-k", ToggleCommandPalette, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("escape", CloseSettings, Some(SETTINGS_CONTEXT)),
         KeyBinding::new("down", SelectNextCommand, Some(COMMAND_PALETTE_CONTEXT)),

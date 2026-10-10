@@ -5,7 +5,7 @@ use secrecy::ExposeSecret;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
-use crate::widgets::button;
+use crate::ui::{Button, Typography};
 
 pub enum TotpSetupEvent {
     Save(Totp),
@@ -114,7 +114,7 @@ impl TotpSetup {
 impl Render for TotpSetup {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
-        let label = |text: &'static str| div().text_sm().text_color(theme.muted).child(text);
+        let label = |text: &'static str| div().text_secondary().text_color(theme.fg_1).child(text);
         let labelled = |text: &'static str, field: &Entity<TextField>| {
             div()
                 .flex()
@@ -129,12 +129,12 @@ impl Render for TotpSetup {
             .flex()
             .flex_col()
             .gap_3()
-            .child(div().text_lg().child(strings::TOTP_SETUP_TITLE))
+            .child(div().text_dialog_title().child(strings::TOTP_SETUP_TITLE))
             .child(labelled(strings::TOTP_SECRET, &self.secret))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.muted)
+                    .text_micro()
+                    .text_color(theme.fg_1)
                     .child(strings::TOTP_URI_NOTE),
             )
             .child(
@@ -159,7 +159,7 @@ impl Render for TotpSetup {
                             .gap_1()
                             .child(label(strings::TOTP_ALGORITHM))
                             .child(
-                                button("totp-algorithm", algorithm_name(self.algorithm), theme)
+                                Button::new("totp-algorithm", algorithm_name(self.algorithm))
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.next_algorithm(cx)),
                                     ),
@@ -169,8 +169,8 @@ impl Render for TotpSetup {
             .when_some(self.error, |this, error| {
                 this.child(
                     div()
-                        .text_sm()
-                        .text_color(theme.error)
+                        .text_secondary()
+                        .text_color(theme.danger)
                         .child(describe(error)),
                 )
             })
@@ -181,19 +181,18 @@ impl Render for TotpSetup {
                     .gap_2()
                     .when(self.removable, |this| {
                         this.child(
-                            button("totp-remove", strings::TOTP_REMOVE, theme).on_click(
+                            Button::new("totp-remove", strings::TOTP_REMOVE).on_click(
                                 cx.listener(|_, _, _, cx| cx.emit(TotpSetupEvent::Remove)),
                             ),
                         )
                     })
                     .child(
-                        button("totp-cancel", strings::CANCEL, theme)
+                        Button::new("totp-cancel", strings::CANCEL)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(TotpSetupEvent::Cancel))),
                     )
                     .child(
-                        button("totp-save", strings::EDITOR_DONE, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
+                        Button::new("totp-save", strings::EDITOR_DONE)
+                            .primary()
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                     ),
             )

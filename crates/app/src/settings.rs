@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, ScrollHandle, SharedString, Stateful, Window, WindowAppearance, div, prelude::*,
-    px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
+    ScrollHandle, SharedString, Stateful, Window, WindowAppearance, div, prelude::*, px,
 };
 use keefast_workspace::{ThemeSetting, VaultId, Workspace};
 
@@ -14,6 +13,7 @@ use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::saving;
 use crate::strings;
 use crate::theme::{self, Theme};
+use crate::ui::{self, Typography, radio_mark, switch_mark};
 use crate::vault_browser::{sidebar_row, sidebar_separator};
 use crate::vault_settings::{VaultSettings, VaultSettingsChangeKey, VaultSettingsClosed};
 
@@ -171,7 +171,7 @@ impl SettingsView {
             Page::Vault(settings) => Some(settings.read(cx).vault()),
         };
         let icon =
-            |icon: IconName| Some(icons::ui_icon(icon, px(14.), theme.text).into_any_element());
+            |icon: IconName| Some(icons::ui_icon(icon, px(14.), theme.fg_0).into_any_element());
         let sections = SECTIONS.iter().enumerate().map(|(ix, &title)| {
             sidebar_row(
                 ("settings-section", ix),
@@ -204,7 +204,7 @@ impl SettingsView {
             .flex_col()
             .py_1p5()
             .overflow_y_scroll()
-            .bg(theme.sidebar)
+            .bg(theme.bg_sidebar)
             .border_r_1()
             .border_color(theme.border)
             .child(
@@ -302,52 +302,126 @@ impl SettingsView {
             }))
     }
 
-    /// A preview of `setting`, KeeWeb's way: a card in its background and text colours with a
-    /// button in its action colour.
+    /// A choice of theme: a small window drawn in its colours, half dark and half light for
+    /// System, over its name.
     fn theme_card(
         &mut self,
         index: &mut usize,
         setting: ThemeSetting,
         chosen: bool,
-        appearance: WindowAppearance,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let preview = Theme::of(setting, appearance);
+        let window =
+            |preview: Theme| {
+                div()
+                    .size_full()
+                    .flex()
+                    .bg(preview.bg_0)
+                    .child(
+                        div()
+                            .w(px(52.))
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .p(px(8.))
+                            .bg(preview.bg_sidebar)
+                            .border_r_1()
+                            .border_color(preview.border)
+                            .children([24., 16., 20., 14.].map(|width| {
+                                div().w(px(width)).h(px(3.)).rounded_full().bg(preview.fg_2)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .p(px(8.))
+                            .children(
+                                [(false, 0.9), (true, 0.8), (false, 0.55), (false, 0.7)].map(
+                                    |(picked, width)| {
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(5.))
+                                            .px(px(4.))
+                                            .h(px(11.))
+                                            .rounded(px(2.))
+                                            .when(picked, |this| this.bg(preview.bg_active))
+                                            .child(div().size(px(5.)).rounded(px(1.)).bg(
+                                                if picked { preview.accent } else { preview.fg_2 },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .w(gpui::relative(width))
+                                                    .h(px(3.))
+                                                    .rounded_full()
+                                                    .bg(preview.fg_2),
+                                            )
+                                    },
+                                ),
+                            ),
+                    )
+            };
+        let picture = match setting {
+            // The dark window, its right half drawn light.
+            ThemeSetting::System => div()
+                .size_full()
+                .relative()
+                .child(window(Theme::of(ThemeSetting::Dark, WindowAppearance::Dark)))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .h_full()
+                        .w_1_2()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .h_full()
+                                .w(THEME_CARD_WIDTH - px(2.))
+                                .child(window(Theme::of(
+                                    ThemeSetting::Light,
+                                    WindowAppearance::Light,
+                                ))),
+                        ),
+                ),
+            setting => window(Theme::of(setting, WindowAppearance::Dark)),
+        };
         self.control(index, Change::Theme(setting), theme, cx)
-            .w(px(140.))
+            .w(THEME_CARD_WIDTH)
             .flex()
             .flex_col()
-            .items_center()
             .gap_2()
-            .pt_1p5()
-            .pb_3()
-            .border_2()
-            .border_color(if chosen { theme.accent } else { preview.border })
-            .bg(preview.background)
-            .text_color(preview.text)
-            .text_sm()
             .child(
                 div()
-                    .w(px(110.))
-                    .pb_1()
-                    .border_b_1()
-                    .border_color(preview.border)
-                    .text_center()
-                    .truncate()
-                    .child(theme_name(setting)),
+                    .h(px(84.))
+                    .rounded(px(8.))
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(if chosen {
+                        theme.accent
+                    } else {
+                        theme.border_strong
+                    })
+                    .when(chosen, |this| this.shadow(theme.focus_ring()))
+                    .child(picture),
             )
             .child(
                 div()
-                    .w(px(84.))
-                    .h(px(40.))
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .rounded_sm()
-                    .bg(preview.accent)
-                    .text_color(preview.accent_text)
-                    .child(strings::THEME_PREVIEW_BUTTON),
+                    .gap_2()
+                    .text_color(theme.fg_0)
+                    .child(radio_mark(chosen, theme))
+                    .child(theme_name(setting)),
             )
             .into_any_element()
     }
@@ -366,11 +440,9 @@ impl SettingsView {
             .gap_1()
             .px_1()
             .mx_neg_1()
-            .child(if on {
-                strings::CHECKBOX_ON
-            } else {
-                strings::CHECKBOX_OFF
-            })
+            .items_center()
+            .gap_2()
+            .child(switch_mark(on, theme))
             .child(label)
             .into_any_element()
     }
@@ -389,26 +461,24 @@ impl SettingsView {
             .iter()
             .map(|(value, label)| {
                 let selected = *value == chosen;
-                self.control(index, change(*value), theme, cx)
-                    .px_2()
-                    .py_0p5()
-                    .text_sm()
-                    .border_color(theme.border)
-                    .when(selected, |this| {
-                        this.bg(theme.accent).text_color(theme.accent_text)
-                    })
-                    .child(label.clone())
-                    .into_any_element()
+                ui::segment(
+                    self.control(index, change(*value), theme, cx),
+                    selected,
+                    theme,
+                )
+                .child(label.clone())
+                .into_any_element()
             })
             .collect();
         div()
             .flex()
-            .flex_wrap()
-            .gap_1()
-            .children(buttons)
+            .child(ui::segment_track(theme).flex_wrap().children(buttons))
             .into_any_element()
     }
 }
+
+/// How wide each choice of theme is drawn.
+const THEME_CARD_WIDTH: gpui::Pixels = px(180.);
 
 /// The waits to offer, with the one chosen among them even if it isn't one of `offered`, as
 /// when set in the config file by hand.
@@ -454,16 +524,6 @@ fn theme_name(setting: ThemeSetting) -> &'static str {
         ThemeSetting::System => strings::THEME_SYSTEM,
         ThemeSetting::Dark => strings::THEME_DARK,
         ThemeSetting::Light => strings::THEME_LIGHT,
-        ThemeSetting::SolarizedDark => strings::THEME_SOLARIZED_DARK,
-        ThemeSetting::SolarizedLight => strings::THEME_SOLARIZED_LIGHT,
-        ThemeSetting::DarkBlue => strings::THEME_DARK_BLUE,
-        ThemeSetting::LightBlue => strings::THEME_LIGHT_BLUE,
-        ThemeSetting::DarkBrown => strings::THEME_DARK_BROWN,
-        ThemeSetting::LightBrown => strings::THEME_LIGHT_BROWN,
-        ThemeSetting::Terminal => strings::THEME_TERMINAL,
-        ThemeSetting::TerminalLight => strings::THEME_TERMINAL_LIGHT,
-        ThemeSetting::DarkContrast => strings::THEME_DARK_CONTRAST,
-        ThemeSetting::HighContrast => strings::THEME_HIGH_CONTRAST,
     }
 }
 
@@ -473,7 +533,7 @@ fn section(title: &'static str) -> gpui::Div {
         .flex_col()
         .gap_2()
         .pb_6()
-        .child(div().text_xl().font_weight(FontWeight::BOLD).child(title))
+        .child(div().text_title().child(title))
 }
 
 /// The title of a settings page, with the way back to the Vaults.
@@ -496,13 +556,7 @@ fn page_header(
                 .gap_3()
                 .min_w_0()
                 .child(icon)
-                .child(
-                    div()
-                        .text_3xl()
-                        .font_weight(FontWeight::BOLD)
-                        .truncate()
-                        .child(title.into()),
-                ),
+                .child(div().text_title().truncate().child(title.into())),
         )
         .child(
             div()
@@ -515,13 +569,13 @@ fn page_header(
                 .py_1()
                 .rounded_md()
                 .cursor_pointer()
-                .text_sm()
-                .hover(|this| this.bg(theme.sidebar_selection))
+                .text_secondary()
+                .hover(|this| this.bg(theme.bg_active))
                 .child(strings::SETTINGS_CLOSE)
                 .child(icons::ui_icon(
                     IconName::CircleArrowLeft,
                     px(16.),
-                    theme.text,
+                    theme.fg_0,
                 ))
                 .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsClosed))),
         )
@@ -529,11 +583,11 @@ fn page_header(
 }
 
 fn label(text: &'static str) -> gpui::Div {
-    div().text_sm().child(text)
+    div().text_secondary().child(text)
 }
 
 fn note(text: impl Into<SharedString>, theme: Theme) -> gpui::Div {
-    div().text_xs().text_color(theme.muted).child(text.into())
+    div().text_micro().text_color(theme.fg_1).child(text.into())
 }
 
 impl Render for SettingsView {
@@ -551,12 +605,11 @@ impl Render for SettingsView {
         let browsers = browser_integration::status(&self.integration, cx);
 
         let mut index = 0;
-        let appearance = window.appearance();
         let theme_cards: Vec<AnyElement> = ThemeSetting::ALL
             .into_iter()
             .map(|setting| {
                 let chosen = setting == chosen_theme;
-                self.theme_card(&mut index, setting, chosen, appearance, theme, cx)
+                self.theme_card(&mut index, setting, chosen, theme, cx)
             })
             .collect();
         let theme_choices = div().flex().flex_wrap().gap_2().children(theme_cards);
@@ -619,7 +672,7 @@ impl Render for SettingsView {
                     .unwrap_or_default();
                 vec![
                     page_header(
-                        icons::ui_icon(IconName::LockOpen, px(28.), theme.text).into_any_element(),
+                        icons::ui_icon(IconName::LockOpen, px(28.), theme.fg_0).into_any_element(),
                         name,
                         theme,
                         cx,
@@ -629,7 +682,7 @@ impl Render for SettingsView {
             }
             Page::General => vec![
                 page_header(
-                    icons::ui_icon(IconName::Settings, px(28.), theme.text).into_any_element(),
+                    icons::ui_icon(IconName::Settings, px(28.), theme.fg_0).into_any_element(),
                     strings::SETTINGS,
                     theme,
                     cx,
@@ -650,7 +703,7 @@ impl Render for SettingsView {
                 section(strings::SETTINGS_SAVING)
                     .child(autosave)
                     .when(config_error, |this| {
-                        this.child(note(strings::CONFIG_ERROR, theme).text_color(theme.error))
+                        this.child(note(strings::CONFIG_ERROR, theme).text_color(theme.danger))
                     })
                     .into_any_element(),
                 section(strings::SETTINGS_GENERATOR)
@@ -661,7 +714,7 @@ impl Render for SettingsView {
                     .child(browser)
                     .when_some(browsers, |this, (summary, failed)| {
                         this.child(
-                            note(summary, theme).when(failed, |this| this.text_color(theme.error)),
+                            note(summary, theme).when(failed, |this| this.text_color(theme.danger)),
                         )
                     })
                     .into_any_element(),
@@ -680,8 +733,8 @@ impl Render for SettingsView {
             .on_action(cx.listener(|_, _: &CloseSettings, _, cx| cx.emit(SettingsClosed)))
             .size_full()
             .flex()
-            .bg(theme.background)
-            .text_color(theme.text)
+            .bg(theme.bg_0)
+            .text_color(theme.fg_0)
             .child(self.render_menu(theme, cx))
             .child(
                 div()

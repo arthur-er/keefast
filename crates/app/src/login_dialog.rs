@@ -8,8 +8,8 @@ use keefast_workspace::{LoginId, LoginTarget, PendingLogin, Workspace};
 
 use crate::strings;
 use crate::theme::Theme;
+use crate::ui::{self, Button, Dialog, Typography};
 use crate::vault_browser::flatten_groups;
-use crate::widgets::button;
 
 pub enum LoginDialogEvent {
     Save(LoginTarget),
@@ -186,22 +186,19 @@ impl Render for LoginDialog {
                     this.child(
                         div()
                             .flex_none()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(detail),
                     )
                 });
             match row.target {
-                None => line
-                    .pt_2()
-                    .text_sm()
-                    .text_color(theme.muted)
-                    .font_weight(gpui::FontWeight::SEMIBOLD),
+                None => line.pt_2().text_micro().text_color(theme.fg_2),
                 Some(target) => line
                     .cursor_pointer()
+                    .rounded(px(6.))
                     .map(|this| match target == self.chosen {
-                        true => this.bg(theme.selection).text_color(theme.selection_text),
-                        false => this.hover(|this| this.bg(theme.sidebar_selection)),
+                        true => this.bg(theme.bg_active).text_color(theme.fg_0),
+                        false => this.hover(|this| this.bg(theme.bg_hover)),
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.choose(target, cx))),
             }
@@ -213,48 +210,38 @@ impl Render for LoginDialog {
             .id("login-dialog")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
-            .w(px(480.))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_6()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.panel)
-            .text_color(theme.text)
-            .shadow_lg()
-            .child(div().text_xl().child(strings::LOGIN_TITLE))
-            .child(div().child(prompt))
-            .child(
-                div()
-                    .id("login-targets")
-                    .max_h(px(300.))
-                    .overflow_y_scroll()
-                    .pb_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(rows),
-            )
-            .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
-            })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        button("cancel-login", strings::CANCEL, theme)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(LoginDialogEvent::Cancel))),
-                    )
-                    .child(
-                        button("save-login", strings::LOGIN_SAVE, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
-                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-                    ),
-            )
+            .child(ui::appear(
+                "login-dialog-appear",
+                div().child(
+                    Dialog::new(strings::LOGIN_TITLE)
+                        .description(prompt)
+                        .width(px(480.))
+                        .child(
+                            div()
+                                .id("login-targets")
+                                .max_h(px(300.))
+                                .overflow_y_scroll()
+                                .p(px(4.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.bg_1)
+                                .children(rows),
+                        )
+                        .when_some(self.error.clone(), |this, error| {
+                            this.child(ui::error_text(error, theme))
+                        })
+                        .action(
+                            Button::new("cancel-login", strings::CANCEL).on_click(
+                                cx.listener(|_, _, _, cx| cx.emit(LoginDialogEvent::Cancel)),
+                            ),
+                        )
+                        .action(
+                            Button::new("save-login", strings::LOGIN_SAVE)
+                                .primary()
+                                .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                        ),
+                ),
+            ))
     }
 }

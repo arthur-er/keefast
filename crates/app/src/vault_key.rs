@@ -18,7 +18,7 @@ use crate::saving;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
-use crate::widgets::{button, tool_button};
+use crate::ui::{Button, Segmented, Typography, check_mark};
 
 pub enum VaultKeyEvent {
     /// The new Vault was created and added to the Workspace, or the open Vault's new settings
@@ -525,7 +525,7 @@ fn describe_change(error: &ChangeKeyError) -> &'static str {
 impl Render for VaultKeyForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
-        let label = |text: &'static str| div().text_sm().text_color(theme.muted).child(text);
+        let label = |text: &'static str| div().text_secondary().text_color(theme.fg_1).child(text);
         let labelled = |text: &'static str, field: &Entity<TextField>| {
             div()
                 .flex_1()
@@ -534,14 +534,6 @@ impl Render for VaultKeyForm {
                 .gap_1()
                 .child(label(text))
                 .child(field.clone())
-        };
-        // One of a few choices, the chosen one highlighted.
-        let choice = |id: &'static str, text: &'static str, chosen: bool| {
-            tool_button(id, text, theme).when(chosen, |this| {
-                this.bg(theme.accent)
-                    .text_color(theme.accent_text)
-                    .border_color(theme.accent)
-            })
         };
         let is_new = self.purpose == Purpose::Create;
         let title: SharedString = match self.purpose {
@@ -573,7 +565,7 @@ impl Render for VaultKeyForm {
             .flex()
             .flex_col()
             .gap_3()
-            .child(div().text_lg().child(title))
+            .child(div().text_dialog_title().child(title))
             .when(is_new, |this| {
                 this.child(
                     div()
@@ -582,7 +574,7 @@ impl Render for VaultKeyForm {
                         .gap_2()
                         .child(labelled(strings::NEW_VAULT_PATH, &self.path))
                         .child(
-                            button("browse-vault-path", strings::NEW_VAULT_BROWSE, theme)
+                            Button::new("browse-vault-path", strings::NEW_VAULT_BROWSE)
                                 .on_click(cx.listener(|this, _, _, cx| this.browse_path(cx))),
                         ),
                 )
@@ -595,7 +587,7 @@ impl Render for VaultKeyForm {
                     .justify_between()
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui::FontWeight::MEDIUM)
                             .child(strings::MASTER_KEY),
                     )
                     .when(!is_new, |this| {
@@ -605,11 +597,9 @@ impl Render for VaultKeyForm {
                                 .flex()
                                 .gap_1()
                                 .cursor_pointer()
-                                .text_sm()
-                                .child(match self.set_key {
-                                    true => strings::CHECKBOX_ON,
-                                    false => strings::CHECKBOX_OFF,
-                                })
+                                .text_secondary()
+                                .items_center()
+                                .child(check_mark(self.set_key, theme))
                                 .child(strings::CHANGE_KEY_TOGGLE)
                                 .on_click(cx.listener(|this, _, _, cx| this.toggle_set_key(cx))),
                         )
@@ -633,63 +623,64 @@ impl Render for VaultKeyForm {
                             div()
                                 .flex_1()
                                 .truncate()
-                                .text_sm()
-                                .when(self.key_file.is_none(), |this| this.text_color(theme.muted))
+                                .text_secondary()
+                                .when(self.key_file.is_none(), |this| this.text_color(theme.fg_1))
                                 .child(key_file_label),
                         )
                         .when(self.key_file.is_some(), |this| {
                             this.child(
-                                tool_button(
-                                    "clear-new-key-file",
-                                    strings::UNLOCK_CLEAR_KEY_FILE,
-                                    theme,
-                                )
-                                .text_color(theme.muted)
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
+                                Button::new("clear-new-key-file", strings::UNLOCK_CLEAR_KEY_FILE)
+                                    .small()
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
                                         this.key_file = None;
                                         cx.notify();
-                                    },
-                                )),
+                                    })),
                             )
                         })
                         .child(
-                            button("choose-new-key-file", strings::KEY_FILE_CHOOSE, theme)
+                            Button::new("choose-new-key-file", strings::KEY_FILE_CHOOSE)
                                 .on_click(cx.listener(|this, _, _, cx| this.choose_key_file(cx))),
                         )
                         .child(
-                            button("create-key-file", strings::KEY_FILE_CREATE, theme)
+                            Button::new("create-key-file", strings::KEY_FILE_CREATE)
                                 .on_click(cx.listener(|this, _, _, cx| this.create_key_file(cx))),
                         ),
                 )
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(theme.muted)
+                        .text_micro()
+                        .text_color(theme.fg_1)
                         .child(strings::KEY_NOTE),
                 )
             })
             .child(
                 div()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .child(strings::ENCRYPTION),
             )
             .child(label(strings::CIPHER))
-            .child(
-                div()
-                    .flex()
-                    .gap_1()
-                    .children(CIPHERS.map(|(id, name, cipher)| {
-                        choice(id, name, self.cipher == cipher).on_click(
-                            cx.listener(move |this, _, _, cx| this.select_cipher(cipher, cx)),
-                        )
-                    })),
-            )
+            .child(div().flex().child(CIPHERS.into_iter().fold(
+                Segmented::new("cipher"),
+                |choices, (_, name, cipher)| {
+                    choices.option(
+                        name,
+                        self.cipher == cipher,
+                        cx.listener(move |this, _, _, cx| this.select_cipher(cipher, cx)),
+                    )
+                },
+            )))
             .child(label(strings::KDF))
-            .child(div().flex().gap_1().children(KDFS.map(|(id, name, kdf)| {
-                choice(id, name, self.kdf == kdf)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_kdf(kdf, cx)))
-            })))
+            .child(div().flex().child(KDFS.into_iter().fold(
+                Segmented::new("kdf"),
+                |choices, (_, name, kdf)| {
+                    choices.option(
+                        name,
+                        self.kdf == kdf,
+                        cx.listener(move |this, _, _, cx| this.select_kdf(kdf, cx)),
+                    )
+                },
+            )))
             .child(match argon2 {
                 true => div()
                     .flex()
@@ -703,20 +694,20 @@ impl Render for VaultKeyForm {
             })
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.muted)
+                    .text_micro()
+                    .text_color(theme.fg_1)
                     .child(strings::KDF_NOTE),
             )
             .when(working, |this| {
                 this.child(
                     div()
-                        .text_sm()
-                        .text_color(theme.muted)
+                        .text_secondary()
+                        .text_color(theme.fg_1)
                         .child(strings::NEW_VAULT_IN_PROGRESS),
                 )
             })
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             })
             .child(
                 div()
@@ -724,21 +715,19 @@ impl Render for VaultKeyForm {
                     .justify_end()
                     .gap_2()
                     .child(
-                        button("vault-key-cancel", strings::CANCEL, theme)
+                        Button::new("vault-key-cancel", strings::CANCEL)
                             .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
                     )
                     .child(
-                        button(
+                        Button::new(
                             "vault-key-submit",
                             match self.purpose {
                                 Purpose::Create => strings::NEW_VAULT_CREATE,
                                 Purpose::Change(_) => strings::CHANGE_KEY_APPLY,
                             },
-                            theme,
                         )
-                        .bg(theme.accent)
-                        .text_color(theme.accent_text)
-                        .when(working, |this| this.opacity(0.5))
+                        .primary()
+                        .disabled(working)
                         .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
                     ),
             )

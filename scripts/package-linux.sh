@@ -77,6 +77,8 @@ install -Dm755 "$bin_dir/keefast" "$bin_dir/keefast-native-host" -t "$tree/bin"
 install -Dm644 "$root/packaging/linux/keefast.desktop" -t "$tree/share/applications"
 install -Dm644 "$root/assets/icon.svg" "$tree/share/icons/hicolor/scalable/apps/keefast.svg"
 install -Dm644 "$root/LICENSE" "$root/README.md" -t "$tree/share/doc/keefast"
+# keefast embeds Inter and JetBrains Mono, whose licence asks to be shipped with them.
+install -Dm644 "$root"/crates/app/assets/fonts/*-LICENSE.txt -t "$tree/share/doc/keefast"
 tar -C "$work" --owner=0 --group=0 --numeric-owner -czf "$out_dir/$name.tar.gz" "$name"
 echo "$out_dir/$name.tar.gz"
 
@@ -95,6 +97,7 @@ appdir="$work/keefast.AppDir"
   --desktop-file "$tree/share/applications/keefast.desktop" \
   --icon-file "$tree/share/icons/hicolor/scalable/apps/keefast.svg"
 install -Dm644 "$root/LICENSE" "$root/README.md" -t "$appdir/usr/share/doc/keefast"
+install -Dm644 "$root"/crates/app/assets/fonts/*-LICENSE.txt -t "$appdir/usr/share/doc/keefast"
 
 image="$out_dir/keefast-$version-$arch.AppImage"
 ARCH="$arch" "$appimagetool" --no-appstream --runtime-file "$runtime" "$appdir" "$image"

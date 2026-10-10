@@ -9,8 +9,8 @@ use secrecy::ExposeSecret;
 use crate::actions::{self, CloseHistory, RestoreVersion, SelectNewerVersion, SelectOlderVersion};
 use crate::strings;
 use crate::theme::Theme;
+use crate::ui::{Button, Typography};
 use crate::vault_browser::title_of;
-use crate::widgets::{button, tool_button};
 
 pub enum EntryHistoryEvent {
     /// Restore the version at this index in the Entry's history, oldest first.
@@ -146,7 +146,7 @@ impl EntryHistory {
                 .flex()
                 .flex_col()
                 .gap_0p5()
-                .child(div().text_sm().text_color(theme.muted).child(label))
+                .child(div().text_secondary().text_color(theme.fg_1).child(label))
                 .child(div().child(value))
         };
         let shown = |value: &str, protected: bool| -> SharedString {
@@ -159,7 +159,7 @@ impl EntryHistory {
         let reveal = div()
             .id("history-reveal")
             .cursor_pointer()
-            .text_sm()
+            .text_secondary()
             .text_color(theme.accent)
             .child(if self.revealed {
                 strings::HIDE_PASSWORD
@@ -190,15 +190,14 @@ impl EntryHistory {
                     .justify_between()
                     .gap_2()
                     .child(
-                        div().text_lg().child(
+                        div().text_dialog_title().child(
                             strings::HISTORY_VERSION_OF
                                 .replace("{time}", &modified_at(version.last_modified())),
                         ),
                     )
                     .child(
-                        button("history-restore", strings::HISTORY_RESTORE, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
+                        Button::new("history-restore", strings::HISTORY_RESTORE)
+                            .primary()
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(EntryHistoryEvent::Restore(index))
                             })),
@@ -221,8 +220,8 @@ impl EntryHistory {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(theme.muted)
+                                    .text_secondary()
+                                    .text_color(theme.fg_1)
                                     .child(strings::DETAIL_PASSWORD),
                             )
                             .child(reveal),
@@ -242,8 +241,8 @@ impl EntryHistory {
                     .gap_0p5()
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .truncate()
                             .child(custom.name.clone()),
                     )
@@ -271,12 +270,12 @@ impl Render for EntryHistory {
                 .py_1()
                 .rounded_md()
                 .when(picked, |this| {
-                    this.bg(theme.selection).text_color(theme.selection_text)
+                    this.bg(theme.bg_active).text_color(theme.fg_0)
                 })
                 .child(div().flex_none().child(time))
                 .child(
                     div()
-                        .when(!picked, |this| this.text_color(theme.muted))
+                        .when(!picked, |this| this.text_color(theme.fg_1))
                         .truncate()
                         .child(summary),
                 )
@@ -301,7 +300,7 @@ impl Render for EntryHistory {
                 )
                 .cursor_pointer()
                 .when(selected != Some(index), |this| {
-                    this.hover(|this| this.bg(theme.sidebar_selection))
+                    this.hover(|this| this.bg(theme.bg_active))
                 })
                 .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             });
@@ -328,12 +327,13 @@ impl Render for EntryHistory {
                     .gap_2()
                     .child(
                         div()
-                            .text_xl()
+                            .text_title()
                             .truncate()
                             .child(strings::HISTORY_TITLE.replace("{title}", &title_of(entry))),
                     )
                     .child(
-                        tool_button("history-close", strings::HISTORY_CLOSE, theme)
+                        Button::new("history-close", strings::HISTORY_CLOSE)
+                            .small()
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(EntryHistoryEvent::Close))),
                     ),
             )
@@ -341,15 +341,15 @@ impl Render for EntryHistory {
                 div()
                     .flex()
                     .flex_col()
-                    .text_sm()
+                    .text_secondary()
                     .child(current)
                     .children(versions),
             )
             .when(entry.history().is_empty(), |this| {
                 this.child(
                     div()
-                        .text_sm()
-                        .text_color(theme.muted)
+                        .text_secondary()
+                        .text_color(theme.fg_1)
                         .child(strings::HISTORY_EMPTY),
                 )
             })

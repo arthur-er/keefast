@@ -38,8 +38,8 @@ use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
 use crate::totp_setup::{self, TotpSetup, TotpSetupEvent};
+use crate::ui::{self, Button, Typography};
 use crate::vault_key::{VaultKeyEvent, VaultKeyForm};
-use crate::widgets::{button, tool_button};
 
 /// Emitted when the user asks to open another Vault.
 pub struct OpenAnotherVault;
@@ -71,8 +71,10 @@ pub struct VaultBrowser {
     /// The Entry whose TOTP code was copied last, to say so until another is selected.
     totp_copied: Option<(VaultId, EntryId)>,
     error: Option<SharedString>,
-    /// What the last command did, such as copying a password.
-    notice: Option<SharedString>,
+    /// What the last command did, such as copying a password, shown as a toast.
+    notice: Option<Notice>,
+    /// Counts the notices shown, so each toast runs its own countdown.
+    notice_generation: u64,
     entry_list_scroll: UniformListScrollHandle,
     /// Clears what was last copied from the clipboard when its time comes.
     clipboard_clear: Option<Task<()>>,
@@ -95,6 +97,14 @@ pub struct VaultBrowser {
     pane_widths_save: Option<Task<()>>,
     /// The Entry list's menu open, if one is.
     menu: Option<ListMenu>,
+}
+
+/// A toast saying what the last command did.
+struct Notice {
+    text: SharedString,
+    /// How long until what it speaks of runs out, as a copied password is cleared.
+    countdown: Option<Duration>,
+    generation: u64,
 }
 
 /// What picking a menu's choice does.
@@ -297,8 +307,11 @@ impl VaultBrowser {
             }
         })
         .detach();
-        let search = cx
-            .new(|cx| TextField::new(strings::SEARCH_PLACEHOLDER, cx).with_icon(IconName::Search));
+        let search = cx.new(|cx| {
+            TextField::new(strings::SEARCH_PLACEHOLDER, cx)
+                .with_icon(IconName::Search)
+                .search()
+        });
         cx.observe(&search, Self::on_search_changed).detach();
         cx.subscribe_in(&search, window, Self::on_search_event)
             .detach();
@@ -315,6 +328,7 @@ impl VaultBrowser {
             totp_copied: None,
             error: None,
             notice: None,
+            notice_generation: 0,
             entry_list_scroll: UniformListScrollHandle::new(),
             clipboard_clear: None,
             custom_field_focus: Vec::new(),
@@ -387,15 +401,15 @@ impl VaultBrowser {
                 .rounded_md()
                 .border_1()
                 .border_color(theme.border)
-                .bg(theme.panel)
-                .text_sm()
+                .bg(theme.bg_1)
+                .text_secondary()
                 .shadow_md()
                 .child(div().flex_1().min_w_0().child(notice))
                 .child(
                     div()
                         .id("dismiss-merge-notice")
                         .cursor_pointer()
-                        .text_color(theme.muted)
+                        .text_color(theme.fg_1)
                         .child(strings::MERGE_NOTICE_DISMISS)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.merge_notice = None;
@@ -669,7 +683,7 @@ impl VaultBrowser {
         let clears_in = match result {
             Ok(clears_in) => clears_in,
             Err(CopyError::Empty) => {
-                self.notice = Some(strings::NOTHING_TO_COPY.into());
+                self.show_notice(strings::NOTHING_TO_COPY, None);
                 cx.notify();
                 return false;
             }
@@ -685,7 +699,7 @@ impl VaultBrowser {
             CopyField::TotpCode => strings::COPIED_TOTP,
             CopyField::CustomField(_) => strings::COPIED_FIELD,
         };
-        self.notice = Some(match clears_in {
+        let text: SharedString = match clears_in {
             Some(wait) => {
                 // Rounded up: a moment has passed since copying.
                 let seconds = wait.as_secs_f64().ceil().to_string();
@@ -693,7 +707,8 @@ impl VaultBrowser {
                 format!("{copied} {clears}").into()
             }
             None => copied.into(),
-        });
+        };
+        self.show_notice(text, clears_in);
         self.error = None;
         // A new copy replaces the clear waiting for the last one.
         let workspace = self.workspace.clone();
@@ -717,6 +732,15 @@ impl VaultBrowser {
         });
         cx.notify();
         true
+    }
+
+    fn show_notice(&mut self, text: impl Into<SharedString>, countdown: Option<Duration>) {
+        self.notice_generation += 1;
+        self.notice = Some(Notice {
+            text: text.into(),
+            countdown,
+            generation: self.notice_generation,
+        });
     }
 
     /// Whether the selected Entry has TOTP, whose countdown needs redrawing.
@@ -859,7 +883,7 @@ impl VaultBrowser {
                     return;
                 }
                 self.detail = Detail::Entry;
-                self.notice = Some(strings::HISTORY_RESTORED.into());
+                self.show_notice(strings::HISTORY_RESTORED, None);
                 self.revealed_fields.clear();
                 self.copied_field = None;
             }
@@ -941,7 +965,7 @@ impl VaultBrowser {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(notice) => {
-                        this.notice = Some(notice.into());
+                        this.show_notice(notice, None);
                         this.error = None;
                     }
                     Err(error) => this.error = Some(error.into()),
@@ -1464,8 +1488,8 @@ impl VaultBrowser {
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
         let icon =
-            |icon: IconName, color| Some(icons::ui_icon(icon, px(14.), color).into_any_element());
-        let folder = |color| Some(icons::standard_icon(FOLDER_ICON, px(14.), color));
+            |icon: IconName, color| Some(icons::ui_icon(icon, px(15.), color).into_any_element());
+        let folder = |color| Some(icons::standard_icon(FOLDER_ICON, px(15.), color));
         let mut rows: Vec<AnyElement> = Vec::new();
 
         rows.push(
@@ -1474,7 +1498,7 @@ impl VaultBrowser {
                 strings::SIDEBAR_ALL_ITEMS.into(),
                 0,
                 scope == EntryScope::AllVaults,
-                icon(IconName::LayoutGrid, theme.text),
+                icon(IconName::LayoutGrid, theme.fg_1),
                 theme,
             )
             .on_click(cx.listener(|this, _, _, cx| this.select(EntryScope::AllVaults, cx)))
@@ -1482,11 +1506,7 @@ impl VaultBrowser {
         );
 
         rows.push(sidebar_separator(theme));
-        rows.push(sidebar_heading(
-            strings::SIDEBAR_COLORS,
-            IconName::Bookmark,
-            theme,
-        ));
+        rows.push(sidebar_heading(strings::SIDEBAR_COLORS, theme));
         let dots = EntryColor::ALL.into_iter().map(|color| {
             let selected = scope == EntryScope::Color(color);
             div()
@@ -1497,8 +1517,8 @@ impl VaultBrowser {
                 .justify_center()
                 .rounded_full()
                 .cursor_pointer()
-                .when(selected, |this| this.bg(theme.sidebar_selection))
-                .child(icons::color_dot(color, px(12.)))
+                .when(selected, |this| this.bg(theme.bg_active))
+                .child(ui::dot(theme.label(color), 10.))
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.select(EntryScope::Color(color), cx)),
                 )
@@ -1507,18 +1527,14 @@ impl VaultBrowser {
             div()
                 .flex()
                 .gap_1()
-                .pl(px(30.))
+                .px(px(14.))
                 .pb_1()
                 .children(dots)
                 .into_any_element(),
         );
 
         rows.push(sidebar_separator(theme));
-        rows.push(sidebar_heading(
-            strings::SIDEBAR_TAGS,
-            IconName::Tags,
-            theme,
-        ));
+        rows.push(sidebar_heading(strings::SIDEBAR_TAGS, theme));
         for tag in workspace.tags() {
             let tag_scope = EntryScope::Tag(tag.to_owned());
             let selected = scope == tag_scope;
@@ -1560,10 +1576,9 @@ impl VaultBrowser {
                         name.into(),
                         0,
                         selected,
-                        icon(IconName::Lock, theme.muted),
+                        icon(IconName::Lock, theme.fg_1),
                         theme,
                     )
-                    .text_color(theme.muted)
                     .on_click(select)
                     .into_any_element(),
                 );
@@ -1577,10 +1592,10 @@ impl VaultBrowser {
                         format!("{}{}", open.display_name(), strings::LOCKING_MARKER).into(),
                         0,
                         false,
-                        icon(IconName::Lock, theme.muted),
+                        icon(IconName::Lock, theme.fg_1),
                         theme,
                     )
-                    .text_color(theme.muted)
+                    .text_color(theme.fg_1)
                     .into_any_element(),
                 );
                 continue;
@@ -1591,7 +1606,7 @@ impl VaultBrowser {
                     open.display_name().into(),
                     0,
                     selected,
-                    Some(icons::standard_icon(KEY_ICON, px(14.), theme.text)),
+                    Some(icons::standard_icon(KEY_ICON, px(15.), theme.fg_1)),
                     theme,
                 )
                 .when(selected, |this| {
@@ -1643,7 +1658,7 @@ impl VaultBrowser {
                         group.name().to_owned().into(),
                         depth,
                         selected,
-                        folder(theme.text),
+                        folder(theme.fg_1),
                         theme,
                     )
                     .when(selected, |this| {
@@ -1678,7 +1693,7 @@ impl VaultBrowser {
                         label.into(),
                         0,
                         scope == EntryScope::Group(vault, bin),
-                        icon(IconName::Trash, theme.text),
+                        icon(IconName::Trash, theme.fg_1),
                         theme,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1692,7 +1707,7 @@ impl VaultBrowser {
             .flex_none()
             .flex()
             .flex_col()
-            .bg(theme.sidebar)
+            .bg(theme.bg_sidebar)
             .border_r_1()
             .border_color(theme.border)
             .child(
@@ -1701,7 +1716,7 @@ impl VaultBrowser {
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .py_1p5()
+                    .py(px(6.))
                     .overflow_y_scroll()
                     .children(rows),
             )
@@ -1736,19 +1751,20 @@ impl VaultBrowser {
                     .flex()
                     .items_center()
                     .gap_1p5()
+                    .h(px(26.))
                     .px_2()
-                    .py_1()
-                    .rounded_md()
+                    .rounded(px(6.))
                     .cursor_pointer()
-                    .hover(|this| this.bg(theme.sidebar_selection));
+                    .text_color(theme.fg_1)
+                    .hover(|this| this.bg(theme.bg_hover).text_color(theme.fg_0));
                 let Some(open) = workspace.vault(vault).filter(|_| unlocked) else {
                     let name = workspace
                         .locked_vault(vault)
                         .map(|locked| locked.display_name())
                         .unwrap_or_default();
                     return item
-                        .text_color(theme.muted)
-                        .child(icons::ui_icon(IconName::Lock, px(14.), theme.muted))
+                        .text_color(theme.fg_1)
+                        .child(icons::ui_icon(IconName::Lock, px(14.), theme.fg_1))
                         .child(name)
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(UnlockLockedVault(vault))))
                         .into_any_element();
@@ -1758,35 +1774,30 @@ impl VaultBrowser {
                     false => open.display_name(),
                 };
                 let status = if open.is_saving() {
-                    Some((strings::STATUS_SAVING, theme.muted))
+                    Some((strings::STATUS_SAVING, theme.fg_1))
                 } else if open.save_failed() {
-                    Some((strings::STATUS_SAVE_FAILED, theme.error))
+                    Some((strings::STATUS_SAVE_FAILED, theme.danger))
                 } else {
                     open.sync_status().map(|status| match status {
-                        SyncStatus::Synced => (strings::SYNC_SYNCED, theme.muted),
-                        SyncStatus::Syncing => (strings::SYNC_SYNCING, theme.muted),
-                        SyncStatus::Offline => (strings::SYNC_OFFLINE, theme.muted),
-                        SyncStatus::Error => (strings::SYNC_ERROR, theme.error),
+                        SyncStatus::Synced => (strings::SYNC_SYNCED, theme.fg_1),
+                        SyncStatus::Syncing => (strings::SYNC_SYNCING, theme.fg_1),
+                        SyncStatus::Offline => (strings::SYNC_OFFLINE, theme.fg_1),
+                        SyncStatus::Error => (strings::SYNC_ERROR, theme.danger),
                     })
                 };
-                item.child(icons::ui_icon(IconName::LockOpen, px(14.), theme.text))
+                item.child(icons::ui_icon(IconName::LockOpen, px(14.), theme.fg_1))
                     .child(name)
                     .children(
-                        status
-                            .map(|(status, color)| div().text_xs().text_color(color).child(status)),
+                        status.map(|(status, color)| {
+                            div().text_micro().text_color(color).child(status)
+                        }),
                     )
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ShowVaultSettings(vault))))
                     .into_any_element()
             });
         let can_lock = workspace.vaults().next().is_some();
-        let command = |id: &'static str, icon: IconName, color| {
-            div()
-                .id(id)
-                .p_1p5()
-                .rounded_md()
-                .cursor_pointer()
-                .hover(|this| this.bg(theme.sidebar_selection))
-                .child(icons::ui_icon(icon, px(16.), color))
+        let command = |id: &'static str, icon: IconName, tooltip: &'static str| {
+            ui::IconButton::new(id, icon).small().tooltip(tooltip)
         };
 
         div()
@@ -1796,9 +1807,9 @@ impl VaultBrowser {
             .gap_1()
             .px_2()
             .py_1()
-            .text_sm()
-            .bg(theme.sidebar)
-            .text_color(theme.text)
+            .text_secondary()
+            .bg(theme.bg_sidebar)
+            .text_color(theme.fg_0)
             .border_t_1()
             .border_color(theme.border)
             .children(items)
@@ -1808,29 +1819,38 @@ impl VaultBrowser {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .h(px(26.))
                     .px_2()
-                    .py_1()
-                    .rounded_md()
+                    .rounded(px(6.))
                     .cursor_pointer()
-                    .text_color(theme.muted)
-                    .hover(|this| this.bg(theme.sidebar_selection))
-                    .child(icons::ui_icon(IconName::Plus, px(14.), theme.muted))
+                    .text_color(theme.fg_1)
+                    .hover(|this| this.bg(theme.bg_hover).text_color(theme.fg_0))
+                    .child(icons::ui_icon(IconName::Plus, px(14.), theme.fg_1))
                     .child(strings::FOOTER_OPEN)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenAnotherVault))),
             )
             .child(div().flex_1())
             .child(
-                command("footer-help", IconName::CircleQuestionMark, theme.text).on_click(
-                    |_, window, cx| window.dispatch_action(Box::new(ToggleCommandPalette), cx),
-                ),
+                command(
+                    "footer-help",
+                    IconName::CircleQuestionMark,
+                    strings::TOOLTIP_COMMANDS,
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(ToggleCommandPalette), cx)
+                }),
             )
             .child(
-                command("footer-settings", IconName::Settings, theme.text)
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+                command(
+                    "footer-settings",
+                    IconName::Settings,
+                    strings::OPEN_SETTINGS,
+                )
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )
             .when(can_lock, |this| {
                 this.child(
-                    command("footer-lock", IconName::LogOut, theme.text).on_click(
+                    command("footer-lock", IconName::Lock, strings::TOOLTIP_LOCK_ALL).on_click(
                         cx.listener(|this, _, _, cx| locking::lock_all(&this.workspace, cx)),
                     ),
                 )
@@ -1846,21 +1866,8 @@ impl VaultBrowser {
     ) -> AnyElement {
         let rows = items.into_iter().enumerate().map(|(ix, item)| {
             let action = item.action;
-            div()
-                .id(("menu-item", ix))
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_1()
-                .cursor_pointer()
-                .hover(|this| this.bg(theme.sidebar_selection))
-                .child(
-                    div()
-                        .w(px(12.))
-                        .when(item.checked, |this| this.child(strings::MENU_CHECKED)),
-                )
-                .child(item.label)
+            ui::MenuItem::new(("menu-item", ix), item.label)
+                .checked(item.checked)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.menu = None;
                     action(this, window, cx);
@@ -1872,22 +1879,16 @@ impl VaultBrowser {
         div()
             .child(
                 deferred(
-                    anchored().snap_to_window_with_margin(px(8.)).child(
-                        div()
-                            .id("list-menu")
-                            .occlude()
-                            .mt_1()
-                            .min_w(px(160.))
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.border)
-                            .bg(theme.panel)
-                            .text_color(theme.text)
-                            .text_sm()
-                            .shadow_md()
-                            .children(rows),
-                    ),
+                    anchored()
+                        .snap_to_window_with_margin(px(8.))
+                        .child(ui::appear(
+                            "list-menu-appear",
+                            ui::menu(theme)
+                                .id("list-menu")
+                                .occlude()
+                                .mt_1()
+                                .children(rows),
+                        )),
                 )
                 .with_priority(1),
             )
@@ -1920,14 +1921,8 @@ impl VaultBrowser {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(icons::standard_icon(FOLDER_ICON, px(32.), theme.text))
-                    .child(
-                        div()
-                            .text_3xl()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .truncate()
-                            .child(found.name().to_owned()),
-                    ),
+                    .child(icons::standard_icon(FOLDER_ICON, px(32.), theme.fg_0))
+                    .child(div().text_title().truncate().child(found.name().to_owned())),
             )
             .child(
                 div()
@@ -1935,49 +1930,54 @@ impl VaultBrowser {
                     .flex_wrap()
                     .gap_1()
                     .child(
-                        tool_button("group-new-entry", strings::NEW_ENTRY, theme).on_click(
-                            cx.listener(move |this, _, window, cx| {
+                        Button::new("group-new-entry", strings::NEW_ENTRY)
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_editor(EditTarget::New(vault, group), window, cx)
-                            }),
-                        ),
+                            })),
                     )
                     .child(
-                        tool_button("group-new-group", strings::NEW_GROUP, theme).on_click(
-                            cx.listener(|this, _, window, cx| this.new_group(window, cx)),
-                        ),
+                        Button::new("group-new-group", strings::NEW_GROUP)
+                            .small()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.new_group(window, cx)),
+                            ),
                     )
                     .child(
-                        tool_button("rename-group", strings::RENAME, theme).on_click(cx.listener(
-                            move |this, _, window, cx| this.start_rename(vault, group, window, cx),
-                        )),
+                        Button::new("rename-group", strings::RENAME)
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.start_rename(vault, group, window, cx)
+                            })),
                     )
                     .child(
-                        tool_button("move-group", strings::MOVE, theme).on_click(cx.listener(
-                            move |this, _, _, cx| {
+                        Button::new("move-group", strings::MOVE)
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 this.detail = Detail::Moving(subject);
                                 cx.notify();
-                            },
-                        )),
+                            })),
                     )
                     .child(
-                        tool_button("delete-group", strings::DELETE, theme).on_click(
-                            cx.listener(move |this, _, window, cx| {
+                        Button::new("delete-group", strings::DELETE)
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.delete(subject, window, cx)
-                            }),
-                        ),
+                            })),
                     ),
             )
             .when(!in_bin, |this| {
                 this.child(match is_browser_group {
                     true => div()
-                        .text_sm()
-                        .text_color(theme.muted)
+                        .text_secondary()
+                        .text_color(theme.fg_1)
                         .child(strings::BROWSER_GROUP_MARK)
                         .into_any_element(),
                     false => div()
                         .flex()
                         .child(
-                            tool_button("browser-group", strings::USE_AS_BROWSER_GROUP, theme)
+                            Button::new("browser-group", strings::USE_AS_BROWSER_GROUP)
+                                .small()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.edit(cx, |workspace| {
                                         workspace.set_browser_group(vault, group)
@@ -1988,7 +1988,7 @@ impl VaultBrowser {
                 })
             })
             .child(div().flex().justify_end().child(
-                button("close-group", strings::EDITOR_DONE, theme).on_click(cx.listener(
+                Button::new("close-group", strings::EDITOR_DONE).on_click(cx.listener(
                     |this, _, window, cx| {
                         this.detail = Detail::Entry;
                         window.focus(&this.focus, cx);
@@ -2030,23 +2030,22 @@ impl VaultBrowser {
                     .flatten();
                 let expired = workspace.is_expired(entry);
                 let tags = (!entry.tags().is_empty()).then(|| entry.tags().join(", "));
-                // The picked Entry is drawn all in the selection's text colour.
-                let muted = if selected {
-                    theme.selection_text
-                } else {
-                    theme.muted
-                };
+                let muted = theme.fg_1;
                 // Padding, not margins, spaces the rows, as the list measures a row's box.
                 let row = div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
-                    .rounded_md()
+                    .gap(px(10.))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .rounded(px(6.))
                     .cursor_pointer()
-                    .when(selected, |this| {
-                        this.bg(theme.selection).text_color(theme.selection_text)
+                    .map(|this| {
+                        if selected {
+                            this.bg(theme.bg_active)
+                        } else {
+                            this.hover(|style| style.bg(theme.bg_hover))
+                        }
                     })
                     .children(entry_mark(workspace, vault, entry, px(18.), muted))
                     .child(
@@ -2064,21 +2063,22 @@ impl VaultBrowser {
                                         div()
                                             .flex_1()
                                             .truncate()
+                                            .text_strong()
                                             .when(expired, |this| {
-                                                this.line_through().text_color(theme.muted)
+                                                this.line_through().text_color(theme.fg_1)
                                             })
                                             .child(title_of(entry)),
                                     )
-                                    .when(expired, |this| this.child(expired_badge(theme)))
+                                    .when(expired, |this| this.child(expired_badge()))
                                     .when_some(entry.color(), |this, color| {
-                                        this.child(icons::color_dot(color, px(8.)))
+                                        this.child(crate::ui::dot(theme.label(color), 8.))
                                     }),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .gap_2()
-                                    .text_sm()
+                                    .text_secondary()
                                     .text_color(muted)
                                     .child(
                                         div()
@@ -2092,22 +2092,20 @@ impl VaultBrowser {
                                                 .flex_none()
                                                 .max_w(px(120.))
                                                 .truncate()
-                                                .text_xs()
-                                                .when(!selected, |this| {
-                                                    this.text_color(theme.accent)
-                                                })
+                                                .text_micro()
+                                                .text_color(theme.fg_2)
                                                 .child(tags),
                                         )
                                     })
                                     .when_some(vault_name, |this, name| {
-                                        this.child(div().flex_none().text_xs().child(name))
+                                        this.child(div().flex_none().text_micro().child(name))
                                     }),
                             ),
                     );
                 div()
                     .id(("entry", ix))
-                    .px_1p5()
-                    .py_0p5()
+                    .px(px(8.))
+                    .py(px(1.))
                     .child(row)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // So the keyboard shortcuts act on the Entry just picked.
@@ -2123,15 +2121,7 @@ impl VaultBrowser {
         // Built first, as they need `cx` the rest borrows.
         let adding = self.target_group(cx);
         let icon_button = |id: &'static str, icon: IconName, open: bool| {
-            div()
-                .id(id)
-                .flex_none()
-                .p_1p5()
-                .rounded_md()
-                .cursor_pointer()
-                .when(open, |this| this.bg(theme.sidebar_selection))
-                .hover(|this| this.bg(theme.sidebar_selection))
-                .child(icons::ui_icon(icon, px(16.), theme.text))
+            ui::IconButton::new(id, icon).selected(open)
         };
         let add_menu = (self.menu == Some(ListMenu::Add))
             .then_some(adding)
@@ -2249,7 +2239,7 @@ impl VaultBrowser {
                 div()
                     .flex_1()
                     .when(locked.is_none(), |this| {
-                        this.p_3().text_color(theme.muted).child(if locking {
+                        this.p_3().text_color(theme.fg_1).child(if locking {
                             strings::LOCKING_NOTE
                         } else if searching {
                             strings::LIST_NO_MATCHES
@@ -2263,11 +2253,10 @@ impl VaultBrowser {
                             .flex_col()
                             .items_start()
                             .gap_2()
-                            .child(div().text_color(theme.muted).child(strings::VAULT_LOCKED))
+                            .child(div().text_color(theme.fg_1).child(strings::VAULT_LOCKED))
                             .child(
-                                button("unlock-vault", strings::UNLOCK_VAULT, theme)
-                                    .bg(theme.accent)
-                                    .text_color(theme.accent_text)
+                                Button::new("unlock-vault", strings::UNLOCK_VAULT)
+                                    .primary()
                                     .on_click(cx.listener(move |_, _, _, cx| {
                                         cx.emit(UnlockLockedVault(vault))
                                     })),
@@ -2285,16 +2274,13 @@ impl VaultBrowser {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .bg(theme.background)
+            .bg(theme.bg_0)
             .flex()
             .flex_col()
             .gap_3()
             .p_5()
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
-            })
-            .when_some(self.notice.clone(), |this, notice| {
-                this.child(div().text_sm().text_color(theme.muted).child(notice))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             });
 
         match &self.detail {
@@ -2325,10 +2311,11 @@ impl VaultBrowser {
             .and_then(|(vault, id)| workspace.entry(vault, id).map(|entry| (vault, entry)))
         else {
             return pane
-                .items_center()
-                .justify_center()
-                .text_color(theme.muted)
-                .child(strings::DETAIL_EMPTY)
+                .child(ui::empty_state(
+                    IconName::KeyRound,
+                    strings::DETAIL_EMPTY,
+                    theme,
+                ))
                 .into_any_element();
         };
         let id = entry.id();
@@ -2340,7 +2327,7 @@ impl VaultBrowser {
                     .w(DETAIL_LABEL_WIDTH)
                     .flex_none()
                     .text_right()
-                    .text_color(theme.muted)
+                    .text_color(theme.fg_1)
                     .child(label),
             )
         };
@@ -2348,7 +2335,7 @@ impl VaultBrowser {
             labelled(label).child(self.editable_value(vault, id, field, value, theme, cx))
         };
         let expired = workspace.is_expired(entry);
-        let icon = entry_mark(workspace, vault, entry, px(32.), theme.text);
+        let icon = entry_mark(workspace, vault, entry, px(32.), theme.fg_0);
 
         pane.child(
             div()
@@ -2364,61 +2351,59 @@ impl VaultBrowser {
                         .gap_3()
                         .min_w_0()
                         .children(icon)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .text_3xl()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(self.editable_value(
-                                    vault,
-                                    id,
-                                    InlineField::Title,
-                                    div().truncate().child(title_of(entry)),
-                                    theme,
-                                    cx,
-                                )),
-                        )
+                        .child(div().flex_1().min_w_0().flex().text_title().child(
+                            self.editable_value(
+                                vault,
+                                id,
+                                InlineField::Title,
+                                div().truncate().child(title_of(entry)),
+                                theme,
+                                cx,
+                            ),
+                        ))
                         .when_some(entry.color(), |this, color| {
-                            this.child(icons::color_dot(color, px(10.)))
+                            this.child(crate::ui::dot(theme.label(color), 10.))
                         }),
                 )
                 .child(
                     div()
                         .flex()
                         .gap_1()
-                        .child(tool_button("edit-entry", strings::EDIT, theme).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.open_editor(EditTarget::Existing(vault, id), window, cx)
-                            }),
-                        ))
                         .child(
-                            tool_button("totp-entry", strings::TOTP_BUTTON, theme).on_click(
-                                cx.listener(move |this, _, window, cx| {
+                            Button::new("edit-entry", strings::EDIT)
+                                .small()
+                                .icon(IconName::Pencil)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_editor(EditTarget::Existing(vault, id), window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("totp-entry", strings::TOTP_BUTTON)
+                                .small()
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_totp_setup(vault, id, window, cx)
-                                }),
-                            ),
+                                })),
                         )
                         .child(
-                            tool_button("history-entry", strings::HISTORY_BUTTON, theme).on_click(
-                                cx.listener(move |this, _, window, cx| {
+                            Button::new("history-entry", strings::HISTORY_BUTTON)
+                                .small()
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_history(vault, id, window, cx)
-                                }),
-                            ),
+                                })),
                         )
-                        .child(tool_button("move-entry", strings::MOVE, theme).on_click(
+                        .child(Button::new("move-entry", strings::MOVE).small().on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.detail = Detail::Moving(Subject::Entry(vault, id));
                                 cx.notify();
                             }),
                         ))
                         .child(
-                            tool_button("delete-entry", strings::DELETE, theme).on_click(
-                                cx.listener(move |this, _, window, cx| {
+                            Button::new("delete-entry", strings::DELETE)
+                                .small()
+                                .danger_ghost()
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     this.delete(Subject::Entry(vault, id), window, cx)
-                                }),
-                            ),
+                                })),
                         ),
                 ),
         )
@@ -2444,11 +2429,11 @@ impl VaultBrowser {
                     .gap_0p5()
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(strings::DETAIL_TOTP),
                     )
-                    .child(div().text_color(theme.error).child(
+                    .child(div().text_color(theme.danger).child(
                         strings::TOTP_UNREADABLE.replace("{reason}", totp_setup::describe(error)),
                     ))
                     .into_any_element(),
@@ -2467,14 +2452,10 @@ impl VaultBrowser {
         .when(!entry.tags().is_empty(), |this| {
             let tags = entry.tags().iter().enumerate().map(|(ix, tag)| {
                 let scope = EntryScope::Tag(tag.clone());
-                div()
+                ui::tag(tag.clone(), None, theme)
                     .id(("detail-tag", ix))
-                    .px_2()
-                    .rounded_full()
-                    .bg(theme.sidebar_selection)
-                    .text_sm()
                     .cursor_pointer()
-                    .child(tag.clone())
+                    .hover(|style| style.bg(theme.bg_hover))
                     .on_click(cx.listener(move |this, _, _, cx| this.select(scope.clone(), cx)))
             });
             this.child(
@@ -2489,9 +2470,9 @@ impl VaultBrowser {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .when(expired, |this| this.text_color(theme.error))
+                        .when(expired, |this| this.text_color(theme.danger))
                         .child(expires.to_date())
-                        .when(expired, |this| this.child(expired_badge(theme))),
+                        .when(expired, |this| this.child(expired_badge())),
                 ),
             )
         })
@@ -2540,10 +2521,10 @@ impl VaultBrowser {
                                 .flex()
                                 .justify_between()
                                 .gap_2()
-                                .text_sm()
+                                .text_secondary()
                                 .child(
                                     div()
-                                        .text_color(theme.muted)
+                                        .text_color(theme.fg_1)
                                         .truncate()
                                         .child(custom.name.clone()),
                                 )
@@ -2621,22 +2602,22 @@ impl VaultBrowser {
             div()
                 .id(element_id)
                 .cursor_pointer()
-                .text_sm()
+                .text_secondary()
                 .text_color(theme.accent)
                 .child(label)
         };
         let rows = remembered.into_iter().enumerate().map(|(ix, access)| {
             let host: SharedString = access.host.into();
             let (decision, color) = match access.decision {
-                AccessDecision::Allow => (strings::ACCESS_ALLOWED, theme.muted),
-                AccessDecision::Deny => (strings::ACCESS_DENIED, theme.error),
+                AccessDecision::Allow => (strings::ACCESS_ALLOWED, theme.fg_1),
+                AccessDecision::Deny => (strings::ACCESS_DENIED, theme.danger),
             };
             div()
                 .flex()
                 .items_center()
                 .gap_3()
                 .child(div().flex_1().truncate().child(host.clone()))
-                .child(div().text_sm().text_color(color).child(decision))
+                .child(div().text_secondary().text_color(color).child(decision))
                 .child(
                     link(("forget-access", ix), strings::ACCESS_FORGET).on_click(cx.listener(
                         move |this, _, _, cx| this.forget_access(vault, id, Some(host.clone()), cx),
@@ -2654,8 +2635,8 @@ impl VaultBrowser {
                         .justify_between()
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(theme.muted)
+                                .text_secondary()
+                                .text_color(theme.fg_1)
                                 .child(strings::DETAIL_BROWSER_ACCESS),
                         )
                         .child(
@@ -2719,8 +2700,8 @@ impl VaultBrowser {
             .gap_2()
             .child(
                 div()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::ATTACHMENTS),
             )
             .children(rows)
@@ -2744,8 +2725,8 @@ impl VaultBrowser {
                 div()
                     .flex()
                     .gap_2()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::DETAIL_TOTP)
                     .child(div().text_color(theme.accent).child(if copied {
                         strings::TOTP_COPIED
@@ -2761,12 +2742,7 @@ impl VaultBrowser {
                     .gap_3()
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| this.copy_totp(cx)))
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(grouped(code.code())),
-                    )
+                    .child(div().text_title().child(grouped(code.code())))
                     .child(
                         div()
                             .w(px(64.))
@@ -2782,7 +2758,7 @@ impl VaultBrowser {
                             ),
                     )
                     .child(
-                        div().text_sm().text_color(theme.muted).child(
+                        div().text_secondary().text_color(theme.fg_1).child(
                             strings::TOTP_SECONDS_LEFT
                                 .replace("{seconds}", &code.remaining().to_string()),
                         ),
@@ -2816,7 +2792,7 @@ impl VaultBrowser {
                 };
                 sidebar_row(("move-target", ix), name, depth, false, None, theme)
                     .rounded_md()
-                    .hover(|this| this.bg(theme.sidebar_selection))
+                    .hover(|this| this.bg(theme.bg_active))
                     .on_click(cx.listener(move |this, _, _, cx| this.move_to(item, to, cx)))
                     .into_any_element()
             })
@@ -2826,10 +2802,10 @@ impl VaultBrowser {
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_lg().child(strings::MOVE_TO))
+            .child(div().text_dialog_title().child(strings::MOVE_TO))
             .child(div().flex().flex_col().children(rows))
             .child(div().flex().justify_end().child(
-                button("cancel-move", strings::CANCEL, theme).on_click(cx.listener(
+                Button::new("cancel-move", strings::CANCEL).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.detail = Detail::Entry;
                         cx.notify();
@@ -2892,8 +2868,8 @@ impl Render for VaultBrowser {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.background)
-            .text_color(theme.text)
+            .bg(theme.bg_0)
+            .text_color(theme.fg_0)
             .child(
                 div()
                     .flex_1()
@@ -2913,7 +2889,25 @@ impl Render for VaultBrowser {
                         theme,
                         cx,
                     ))
-                    .children(self.render_merge_notice(theme, cx)),
+                    .children(self.render_merge_notice(theme, cx))
+                    .when_some(self.notice.as_ref(), |this, notice| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .bottom(px(24.))
+                                .left_0()
+                                .right_0()
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    ui::Toast::new(
+                                        ("notice", notice.generation),
+                                        notice.text.clone(),
+                                    )
+                                    .countdown(notice.countdown),
+                                ),
+                        )
+                    }),
             )
             .child(self.render_footer(theme, cx))
             .when(self.menu.is_some(), |this| {
@@ -2967,23 +2961,22 @@ pub fn describe(error: &EditVaultError) -> &'static str {
     }
 }
 
-/// A heading above a section of the sidebar.
-/// A heading of the sidebar, with its icon.
-fn sidebar_heading(label: &'static str, icon: IconName, theme: Theme) -> AnyElement {
+/// A heading of a section of the sidebar.
+fn sidebar_heading(label: &'static str, theme: Theme) -> AnyElement {
     div()
-        .mx_1p5()
-        .px_1p5()
-        .py_1()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(icons::ui_icon(icon, px(14.), theme.text))
-        .child(label)
+        .mt(px(8.))
+        .px(px(8.))
+        .child(ui::section_heading(label, theme))
         .into_any_element()
 }
 
 pub fn sidebar_separator(theme: Theme) -> AnyElement {
-    div().h_px().my_1p5().bg(theme.border).into_any_element()
+    div()
+        .h_px()
+        .my(px(6.))
+        .mx(px(8.))
+        .bg(theme.border)
+        .into_any_element()
 }
 
 /// The pencil at the end of a picked sidebar row, opening what can be done with it.
@@ -2991,23 +2984,15 @@ fn edit_mark(id: (&'static str, usize), theme: Theme) -> gpui::Stateful<gpui::Di
     div()
         .id(id)
         .flex_none()
-        .p_0p5()
-        .rounded_sm()
+        .p(px(3.))
+        .rounded(px(4.))
         .cursor_pointer()
-        .hover(|this| this.bg(theme.border))
-        .child(icons::ui_icon(IconName::Pencil, px(12.), theme.muted))
+        .hover(|this| this.bg(theme.bg_hover))
+        .child(icons::ui_icon(IconName::Pencil, px(12.), theme.fg_2))
 }
 
-fn expired_badge(theme: Theme) -> impl IntoElement {
-    div()
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(theme.error)
-        .text_xs()
-        .text_color(theme.error)
-        .child(strings::EXPIRED_BADGE)
+fn expired_badge() -> impl IntoElement {
+    ui::Badge::new(strings::EXPIRED_BADGE).tone(ui::Tone::Danger)
 }
 
 /// A row of the sidebar, `depth` Groups in, after its icon.
@@ -3019,18 +3004,9 @@ pub fn sidebar_row(
     icon: Option<AnyElement>,
     theme: Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .mx_1p5()
-        .pl(px(6. + 14. * depth as f32))
-        .pr_1p5()
-        .py_1()
-        .flex()
-        .items_center()
-        .gap_2()
-        .rounded_md()
-        .cursor_pointer()
-        .when(selected, |this| this.bg(theme.sidebar_selection))
+    ui::nav_row(id, selected, theme)
+        .mx(px(8.))
+        .pl(px(8. + 14. * depth as f32))
         .children(icon)
         .child(div().flex_1().min_w_0().truncate().child(label))
 }

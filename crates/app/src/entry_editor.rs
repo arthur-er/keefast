@@ -14,8 +14,8 @@ use crate::password_generator::{PasswordGenerator, PasswordGeneratorEvent};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
+use crate::ui::{Button, Kbd, Typography, check_mark};
 use crate::vault_browser::describe;
-use crate::widgets::button;
 
 pub enum EntryEditorEvent {
     Save(Box<EntryFields>),
@@ -407,7 +407,7 @@ impl Render for EntryEditor {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().text_color(theme.muted).child(label))
+                .child(div().text_secondary().text_color(theme.fg_1).child(label))
                 .child(field.clone())
         };
 
@@ -427,8 +427,8 @@ impl Render for EntryEditor {
                         div()
                             .flex()
                             .justify_between()
-                            .text_sm()
-                            .text_color(theme.muted)
+                            .text_secondary()
+                            .text_color(theme.fg_1)
                             .child(strings::DETAIL_PASSWORD)
                             .child(
                                 div()
@@ -473,7 +473,7 @@ impl Render for EntryEditor {
             .child(self.render_custom_fields(theme, cx))
             .child(self.render_attachments(theme, cx))
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             })
             .child(
                 div()
@@ -481,13 +481,13 @@ impl Render for EntryEditor {
                     .justify_end()
                     .gap_2()
                     .child(
-                        button("editor-cancel", strings::CANCEL, theme)
+                        Button::new("editor-cancel", strings::CANCEL)
+                            .kbd(Some(Kbd::new([strings::KEY_ESC])))
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(EntryEditorEvent::Cancel))),
                     )
                     .child(
-                        button("editor-save", strings::EDITOR_DONE, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
+                        Button::new("editor-save", strings::EDITOR_DONE)
+                            .primary()
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                     ),
             )
@@ -514,7 +514,7 @@ impl EntryEditor {
         };
         let colors = EntryColor::ALL.into_iter().enumerate().map(|(ix, color)| {
             swatch(ix + 1, self.color == Some(color))
-                .child(icons::color_dot(color, px(14.)))
+                .child(crate::ui::dot(theme.label(color), 14.))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_color(Some(color), cx)))
         });
         div()
@@ -523,8 +523,8 @@ impl EntryEditor {
             .gap_1()
             .child(
                 div()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::FIELD_COLOR),
             )
             .child(
@@ -536,7 +536,7 @@ impl EntryEditor {
                         swatch(0, self.color.is_none())
                             .w_auto()
                             .px_2()
-                            .text_sm()
+                            .text_secondary()
                             .child(strings::NO_COLOR)
                             .on_click(cx.listener(|this, _, _, cx| this.set_color(None, cx))),
                     )
@@ -561,16 +561,16 @@ impl EntryEditor {
                 } else {
                     gpui::transparent_black().into()
                 })
-                .when(selected, |this| this.bg(theme.sidebar_selection))
-                .hover(|this| this.bg(theme.sidebar_selection))
+                .when(selected, |this| this.bg(theme.bg_active))
+                .hover(|this| this.bg(theme.bg_active))
                 .cursor_pointer()
         };
-        let current = vault.map(|vault| icons::entry_icon(self.icon, vault, px(20.), theme.text));
+        let current = vault.map(|vault| icons::entry_icon(self.icon, vault, px(20.), theme.fg_0));
         let picker = self.choosing_icon.then(|| {
             let standard = (0..STANDARD_ICON_COUNT).map(|number| {
                 let icon = EntryIcon::Standard(number);
                 cell(("standard-icon", number as usize), self.icon == icon)
-                    .child(icons::standard_icon(number, px(18.), theme.text))
+                    .child(icons::standard_icon(number, px(18.), theme.fg_0))
                     .on_click(cx.listener(move |this, _, _, cx| this.set_icon(icon, cx)))
             });
             let custom: Vec<_> = vault
@@ -582,13 +582,13 @@ impl EntryEditor {
                     let icon = EntryIcon::Custom(custom.id());
                     cell(("custom-icon", ix), self.icon == icon)
                         .children(
-                            vault.map(|vault| icons::entry_icon(icon, vault, px(18.), theme.text)),
+                            vault.map(|vault| icons::entry_icon(icon, vault, px(18.), theme.fg_0)),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| this.set_icon(icon, cx)))
                 })
                 .collect();
             let heading =
-                |label: &'static str| div().text_xs().text_color(theme.muted).child(label);
+                |label: &'static str| div().text_micro().text_color(theme.fg_1).child(label);
             div()
                 .flex()
                 .flex_col()
@@ -607,7 +607,7 @@ impl EntryEditor {
                         .child(
                             div()
                                 .id("import-icon")
-                                .text_sm()
+                                .text_secondary()
                                 .text_color(theme.accent)
                                 .cursor_pointer()
                                 .child(strings::IMPORT_ICON)
@@ -622,15 +622,15 @@ impl EntryEditor {
             .gap_1()
             .child(
                 div()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::FIELD_ICON),
             )
             .child(
                 div().flex().items_center().gap_3().children(current).child(
                     div()
                         .id("choose-icon")
-                        .text_sm()
+                        .text_secondary()
                         .text_color(theme.accent)
                         .cursor_pointer()
                         .child(strings::CHOOSE_ICON)
@@ -653,14 +653,11 @@ impl EntryEditor {
                     .id("expires")
                     .flex()
                     .gap_1()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .cursor_pointer()
-                    .child(if self.expires {
-                        strings::CHECKBOX_ON
-                    } else {
-                        strings::CHECKBOX_OFF
-                    })
+                    .items_center()
+                    .child(check_mark(self.expires, theme))
                     .child(strings::FIELD_EXPIRES)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_expires(window, cx))),
             )
@@ -673,8 +670,8 @@ impl EntryEditor {
                         .child(div().w(px(140.)).child(self.expiry_date.clone()))
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(theme.muted)
+                                .text_micro()
+                                .text_color(theme.fg_1)
                                 .child(strings::EXPIRY_NOTE),
                         ),
                 )
@@ -704,8 +701,8 @@ impl EntryEditor {
                 div()
                     .flex()
                     .justify_between()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::ATTACHMENTS)
                     .child(
                         div()
@@ -717,7 +714,7 @@ impl EntryEditor {
                     ),
             )
             .when_some(self.attachment_errors.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             })
             .children(rows)
     }
@@ -747,19 +744,16 @@ impl EntryEditor {
                         .flex()
                         .justify_end()
                         .gap_3()
-                        .text_sm()
+                        .text_secondary()
                         .child(
                             div()
                                 .id(("protect-field", index))
                                 .flex()
                                 .gap_1()
                                 .cursor_pointer()
-                                .text_color(theme.muted)
-                                .child(if row.protected {
-                                    strings::CHECKBOX_ON
-                                } else {
-                                    strings::CHECKBOX_OFF
-                                })
+                                .text_color(theme.fg_1)
+                                .items_center()
+                                .child(check_mark(row.protected, theme))
                                 .child(strings::FIELD_PROTECTED)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.toggle_protected(index, cx)
@@ -794,8 +788,8 @@ impl EntryEditor {
                 div()
                     .flex()
                     .justify_between()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(strings::CUSTOM_FIELDS)
                     .child(
                         div()

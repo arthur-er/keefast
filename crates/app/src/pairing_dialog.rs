@@ -7,7 +7,7 @@ use keefast_workspace::PairingId;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
-use crate::widgets::button;
+use crate::ui::{self, Button, Dialog};
 
 pub enum PairingDialogEvent {
     Approve(String),
@@ -65,46 +65,32 @@ impl PairingDialog {
 impl Render for PairingDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
-        div()
-            .id("pairing-dialog")
-            .w(px(440.))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_6()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.panel)
-            .text_color(theme.text)
-            .shadow_lg()
-            .child(div().text_xl().child(strings::PAIRING_TITLE))
-            .child(div().child(strings::PAIRING_PROMPT.replace("{vault}", &self.vault_name)))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted)
-                    .child(strings::PAIRING_NAME_LABEL),
-            )
-            .child(self.name.clone())
-            .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
-            })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
+        div().id("pairing-dialog").child(ui::appear(
+            "pairing-dialog-appear",
+            div().child(
+                Dialog::new(strings::PAIRING_TITLE)
+                    .description(strings::PAIRING_PROMPT.replace("{vault}", &self.vault_name))
                     .child(
-                        button("deny-pairing", strings::PAIRING_DENY, theme)
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(ui::field_label(strings::PAIRING_NAME_LABEL, theme))
+                            .child(self.name.clone()),
+                    )
+                    .when_some(self.error.clone(), |this, error| {
+                        this.child(ui::error_text(error, theme))
+                    })
+                    .action(
+                        Button::new("deny-pairing", strings::PAIRING_DENY)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(PairingDialogEvent::Deny))),
                     )
-                    .child(
-                        button("approve-pairing", strings::PAIRING_APPROVE, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
+                    .action(
+                        Button::new("approve-pairing", strings::PAIRING_APPROVE)
+                            .primary()
                             .on_click(cx.listener(|this, _, _, cx| this.approve(cx))),
                     ),
-            )
+            ),
+        ))
     }
 }

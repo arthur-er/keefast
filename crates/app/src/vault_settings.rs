@@ -10,8 +10,8 @@ use crate::locking;
 use crate::saving;
 use crate::strings;
 use crate::theme::Theme;
+use crate::ui::{Button, Typography, radio_mark};
 use crate::vault_browser::describe;
-use crate::widgets::tool_button;
 
 /// Emitted when the user closes the settings.
 pub struct VaultSettingsClosed;
@@ -188,13 +188,8 @@ impl Render for VaultSettings {
         while self.revoke_focus.len() < pairings.len() {
             self.revoke_focus.push(cx.focus_handle().tab_stop(true));
         }
-        let heading = |text: &'static str| {
-            div()
-                .text_xl()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(text)
-        };
-        let note = |text: &'static str| div().text_sm().text_color(theme.muted).child(text);
+        let heading = |text: &'static str| div().text_title().child(text);
+        let note = |text: &'static str| div().text_secondary().text_color(theme.fg_1).child(text);
 
         let policies = POLICIES.iter().zip(&self.policy_focus).enumerate().map(
             |(ix, (&(policy, label), focus))| {
@@ -211,11 +206,8 @@ impl Render for VaultSettings {
                     .border_color(gpui::transparent_black())
                     .focus(|style| style.border_color(theme.accent))
                     .cursor_pointer()
-                    .child(if chosen {
-                        strings::RADIO_ON
-                    } else {
-                        strings::RADIO_OFF
-                    })
+                    .items_center()
+                    .child(radio_mark(chosen, theme))
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_policy(policy, cx)))
             },
@@ -238,9 +230,9 @@ impl Render for VaultSettings {
                         .border_color(theme.border)
                         .child(div().truncate().child(name.clone()))
                         .child(
-                            tool_button(("revoke-pairing", ix), strings::REVOKE_PAIRING, theme)
+                            Button::new(("revoke-pairing", ix), strings::REVOKE_PAIRING)
+                                .small()
                                 .track_focus(focus)
-                                .focus(|style| style.border_color(theme.accent))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.revoke(name.clone(), window, cx)
                                 })),
@@ -255,7 +247,7 @@ impl Render for VaultSettings {
             .flex_col()
             .gap_6()
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             })
             .child(
                 div()
@@ -265,11 +257,11 @@ impl Render for VaultSettings {
                     .child(heading(strings::VAULT_FILE))
                     .child(
                         div()
-                            .text_sm()
+                            .text_secondary()
                             .text_color(if save_failed {
-                                theme.error
+                                theme.danger
                             } else {
-                                theme.muted
+                                theme.fg_1
                             })
                             .child(status),
                     )
@@ -277,12 +269,12 @@ impl Render for VaultSettings {
                         div()
                             .flex()
                             .gap_1()
-                            .child(tool_button("save-vault", strings::SAVE, theme).on_click(
+                            .child(Button::new("save-vault", strings::SAVE).small().on_click(
                                 cx.listener(|this, _, _, cx| {
                                     saving::save(&this.workspace, this.vault, cx)
                                 }),
                             ))
-                            .child(tool_button("lock-vault", strings::LOCK, theme).on_click(
+                            .child(Button::new("lock-vault", strings::LOCK).small().on_click(
                                 cx.listener(|this, _, _, cx| {
                                     locking::lock_vault(&this.workspace, this.vault, cx)
                                 }),
@@ -306,12 +298,11 @@ impl Render for VaultSettings {
                     .child(heading(strings::MASTER_KEY))
                     .child(
                         div().flex().child(
-                            tool_button(
-                                "change-vault-key",
-                                strings::VAULT_SETTINGS_CHANGE_KEY,
-                                theme,
-                            )
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(VaultSettingsChangeKey))),
+                            Button::new("change-vault-key", strings::VAULT_SETTINGS_CHANGE_KEY)
+                                .small()
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(VaultSettingsChangeKey)),
+                                ),
                         ),
                     ),
             )

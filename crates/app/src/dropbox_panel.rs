@@ -13,7 +13,7 @@ use keefast_workspace::{
 
 use crate::strings;
 use crate::theme::Theme;
-use crate::widgets::{button, tool_button};
+use crate::ui::{Button, Typography};
 
 pub enum DropboxPanelEvent {
     /// The user picked a file to open.
@@ -221,8 +221,8 @@ impl DropboxPanel {
     fn render_body(&self, theme: Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         match &self.account {
             Account::Checking => div()
-                .text_sm()
-                .text_color(theme.muted)
+                .text_secondary()
+                .text_color(theme.fg_1)
                 .child(strings::DROPBOX_CHECKING)
                 .into_any_element(),
             Account::Disconnected => div()
@@ -232,9 +232,8 @@ impl DropboxPanel {
                 .child(div().child(strings::DROPBOX_CONNECT_PROMPT))
                 .child(
                     div().flex().child(
-                        button("dropbox-connect", strings::DROPBOX_CONNECT, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
+                        Button::new("dropbox-connect", strings::DROPBOX_CONNECT)
+                            .primary()
                             .on_click(cx.listener(|this, _, _, cx| this.connect(cx))),
                     ),
                 )
@@ -249,18 +248,14 @@ impl DropboxPanel {
                         .flex()
                         .gap_2()
                         .child(
-                            button("dropbox-open-page", strings::DROPBOX_OPEN_PAGE_AGAIN, theme)
+                            Button::new("dropbox-open-page", strings::DROPBOX_OPEN_PAGE_AGAIN)
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.open_connect_page_again(cx)),
                                 ),
                         )
                         .child(
-                            button(
-                                "dropbox-cancel-connect",
-                                strings::DROPBOX_STOP_CONNECTING,
-                                theme,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_connect(cx))),
+                            Button::new("dropbox-cancel-connect", strings::DROPBOX_STOP_CONNECTING)
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel_connect(cx))),
                         ),
                 )
                 .into_any_element(),
@@ -297,9 +292,9 @@ impl DropboxPanel {
                 .px_3()
                 .py_1()
                 .cursor_pointer()
-                .hover(|this| this.bg(theme.sidebar))
+                .hover(|this| this.bg(theme.bg_sidebar))
                 .when(!item.is_folder && !vault_file, |this| {
-                    this.text_color(theme.muted)
+                    this.text_color(theme.fg_1)
                 })
                 .child(div().flex_none().w(px(18.)).child(icon))
                 .child(div().truncate().child(item.name.clone()))
@@ -316,16 +311,16 @@ impl DropboxPanel {
                     .items_center()
                     .justify_between()
                     .gap_2()
-                    .text_sm()
-                    .text_color(theme.muted)
+                    .text_secondary()
+                    .text_color(theme.fg_1)
                     .child(
                         div()
                             .truncate()
                             .child(strings::DROPBOX_CONNECTED_AS.replace("{account}", &who)),
                     )
                     .child(
-                        tool_button("dropbox-disconnect", strings::DROPBOX_DISCONNECT, theme)
-                            .flex_none()
+                        Button::new("dropbox-disconnect", strings::DROPBOX_DISCONNECT)
+                            .small()
                             .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx))),
                     ),
             )
@@ -336,15 +331,15 @@ impl DropboxPanel {
                     .gap_2()
                     .when(!self.folder.is_empty(), |this| {
                         this.child(
-                            tool_button("dropbox-up", strings::DROPBOX_UP, theme)
-                                .flex_none()
+                            Button::new("dropbox-up", strings::DROPBOX_UP)
+                                .small()
                                 .on_click(cx.listener(|this, _, _, cx| this.open_parent(cx))),
                         )
                     })
                     .child(
                         div()
                             .truncate()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui::FontWeight::MEDIUM)
                             .child(folder),
                     ),
             )
@@ -362,8 +357,8 @@ impl DropboxPanel {
                             div()
                                 .px_3()
                                 .py_1()
-                                .text_sm()
-                                .text_color(theme.muted)
+                                .text_secondary()
+                                .text_color(theme.fg_1)
                                 .child(strings::DROPBOX_LOADING),
                         )
                     })
@@ -372,8 +367,8 @@ impl DropboxPanel {
                             div()
                                 .px_3()
                                 .py_1()
-                                .text_sm()
-                                .text_color(theme.muted)
+                                .text_secondary()
+                                .text_color(theme.fg_1)
                                 .child(strings::DROPBOX_EMPTY_FOLDER),
                         )
                     })
@@ -405,16 +400,16 @@ impl Render for DropboxPanel {
             .rounded_lg()
             .border_1()
             .border_color(theme.border)
-            .bg(theme.panel)
-            .text_color(theme.text)
-            .child(div().text_xl().child(strings::DROPBOX_TITLE))
+            .bg(theme.bg_1)
+            .text_color(theme.fg_0)
+            .child(div().text_dialog_title().child(strings::DROPBOX_TITLE))
             .child(self.render_body(theme, cx))
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().text_sm().text_color(theme.error).child(error))
+                this.child(div().text_secondary().text_color(theme.danger).child(error))
             })
             .child(
                 div().flex().justify_end().child(
-                    button("dropbox-close", strings::CANCEL, theme)
+                    Button::new("dropbox-close", strings::CANCEL)
                         .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                 ),
             )

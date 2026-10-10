@@ -8,7 +8,7 @@ use keefast_workspace::{AccessAnswer, AccessId};
 
 use crate::strings;
 use crate::theme::Theme;
-use crate::widgets::button;
+use crate::ui::{self, Button, Checkbox, Dialog, Typography};
 
 pub struct AccessDialogEvent(pub AccessAnswer);
 
@@ -103,16 +103,16 @@ impl Render for AccessDialog {
                         .child(div().truncate().child(title))
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(theme.muted)
+                                .text_secondary()
+                                .text_color(theme.fg_1)
                                 .truncate()
                                 .child(entry.username.clone()),
                         ),
                 )
                 .child(
                     div()
-                        .text_sm()
-                        .text_color(theme.muted)
+                        .text_secondary()
+                        .text_color(theme.fg_1)
                         .flex_none()
                         .child(entry.vault.clone()),
                 )
@@ -121,62 +121,38 @@ impl Render for AccessDialog {
             .id("access-dialog")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
-            .w(px(460.))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_6()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.panel)
-            .text_color(theme.text)
-            .shadow_lg()
-            .child(div().text_xl().child(strings::ACCESS_TITLE))
-            .child(div().child(strings::ACCESS_PROMPT.replace("{site}", &self.site)))
-            .child(
-                div()
-                    .id("access-entries")
-                    .max_h(px(220.))
-                    .overflow_y_scroll()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(entries),
-            )
-            .child(
-                div()
-                    .id("remember-access")
-                    .flex()
-                    .gap_1()
-                    .text_sm()
-                    .cursor_pointer()
-                    .child(if self.remember {
-                        strings::CHECKBOX_ON
-                    } else {
-                        strings::CHECKBOX_OFF
-                    })
-                    .child(strings::ACCESS_REMEMBER.replace("{site}", &self.site))
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_remember(cx))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(button("deny-access", strings::ACCESS_DENY, theme).on_click(
-                        cx.listener(|this, _, _, cx| this.answer(AccessDecision::Deny, cx)),
-                    ))
-                    .child(
-                        button("allow-access", strings::ACCESS_ALLOW, theme)
-                            .bg(theme.accent)
-                            .text_color(theme.accent_text)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| {
+            .child(ui::appear(
+                "access-dialog-appear",
+                div().child(
+                    Dialog::new(strings::ACCESS_TITLE)
+                        .description(strings::ACCESS_PROMPT.replace("{site}", &self.site))
+                        .child(
+                            div()
+                                .id("access-entries")
+                                .max_h(px(220.))
+                                .overflow_y_scroll()
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.bg_1)
+                                .children(entries),
+                        )
+                        .child(
+                            Checkbox::new("remember-access", self.remember)
+                                .label(strings::ACCESS_REMEMBER.replace("{site}", &self.site))
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_remember(cx))),
+                        )
+                        .action(Button::new("deny-access", strings::ACCESS_DENY).on_click(
+                            cx.listener(|this, _, _, cx| this.answer(AccessDecision::Deny, cx)),
+                        ))
+                        .action(
+                            Button::new("allow-access", strings::ACCESS_ALLOW)
+                                .primary()
+                                .on_click(cx.listener(|this, _, _, cx| {
                                     this.answer(AccessDecision::Allow, cx)
-                                }),
-                            ),
-                    ),
-            )
+                                })),
+                        ),
+                ),
+            ))
     }
 }

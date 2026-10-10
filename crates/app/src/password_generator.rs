@@ -6,7 +6,7 @@ use secrecy::{ExposeSecret, SecretString};
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::Theme;
-use crate::widgets::{button, tool_button};
+use crate::ui::{Button, Checkbox, Segmented, Typography};
 
 pub enum PasswordGeneratorEvent {
     /// Use this password.
@@ -114,8 +114,12 @@ fn stepper(
         .flex()
         .items_center()
         .gap_2()
-        .child(div().text_sm().text_color(theme.muted).child(label))
-        .child(tool_button(SharedString::from(format!("{id}-less")), "−", theme).on_click(step(-1)))
+        .child(div().text_secondary().text_color(theme.fg_1).child(label))
+        .child(
+            Button::new(SharedString::from(format!("{id}-less")), "−")
+                .small()
+                .on_click(step(-1)),
+        )
         .child(
             div()
                 .min_w_8()
@@ -123,7 +127,11 @@ fn stepper(
                 .justify_center()
                 .child(value.to_string()),
         )
-        .child(tool_button(SharedString::from(format!("{id}-more")), "+", theme).on_click(step(1)))
+        .child(
+            Button::new(SharedString::from(format!("{id}-more")), "+")
+                .small()
+                .on_click(step(1)),
+        )
 }
 
 fn checkbox(
@@ -133,18 +141,8 @@ fn checkbox(
     cx: &Context<PasswordGenerator>,
     toggle: fn(&mut CharacterRecipe),
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .flex()
-        .gap_1()
-        .text_sm()
-        .cursor_pointer()
-        .child(if on {
-            strings::CHECKBOX_ON
-        } else {
-            strings::CHECKBOX_OFF
-        })
-        .child(label.into())
+    Checkbox::new(id, on)
+        .label(label)
         .on_click(cx.listener(move |this, _, _, cx| {
             this.change(cx, |settings| toggle(&mut settings.characters))
         }))
@@ -166,29 +164,24 @@ impl Render for PasswordGenerator {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
         let settings = self.workspace.read(cx).generator_settings().clone();
-        let mode_tab = |id: &'static str, label: &'static str, mode: GeneratorMode| {
-            let selected = settings.mode == mode;
-            tool_button(id, label, theme)
-                .when(selected, |this| {
-                    this.bg(theme.accent).text_color(theme.accent_text)
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.change(cx, |settings| settings.mode = mode)
-                }))
+        let mode_tab = |mode: GeneratorMode| {
+            cx.listener(move |this: &mut Self, _, _, cx| {
+                this.change(cx, |settings| settings.mode = mode)
+            })
         };
-        let tabs = div()
-            .flex()
-            .gap_1()
-            .child(mode_tab(
-                "generator-characters",
-                strings::GENERATOR_CHARACTERS,
-                GeneratorMode::Characters,
-            ))
-            .child(mode_tab(
-                "generator-passphrase",
-                strings::GENERATOR_PASSPHRASE,
-                GeneratorMode::Passphrase,
-            ));
+        let tabs = div().flex().child(
+            Segmented::new("generator-mode")
+                .option(
+                    strings::GENERATOR_CHARACTERS,
+                    settings.mode == GeneratorMode::Characters,
+                    mode_tab(GeneratorMode::Characters),
+                )
+                .option(
+                    strings::GENERATOR_PASSPHRASE,
+                    settings.mode == GeneratorMode::Passphrase,
+                    mode_tab(GeneratorMode::Passphrase),
+                ),
+        );
 
         let options = match settings.mode {
             GeneratorMode::Characters => {
@@ -275,8 +268,8 @@ impl Render for PasswordGenerator {
                         .gap_2()
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(theme.muted)
+                                .text_secondary()
+                                .text_color(theme.fg_1)
                                 .child(strings::GENERATOR_SEPARATOR),
                         )
                         .child(div().w_24().child(self.separator.clone())),
@@ -287,7 +280,7 @@ impl Render for PasswordGenerator {
             Ok(password) => div()
                 .font_family("monospace")
                 .child(SharedString::from(password.expose_secret().to_owned())),
-            Err(error) => div().text_color(theme.error).child(error_message(error)),
+            Err(error) => div().text_color(theme.danger).child(error_message(error)),
         };
 
         div()
@@ -299,7 +292,7 @@ impl Render for PasswordGenerator {
             .rounded_md()
             .border_1()
             .border_color(theme.border)
-            .bg(theme.panel)
+            .bg(theme.bg_1)
             .child(tabs)
             .child(options)
             .child(
@@ -307,7 +300,7 @@ impl Render for PasswordGenerator {
                     .px_2()
                     .py_1p5()
                     .rounded_md()
-                    .bg(theme.background)
+                    .bg(theme.bg_0)
                     .overflow_hidden()
                     .child(preview),
             )
@@ -317,20 +310,18 @@ impl Render for PasswordGenerator {
                     .justify_end()
                     .gap_2()
                     .when(!self.in_settings, |this| {
-                        this.child(button("generator-cancel", strings::CANCEL, theme).on_click(
+                        this.child(Button::new("generator-cancel", strings::CANCEL).on_click(
                             cx.listener(|_, _, _, cx| cx.emit(PasswordGeneratorEvent::Cancel)),
                         ))
                     })
                     .child(
-                        button("generator-again", strings::GENERATOR_AGAIN, theme)
+                        Button::new("generator-again", strings::GENERATOR_AGAIN)
                             .on_click(cx.listener(|this, _, _, cx| this.regenerate(cx))),
                     )
                     .when(!self.in_settings, |this| {
                         this.child(
-                            button("generator-use", strings::GENERATOR_USE, theme)
-                                .when(self.generated.is_ok(), |this| {
-                                    this.bg(theme.accent).text_color(theme.accent_text)
-                                })
+                            Button::new("generator-use", strings::GENERATOR_USE)
+                                .when(self.generated.is_ok(), |this| this.primary())
                                 .on_click(cx.listener(|this, _, _, cx| this.use_password(cx))),
                         )
                     }),

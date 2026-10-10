@@ -6,13 +6,11 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AssetSource, Image, ImageFormat, Pixels, Rgba, SharedString, div, img, prelude::*,
+    AnyElement, AssetSource, Image, ImageFormat, Pixels, Rgba, SharedString, img, prelude::*,
 };
 use gpui_component::Icon;
 pub use gpui_kit_assets::IconName;
-use keefast_core::{EntryColor, EntryIcon, STANDARD_ICON_COUNT, Vault};
-
-use crate::theme::rgb_const;
+use keefast_core::{EntryIcon, STANDARD_ICON_COUNT, Vault};
 
 /// The Lucide icon drawn for each of KeePass's standard icons, by number: KeePass numbers them
 /// and each client draws them its own way, so these are the nearest in meaning to KeePass's
@@ -229,27 +227,6 @@ pub fn standard_icon(number: u32, size: Pixels, color: Rgba) -> AnyElement {
     ui_icon(icon, size, color).into_any_element()
 }
 
-/// How the app draws each colour: brighter than the Vault file's, to stand out as a dot.
-pub fn color_rgba(color: EntryColor) -> Rgba {
-    match color {
-        EntryColor::Red => rgb_const(0xe5484d),
-        EntryColor::Orange => rgb_const(0xf76b15),
-        EntryColor::Yellow => rgb_const(0xf5c518),
-        EntryColor::Green => rgb_const(0x30a46c),
-        EntryColor::Blue => rgb_const(0x3e83f8),
-        EntryColor::Violet => rgb_const(0x8e4ec6),
-    }
-}
-
-/// A dot in an Entry's colour.
-pub fn color_dot(color: EntryColor, size: Pixels) -> gpui::Div {
-    div()
-        .size(size)
-        .flex_none()
-        .rounded_full()
-        .bg(color_rgba(color))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,7 +243,7 @@ mod tests {
             IconName::Plus,
             IconName::CircleQuestionMark,
             IconName::Settings,
-            IconName::LogOut,
+            IconName::Check,
             IconName::Search,
             IconName::ArrowDownWideNarrow,
             IconName::Pencil,
