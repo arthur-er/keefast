@@ -97,7 +97,9 @@ export function useEntryHistory(vault: VaultId | undefined, entry: EntryId | und
   });
 }
 
-/** The Entry's TOTP code, refetched as each code runs out. */
+/** The Entry's TOTP code, refetched as each code runs out, and as the window shows again: while
+ * it is hidden (minimised, on another workspace) the refetch interval waits, so a code that ran
+ * out meanwhile would show at "0 s" until the next one. */
 export function useTotpCode(vault: VaultId | undefined, entry: EntryId | undefined, enabled = true) {
   return useQuery({
     queryKey: keys.totp(vault ?? -1, entry ?? ""),
@@ -105,6 +107,7 @@ export function useTotpCode(vault: VaultId | undefined, entry: EntryId | undefin
     enabled: enabled && vault !== undefined && entry !== undefined,
     staleTime: 0,
     refetchInterval: (query) => (query.state.data ? query.state.data.remaining * 1000 : false),
+    refetchOnWindowFocus: true,
   });
 }
 
