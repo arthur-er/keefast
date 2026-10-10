@@ -108,4 +108,16 @@ describe("mock backend", () => {
     const github = (await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" }))[0]!;
     expect((await api.getEntry(github.vault, github.id)).facets).toEqual([]);
   });
+
+  it("lists the facets Plugins contribute, and runs their format and validate hooks", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [card] = await api.listFacets();
+    expect(card).toMatchObject({ plugin: "keefast.card", facet: "card", detect: ["Card number"], editor: { add: "Add card", remove: "Remove card" } });
+    expect(await api.formatOwnedField("keefast.card", "card", "number", "4111111111111111")).toBe("4111 1111 1111 1111");
+    expect(await api.formatOwnedField("keefast.card", "card", "expiry", "083")).toBe("08/3");
+    expect(await api.validateOwnedField("keefast.card", "card", "number", "4111 1111 1111 1111")).toBeNull();
+    expect(await api.validateOwnedField("keefast.card", "card", "number", "4111 1111 1111 1112")).toMatchObject({ severity: "warning" });
+    expect(await api.validateOwnedField("keefast.card", "card", "expiry", "01/20")).toMatchObject({ severity: "warning", message: expect.stringContaining("expired") });
+    await expect(api.formatOwnedField("keefast.card", "passport", "number", "1")).rejects.toMatchObject({ kind: "notFound" });
+  });
 });

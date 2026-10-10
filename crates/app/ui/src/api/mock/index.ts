@@ -52,7 +52,7 @@ import {
   type MockVault,
 } from "./data";
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
-import { facetsOf } from "./plugins";
+import { facetsOf, facetTemplates, formatOwned, validateOwned } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -933,6 +933,17 @@ export function createMockBackend(): Backend & {
         groupPath: groupPath(v, e.group),
         deletesForGood: !v.recycleBin || inBin(v, e.group),
       };
+    }),
+    listFacets: command(() => facetTemplates(plugins.runs)),
+    formatOwnedField: command(async (plugin, facet, key, value) => {
+      const formatted = await formatOwned(plugin, facet, key, value, plugins.runs);
+      if (formatted === null) throw new MockError("notFound", "That Plugin isn't installed.");
+      return formatted;
+    }),
+    validateOwnedField: command(async (plugin, facet, key, value) => {
+      const problem = await validateOwned(plugin, facet, key, value, plugins.runs);
+      if (problem === undefined) throw new MockError("notFound", "That Plugin isn't installed.");
+      return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
     revealCustomField: command((id, entryId, index) => {

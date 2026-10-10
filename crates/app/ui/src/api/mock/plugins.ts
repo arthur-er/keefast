@@ -1,11 +1,13 @@
 // The mock's Plugin host: what crates/plugins does for the app, over the same components run
 // through jco (bundled-plugins.ts). It finds the facets an Entry has by its custom fields' names,
 // asks each Plugin's `derive` for labels, and answers in `FacetView`s, protected values left out.
-// No fuel or memory limits: the mock trusts the Plugins compiled into keefast.
+// For Entry editor A it lists the facets Plugins contribute, and runs `format` and `validate`
+// (passing the month it is, as the app does: Plugins have no clock). No fuel or memory limits:
+// the mock trusts the Plugins compiled into keefast.
 
 import { bundledPlugins } from "virtual:keefast/bundled-plugins";
 
-import type { FacetView, OwnedFieldKind } from "@/bindings";
+import type { FacetTemplate, FacetView, OwnedFieldKind, ProblemView } from "@/bindings";
 
 import type { MockField } from "./data";
 
@@ -22,7 +24,8 @@ export interface PluginManifest {
       title: string;
       icon?: string;
       detect: { fields: string[] };
-      fields: { key: string; name: string; label: string; kind: OwnedFieldKind; protected?: boolean }[];
+      fields: { key: string; name: string; label: string; kind: OwnedFieldKind; protected?: boolean; placeholder?: string }[];
+      editor?: { add: string; remove: string };
     }[];
   };
 }
@@ -30,7 +33,12 @@ export interface PluginManifest {
 /** The hooks of the `plugin` world (crates/plugins/wit/plugin.wit), as jco exposes them. */
 export interface PluginHooks {
   format(facet: string, key: string, value: string): string;
-  validate(facet: string, key: string, value: string): { severity: "warning" | "error"; message: string } | undefined;
+  validate(
+    facet: string,
+    key: string,
+    value: string,
+    today: { year: number; month: number },
+  ): { severity: "warning" | "error"; message: string } | undefined;
   derive(facet: string, fields: { key: string; value?: string }[]): { label?: string; fields: { key: string; text: string }[] };
 }
 
@@ -86,6 +94,8 @@ export async function facetsOf(fields: readonly MockField[], runs: (id: string) 
         icon: facet.icon ?? null,
         label: derived?.label !== undefined ? shorten(derived.label) : null,
         canCopy: manifest.capabilities.includes("copy"),
+        detect: facet.detect.fields,
+        editor: facet.editor ?? null,
         fields: facet.fields.map((owned, at) => {
           const index = indexes[at]!;
           const kept = fields[index];
@@ -100,10 +110,71 @@ export async function facetsOf(fields: readonly MockField[], runs: (id: string) 
             value: kept && !isProtected ? kept.value : null,
             isEmpty: !kept || kept.value === "",
             text: text(owned.key),
+            placeholder: owned.placeholder ?? null,
           };
         }),
       });
     }
   }
   return found;
+}
+
+/** Every facet the Plugins that `runs` contribute, as `list_facets` answers. */
+export function facetTemplates(runs: (id: string) => boolean = () => true): FacetTemplate[] {
+  return bundledPlugins.flatMap(({ manifest }) =>
+    (runs(manifest.id) ? manifest.contributions.facets : []).map((facet) => ({
+      plugin: manifest.id,
+      facet: facet.id,
+      title: facet.title,
+      icon: facet.icon ?? null,
+      detect: facet.detect.fields,
+      editor: facet.editor ?? null,
+      fields: facet.fields.map((owned) => ({
+        key: owned.key,
+        name: owned.name,
+        label: owned.label,
+        kind: owned.kind,
+        protected: owned.protected ?? false,
+        placeholder: owned.placeholder ?? null,
+      })),
+    })),
+  );
+}
+
+/** A running Plugin's facet, checked to exist, as the host's `facet_of`. */
+async function facetHooks(plugin: string, facet: string, runs: (id: string) => boolean): Promise<PluginHooks | null> {
+  const found = bundledPlugins.find((candidate) => candidate.manifest.id === plugin && runs(plugin));
+  if (!found?.manifest.contributions.facets.some((candidate) => candidate.id === facet)) return null;
+  return hooksOf(plugin);
+}
+
+/** A value typed into an Owned field, formatted by its Plugin; `null` for no such facet. */
+export async function formatOwned(
+  plugin: string,
+  facet: string,
+  key: string,
+  value: string,
+  runs: (id: string) => boolean = () => true,
+): Promise<string | null> {
+  const hooks = await facetHooks(plugin, facet, runs);
+  return hooks ? hooks.format(facet, key, value) : null;
+}
+
+/** The month `now` is in, in UTC, as the app passes `validate`. */
+export const monthOf = (now: Date) => ({ year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
+
+/** What the Plugin says is wrong with a value; `undefined` for no such facet. */
+export async function validateOwned(
+  plugin: string,
+  facet: string,
+  key: string,
+  value: string,
+  runs: (id: string) => boolean = () => true,
+  now = new Date(),
+): Promise<ProblemView | null | undefined> {
+  const hooks = await facetHooks(plugin, facet, runs);
+  if (!hooks) return undefined;
+  const problem = hooks.validate(facet, key, value, monthOf(now));
+  // As the host, which cuts a message to 200 characters.
+  return problem ? { severity: problem.severity, message: [...problem.message.split("\n")[0]!].slice(0, 200).join("") } : null;
 }

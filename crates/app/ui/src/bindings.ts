@@ -132,6 +132,25 @@ export const commands = {
 	 *  refused, so a Vault file can't make keefast run something.
 	 */
 	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
+	/**
+	 *  Every facet the Plugins contribute, in the order the Plugins were loaded: the editor offers
+	 *  to add the ones with a section of their own.
+	 */
+	listFacets: () => typedError<FacetTemplate[], ApiError>(__TAURI_INVOKE("list_facets")),
+	/**
+	 *  A value as the user typed it into an Owned field, formatted by its Plugin's `format` hook,
+	 *  such as a card number in groups of four.
+	 */
+	formatOwnedField: (plugin: string, facet: string, key: string, value: string) => typedError<string, ApiError>(__TAURI_INVOKE("format_owned_field", { plugin, facet, key, value })),
+	/**
+	 *  What the Plugin's `validate` hook says is wrong with a value for an Owned field, if anything.
+	 *  The hook gets the month it is now, since Plugins have no clock.
+	 */
+	validateOwnedField: (plugin: string, facet: string, key: string, value: string) => typedError<{
+	severity: ProblemSeverity,
+	/**  One sentence saying what to do, shown as is. */
+	message: string,
+} | null, ApiError>(__TAURI_INVOKE("validate_owned_field", { plugin, facet, key, value })),
 	/**  The Entry's earlier versions, oldest first. Each edit keeps the version it replaces here. */
 	getEntryHistory: (vault: VaultId, entry: EntryId) => typedError<EntryVersion[], ApiError>(__TAURI_INVOKE("get_entry_history", { vault, entry })),
 	/**  The password of a version of the Entry, for the user to see. */
@@ -666,6 +685,32 @@ export type ErrorKind =
 /**  The user stopped it. */
 "cancelled";
 
+/**  A facet's section in the Entry editor: the actions adding it and taking it off an Entry. */
+export type FacetEditorView = {
+	/**  Such as "Add card". */
+	add: string,
+	/**  Such as "Remove card". */
+	remove: string,
+};
+
+/**  A facet a Plugin contributes, whether an Entry has it or not, such as the Card. */
+export type FacetTemplate = {
+	/**  The Plugin's id, such as `keefast.card`. */
+	plugin: string,
+	/**  The facet's id within the Plugin, such as `card`. */
+	facet: string,
+	/**  The section's title, such as "Card". */
+	title: string,
+	/**  One of the kit's icons, by name (`credit-card`). */
+	icon: string | null,
+	/**  The names of the fields an Entry has the facet by. */
+	detect: string[],
+	/**  Its section in the Entry editor; `None` when its Owned fields are edited as custom fields. */
+	editor: FacetEditorView | null,
+	/**  In the order the section shows them. */
+	fields: OwnedFieldTemplate[],
+};
+
 /**  A facet a Plugin found on an Entry, such as its Card: a section of the detail. */
 export type FacetView = {
 	/**  The Plugin's id, such as `keefast.card`. */
@@ -680,6 +725,10 @@ export type FacetView = {
 	label: string | null,
 	/**  Whether the Plugin has the Plugin capability to have its fields copied. */
 	canCopy: boolean,
+	/**  The names of the fields an Entry has the facet by. */
+	detect: string[],
+	/**  Its section in the Entry editor; `None` when its Owned fields are edited as custom fields. */
+	editor: FacetEditorView | null,
 	fields: OwnedFieldView[],
 };
 
@@ -832,6 +881,21 @@ export type OwnedFieldKind = "text" |
 /**  A month as `MM/YY`, such as a card's expiry; the UI says when it has passed or is near. */
 "monthYear";
 
+/**  One of a facet's Owned fields, as its Plugin declares it. */
+export type OwnedFieldTemplate = {
+	/**  How its Plugin names it. */
+	key: string,
+	/**  The custom field's name, such as `Card number`. */
+	name: string,
+	/**  What the section calls it, such as "Number". */
+	label: string,
+	kind: OwnedFieldKind,
+	/**  Whether a new value is kept protected. */
+	protected: boolean,
+	/**  What its input shows while empty, such as "MM/YY". */
+	placeholder: string | null,
+};
+
 /**
  *  One of a facet's Owned fields on an Entry. A protected value is left out, as a custom field's
  *  is: reveal and copy it by `index`, as any custom field.
@@ -856,6 +920,8 @@ export type OwnedFieldView = {
 	 *  "Visa •••• 1111".
 	 */
 	text: string | null,
+	/**  What its input shows while empty in the Entry editor, such as "MM/YY". */
+	placeholder: string | null,
 };
 
 /**  How wide the Vault browser's sidebar and Entry list are, in logical pixels. */
@@ -982,6 +1048,20 @@ export type PluginView = {
 
 /**  How an attachment can be shown. */
 export type PreviewKind = "text" | "image" | "none";
+
+/**  How much a problem a Plugin found matters. */
+export type ProblemSeverity = 
+/**  Probably a mistake; the Entry still saves. */
+"warning" | 
+/**  The value can't be kept as it is: the Entry doesn't save until it changes. */
+"error";
+
+/**  What a Plugin says is wrong with a value. */
+export type ProblemView = {
+	severity: ProblemSeverity,
+	/**  One sentence saying what to do, shown as is. */
+	message: string,
+};
 
 /**  Which Storage provider holds a Vault file. */
 export type Provider = "local" | "dropbox";

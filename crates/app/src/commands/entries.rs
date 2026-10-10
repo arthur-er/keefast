@@ -21,6 +21,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use super::Core;
+use super::facets::FacetEditorView;
 use crate::dto::{
     Color, EntryId, GroupId, IconChoice, IconView, Scope, VaultId, icon_view, seconds, title_of,
 };
@@ -198,6 +199,8 @@ pub struct OwnedFieldView {
     /// What its Plugin derived to show in place of the value, without a reveal, such as
     /// "Visa •••• 1111".
     pub text: Option<String>,
+    /// What its input shows while empty in the Entry editor, such as "MM/YY".
+    pub placeholder: Option<String>,
 }
 
 /// A facet a Plugin found on an Entry, such as its Card: a section of the detail.
@@ -216,6 +219,10 @@ pub struct FacetView {
     pub label: Option<String>,
     /// Whether the Plugin has the Plugin capability to have its fields copied.
     pub can_copy: bool,
+    /// The names of the fields an Entry has the facet by.
+    pub detect: Vec<String>,
+    /// Its section in the Entry editor; `None` when its Owned fields are edited as custom fields.
+    pub editor: Option<FacetEditorView>,
     pub fields: Vec<OwnedFieldView>,
 }
 
@@ -466,6 +473,8 @@ fn facet_view(found: FoundFacet, custom_fields: &[CustomField]) -> FacetView {
         icon: found.facet.icon.clone(),
         label: found.label,
         can_copy: found.plugin.has(Capability::Copy),
+        detect: found.facet.detect.fields.clone(),
+        editor: found.facet.editor.as_ref().map(FacetEditorView::from),
         fields: found
             .fields
             .into_iter()
@@ -484,6 +493,7 @@ fn facet_view(found: FoundFacet, custom_fields: &[CustomField]) -> FacetView {
                         .map(|kept| kept.value.expose_secret().to_owned()),
                     is_empty: kept.is_none_or(|kept| kept.value.expose_secret().is_empty()),
                     text: field.text,
+                    placeholder: field.owned.placeholder.clone(),
                 }
             })
             .collect(),
@@ -733,11 +743,14 @@ fn web_address(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use keefast_core::CustomField;
-    use secrecy::SecretString;
+    use secrecy::{ExposeSecret, SecretString};
 
     use keefast_plugins::PluginHost;
 
-    use super::{OwnedFieldKind, custom_field_view, facet_views, web_address};
+    use super::{
+        CustomFieldInput, EntryInput, OwnedFieldKind, custom_field_view, facet_views, web_address,
+    };
+    use crate::dto::IconChoice;
 
     #[test]
     fn fields_keeping_totp_settings_are_marked() {
@@ -800,6 +813,83 @@ mod tests {
         // Nothing in the DTO is a protected value.
         let json = serde_json::to_string(&facets).unwrap();
         assert!(!json.contains("4111 1111 1111 1111"));
+    }
+
+    /// Entry editor A saves a Card the user didn't touch as kept: `value: None` with its index,
+    /// so its protected values never cross to the UI, and come back as they were.
+    #[test]
+    fn card_fields_kept_by_index_come_back_as_they_were() {
+        use keefast_core::{CompositeKey, Encryption, EntryFields, Timestamp, Vault};
+
+        let field = |name: &str, value: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        };
+        let now = Timestamp::from_unix_seconds(1_800_000_000);
+        let mut vault = Vault::create(
+            "Test",
+            &CompositeKey::password("x"),
+            &Encryption::default(),
+            now,
+        )
+        .unwrap();
+        let fields = EntryFields {
+            title: "Company Visa".into(),
+            custom_fields: vec![
+                field("Note", "hi", false),
+                field("Card number", "4111 1111 1111 1111", true),
+                field("Expiry", "08/31", false),
+                field("CVV", "123", true),
+            ],
+            ..EntryFields::default()
+        };
+        let id = vault.create_entry(vault.root().id(), &fields, now).unwrap();
+        let entry = vault.entry(id).unwrap();
+
+        let kept = |name: &str, original, protected| CustomFieldInput {
+            name: name.to_owned(),
+            value: None,
+            protected,
+            original: Some(original),
+        };
+        let input = EntryInput {
+            title: "Company Visa (work)".into(),
+            username: String::new(),
+            password: None,
+            url: String::new(),
+            notes: String::new(),
+            custom_fields: vec![
+                kept("Note", 0, false),
+                kept("Card number", 1, true),
+                CustomFieldInput {
+                    name: "Expiry".into(),
+                    value: Some("09/31".into()),
+                    protected: false,
+                    original: None,
+                },
+                kept("CVV", 3, true),
+            ],
+            tags: Vec::new(),
+            color: None,
+            icon: IconChoice::Standard { number: 0 },
+            expires: None,
+        };
+        let edited = input.to_fields(Some(entry)).unwrap();
+        let shown: Vec<_> = edited
+            .custom_fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.value.expose_secret(), f.protected))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Note", "hi", false),
+                ("Card number", "4111 1111 1111 1111", true),
+                ("Expiry", "09/31", false),
+                ("CVV", "123", true),
+            ]
+        );
     }
 
     #[test]

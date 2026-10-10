@@ -9,6 +9,7 @@ pub mod browser;
 pub mod clipboard;
 pub mod dropbox;
 pub mod entries;
+pub mod facets;
 pub mod generator;
 pub mod groups;
 pub mod history;
