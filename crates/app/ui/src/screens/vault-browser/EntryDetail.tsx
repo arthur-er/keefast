@@ -3,13 +3,13 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, History, KeyRound, Pencil, Plus,
+  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, KeyRound, Pencil, Plus,
   Settings2, Timer, Trash2, User,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { CopyTarget, EntryDetail as Entry } from "@/bindings";
-import { useEntryHistory, useTotpCode } from "@/api/queries";
+import { useTotpCode } from "@/api/queries";
 import {
   Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
   TabsTrigger, toast,
@@ -17,6 +17,8 @@ import {
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
 import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
+import { HistoryTab } from "@/screens/entry-history/HistoryTab";
+import { useShowHistoryCommand } from "@/screens/entry-history/open";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
@@ -103,6 +105,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
     },
     keysActive,
   );
+  useShowHistoryCommand(actions, keysActive);
   useAppCommand({ id: "openUrl", title: "Open URL", section: "Entry", icon: Globe, enabled: !!entry.url, run: () => openUrl(entry.vault, entry.id) }, keysActive);
 
   const location = entry.groupPath.length > 1 ? `${entry.vaultName} / ${entry.groupPath[entry.groupPath.length - 1]}` : entry.vaultName;
@@ -258,7 +261,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
             <Files entry={entry} />
           </TabsContent>
           <TabsContent value="history">
-            <VersionHistory entry={entry} />
+            <HistoryTab entry={entry} />
           </TabsContent>
           <TabsContent value="access">
             <Access entry={entry} />
@@ -600,56 +603,6 @@ function Files({ entry }: { entry: Entry }) {
         </div>
       )}
     </>
-  );
-}
-
-function VersionHistory({ entry }: { entry: Entry }) {
-  const history = useEntryHistory(entry.vault, entry.historyCount > 0 ? entry.id : undefined);
-  if (entry.historyCount === 0) {
-    return (
-      <div className="vb-empty h-[200px]">
-        <History />
-        <p>This Entry has no earlier versions yet.</p>
-        <span className="subtle text-sm">Each edit keeps the previous version here.</span>
-      </div>
-    );
-  }
-  const restore = async (index: number, when: string) => {
-    try {
-      await api.restoreEntryVersion(entry.vault, entry.id, index);
-      toast(`Restored the version of ${when}. The current one is kept in History.`);
-    } catch (error) {
-      toast(errorMessage(error), { icon: "error" });
-    }
-  };
-  // Newest first, under the current version.
-  const versions = [...(history.data ?? [])].reverse();
-  return (
-    <div>
-      <div className="C-ver is-current">
-        <span className="node" />
-        <div>
-          <div className="what">Current version</div>
-          <div className="when">{entry.modified !== null ? formatDate(entry.modified) : "Unknown"}</div>
-        </div>
-        <span />
-      </div>
-      {versions.map((version) => {
-        const when = version.modified !== null ? formatDate(version.modified) : "an unknown date";
-        return (
-          <div key={version.index} className="C-ver">
-            <span className="node" />
-            <div className="min-w-0">
-              <div className="what truncate">{version.title}</div>
-              <div className="when">Version of {when}</div>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => void restore(version.index, when)}>
-              Restore
-            </Button>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 

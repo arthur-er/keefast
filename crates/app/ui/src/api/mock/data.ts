@@ -86,7 +86,8 @@ export interface MockVault {
   customIcons: { id: string; png: string }[];
 }
 
-const day = (date: string) => Date.parse(`${date}T12:00:00Z`) / 1000;
+/** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
+const day = (date: string) => (date.includes("T") ? Date.parse(date) : Date.parse(`${date}T12:00:00Z`)) / 1000;
 
 /** The prototype's site colours, for the Entries' stand-in favicons. */
 export const BRAND_COLORS: Record<string, string> = {
@@ -115,6 +116,9 @@ interface Seed {
   fields?: MockField[];
   expires?: string;
   history?: number;
+  /** Earlier versions told one by one (oldest first), each the Entry as it is but for the fields
+   * given; in place of `history`'s made-up ones. */
+  versions?: ({ at: string } & Partial<Omit<MockVersion, "modified">>)[];
   modified?: string;
   created?: string;
   group?: string;
@@ -145,6 +149,22 @@ function entry(seed: Seed): MockEntry {
     history: [],
     access: seed.access ?? [],
   };
+  for (const { at, ...version } of seed.versions ?? []) {
+    made.history.push({
+      modified: Date.parse(at) / 1000,
+      title: made.title,
+      username: made.username,
+      password: made.password,
+      url: made.url,
+      notes: made.notes,
+      tags: made.tags,
+      color: made.color,
+      fields: made.fields,
+      totp: made.totp,
+      attachments: made.attachments.map((attachment) => attachment.name),
+      ...version,
+    });
+  }
   for (let index = 0; index < (seed.history ?? 0); index++) {
     const back = (seed.history! - index) * 23 * 86400;
     made.history.push({
@@ -163,6 +183,17 @@ function entry(seed: Seed): MockEntry {
   }
   return made;
 }
+
+/** GitHub's story in the prototype's Entry history: created in 2024, then a new username and
+ * password, the CI token, a TOTP. */
+const GITHUB_VERSIONS: Seed["versions"] = [
+  { at: "2024-03-02T10:04:00", title: "Github", username: "arthur.rezende", password: "github2024", url: "https://github.com/login", notes: "", totp: null, tags: [], fields: [], attachments: [] },
+  { at: "2025-11-02T18:40:00", username: "arthur.rezende", password: "Gh!2025-kq81mZ", url: "https://github.com/login", notes: "", totp: null, tags: [], fields: [], attachments: [] },
+  { at: "2026-03-14T08:15:00", password: "Gh!2025-kq81mZ", url: "https://github.com/login", totp: null, tags: [], fields: [] },
+  { at: "2026-06-03T21:02:00", password: "Gh!2025-kq81mZ", totp: null, tags: [] },
+  { at: "2026-09-28T09:12:00", totp: null, tags: [] },
+  { at: "2026-10-07T14:30:00", totp: null, tags: ["dev"] },
+];
 
 const RECOVERY_CODES = [
   "GitHub recovery codes",
@@ -199,7 +230,7 @@ export function fakeVaults(): MockVault[] {
       policy: "ask",
       customIcons: [],
       entries: [
-        entry({ id: "e1", title: "GitHub", brand: "github", username: "arthur-er", password: "x7#Lq9!vR2mZ@pW4", url: "https://github.com", tags: ["dev", "2fa"], color: "violet", totp: "JBSWY3DPEHPK3PXP", notes: "Recovery codes in attachment.", attachments: [{ name: "github-recovery-codes.txt", text: RECOVERY_CODES, size: 1229 }], fields: [{ name: "PAT (ci)", value: "ghp_4fT9xQ2mZr8LbN0vKc7WdY1sHe3JpA6uGi5o", protected: true }], history: 7, modified: "2026-10-07", access: [{ host: "github.com", allowed: true }] }),
+        entry({ id: "e1", title: "GitHub", brand: "github", username: "arthur-er", password: "x7#Lq9!vR2mZ@pW4", url: "https://github.com", tags: ["dev", "2fa"], color: "violet", totp: "JBSWY3DPEHPK3PXP", notes: "Recovery codes in attachment.", attachments: [{ name: "github-recovery-codes.txt", text: RECOVERY_CODES, size: 1229 }], fields: [{ name: "PAT (ci)", value: "ghp_4fT9xQ2mZr8LbN0vKc7WdY1sHe3JpA6uGi5o", protected: true }], versions: GITHUB_VERSIONS, created: "2024-03-02T10:04:00", modified: "2026-10-07T14:32:00", access: [{ host: "github.com", allowed: true }] }),
         entry({ id: "e2", title: "Proton Mail", brand: "proton", username: "arthur-er@protonmail.com", password: "correct-horse-battery-staple-91", url: "https://account.proton.me", group: "email", tags: ["email", "2fa"], color: "blue", totp: "KRSXG5CTMVRXEZLU", history: 3, modified: "2026-09-30" }),
         entry({ id: "e3", title: "Google", brand: "google", username: "arthur.rezende@gmail.com", password: "Gq!29vmL0pzX#", url: "https://accounts.google.com", group: "email", tags: ["email"], history: 12, modified: "2026-08-14" }),
         entry({ id: "e4", title: "Fastmail", brand: "fastmail", username: "a@rezende.dev", password: "uH3$kq8Zx1!b", url: "https://app.fastmail.com", group: "email", tags: ["email"], modified: "2026-05-02" }),

@@ -10,6 +10,7 @@ import type { AppSettings, PaneWidthsView } from "@/bindings";
 import { keys, useSettings, useWorkspace } from "@/api/queries";
 import { Button } from "@/kit";
 import { cn } from "@/lib/utils";
+import { EntryHistoryPage } from "@/screens/entry-history/EntryHistory";
 import { DetailArea } from "@/screens/vault-browser/DetailArea";
 import { EntryList } from "@/screens/vault-browser/EntryList";
 import { LockedVault } from "@/screens/vault-browser/LockedVault";
@@ -32,9 +33,16 @@ export function Shell() {
       <Sidebar />
       <Edge pane="sidebar" widths={widths} left={0} />
       <div className="vb-main">
-        <Toolbar />
-        <MergeNotice />
-        <div className="vb-panes">{state.page.kind === "browser" ? <Browser widths={widths} /> : <PagePlaceholder />}</div>
+        {state.page.kind === "browser" && state.detail === "history" ? (
+          // Entry history B takes the Entry list's place too: versions beside the comparison.
+          <EntryHistoryPage />
+        ) : (
+          <>
+            <Toolbar />
+            <MergeNotice />
+            <div className="vb-panes">{state.page.kind === "browser" ? <Browser widths={widths} /> : <PagePlaceholder />}</div>
+          </>
+        )}
       </div>
     </div>
   );
