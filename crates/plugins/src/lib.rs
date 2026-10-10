@@ -3,18 +3,23 @@
 //! facets an Entry has from its custom fields' names, hands a hook the values of one facet's
 //! Owned fields, and gets back text to show or values to write.
 //!
-//! keefast's own Card Plugin is compiled in ([`PluginHost::bundled`]); installing others from
-//! files comes later.
+//! keefast's own Card Plugin is compiled in ([`PluginHost::bundled`]). Others are installed
+//! from signed package files ([`package`]) and kept on disk by the [`PluginStore`], which loads
+//! the enabled ones into the host.
 
 pub mod manifest;
+pub mod package;
 mod runtime;
+mod store;
 
 use std::sync::{Mutex, PoisonError};
 
 use wasmtime::Engine;
 
 pub use manifest::{API_VERSION, Capability, Facet, FieldKind, Manifest, OwnedField};
+pub use package::{Package, PackageError, PublisherKey};
 pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, Problem, Severity};
+pub use store::{InstallError, InstalledPlugin, Offer, PluginStore, Publisher};
 
 use runtime::{Field, Runtime};
 
@@ -26,6 +31,14 @@ const BUNDLED: &[(&str, &[u8])] = &[(
     include_str!("../../../plugins/card/plugin.json"),
     include_bytes!("../../../plugins/card/card.wasm"),
 )];
+
+/// The Plugins compiled into keefast, read.
+pub(crate) fn bundled_plugins() -> impl Iterator<Item = (Manifest, &'static [u8])> {
+    BUNDLED.iter().map(|(manifest, component)| {
+        let manifest = Manifest::parse(manifest).expect("a bundled Plugin's manifest reads");
+        (manifest, *component)
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginError {
@@ -109,8 +122,8 @@ impl PluginHost {
     /// A host with the Plugins compiled into keefast.
     pub fn bundled() -> Self {
         let mut host = Self::new();
-        for (manifest, component) in BUNDLED {
-            host.load(manifest, component)
+        for (manifest, component) in bundled_plugins() {
+            host.add(manifest, component)
                 .expect("a bundled Plugin loads");
         }
         host
@@ -118,7 +131,28 @@ impl PluginHost {
 
     /// Loads a Plugin, refusing one whose id is taken or whose Owned fields another owns.
     pub fn load(&mut self, manifest: &str, component: &[u8]) -> Result<&Manifest, PluginError> {
-        let manifest = Manifest::parse(manifest)?;
+        self.add(Manifest::parse(manifest)?, component)
+    }
+
+    /// Checks a component would load: that it compiles, is a Plugin of this API version and
+    /// imports nothing.
+    pub(crate) fn check_component(&self, component: &[u8]) -> Result<(), PluginError> {
+        Runtime::new(&self.engine, component).map(|_| ())
+    }
+
+    /// Stops running a Plugin; its facets are no longer found. Whether it ran.
+    pub fn unload(&mut self, id: &str) -> bool {
+        let before = self.plugins.len();
+        self.plugins.retain(|plugin| plugin.manifest.id != id);
+        self.plugins.len() != before
+    }
+
+    /// [`Self::load`] for a manifest already read.
+    pub(crate) fn add(
+        &mut self,
+        manifest: Manifest,
+        component: &[u8],
+    ) -> Result<&Manifest, PluginError> {
         if self.manifest(&manifest.id).is_some() {
             return Err(PluginError::Taken(manifest.id));
         }

@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::PluginError;
 
@@ -23,6 +23,15 @@ pub struct Manifest {
     /// What the user knows it as.
     pub name: String,
     pub version: String,
+    /// Who made it, as they call themselves. Only their key is checked: a package signed by a
+    /// key keefast hasn't seen shows this name as unverified.
+    #[serde(default)]
+    pub publisher: Option<String>,
+    /// The publisher's ed25519 public key, base64, which signs the Plugin's packages
+    /// (`PACKAGE.md`). A Plugin compiled into keefast has none yet: keefast signs its own with
+    /// #123.
+    #[serde(default)]
+    pub publisher_key: Option<String>,
     pub api_version: u32,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
@@ -32,7 +41,7 @@ pub struct Manifest {
 
 /// Something a Plugin may do, granted by the user when installing it (ADR 0009). Its Owned
 /// fields are the facets' fields, so they aren't listed here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Capability {
     /// Its hooks get the values of protected Owned fields, so `derive` can label them.
@@ -144,6 +153,15 @@ impl Manifest {
         }
         if self.name.trim().is_empty() || self.version.trim().is_empty() {
             return invalid("a Plugin needs a name and a version".into());
+        }
+        let too_long = |text: &str| text.chars().count() > MAX_ID || text.contains('\n');
+        if too_long(&self.name) || too_long(&self.version) {
+            return invalid("a Plugin's name and version must be one short line".into());
+        }
+        if let Some(publisher) = &self.publisher
+            && (publisher.trim().is_empty() || too_long(publisher))
+        {
+            return invalid("a Plugin's publisher must be one short line".into());
         }
         let mut facets = HashSet::new();
         let mut names = HashSet::new();

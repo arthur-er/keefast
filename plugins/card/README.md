@@ -13,6 +13,11 @@ fields, so any KeePass app reads it: `Card number` (protected), `Cardholder`, `E
   (`crates/plugins/src/lib.rs`), and the mock UI runs it through jco
   (`crates/app/ui/bundled-plugins.ts`).
 
+keefast lists it in Settings → Plugins as keefast's: it can be disabled, not removed. It isn't a
+signed package yet: compiled in, it is trusted as part of keefast. Packaging and signing it with
+keefast's key, so it goes through the same checks as third-party Plugins
+(`crates/plugins/PACKAGE.md`), is #123.
+
 ## Building
 
 `card.wasm` is committed rather than built by `cargo build`: building it needs the
