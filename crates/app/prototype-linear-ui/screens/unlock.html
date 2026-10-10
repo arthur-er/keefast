@@ -1,0 +1,836 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Unlock — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- Shared (unlock screen) ---------- */
+html.is-shot .proto-bar { display: none; }
+#app { background: var(--bg-0); }
+h1, h2, h3, p { margin: 0; }
+button { cursor: default; }
+
+.brand { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+  background: var(--bg-1); border: 1px solid var(--border-strong); color: var(--accent-fg);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 6px 20px rgb(0 0 0 / 0.25); }
+.brand svg.lucide { width: 18px; height: 18px; }
+.brand.sm { width: 24px; height: 24px; border-radius: 7px; box-shadow: none; }
+.brand.sm svg.lucide { width: 13px; height: 13px; }
+
+.vtile { position: relative; display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px;
+  border-radius: 7px; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--fg-1); }
+.vtile svg.lucide { width: 14px; height: 14px; }
+.vtile.lg { width: 40px; height: 40px; border-radius: 10px; }
+.vtile.lg svg.lucide { width: 18px; height: 18px; }
+.vtile.xl { width: 52px; height: 52px; border-radius: 13px; }
+.vtile.xl svg.lucide { width: 22px; height: 22px; }
+.vtile.sm { width: 22px; height: 22px; border-radius: 6px; }
+.vtile.sm svg.lucide { width: 12px; height: 12px; }
+.vtile .pip { position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--bg-0); color: var(--fg-1); }
+.vtile .pip svg.lucide { width: 9px; height: 9px; stroke-width: 2.25; }
+.vtile.mono-tile { font-weight: 600; font-size: 13px; letter-spacing: -0.02em; color: var(--fg-1); }
+.vtile.mono-tile.tinted { color: var(--t); background: color-mix(in srgb, var(--t) 16%, var(--bg-1)); border-color: color-mix(in srgb, var(--t) 28%, transparent); }
+.vtile.sm.mono-tile { font-size: 11px; }
+.vtile.lg.mono-tile { font-size: 17px; }
+.vtile.xl.mono-tile { font-size: 22px; }
+.vtile .pip { border: 1px solid var(--border-strong); }
+.vtile.lg .pip, .vtile.xl .pip { width: 18px; height: 18px; }
+.vtile.lg .pip svg.lucide, .vtile.xl .pip svg.lucide { width: 11px; height: 11px; }
+.vtile.sm .pip { width: 12px; height: 12px; right: -4px; bottom: -4px; }
+.vtile.sm .pip svg.lucide { width: 8px; height: 8px; }
+
+.path { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0; color: var(--fg-2); }
+
+/* Password field */
+.pw { position: relative; }
+.pw .input { padding-right: 4px; }
+.pw .input input { font-family: var(--font-mono); letter-spacing: 0.08em; }
+.pw .input input::placeholder { font-family: var(--font-ui); letter-spacing: 0; }
+.pw .input input.revealed { letter-spacing: 0.02em; }
+.pw .eye { width: 28px; height: 28px; }
+.caps { display: none; }
+.caps.on { display: inline-flex; }
+
+/* Progress (indeterminate: key derivation) */
+.progress { position: relative; height: 2px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.progress > i { position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--accent);
+  animation: kf-indet 1.1s var(--ease) infinite; }
+@keyframes kf-indet { from { left: -38%; } to { left: 100%; } }
+.spin { animation: kf-spin 0.9s linear infinite; }
+@keyframes kf-spin { to { transform: rotate(360deg); } }
+.shake { animation: kf-shake 320ms var(--ease); }
+@keyframes kf-shake { 0%,100% { transform: none; } 20% { transform: translateX(-5px); } 45% { transform: translateX(4px); } 70% { transform: translateX(-2px); } }
+
+[data-status]:empty, [data-nvstatus]:empty { display: none; }
+.notice { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: var(--text-sm); line-height: 1.45; }
+.notice svg.lucide { width: 14px; height: 14px; margin-top: 1px; }
+.notice.danger { background: var(--danger-bg); color: var(--danger); }
+.notice.muted { background: var(--bg-inset); color: var(--fg-1); border: 1px solid var(--border); }
+.notice .detail { display: block; color: var(--fg-2); margin-top: 2px; font-family: var(--font-mono); font-size: 11px; }
+
+.forget { opacity: 0; width: 22px !important; height: 22px !important; color: var(--fg-2) !important; }
+.forget svg.lucide { width: 13px !important; height: 13px !important; }
+.vrow:hover .forget, .vrow.is-active .forget { opacity: 1; }
+.forget:hover { color: var(--fg-0) !important; background: var(--bg-active) !important; }
+
+.keyfile-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; border-radius: var(--r-xs);
+  background: var(--bg-active); color: var(--fg-0); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; max-width: 220px; }
+.keyfile-chip svg.lucide { width: 13px; height: 13px; color: var(--fg-1); }
+.keyfile-chip .x { all: unset; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: var(--fg-2); }
+.keyfile-chip .x:hover { background: var(--bg-hover); color: var(--fg-0); }
+
+.win-corner { position: absolute; top: 10px; right: 12px; display: flex; gap: 2px; z-index: 5; }
+.win-corner-l { position: absolute; top: 10px; left: 14px; display: flex; align-items: center; gap: 8px; z-index: 5; font-weight: 600; font-size: var(--text-md); letter-spacing: -0.01em; }
+
+/* ---------- New Vault (shared parts) ---------- */
+.nv-section-title { font-size: var(--text-md); font-weight: 600; }
+.nv-section-desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+.nv-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.nv-grid3 > * { min-width: 0; }
+.nv-num .input { font-variant-numeric: tabular-nums; }
+.nv-num .input input { text-align: left; }
+.nv-num .unit { color: var(--fg-2); font-size: var(--text-sm); }
+.enc-head { all: unset; display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; }
+.enc-head:hover { background: var(--bg-hover); }
+.enc-head .chev { color: var(--fg-2); transition: transform var(--dur) var(--ease); }
+.enc-head.open .chev { transform: rotate(90deg); }
+.enc-sum { margin-left: auto; color: var(--fg-2); font-size: var(--text-sm); display: flex; gap: 6px; align-items: center; }
+.enc-sum .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-2); opacity: 0.6; }
+.enc-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 14px; animation: kf-fade var(--dur) var(--ease); }
+.seg.full { display: flex; }
+.seg.full > button { flex: 1; justify-content: center; }
+.match { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }
+.match.ok { color: var(--ok); }
+.match svg.lucide { width: 13px; height: 13px; }
+.str-row { display: flex; align-items: center; gap: 10px; }
+.str-row .strength { flex: 1; }
+.str-row .bits { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+.est { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-1); }
+.est b { font-weight: 500; color: var(--fg-0); font-variant-numeric: tabular-nums; }
+
+/* ---------- Variant A: focused card ---------- */
+.a-wrap { height: 100%; display: grid; place-items: center; overflow: auto; padding: 32px 0 40px; }
+.a-col { width: 400px; display: flex; flex-direction: column; }
+.a-head { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 22px; }
+.a-head h1 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin-top: 16px; }
+.a-head p { color: var(--fg-1); margin-top: 4px; }
+.a-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 40px rgb(0 0 0 / 0.25); position: relative; }
+:root[data-theme="light"] .a-card { box-shadow: 0 12px 40px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04); }
+.a-file { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px;
+  border-bottom: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.a-file:hover { background: var(--bg-hover); }
+.a-file .nm { font-weight: 600; font-size: var(--text-md); }
+.a-file .chev { margin-left: auto; color: var(--fg-2); }
+.a-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.a-keyrow { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.a-keyrow .label { margin-right: auto; }
+.a-lists { margin-top: 22px; display: flex; flex-direction: column; gap: 14px; }
+.a-list-head { display: flex; align-items: center; height: 24px; padding: 0 10px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.vrow { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 6px 0 10px; border-radius: var(--r-sm); color: var(--fg-0); }
+.vrow:hover { background: var(--bg-hover); }
+.vrow.is-active { background: var(--bg-active); }
+.vrow .nm { font-weight: 500; flex: none; }
+.vrow .path { flex: 1; }
+.vrow .when { color: var(--fg-2); font-size: var(--text-sm); flex: none; }
+.a-foot { display: flex; justify-content: center; gap: 2px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.a-pop { position: absolute; left: 8px; right: 8px; top: 62px; z-index: 20; padding: 4px; transform-origin: top center; }
+.a-pop .menu-item .path { margin-left: auto; max-width: 180px; }
+.a-card .unlock-btn { width: 100%; }
+
+/* ---------- Variant B: split, Vaults rail ---------- */
+.b-shell { display: grid; grid-template-columns: 284px 1fr; height: 100%; }
+.b-rail { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.b-rail-top { height: var(--toolbar-h); display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; font-weight: 600; letter-spacing: -0.01em; }
+.b-rail-scroll { flex: 1; overflow: auto; padding: 4px 8px; }
+.b-sec + .b-sec { margin-top: 10px; }
+.b-item { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 6px 0 8px; border-radius: var(--r-sm); }
+.b-item:hover { background: var(--bg-hover); }
+.b-item.is-active { background: var(--bg-active); }
+.b-item .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.b-item .nm { font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.b-item .badge { height: 18px; }
+.b-rail-foot { border-top: 1px solid var(--border); padding: 6px 8px 8px; flex: none; }
+.b-rail-foot .nav-item kbd, .b-rail-foot .nav-item .kbds { margin-left: auto; }
+.b-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.b-main .toolbar { justify-content: space-between; }
+.b-stage { flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; }
+.b-pane { width: 420px; }
+.b-id { display: flex; flex-direction: column; align-items: flex-start; gap: 0; }
+.b-id h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin-top: 16px; }
+.b-id .path { font-size: 12px; margin-top: 4px; }
+.b-id .facts { display: flex; gap: 6px; margin-top: 12px; }
+.b-form { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+.b-keyfile { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; border-radius: var(--r-sm);
+  border: 1px dashed var(--border-strong); color: var(--fg-2); }
+.b-keyfile.has { border-style: solid; background: var(--bg-1); color: var(--fg-0); }
+.b-keyfile .nm { font-family: var(--font-mono); font-size: 12px; }
+.b-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.b-actions .hint-r { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: inline-flex; gap: 6px; align-items: center; }
+.b-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; color: var(--fg-1); }
+.b-empty .vtile { margin-bottom: 4px; }
+/* B · New Vault: settings-style two-column form */
+.b-nv { width: 640px; align-self: start; }
+.b-nv h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
+.b-nv .lede { color: var(--fg-1); margin-top: 4px; }
+.b-nv-sec { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); }
+.b-nv-sec:first-of-type { margin-top: 20px; }
+.b-nv-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.b-nv-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 14px 0 0; border-top: 1px solid var(--border); }
+.b-nv-foot .left { margin-right: auto; }
+.enc-box { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--bg-1); }
+
+/* ---------- Variant C: launcher ---------- */
+.c-wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 96px; }
+.c-others { margin-top: 16px; display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); }
+.c-others .tag { cursor: default; gap: 6px; padding: 0 8px 0 3px; }
+.c-others .tag:hover { background: var(--bg-hover); color: var(--fg-0); }
+.c-others .vtile { width: 16px; height: 16px; border-radius: 4px; font-size: 9px !important; }
+.c-others .vtile .pip { display: none; }
+.c-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; color: var(--fg-1); font-size: var(--text-md); }
+.c-brand b { color: var(--fg-0); font-weight: 600; letter-spacing: -0.01em; }
+.c-pal { width: 620px; background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); overflow: hidden; position: relative; }
+.c-pal.shake { animation: kf-shake 320ms var(--ease); }
+.c-in { display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); position: relative; }
+.c-in > svg.lucide { color: var(--fg-2); width: 18px; height: 18px; }
+.c-in input { all: unset; flex: 1; min-width: 0; font-size: var(--text-lg); height: 100%; color: var(--fg-0); }
+.c-in input::placeholder { color: var(--fg-2); }
+.c-in input.secret { font-family: var(--font-mono); letter-spacing: 0.12em; }
+.c-in input.secret.revealed { letter-spacing: 0.02em; }
+.c-in input.secret::placeholder { font-family: var(--font-ui); letter-spacing: 0; }
+.c-in .progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 0; background: transparent; }
+.c-in.invalid { box-shadow: inset 0 -1px 0 var(--danger); }
+.c-crumb { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px 0 4px; border-radius: var(--r-sm);
+  background: var(--bg-active); font-size: var(--text-sm); font-weight: 500; flex: none; }
+.c-crumb .vtile { width: 18px; height: 18px; border-radius: 5px; }
+.c-crumb .vtile svg.lucide { width: 11px; height: 11px; }
+.c-crumb .vtile.mono-tile { font-size: 10px; }
+.c-crumb .vtile .pip { display: none; }
+.c-list { max-height: 420px; overflow: auto; padding: 6px; }
+.c-group { padding: 8px 10px 4px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.c-item { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 6px 0 10px; border-radius: var(--r-sm); }
+.c-item.is-active { background: var(--bg-active); }
+.c-item .nm { font-weight: 500; flex: none; }
+.c-item .nm mark { background: none; color: var(--accent-fg); }
+.c-item .path { flex: 1; min-width: 0; }
+.c-item .when { color: var(--fg-2); font-size: var(--text-sm); }
+.c-item .act-ico { width: 28px; display: grid; place-items: center; color: var(--fg-1); }
+.c-item .ret { opacity: 0; }
+.c-item.is-active .ret { opacity: 1; }
+.c-empty { padding: 28px 16px; text-align: center; color: var(--fg-2); }
+.c-foot { display: flex; align-items: center; gap: 14px; height: 40px; padding: 0 12px 0 14px; border-top: 1px solid var(--border);
+  background: var(--bg-inset); font-size: var(--text-sm); color: var(--fg-2); }
+.c-foot .k { display: inline-flex; align-items: center; gap: 6px; }
+.c-foot .right { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+.c-detail { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.c-meta { display: grid; grid-template-columns: 88px 1fr; row-gap: 8px; align-items: center; font-size: var(--text-sm); }
+.c-meta .k { color: var(--fg-2); }
+.c-meta .v { color: var(--fg-0); min-width: 0; display: flex; align-items: center; gap: 8px; }
+.c-under { margin-top: 16px; font-size: var(--text-sm); color: var(--fg-2); display: flex; gap: 16px; }
+.c-under a { color: var(--fg-1); display: inline-flex; gap: 6px; align-items: center; }
+.c-under a:hover { color: var(--fg-0); }
+/* C · New Vault stepper */
+.c-steps { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); }
+.c-steps i.d { width: 18px; height: 3px; border-radius: 3px; background: var(--border-strong); display: inline-block; }
+.c-steps i.d.on { background: var(--accent); }
+.c-nv { padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 252px; }
+.c-nv .enc-box { background: transparent; }
+</style>
+</head>
+<body><div id="app"></div>
+<script>
+/* =====================================================================
+ * State + behaviour shared by every variant
+ * ===================================================================== */
+const P = new URL(location.href).searchParams;
+if (P.get("shot")) document.documentElement.classList.add("is-shot");
+const I = KF.icon, esc = KF.esc;
+
+const STR = {
+  title: "Open a Vault", noFile: "No Vault file selected", chooseFile: "Choose Vault file…",
+  pwLabel: "Master password", pwPh: "Type your master password", keyLabel: "Key file", noKey: "None (optional)",
+  chooseKey: "Choose key file…", unlock: "Unlock", unlocking: "Unlocking…",
+  progress: "Deriving the key. This can take a few seconds.", dropbox: "From Dropbox…", newVault: "New Vault…",
+  recents: "Recent Vault files", locked: "Locked Vaults", vaultLocked: "This Vault is locked.",
+  errWrong: "Wrong master password or key file.", errNotFound: "The Vault file could not be found.",
+  errAlready: "A Vault from this Vault file is already open.",
+  nvTitle: "New Vault", nvPath: "Vault file", nvPathPh: "e.g. ~/Vaults/Personal.kdbx", nvBrowse: "Browse…",
+  nvName: "Name", nvNamePh: "The Vault file's name if empty", nvCreate: "Create", nvCreating: "Creating the Vault: deriving the key…",
+  nvNoPath: "Choose where to save the Vault file.", nvExists: "A file is already there. keefast never replaces a file with a new Vault.",
+  masterKey: "Master key", confirm: "Repeat the master password", confirmPh: "Type it again", kfChoose: "Choose…", kfCreate: "Create new…",
+  keyNote: "Use a master password, a key file, or both. Keep a copy of the key file somewhere safe: without it the Vault can't be opened.",
+  mismatch: "The two master passwords are different.", none: "Set a master password, a key file, or both.",
+  encryption: "Encryption", cipher: "Cipher", kdf: "Key derivation", mem: "Memory (MiB)", it: "Iterations", par: "Parallelism", rounds: "Rounds",
+  kdfNote: "Higher values make guessing the master password slower, and unlocking and saving too.",
+  kdfNumber: "Enter whole numbers for the key derivation settings.", kdfIt: "Argon2 needs at least 1 iteration.",
+  kdfPar: "Argon2's parallelism must be between 1 and 16777215.",
+  kdfMem: "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 TiB.", kdfRounds: "AES-KDF needs at least 1 round.",
+  cancel: "Cancel", settings: "Settings",
+};
+
+function freshState() {
+  const st = P.get("state") || "";
+  const S = {
+    locked: [{ id: "family", name: "Family", path: "~/Vaults/Family.kdbx", storage: "local", when: "Locked 12 min ago", locked: true, tint: "green" }],
+    recents: [
+      { id: "personal", name: "Personal", path: "~/Vaults/Personal.kdbx", storage: "local", when: "Today", tint: "purple" },
+      { id: "work", name: "Work", path: "Dropbox: /Apps/keefast/Work.kdbx", storage: "dropbox", when: "Today", tint: "blue" },
+      { id: "old", name: "Old-2019", path: "~/Backups/Old-2019.kdbx", storage: "local", when: "3 months ago", missing: true },
+    ],
+    sel: "personal", pw: "", show: false, keyFile: null, phase: "idle", error: null, caps: false,
+    mode: "unlock", popover: false, shake: false,
+    nv: { step: 0, path: "", name: "", pw: "", pw2: "", show: false, keyFile: null, keyNew: false, encOpen: false,
+      cipher: "AES-256", kdf: "Argon2id", mem: "64", it: "5", par: "4", rounds: "2000000", phase: "idle", error: null, field: null },
+    c: { q: "", active: 0, step: "list" },
+  };
+  if (st === "error") { S.pw = "hunter2"; S.error = { msg: STR.errWrong }; }
+  if (st === "unlocking") { S.pw = "correct horse battery"; S.phase = "unlocking"; }
+  if (st === "empty") { S.sel = null; }
+  if (st === "locked") { S.sel = "family"; }
+  if (st === "password") { S.c.step = "pw"; S.pw = "correct horse"; }
+  if (st === "new" || st === "new-enc") {
+    S.mode = "new";
+    Object.assign(S.nv, { path: "~/Vaults/Side-projects.kdbx", name: "Side projects", pw: "tidal-ember-quartz-91", pw2: "tidal-ember-quartz-91", encOpen: st === "new-enc" });
+    if (P.get("step")) S.nv.step = +P.get("step");
+  }
+  return S;
+}
+
+const all = (S) => [...S.locked, ...S.recents];
+const findLoc = (S, id) => all(S).find((l) => l.id === id) || null;
+const vtile = (l, cls = "") => {
+  if (!l) return `<span class="vtile ${cls}">${I("file-question")}</span>`;
+  const c = l.tint ? `--t:var(--c-${l.tint})` : "";
+  const pip = l.locked ? I("lock") : l.storage === "dropbox" ? I("cloud") : "";
+  return `<span class="vtile mono-tile ${cls} ${l.tint ? "tinted" : ""}" style="${c}">${esc(l.name.trim()[0].toUpperCase())}${pip ? `<span class="pip">${pip}</span>` : ""}</span>`;
+};
+
+/* Password strength (prototype estimate). */
+function strength(pw) {
+  if (!pw) return { score: 0, bits: 0 };
+  let pool = 0;
+  if (/[a-z]/.test(pw)) pool += 26; if (/[A-Z]/.test(pw)) pool += 26; if (/\d/.test(pw)) pool += 10; if (/[^a-zA-Z0-9]/.test(pw)) pool += 32;
+  const bits = Math.round(pw.length * Math.log2(Math.max(pool, 2)));
+  return { bits, score: bits < 36 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4 };
+}
+function kdfEstimate(nv) {
+  if (nv.kdf === "AES-KDF") { const r = +nv.rounds || 0; return (r / 4_000_000).toFixed(1); }
+  const s = ((+nv.mem || 0) * (+nv.it || 0)) / 640;
+  return s < 0.1 ? "< 0.1" : s.toFixed(1);
+}
+function encSummary(nv) {
+  const parts = [nv.cipher, nv.kdf];
+  if (nv.kdf === "AES-KDF") parts.push(`${Number(nv.rounds || 0).toLocaleString("en")} rounds`);
+  else parts.push(`${nv.mem} MiB`, `${nv.it}×`);
+  return parts.map((p) => `<span>${esc(p)}</span>`).join(`<i class="sep"></i>`);
+}
+function validateNew(S) {
+  const nv = S.nv;
+  if (!nv.path.trim()) return { msg: STR.nvNoPath, field: "path" };
+  if (all(S).some((l) => l.path === nv.path.trim())) return { msg: STR.nvExists, field: "path" };
+  if (!nv.pw && !nv.keyFile) return { msg: STR.none, field: "pw" };
+  if (nv.pw !== nv.pw2) return { msg: STR.mismatch, field: "pw2" };
+  const nums = nv.kdf === "AES-KDF" ? [nv.rounds] : [nv.mem, nv.it, nv.par];
+  if (nums.some((n) => !/^\d+$/.test(String(n).trim()))) return { msg: STR.kdfNumber, field: "enc" };
+  if (nv.kdf === "AES-KDF") { if (+nv.rounds < 1) return { msg: STR.kdfRounds, field: "enc" }; }
+  else {
+    if (+nv.it < 1) return { msg: STR.kdfIt, field: "enc" };
+    if (+nv.par < 1 || +nv.par > 16777215) return { msg: STR.kdfPar, field: "enc" };
+    if (+nv.mem * 1024 < 8 * +nv.par || +nv.mem > 4 * 1024 * 1024) return { msg: STR.kdfMem, field: "enc" };
+  }
+  return null;
+}
+
+/* ---------- Shared fragments ---------- */
+const F = {
+  pw(S, { lg = true, autofocus = true, id = "pw" } = {}) {
+    const invalid = S.error && S.error.msg === STR.errWrong;
+    return `<div class="pw ${S.shake ? "shake" : ""}">
+      <div class="input ${lg ? "lg" : ""} ${invalid ? "invalid" : ""}">
+        <input id="${id}" data-model="pw" type="${S.show ? "text" : "password"}" class="${S.show ? "revealed" : ""}" value="${esc(S.pw)}" placeholder="${STR.pwPh}" ${S.phase === "unlocking" ? "disabled" : ""} ${autofocus ? "data-autofocus" : ""} spellcheck="false" autocomplete="off">
+        <span class="badge warn caps ${S.caps ? "on" : ""}" data-live="caps">${I("arrow-big-up", "ico-sm")} Caps Lock</span>
+        <button class="btn ghost icon sm eye" data-act="toggleShow" title="${S.show ? "Hide" : "Show"} password">${I(S.show ? "eye-off" : "eye")}</button>
+      </div></div>`;
+  },
+  keyChip(kf, act = "clearKey") {
+    return `<span class="keyfile-chip" title="${esc(kf.path)}">${I("file-key-2")}<span class="truncate">${esc(kf.name)}</span><button class="x" data-act="${act}" title="Remove key file">${I("x", "ico-sm")}</button></span>`;
+  },
+  status(S) {
+    if (S.phase === "unlocking") return `<div class="vstack" style="gap:8px"><div class="progress"><i></i></div><div class="hint">${STR.progress}</div></div>`;
+    if (S.error) return `<div class="notice danger">${I("circle-alert")}<span>${esc(S.error.msg)}${S.error.detail ? `<span class="detail">${esc(S.error.detail)}</span>` : ""}</span></div>`;
+    return "";
+  },
+  unlockLabel(S) {
+    if (S.phase === "unlocking") return `${I("loader-circle", "spin")} ${STR.unlocking}`;
+    if (S.phase === "done") return `${I("check")} Unlocked`;
+    return `${STR.unlock} <kbd>Enter</kbd>`;
+  },
+  menuLocs(S) {
+    const row = (l) => `<div class="menu-item ${S.sel === l.id ? "is-active" : ""}" data-act="select" data-arg="${l.id}">${vtile(l, "sm")}<span>${esc(l.name)}</span><span class="path truncate">${esc(l.path)}</span></div>`;
+    return `${S.locked.length ? `<div class="menu-label">${STR.locked}</div>${S.locked.map(row).join("")}` : ""}
+      ${S.recents.length ? `<div class="menu-label">${STR.recents}</div>${S.recents.map(row).join("")}` : ""}
+      <div class="menu-sep"></div>
+      <div class="menu-item" data-act="chooseFile">${I("folder-open")} ${STR.chooseFile} ${KF.kbd("Ctrl", "O")}</div>
+      <div class="menu-item" data-act="dropbox">${I("cloud")} ${STR.dropbox}</div>
+      <div class="menu-item" data-act="newVault">${I("plus")} ${STR.newVault} ${KF.kbd("Ctrl", "N")}</div>`;
+  },
+  /* New Vault field groups */
+  nvPath(S) {
+    const nv = S.nv, bad = nv.error && nv.error.field === "path";
+    return `<div class="field"><label>${STR.nvPath}</label>
+        <div class="hstack"><div class="input mono ${bad ? "invalid" : ""}">${I("file-lock-2")}<input data-model="nv.path" value="${esc(nv.path)}" placeholder="${STR.nvPathPh}" spellcheck="false" data-autofocus></div>
+        <button class="btn secondary" data-act="nvBrowse">${STR.nvBrowse}</button></div>
+        ${bad ? `<div class="error-msg">${I("circle-alert", "ico-sm")} ${esc(nv.error.msg)}</div>` : ""}</div>
+      <div class="field"><label>${STR.nvName}</label><div class="input"><input data-model="nv.name" value="${esc(nv.name)}" placeholder="${STR.nvNamePh}"></div></div>`;
+  },
+  nvKey(S, { note = true } = {}) {
+    const nv = S.nv, st = strength(nv.pw);
+    const badPw = nv.error && nv.error.field === "pw", bad2 = nv.error && nv.error.field === "pw2";
+    return `<div class="field"><label>${STR.pwLabel}</label>
+        <div class="pw"><div class="input ${badPw ? "invalid" : ""}"><input data-model="nv.pw" type="${nv.show ? "text" : "password"}" class="${nv.show ? "revealed" : ""}" value="${esc(nv.pw)}" placeholder="${STR.pwPh}" spellcheck="false" autocomplete="off">
+        <button class="btn ghost icon sm eye" data-act="nvToggleShow" title="Show password">${I(nv.show ? "eye-off" : "eye")}</button></div></div>
+        <div class="str-row" data-live="nvStrength">${F.nvStrength(nv)}</div></div>
+      <div class="field"><label>${STR.confirm}</label>
+        <div class="pw"><div class="input ${bad2 ? "invalid" : ""}"><input data-model="nv.pw2" type="${nv.show ? "text" : "password"}" class="${nv.show ? "revealed" : ""}" value="${esc(nv.pw2)}" placeholder="${STR.confirmPh}" spellcheck="false" autocomplete="off"></div></div>
+        <div data-live="nvMatch">${F.nvMatch(nv)}</div></div>
+      <div class="field"><label>${STR.keyLabel}</label>
+        <div class="hstack">
+          ${nv.keyFile ? F.keyChip(nv.keyFile, "nvClearKey") + (nv.keyNew ? `<span class="badge accent">New</span>` : "") : `<span class="subtle" style="font-size:var(--text-sm)">${STR.noKey}</span>`}
+          <span class="spacer"></span>
+          <button class="btn secondary sm" data-act="nvChooseKey">${STR.kfChoose}</button>
+          <button class="btn secondary sm" data-act="nvCreateKey">${I("sparkles")} ${STR.kfCreate}</button>
+        </div>
+        ${note ? `<div class="hint">${STR.keyNote}</div>` : ""}</div>`;
+  },
+  nvStrength(nv) {
+    const st = strength(nv.pw);
+    return `<div class="strength" data-score="${st.score}"><i></i><i></i><i></i><i></i></div><span class="bits">${nv.pw ? `${st.bits} bits` : "&nbsp;"}</span>`;
+  },
+  nvMatch(nv) {
+    if (!nv.pw2) return "";
+    if (nv.pw2 === nv.pw) return `<span class="match ok">${I("check")} The two master passwords match.</span>`;
+    if (nv.pw.startsWith(nv.pw2)) return "";
+    return `<span class="error-msg">${I("circle-alert", "ico-sm")} ${STR.mismatch}</span>`;
+  },
+  nvEnc(S, { collapsible = true, summaryFirst = false } = {}) {
+    const nv = S.nv, open = !collapsible || nv.encOpen, bad = nv.error && nv.error.field === "enc";
+    const seg = (key, opts) => `<div class="seg full">${opts.map((o) => `<button class="${nv[key] === o ? "is-on" : ""}" data-act="nvSet" data-arg="${key}:${o}">${o}</button>`).join("")}</div>`;
+    const num = (key, label, unit = "") => `<div class="field nv-num"><label>${label}</label><div class="input ${bad ? "invalid" : ""}"><input data-model="nv.${key}" value="${esc(nv[key])}" inputmode="numeric">${unit ? `<span class="unit">${unit}</span>` : ""}</div></div>`;
+    const body = `<div class="enc-body">
+        <div class="field"><label>${STR.cipher}</label>${seg("cipher", ["AES-256", "ChaCha20", "Twofish"])}</div>
+        <div class="field"><label>${STR.kdf}</label>${seg("kdf", ["Argon2id", "Argon2d", "AES-KDF"])}</div>
+        ${nv.kdf === "AES-KDF" ? `<div class="nv-grid3">${num("rounds", STR.rounds)}</div>` : `<div class="nv-grid3">${num("mem", STR.mem, "MiB")}${num("it", STR.it)}${num("par", STR.par)}</div>`}
+        ${bad ? `<div class="error-msg">${I("circle-alert", "ico-sm")} ${esc(nv.error.msg)}</div>` : ""}
+        <div class="hstack" style="justify-content:space-between;align-items:flex-start;gap:16px"><div class="hint" style="max-width:340px">${STR.kdfNote}</div><span class="est" data-live="nvEst" title="Estimate for this machine">${I("timer", "ico-sm")} ≈ <b>${kdfEstimate(nv)} s</b> per unlock</span></div>
+      </div>`;
+    if (!collapsible) return body;
+    return `<div class="enc-box">
+      ${summaryFirst
+        ? `<button class="enc-head ${open ? "open" : ""}" data-act="nvEncToggle">${I("chevron-right", "chev ico-sm")}<span class="enc-sum" data-live="nvSum" style="margin:0;color:var(--fg-0);font-size:var(--text-md)">${encSummary(nv)}</span><span class="subtle" style="margin-left:auto;font-size:var(--text-sm)">${open ? "Hide" : "Customize"}</span></button>`
+        : `<button class="enc-head ${open ? "open" : ""}" data-act="nvEncToggle">${I("chevron-right", "chev ico-sm")}<span class="nv-section-title">${STR.encryption}</span>
+        <span class="enc-sum" data-live="nvSum">${encSummary(nv)}</span></button>`}
+      ${open ? body : ""}</div>`;
+  },
+  nvStatus(S) {
+    const nv = S.nv;
+    if (nv.phase === "creating") return `<div class="vstack" style="gap:8px"><div class="progress"><i></i></div><div class="hint">${STR.nvCreating}</div></div>`;
+    if (nv.error && !["path", "pw2", "enc"].includes(nv.error.field)) return `<div class="notice danger">${I("circle-alert")}<span>${esc(nv.error.msg)}</span></div>`;
+    return "";
+  },
+};
+
+/* ---------- Controller: one per variant mount ---------- */
+function mount(root, view, extra = {}) {
+  const S = freshState();
+  let t = null;
+  const live = Object.assign({
+    caps: () => `${I("arrow-big-up", "ico-sm")} Caps Lock`,
+    nvStrength: () => F.nvStrength(S.nv), nvMatch: () => F.nvMatch(S.nv), nvSum: () => encSummary(S.nv), nvEst: () => `${I("timer", "ico-sm")} ≈ <b>${kdfEstimate(S.nv)} s</b> per unlock`,
+  }, extra.live || {});
+
+  function render() {
+    const a = document.activeElement, focusKey = a && a.dataset && (a.dataset.model || a.id), caret = a && a.selectionStart;
+    root.innerHTML = view(S, F);
+    const target = (focusKey && (root.querySelector(`[data-model="${focusKey}"]`) || root.querySelector("#" + CSS.escape(focusKey)))) || root.querySelector("[data-autofocus]:not([disabled])");
+    if (target && !P.get("shot")) { target.focus(); try { const p = caret ?? target.value.length; target.setSelectionRange(p, p); } catch {} }
+    if (S.shake) setTimeout(() => { S.shake = false; }, 400);
+    extra.after && extra.after(S, root);
+  }
+  function refreshLive() {
+    root.querySelectorAll("[data-live]").forEach((n) => { const f = live[n.dataset.live]; if (f) n.innerHTML = f(S); });
+  }
+  const set = (path, v) => { const k = path.split("."); if (k.length === 2) S[k[0]][k[1]] = v; else S[k[0]] = v; };
+
+  const A = {
+    toggleShow() { S.show = !S.show; render(); },
+    select(id) { S.sel = id; S.error = null; S.pw = ""; S.keyFile = null; S.popover = false; S.phase = "idle"; render(); },
+    forget(id) {
+      const l = findLoc(S, id); S.recents = S.recents.filter((r) => r.id !== id);
+      if (S.sel === id) { S.sel = null; S.error = null; }
+      render(); KF.toast(`Forgot <b>${esc(l.name)}</b> <span class="subtle">· the Vault file is untouched</span>`, { icon: "history" });
+    },
+    chooseFile() {
+      S.popover = false;
+      if (!S.recents.find((r) => r.id === "shared")) S.recents.unshift({ id: "shared", name: "Shared", path: "~/Downloads/Shared.kdbx", storage: "local", when: "Just now", tint: "orange" });
+      A.select("shared");
+    },
+    dropbox() { S.popover = false; render(); KF.toast(`${STR.dropbox} opens the Dropbox browser <span class="subtle">· separate screen</span>`, { icon: "cloud" }); },
+    settings() { KF.toast("Settings", { icon: "settings" }); },
+    chooseKey() { S.keyFile = { name: "Personal.keyx", path: "~/Keys/Personal.keyx" }; S.error = null; render(); },
+    clearKey() { S.keyFile = null; render(); },
+    togglePopover() { S.popover = !S.popover; render(); },
+    closePopover() { if (S.popover) { S.popover = false; render(); } },
+    unlock() {
+      const l = findLoc(S, S.sel);
+      if (!l || S.phase === "unlocking") return;
+      S.popover = false;
+      if (l.missing) { S.error = { msg: STR.errNotFound, detail: l.path }; S.shake = true; render(); return; }
+      S.phase = "unlocking"; S.error = null; render();
+      clearTimeout(t);
+      t = setTimeout(() => {
+        if (S.pw.length < 4 && !S.keyFile) { S.phase = "idle"; S.error = { msg: STR.errWrong }; S.shake = true; render(); const i = root.querySelector('[data-model="pw"]'); i && i.select(); return; }
+        S.phase = "done"; render();
+        KF.toast(`<b>${esc(l.name)}</b> unlocked`, { icon: "lock-open" });
+        t = setTimeout(() => { S.phase = "idle"; S.pw = ""; S.keyFile = null; if (l.locked) { S.locked = S.locked.filter((x) => x.id !== l.id); S.sel = S.recents[0] ? S.recents[0].id : null; } render(); }, 1400);
+      }, 1500);
+    },
+    newVault() { S.popover = false; S.mode = "new"; S.nv.error = null; S.nv.step = 0; render(); },
+    nvCancel() { S.mode = "unlock"; S.nv.phase = "idle"; clearTimeout(t); render(); },
+    nvBrowse() { if (!S.nv.path) S.nv.path = "~/Vaults/Vault.kdbx"; if (S.nv.error && S.nv.error.field === "path") S.nv.error = null; render(); },
+    nvToggleShow() { S.nv.show = !S.nv.show; render(); },
+    nvChooseKey() { S.nv.keyFile = { name: "Personal.keyx", path: "~/Keys/Personal.keyx" }; S.nv.keyNew = false; render(); },
+    nvCreateKey() { S.nv.keyFile = { name: "Vault.keyx", path: "~/Vaults/Vault.keyx" }; S.nv.keyNew = true; render(); KF.toast(`Key file created <span class="subtle">· keep a copy somewhere safe</span>`, { icon: "file-key-2" }); },
+    nvClearKey() { S.nv.keyFile = null; S.nv.keyNew = false; render(); },
+    nvEncToggle() { S.nv.encOpen = !S.nv.encOpen; render(); },
+    nvSet(arg) { const [k, v] = arg.split(":"); S.nv[k] = v; if (S.nv.error && S.nv.error.field === "enc") S.nv.error = null; render(); },
+    nvStep(d) {
+      const nv = S.nv, n = +d;
+      if (n > 0) {
+        const err = validateNew(S);
+        const stepOf = { path: 0, pw: 1, pw2: 1, enc: 2 };
+        if (err && stepOf[err.field] <= nv.step) { nv.error = err; render(); return; }
+      }
+      nv.error = null; nv.step = Math.max(0, Math.min(2, nv.step + n)); render();
+    },
+    nvCreate() {
+      const nv = S.nv; if (nv.phase === "creating") return;
+      const err = validateNew(S); nv.error = err;
+      if (err) { if (err.field === "enc") nv.encOpen = true; render(); return; }
+      nv.phase = "creating"; render();
+      t = setTimeout(() => {
+        const name = nv.name.trim() || nv.path.split("/").pop().replace(/\.kdbx$/, "");
+        S.recents.unshift({ id: "nv" + Date.now(), name, path: nv.path.trim(), storage: "local", when: "Just now", tint: "yellow" });
+        nv.phase = "idle"; S.mode = "unlock"; S.sel = S.recents[0].id; render();
+        KF.toast(`<b>${esc(name)}</b> created and unlocked`, { icon: "vault" });
+      }, 1600);
+    },
+    ...(extra.actions ? extra.actions(S, render) : {}),
+  };
+
+  root.onclick = (e) => {
+    const el = e.target.closest("[data-act]");
+    if (!el) { if (S.popover && !e.target.closest(".a-pop")) A.closePopover(); return; }
+    e.stopPropagation();
+    if (el.dataset.act !== "togglePopover" && S.popover && !el.closest(".a-pop")) S.popover = false;
+    A[el.dataset.act] && A[el.dataset.act](el.dataset.arg, e, el);
+  };
+  root.oninput = (e) => {
+    const m = e.target.dataset.model; if (!m) return;
+    set(m, e.target.value);
+    if (m === "pw" && S.error) { S.error = null; const box = e.target.closest(".input"); box && box.classList.remove("invalid"); const st = root.querySelector("[data-status]"); if (st) st.innerHTML = ""; }
+    if (m.startsWith("nv.") && S.nv.error && (S.nv.error.field === m.slice(3) || (m === "nv.pw2" && S.nv.error.field === "pw2"))) {
+      S.nv.error = null; const box = e.target.closest(".input"); box && box.classList.remove("invalid"); const em = box && box.closest(".field").querySelector(".error-msg"); em && em.remove();
+    }
+    extra.onInput && extra.onInput(S, m, render);
+    refreshLive();
+  };
+  const caps = (e) => { if (e.getModifierState) { const c = e.getModifierState("CapsLock"); if (c !== S.caps) { S.caps = c; root.querySelectorAll(".caps").forEach((n) => n.classList.toggle("on", c)); } } };
+  root.onkeydown = (e) => {
+    caps(e);
+    if (extra.onKey && extra.onKey(S, e, A, render) === true) return;
+    if (e.key === "Enter" && S.mode === "unlock" && e.target.dataset.model === "pw") { e.preventDefault(); A.unlock(); }
+    else if (e.key === "Enter" && S.mode === "new" && e.target.dataset.model && !extra.nvEnter) { e.preventDefault(); A.nvCreate(); }
+    else if (e.key === "Escape") { if (S.popover) A.closePopover(); else if (S.mode === "new") A.nvCancel(); }
+  };
+  root.onkeyup = caps;
+  window.__unlockKeys && window.removeEventListener("keydown", window.__unlockKeys);
+  window.__unlockKeys = (e) => {
+    if (!root.isConnected) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); A.chooseFile(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); A.newVault(); }
+  };
+  window.addEventListener("keydown", window.__unlockKeys);
+  render();
+  return { S, A, render };
+}
+
+/* =====================================================================
+ * Variant A — focused card, recents below
+ * ===================================================================== */
+function viewA(S, F) {
+  if (S.mode === "new") return viewANew(S, F);
+  const l = findLoc(S, S.sel);
+  const listRow = (x, forgettable) => `<div class="vrow ${S.sel === x.id ? "is-active" : ""}" data-act="select" data-arg="${x.id}">
+      ${vtile(x, "sm")}<span class="nm">${esc(x.name)}</span><span class="path truncate">${esc(x.path)}</span>
+      <span class="when">${esc(x.when)}</span>
+      ${forgettable ? `<button class="btn ghost icon sm forget" data-act="forget" data-arg="${x.id}" title="Forget this Vault file">${I("x")}</button>` : `<span style="width:22px"></span>`}</div>`;
+  return `
+  <div class="win-corner"><button class="btn ghost icon sm" data-act="settings" title="Settings  Ctrl ,">${I("settings")}</button></div>
+  <div class="a-wrap"><div class="a-col">
+    <div class="a-head"><span class="brand">${I("key-round")}</span>
+      <h1>${STR.title}</h1>
+      <p>${l ? (l.locked ? `${STR.vaultLocked} Enter its master key.` : "Enter the master key to unlock this Vault file.") : "Choose a Vault file to unlock."}</p></div>
+    <div class="a-card">
+      <button class="a-file" data-act="togglePopover">
+        ${l ? `${vtile(l, "lg")}<span class="vstack" style="gap:2px;min-width:0"><span class="hstack" style="gap:6px"><span class="nm">${esc(l.name)}</span>${l.locked ? `<span class="badge">Locked</span>` : ""}${l.storage === "dropbox" ? `<span class="badge info">Dropbox</span>` : ""}</span><span class="path truncate">${esc(l.path)}</span></span>`
+          : `<span class="vtile lg">${I("file-question")}</span><span class="vstack" style="gap:2px"><span class="nm" style="color:var(--fg-1)">${STR.noFile}</span><span class="path">Pick one below, or choose a file</span></span>`}
+        ${I("chevrons-up-down", "chev")}
+      </button>
+      ${S.popover ? `<div class="menu a-pop">${F.menuLocs(S)}</div>` : ""}
+      <div class="a-body">
+        <div class="field"><label for="pw">${STR.pwLabel}</label>${F.pw(S)}</div>
+        <div class="a-keyrow"><span class="label">${STR.keyLabel}</span>
+          ${S.keyFile ? F.keyChip(S.keyFile) : `<span class="subtle" style="font-size:var(--text-sm)">${STR.noKey}</span><button class="btn secondary sm" data-act="chooseKey">${STR.chooseKey}</button>`}</div>
+        <div data-status>${F.status(S)}</div>
+        <button class="btn primary lg unlock-btn" data-act="unlock" ${!l || S.phase !== "idle" ? "disabled" : ""}>${F.unlockLabel(S)}</button>
+      </div>
+    </div>
+    <div class="a-lists">
+      ${S.locked.length ? `<div><div class="a-list-head">${STR.locked}</div>${S.locked.map((x) => listRow(x, false)).join("")}</div>` : ""}
+      ${S.recents.length ? `<div><div class="a-list-head">${STR.recents}</div>${S.recents.map((x) => listRow(x, true)).join("")}</div>` : ""}
+    </div>
+    <div class="a-foot">
+      <button class="btn ghost sm" data-act="chooseFile">${I("folder-open")} ${STR.chooseFile}</button>
+      <button class="btn ghost sm" data-act="dropbox">${I("cloud")} ${STR.dropbox}</button>
+      <button class="btn ghost sm" data-act="newVault">${I("plus")} ${STR.newVault}</button>
+    </div>
+  </div></div>`;
+}
+function viewANew(S, F) {
+  const nv = S.nv, busy = nv.phase === "creating";
+  return `
+  <div class="win-corner"><button class="btn ghost icon sm" data-act="settings" title="Settings">${I("settings")}</button></div>
+  <div class="a-wrap" style="place-items:start center"><div class="a-col" style="width:520px">
+    <div class="hstack" style="margin-bottom:16px;gap:12px"><button class="btn ghost icon sm" data-act="nvCancel" title="Back  Esc">${I("arrow-left")}</button>
+      <div><h1 style="font-size:var(--text-xl);font-weight:600;letter-spacing:-0.015em">${STR.nvTitle}</h1><p class="muted" style="font-size:var(--text-sm)">A new Vault file, encrypted with a master key only you hold.</p></div></div>
+    <div class="a-card">
+      <div class="a-body" style="padding:16px">${F.nvPath(S)}</div>
+      <div class="a-body" style="padding:16px;border-top:1px solid var(--border)"><div class="nv-section-title">${STR.masterKey}</div>${F.nvKey(S)}</div>
+      <div style="border-top:1px solid var(--border)">${F.nvEnc(S).replace('class="enc-box"', 'class="enc-box" style="border:0;border-radius:0;background:transparent"')}</div>
+      <div class="dialog-foot" style="border-radius:0 0 var(--r-lg) var(--r-lg)">
+        <div style="flex:1;min-width:0" data-nvstatus>${F.nvStatus(S)}</div>
+        <button class="btn ghost" data-act="nvCancel" ${busy ? "disabled" : ""}>${STR.cancel}</button>
+        <button class="btn primary" data-act="nvCreate" ${busy ? "disabled" : ""}>${busy ? `${I("loader-circle", "spin")} Creating…` : `${STR.nvCreate} <kbd>Enter</kbd>`}</button>
+      </div>
+    </div>
+  </div></div>`;
+}
+
+/* =====================================================================
+ * Variant B — split: Vault files rail + focused unlock pane
+ * ===================================================================== */
+function viewB(S, F) {
+  const l = findLoc(S, S.sel);
+  const item = (x, forgettable) => `<div class="b-item vrow ${S.mode === "unlock" && S.sel === x.id ? "is-active" : ""}" data-act="select" data-arg="${x.id}">
+      ${vtile(x)}<span class="txt"><span class="nm truncate">${esc(x.name)}${x.locked ? `<span class="badge">Locked</span>` : ""}</span><span class="path truncate">${esc(x.path)}</span></span>
+      ${forgettable ? `<button class="btn ghost icon sm forget" data-act="forget" data-arg="${x.id}" title="Forget this Vault file">${I("x")}</button>` : ""}</div>`;
+  const rail = `<aside class="b-rail">
+      <div class="b-rail-top"><span class="brand sm">${I("key-round")}</span>keefast</div>
+      <div class="b-rail-scroll">
+        ${S.locked.length ? `<div class="b-sec"><div class="nav-head">${STR.locked}</div>${S.locked.map((x) => item(x, false)).join("")}</div>` : ""}
+        ${S.recents.length ? `<div class="b-sec"><div class="nav-head">${STR.recents}</div>${S.recents.map((x) => item(x, true)).join("")}</div>` : `<div class="b-sec"><div class="nav-head">${STR.recents}</div><div class="hint" style="padding:4px 8px">Vault files you open appear here.</div></div>`}
+      </div>
+      <div class="b-rail-foot">
+        <div class="nav-item" data-act="chooseFile">${I("folder-open")} ${STR.chooseFile} ${KF.kbd("Ctrl", "O")}</div>
+        <div class="nav-item" data-act="dropbox">${I("cloud")} ${STR.dropbox}</div>
+        <div class="nav-item ${S.mode === "new" ? "is-selected" : ""}" data-act="newVault">${I("plus")} ${STR.newVault} ${KF.kbd("Ctrl", "N")}</div>
+      </div>
+    </aside>`;
+  let main;
+  if (S.mode === "new") main = viewBNew(S, F);
+  else if (!l) main = `<div class="b-stage"><div class="b-empty"><span class="vtile xl">${I("file-search")}</span><div style="color:var(--fg-0);font-weight:500">${STR.noFile}</div><div class="hint">Pick a Vault file on the left, or open one from disk.</div>
+      <button class="btn secondary" data-act="chooseFile" style="margin-top:6px">${I("folder-open")} ${STR.chooseFile} ${KF.kbd("Ctrl", "O")}</button></div></div>`;
+  else main = `<div class="b-stage"><div class="b-pane">
+      <div class="b-id">${vtile(l, "xl")}
+        <h2>${esc(l.name)}</h2><div class="path">${esc(l.path)}</div>
+        <div class="facts">${l.locked ? `<span class="badge">${I("lock", "ico-sm")} ${STR.vaultLocked.replace(".", "")}</span>` : ""}<span class="badge ${l.storage === "dropbox" ? "info" : ""}">${I(l.storage === "dropbox" ? "cloud" : "hard-drive", "ico-sm")} ${l.storage === "dropbox" ? "Dropbox" : "On this device"}</span><span class="badge">${I(l.locked ? "clock" : "history", "ico-sm")} ${l.locked ? esc(l.when) : "Opened " + esc(l.when).toLowerCase()}</span></div>
+      </div>
+      <div class="b-form">
+        <div class="field"><label for="pw">${STR.pwLabel}</label>${F.pw(S)}</div>
+        <div class="field"><label>${STR.keyLabel}</label>
+          <div class="b-keyfile ${S.keyFile ? "has" : ""}">${I("file-key-2", "ico-sm")}
+            ${S.keyFile ? `<span class="nm truncate">${esc(S.keyFile.path)}</span><span class="spacer"></span><button class="btn ghost icon sm" data-act="clearKey" title="Remove key file">${I("x")}</button>`
+              : `<span style="font-size:var(--text-sm)">${STR.noKey}</span><span class="spacer"></span><button class="btn ghost sm" data-act="chooseKey">${STR.chooseKey}</button>`}
+          </div></div>
+        <div data-status>${F.status(S)}</div>
+        <div class="b-actions">
+          <button class="btn primary lg" data-act="unlock" ${S.phase !== "idle" ? "disabled" : ""} style="min-width:140px">${F.unlockLabel(S)}</button>
+          <span class="hint-r">${I("shield-check", "ico-sm")} Decrypted only in memory</span>
+        </div>
+      </div></div></div>`;
+  return `<div class="b-shell">${rail}<main class="b-main">
+      <div class="toolbar"><div class="crumbs"><b>${S.mode === "new" ? STR.nvTitle : STR.title}</b></div>
+        <div class="hstack" style="gap:2px"><button class="btn ghost icon sm" data-act="settings" title="Settings  Ctrl ,">${I("settings")}</button></div></div>
+      ${main}</main></div>`;
+}
+function viewBNew(S, F) {
+  const nv = S.nv, busy = nv.phase === "creating";
+  return `<div class="b-stage" style="place-items:start center"><div class="b-nv">
+      <h2>Create a Vault</h2><p class="lede">A new Vault file, encrypted with a master key only you hold.</p>
+      <section class="b-nv-sec"><div><div class="nv-section-title">Location</div><div class="nv-section-desc">Where the Vault file is saved, and what keefast calls it.</div></div>
+        <div class="b-nv-ctl">${F.nvPath(S)}</div></section>
+      <section class="b-nv-sec"><div><div class="nv-section-title">${STR.masterKey}</div><div class="nv-section-desc">A master password, a key file, or both.</div></div>
+        <div class="b-nv-ctl">${F.nvKey(S)}</div></section>
+      <section class="b-nv-sec"><div><div class="nv-section-title">${STR.encryption}</div><div class="nv-section-desc">The defaults are read by every KeePass client.</div></div>
+        <div class="b-nv-ctl">${F.nvEnc(S, { summaryFirst: true })}</div></section>
+      <div class="b-nv-foot"><div class="left" style="min-width:0;flex:1" data-nvstatus>${F.nvStatus(S)}</div>
+        <button class="btn ghost" data-act="nvCancel" ${busy ? "disabled" : ""}>${STR.cancel} <kbd>Esc</kbd></button>
+        <button class="btn primary" data-act="nvCreate" ${busy ? "disabled" : ""}>${busy ? `${I("loader-circle", "spin")} Creating…` : `${STR.nvCreate} ${KF.kbd("Ctrl", "Enter")}`}</button></div>
+    </div></div>`;
+}
+
+/* =====================================================================
+ * Variant C — launcher: type to filter, password inline
+ * ===================================================================== */
+function cItems(S) {
+  const q = S.c.q.trim().toLowerCase();
+  const hit = (s) => !q || s.toLowerCase().includes(q);
+  const out = [];
+  S.locked.filter((l) => hit(l.name) || hit(l.path)).forEach((l) => out.push({ group: STR.locked, kind: "loc", l }));
+  S.recents.filter((l) => hit(l.name) || hit(l.path)).forEach((l) => out.push({ group: STR.recents, kind: "loc", l, forget: true }));
+  [{ act: "chooseFile", icon: "folder-open", label: STR.chooseFile, kbd: ["Ctrl", "O"] }, { act: "dropbox", icon: "cloud", label: STR.dropbox }, { act: "newVault", icon: "plus", label: STR.newVault, kbd: ["Ctrl", "N"] }]
+    .filter((a) => hit(a.label)).forEach((a) => out.push({ group: "Actions", kind: "act", a }));
+  return out;
+}
+function hl(name, q) {
+  q = q.trim(); if (!q) return esc(name);
+  const i = name.toLowerCase().indexOf(q.toLowerCase()); if (i < 0) return esc(name);
+  return esc(name.slice(0, i)) + `<mark>${esc(name.slice(i, i + q.length))}</mark>` + esc(name.slice(i + q.length));
+}
+function cListHTML(S) {
+  const items = cItems(S);
+  if (S.c.active >= items.length) S.c.active = Math.max(0, items.length - 1);
+  if (!items.length) return `<div class="c-empty">No Vault file matches “${esc(S.c.q)}”.<br><span style="font-size:var(--text-sm)">Press <kbd>Ctrl</kbd> <kbd>O</kbd> to choose one from disk.</span></div>`;
+  let g = null;
+  return items.map((it, i) => {
+    const head = it.group !== g ? `<div class="c-group">${(g = it.group)}</div>` : "";
+    const act = i === S.c.active ? "is-active" : "";
+    if (it.kind === "loc") return head + `<div class="c-item vrow ${act}" data-act="cPick" data-arg="${i}" data-hover="${i}">${vtile(it.l)}<span class="nm">${hl(it.l.name, S.c.q)}</span><span class="path truncate">${esc(it.l.path)}</span><span class="when">${esc(it.l.when)}</span>
+        ${it.forget ? `<button class="btn ghost icon sm forget" data-act="forget" data-arg="${it.l.id}" title="Forget  Ctrl Backspace">${I("x")}</button>` : `<span style="width:22px"></span>`}<kbd class="ret">↵</kbd></div>`;
+    return head + `<div class="c-item ${act}" data-act="cPick" data-arg="${i}" data-hover="${i}"><span class="act-ico">${I(it.a.icon)}</span><span class="nm" style="font-weight:400">${hl(it.a.label, S.c.q)}</span><span class="spacer"></span>${it.a.kbd ? KF.kbd(...it.a.kbd) : ""}<kbd class="ret" style="margin-left:6px">↵</kbd></div>`;
+  }).join("");
+}
+function viewC(S, F) {
+  const brand = `<div class="c-brand"><span class="brand sm">${I("key-round")}</span><b>keefast</b></div>`;
+  const under = `<div class="c-under"><a data-act="settings">${I("settings", "ico-sm")} ${STR.settings}</a></div>`;
+  if (S.mode === "new") return `<div class="c-wrap">${brand}${viewCNew(S, F)}</div>`;
+  if (S.c.step === "list") return `<div class="c-wrap">${brand}
+    <div class="c-pal">
+      <div class="c-in">${I("search")}<input data-model="c.q" value="${esc(S.c.q)}" placeholder="${STR.title} — type to filter Vault files…" data-autofocus spellcheck="false"></div>
+      <div class="c-list" data-live="cList">${cListHTML(S)}</div>
+      <div class="c-foot"><span class="k">${KF.kbd("↑", "↓")} Move</span><span class="k"><kbd>↵</kbd> Open</span><span class="k">${KF.kbd("Ctrl", "⌫")} Forget</span>
+        <span class="right"><span class="k"><kbd>Esc</kbd> Clear</span></span></div>
+    </div>${under}</div>`;
+  const l = findLoc(S, S.sel);
+  const invalid = S.error && S.error.msg === STR.errWrong;
+  return `<div class="c-wrap">${brand}
+    <div class="c-pal ${S.shake ? "shake" : ""}">
+      <div class="c-in ${invalid ? "invalid" : ""}">
+        <button class="btn ghost icon sm" data-act="cBack" title="Back  Esc">${I("arrow-left")}</button>
+        <span class="c-crumb">${vtile(l)}${esc(l.name)}</span>
+        <input id="cpw" data-model="pw" type="${S.show ? "text" : "password"}" class="secret ${S.show ? "revealed" : ""}" value="${esc(S.pw)}" placeholder="${STR.pwLabel}" ${S.phase === "unlocking" ? "disabled" : ""} data-autofocus spellcheck="false" autocomplete="off">
+        <span class="badge warn caps ${S.caps ? "on" : ""}">${I("arrow-big-up", "ico-sm")} Caps Lock</span>
+        <button class="btn ghost icon sm" data-act="toggleShow" title="${S.show ? "Hide" : "Show"} password">${I(S.show ? "eye-off" : "eye")}</button>
+        <button class="btn primary sm" data-act="unlock" ${S.phase !== "idle" ? "disabled" : ""}>${S.phase === "unlocking" ? `${I("loader-circle", "spin")} ${STR.unlocking}` : S.phase === "done" ? `${I("check")} Unlocked` : `${STR.unlock}`}</button>
+        ${S.phase === "unlocking" ? `<div class="progress"><i></i></div>` : ""}
+      </div>
+      <div class="c-detail">
+        <div class="c-meta">
+          <span class="k">${STR.nvPath}</span><span class="v"><span class="path truncate" style="color:var(--fg-1)">${esc(l.path)}</span>${l.locked ? `<span class="badge">Locked</span>` : ""}${l.storage === "dropbox" ? `<span class="badge info">Dropbox</span>` : ""}</span>
+          <span class="k">${STR.keyLabel}</span><span class="v">${S.keyFile ? F.keyChip(S.keyFile) : `<span class="subtle">${STR.noKey}</span><button class="btn ghost sm" data-act="chooseKey" style="margin-left:-4px">${I("file-key-2")} ${STR.chooseKey} ${KF.kbd("Ctrl", "K")}</button>`}</span>
+        </div>
+        <div data-status>${S.phase === "unlocking" ? `<div class="hint">${STR.progress}</div>` : F.status(S)}</div>
+      </div>
+      <div class="c-foot"><span class="k"><kbd>↵</kbd> ${STR.unlock}</span><span class="k">${KF.kbd("Ctrl", "K")} ${STR.keyLabel}</span><span class="k">${KF.kbd("Alt", "V")} Show</span>
+        <span class="right"><span class="k"><kbd>Tab</kbd> Next Vault</span><span class="k"><kbd>Esc</kbd> Back</span></span></div>
+    </div>
+    <div class="c-others">${all(S).filter((x) => x.id !== S.sel).map((x) => `<span class="tag" data-act="select" data-arg="${x.id}">${vtile(x)}${esc(x.name)}</span>`).join("")}</div></div>`;
+}
+function viewCNew(S, F) {
+  const nv = S.nv, busy = nv.phase === "creating";
+  const steps = ["Vault file", STR.masterKey, STR.encryption];
+  const body = nv.step === 0 ? F.nvPath(S) : nv.step === 1 ? F.nvKey(S) : F.nvEnc(S, { collapsible: false }).replace('class="enc-body"', 'class="enc-body" style="padding:0"');
+  return `<div class="c-pal">
+    <div class="c-in"><button class="btn ghost icon sm" data-act="${nv.step ? "nvStep" : "nvCancel"}" data-arg="-1" title="Back">${I("arrow-left")}</button>
+      <span style="font-size:var(--text-lg);font-weight:500">${STR.nvTitle}</span><span class="subtle" style="font-size:var(--text-lg)">/</span><span style="font-size:var(--text-lg);color:var(--fg-1)">${steps[nv.step]}</span>
+      <span class="c-steps">${steps.map((_, i) => `<i class="d ${i <= nv.step ? "on" : ""}"></i>`).join("")}<span style="margin-left:4px">${nv.step + 1} of 3</span></span></div>
+    <div class="c-nv">${body}<div data-nvstatus>${F.nvStatus(S)}</div></div>
+    <div class="c-foot">${nv.step === 2 ? `<span class="k"><span class="enc-sum" style="margin:0">${encSummary(nv)}</span></span>` : `<span class="k">${nv.step === 0 ? "Next: master key" : "Next: encryption · defaults are fine"}</span>`}
+      <span class="right">
+        <button class="btn ghost sm" data-act="nvCancel" ${busy ? "disabled" : ""}>${STR.cancel} <kbd>Esc</kbd></button>
+        ${nv.step < 2 ? `${nv.step === 1 ? `<button class="btn secondary sm" data-act="nvCreate">Create with defaults</button>` : ""}<button class="btn primary sm" data-act="nvStep" data-arg="1">Continue <kbd>↵</kbd></button>`
+          : `<button class="btn primary sm" data-act="nvCreate" ${busy ? "disabled" : ""}>${busy ? `${I("loader-circle", "spin")} Creating…` : `${STR.nvCreate} <kbd>↵</kbd>`}</button>`}
+      </span></div>
+  </div>`;
+}
+
+/* =====================================================================
+ * Register variants
+ * ===================================================================== */
+KF.variants({
+  A: { name: "Focused card, recents below", render(root) { mount(root, viewA); } },
+  B: { name: "Vault files rail + unlock pane", render(root) {
+    mount(root, viewB, {
+      onKey(S, e, A) { if (S.mode === "new" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); A.nvCreate(); return true; } if (S.mode === "new" && e.key === "Enter") return true; },
+    });
+  } },
+  C: { name: "Launcher: filter, then password inline", render(root) {
+    mount(root, viewC, {
+      nvEnter: true,
+      live: { cList: (S) => cListHTML(S) },
+      onInput(S, m) { if (m === "c.q") S.c.active = 0; },
+      actions: (S, render) => ({
+        cPick(i) {
+          const it = cItems(S)[+i]; if (!it) return;
+          if (it.kind === "act") { this[it.a.act](); return; }
+          S.sel = it.l.id; S.c.step = "pw"; S.pw = ""; S.error = null; S.keyFile = null; S.phase = "idle"; render();
+        },
+        cBack() { if (S.phase === "unlocking") return; S.c.step = "list"; S.error = null; render(); },
+      }),
+      onKey(S, e, A, render) {
+        if (S.mode === "new") {
+          if (e.key === "Enter") { e.preventDefault(); S.nv.step < 2 ? A.nvStep(1) : A.nvCreate(); return true; }
+          if (e.key === "Escape") { e.preventDefault(); S.nv.step ? A.nvStep(-1) : A.nvCancel(); return true; }
+          return;
+        }
+        if (S.c.step === "list") {
+          const n = cItems(S).length;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); S.c.active = (S.c.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n; const ls = document.querySelector("[data-live=cList]"); ls.innerHTML = cListHTML(S); ls.querySelector(".is-active")?.scrollIntoView({ block: "nearest" }); return true; }
+          if (e.key === "Enter") { e.preventDefault(); A.cPick(S.c.active); return true; }
+          if (e.key === "Backspace" && (e.ctrlKey || e.metaKey)) { const it = cItems(S)[S.c.active]; if (it && it.forget) { e.preventDefault(); A.forget(it.l.id); } return true; }
+          if (e.key === "Escape") { S.c.q = ""; render(); return true; }
+          return true;
+        }
+        if (e.key === "Escape") { e.preventDefault(); A.cBack(); return true; }
+        if (e.key === "Tab" && S.phase === "idle") { e.preventDefault(); const L = all(S), i = L.findIndex((x) => x.id === S.sel); A.select(L[(i + (e.shiftKey ? -1 : 1) + L.length) % L.length].id); return true; }
+        if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); A.chooseKey(); return true; }
+        if (e.key.toLowerCase() === "v" && e.altKey) { e.preventDefault(); A.toggleShow(); return true; }
+      },
+      after(S, root) {
+        root.querySelectorAll("[data-hover]").forEach((n) => (n.onmouseenter = () => {
+          if (S.c.active === +n.dataset.hover) return; S.c.active = +n.dataset.hover;
+          root.querySelectorAll(".c-item").forEach((x) => x.classList.toggle("is-active", x === n));
+        }));
+      },
+    });
+  } },
+});
+</script>
+</body>
+</html>

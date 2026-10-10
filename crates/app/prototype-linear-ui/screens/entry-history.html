@@ -1,0 +1,395 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Entry history — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- App backdrop ---------- */
+.sh { display: grid; grid-template-columns: var(--sidebar-w) var(--list-w) 1fr; height: 100%; }
+.sh.split { grid-template-columns: var(--sidebar-w) 1fr; }
+.sh-side { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sh-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sh-detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.sh-vault { display: flex; align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px 0 14px; flex: none; }
+.sh-vault b { font-weight: 600; }
+.sh-vlogo { width: 20px; height: 20px; border-radius: 5px; background: var(--accent); color: var(--fg-on-accent); display: grid; place-items: center; }
+.sh-vlogo svg.lucide { width: 12px; height: 12px; }
+.sh-foot { margin-top: auto; padding: 8px; border-top: 1px solid var(--border); }
+.sh-rows { overflow: hidden; padding: 4px 8px; flex: 1; }
+.sh-rows .row { height: 40px; gap: 10px; }
+.sh-rows .row .t { font-weight: 500; }
+.sh-rows .row .u { color: var(--fg-2); font-size: var(--text-sm); }
+.sh-body { flex: 1; overflow: auto; padding: 24px 32px 96px; }
+.sh-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.sh-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+.sh-status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); margin-right: 4px; }
+.fld { display: grid; grid-template-columns: 112px 1fr; align-items: center; column-gap: 12px; min-height: 36px; }
+.fld > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.backdrop-dim::after { content: ""; position: absolute; inset: 0; background: var(--scrim); opacity: 0.6; z-index: 20; animation: kf-fade var(--dur) var(--ease); }
+
+/* ---------- Diff values ---------- */
+.del { color: var(--danger); background: var(--danger-bg); text-decoration: line-through; text-decoration-color: rgb(242 85 90 / 0.5); border-radius: 3px; padding: 1px 4px; }
+.ins { color: var(--ok); background: var(--ok-bg); border-radius: 3px; padding: 1px 4px; }
+.arrow { color: var(--fg-2); display: inline-flex; }
+.val-mono { font-family: var(--font-mono); letter-spacing: 0.02em; font-size: 12.5px; }
+.chg { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 6px; border-radius: var(--r-xs); font-size: var(--text-xs); font-weight: 500; color: var(--fg-1); background: var(--bg-active); white-space: nowrap; }
+.chg svg.lucide { width: 12px; height: 12px; }
+
+/* ---------- Variant A: side sheet with timeline ---------- */
+.hs { width: 460px; }
+.hs-head { display: flex; align-items: center; gap: 10px; height: var(--toolbar-h); padding: 0 10px 0 20px; border-bottom: 1px solid var(--border); flex: none; }
+.hs-head h2 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.hs-sub { display: flex; align-items: center; gap: 8px; padding: 12px 20px 4px; font-size: var(--text-sm); color: var(--fg-2); }
+.hs-body { flex: 1; overflow: auto; padding: 8px 12px 24px; }
+.tl { position: relative; }
+.tl-item { position: relative; padding: 10px 12px 10px 36px; border-radius: var(--r-md); cursor: default; }
+.tl-item::before { content: ""; position: absolute; left: 19px; top: 0; bottom: 0; width: 1px; background: var(--border-strong); }
+.tl-item:first-child::before { top: 18px; }
+.tl-item:last-child::before { bottom: calc(100% - 18px); }
+.tl-dot { position: absolute; left: 15px; top: 14px; width: 9px; height: 9px; border-radius: 50%; background: var(--bg-0); border: 1.5px solid var(--fg-2); }
+.tl-item.is-current .tl-dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.tl-item:hover { background: var(--bg-hover); }
+.tl-item.is-selected { background: var(--bg-active); }
+.tl-item.is-selected .tl-dot { border-color: var(--fg-0); }
+.tl-item.is-current.is-selected .tl-dot { border-color: var(--accent); }
+.tl-top { display: flex; align-items: baseline; gap: 8px; }
+.tl-title { font-weight: 500; }
+.tl-when { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); white-space: nowrap; }
+.tl-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tl-diff { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; animation: kf-fade var(--dur) var(--ease); }
+.dl { display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: baseline; padding: 4px 0; font-size: var(--text-sm); }
+.dl > .k { color: var(--fg-2); }
+.dl > .v { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.tl-actions { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.hs-foot { display: flex; align-items: center; gap: 14px; height: 36px; padding: 0 20px; border-top: 1px solid var(--border); background: var(--bg-inset); font-size: var(--text-sm); color: var(--fg-2); flex: none; }
+.hs-foot span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- Variant B: full-window split ---------- */
+.vh { display: grid; grid-template-columns: 300px 1fr; min-height: 0; height: 100%; }
+.vh-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg-0); }
+.vh-list .scroll { flex: 1; overflow: auto; padding: 4px 8px 16px; }
+.vh-group { padding: 12px 10px 4px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.vr { display: flex; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm); cursor: default; }
+.vr:hover { background: var(--bg-hover); }
+.vr.is-selected { background: var(--bg-active); }
+.vr .ic { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); border: 1px solid var(--border-strong); margin-top: 1px; }
+.vr .ic svg.lucide { width: 12px; height: 12px; }
+.vr.is-current .ic { color: var(--accent-fg); background: var(--accent-bg); border-color: transparent; }
+.vr .t { font-weight: 500; line-height: 1.35; }
+.vr .s { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.4; margin-top: 1px; }
+.vh-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.vh-top { display: flex; align-items: center; gap: 12px; padding: 20px 32px 16px; border-bottom: 1px solid var(--border); }
+.vh-top h1 { margin: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
+.vh-top .sub { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+.vh-bar { display: flex; align-items: center; gap: 12px; padding: 10px 32px; border-bottom: 1px solid var(--border); font-size: var(--text-sm); color: var(--fg-1); }
+.vh-body { flex: 1; overflow: auto; padding: 12px 32px 96px; }
+.dt { display: flex; flex-direction: column; max-width: 760px; }
+.dr { display: grid; grid-template-columns: 132px 1fr; gap: 16px; align-items: baseline; padding: 9px 12px; margin: 0 -12px; border-radius: var(--r-sm); position: relative; }
+.dr > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.dr > .v { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; color: var(--fg-1); }
+.dr.is-changed { background: var(--bg-hover); }
+.dr.is-changed::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
+.dr.is-changed > .k { color: var(--fg-0); font-weight: 500; }
+.dr.is-changed > .v { color: var(--fg-0); }
+.dr.is-hidden { display: none; }
+.stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 40px; }
+.empty .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-1); border: 1px solid var(--border); color: var(--fg-2); margin: 0 auto 14px; }
+.empty p { margin: 0 auto 16px; max-width: 320px; color: var(--fg-1); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* =================== Entry history model =================== */
+const P = new URL(location.href).searchParams;
+const urlState = P.get("state");
+const base = { title: "GitHub", username: "arthur-er", password: "x7#Lq9!vR2mZ@pW4", url: "https://github.com", notes: "Recovery codes in attachment.", totp: "Set up", tags: ["dev", "2fa"], fields: { "PAT (ci)": "ghp_4fT9…redacted" }, attachments: ["github-recovery-codes.txt"] };
+const snap = (o, t) => ({ ...base, ...o, fields: { ...base.fields, ...(o.fields || {}) }, saved: t });
+// Oldest first, like Entry::history(); the Entry itself is `current`.
+let history = [
+  snap({ title: "Github", username: "arthur.rezende", password: "github2024", url: "https://github.com/login", notes: "", totp: "Not set up", tags: [], fields: { "PAT (ci)": null }, attachments: [] }, new Date("2024-03-02T10:04")),
+  snap({ username: "arthur.rezende", password: "Gh!2025-kq81mZ", url: "https://github.com/login", notes: "", totp: "Not set up", tags: [], fields: { "PAT (ci)": null }, attachments: [] }, new Date("2025-11-02T18:40")),
+  snap({ password: "Gh!2025-kq81mZ", url: "https://github.com/login", totp: "Not set up", tags: [], fields: { "PAT (ci)": null } }, new Date("2026-03-14T08:15")),
+  snap({ password: "Gh!2025-kq81mZ", totp: "Not set up", tags: [] }, new Date("2026-06-03T21:02")),
+  snap({ totp: "Not set up", tags: [] }, new Date("2026-09-28T09:12")),
+  snap({ totp: "Not set up", tags: ["dev"] }, new Date("2026-10-07T14:30")),
+];
+let current = snap({}, new Date("2026-10-07T14:32"));
+if (urlState === "empty") { history = []; current = snap({ title: "Fastmail", username: "a@rezende.dev", password: "uH3$kq8Zx1!b", url: "https://app.fastmail.com", notes: "", totp: "Not set up", tags: ["email"], fields: { "PAT (ci)": null }, attachments: [] }, new Date("2026-05-02T12:00")); }
+const NOW = new Date("2026-10-09T10:00");
+
+const FIELDS = [["title", "Title"], ["username", "Username"], ["password", "Password", true], ["url", "URL"], ["notes", "Notes"], ["totp", "TOTP"], ["tags", "Tags"]];
+const MON = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const fmt = (d) => `${MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${hm(d)}`;
+const fmtShort = (d) => `${MON[d.getMonth()]} ${d.getDate()}, ${hm(d)}`;
+function rel(d) {
+  const days = Math.floor((NOW - d) / 864e5);
+  if (days < 1) return "Today"; if (days < 2) return "Yesterday"; if (days < 7) return `${days} days ago`;
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`; if (days < 365) return `${Math.round(days / 30)} months ago`;
+  return `${Math.round(days / 365)} year${days >= 730 ? "s" : ""} ago`;
+}
+/** All versions newest first: index 0 is the current Entry. */
+const versions = () => [current, ...history.slice().reverse()];
+const val = (v, k) => (k === "tags" ? v.tags.join(", ") : v[k] ?? "");
+function diff(a, b) {
+  // What changed going from a (older) to b (newer).
+  if (!a) return [{ k: "created", label: "Entry created" }];
+  const out = [];
+  for (const [k, label, prot] of FIELDS) if (val(a, k) !== val(b, k)) out.push({ k, label, prot, from: a[k], to: b[k] });
+  const names = new Set([...Object.keys(a.fields), ...Object.keys(b.fields)]);
+  for (const n of names) if ((a.fields[n] ?? null) !== (b.fields[n] ?? null)) out.push({ k: "field:" + n, label: n, prot: true, from: a.fields[n], to: b.fields[n], custom: true });
+  if (a.attachments.join() !== b.attachments.join()) out.push({ k: "attachments", label: "Attachments", from: a.attachments, to: b.attachments });
+  return out;
+}
+function chipFor(c) {
+  const ic = { created: "sparkles", password: "key-round", url: "link", totp: "timer", username: "user", title: "type", notes: "sticky-note", tags: "tag", attachments: "paperclip" }[c.custom ? "x" : c.k] || "brackets";
+  let text;
+  if (c.k === "created") text = "Entry created";
+  else if (c.k === "totp") text = c.to === "Set up" ? "TOTP set up" : "TOTP removed";
+  else if (c.k === "tags") { const add = c.to.filter((t) => !c.from.includes(t)); text = add.length ? `Tagged ${add.join(", ")}` : "Tags changed"; }
+  else if (c.k === "attachments") text = c.to.length > c.from.length ? "Attachment added" : "Attachment removed";
+  else if (c.custom) text = c.from == null ? `${c.label} added` : c.to == null ? `${c.label} removed` : `${c.label} changed`;
+  else if (c.k === "notes" && !c.from) text = "Notes added";
+  else text = `${c.label} changed`;
+  return `<span class="chg">${KF.icon(ic)}${KF.esc(text)}</span>`;
+}
+const summaryText = (cs) => cs.map((c) => chipFor(c).replace(/<[^>]+>/g, "")).join(" · ");
+const MASK = "••••••••";
+function shown(value, prot, revealed) {
+  if (value == null || value === "" || (Array.isArray(value) && !value.length)) return `<span class="subtle">Empty</span>`;
+  if (Array.isArray(value)) return KF.esc(value.join(", "));
+  if (prot && !revealed) return `<span class="val-mono">${MASK}</span>`;
+  return prot ? `<span class="val-mono">${KF.esc(value)}</span>` : KF.esc(value);
+}
+function changeHtml(c, revealed) {
+  if (c.k === "created") return `<span class="subtle">First saved version of this Entry.</span>`;
+  const long = c.k === "notes";
+  const from = c.from == null || c.from === "" || (Array.isArray(c.from) && !c.from.length) ? null : c.from;
+  if (from == null) return `<span class="ins">${shown(c.to, c.prot, revealed)}</span>`;
+  if (c.to == null || c.to === "") return `<span class="del">${shown(c.from, c.prot, revealed)}</span>`;
+  const inner = `<span class="del">${shown(c.from, c.prot, revealed)}</span>${long ? "" : `<span class="arrow">${KF.icon("arrow-right", "ico-sm")}</span>`}<span class="ins">${shown(c.to, c.prot, revealed)}</span>`;
+  return long ? `<div class="stack">${inner}</div>` : inner;
+}
+function restore(idx) {
+  const vs = versions(); const v = vs[idx]; if (!v || idx === 0) return false;
+  history.push(current);
+  current = { ...v, fields: { ...v.fields }, attachments: [...v.attachments], tags: [...v.tags], saved: new Date(NOW) };
+  setTimeout(() => KF.toast("Version restored. The one it replaced is kept in the Entry's history.", { icon: "history" }), 0);
+  return true;
+}
+let keyHandler = null;
+function onKeys(fn) { if (keyHandler) window.removeEventListener("keydown", keyHandler); keyHandler = fn; window.addEventListener("keydown", fn); }
+
+/* =================== App backdrop =================== */
+const V = KF.vault("personal");
+function sidebar() {
+  const counts = (g) => V.entries.filter((e) => e.group === g).length;
+  return `<aside class="sh-side">
+    <div class="sh-vault"><span class="sh-vlogo">${KF.icon("vault")}</span><b>Personal</b>${KF.icon("chevrons-up-down", "ico-sm subtle")}<span class="spacer"></span><button class="btn ghost sm icon">${KF.icon("square-pen")}</button></div>
+    <div class="nav-section">
+      <div class="nav-item is-selected">${KF.icon("layers")}All Entries<span class="count">${V.entries.length - 1}</span></div>
+      <div class="nav-item">${KF.icon("clock")}Recently modified</div>
+      <div class="nav-item">${KF.icon("triangle-alert")}Expired<span class="count">1</span></div>
+    </div>
+    <div class="nav-section"><div class="nav-head">Groups</div>
+      ${V.groups.filter((g) => g.parent).map((g) => `<div class="nav-item">${KF.icon(g.icon)}${g.name}<span class="count">${counts(g.id) || ""}</span></div>`).join("")}
+    </div>
+    <div class="nav-section"><div class="nav-head">Tags</div>
+      ${[["2fa", "purple"], ["dev", "blue"], ["email", "green"], ["shared", "orange"]].map(([t, c]) => `<div class="nav-item"><span class="dot" style="background:var(--c-${c});width:7px;height:7px;margin:0 4px"></span>${t}</div>`).join("")}
+    </div>
+    <div class="sh-foot">
+      <div class="nav-item">${KF.icon("hard-drive")}Personal<span class="count"><span class="status-dot"></span></span></div>
+      <div class="nav-item">${KF.icon("cloud")}Work<span class="count"><span class="status-dot" style="background:var(--info)"></span></span></div>
+      <div class="nav-item">${KF.icon("lock")}Family</div>
+    </div>
+  </aside>`;
+}
+function entryList(selId) {
+  const es = V.entries.filter((e) => e.group !== "bin");
+  return `<section class="sh-list">
+    <div class="toolbar"><div class="search" style="flex:1">${KF.icon("search", "ico-sm")}<input placeholder="Search Entries"><kbd>/</kbd></div><button class="btn ghost icon">${KF.icon("plus")}</button></div>
+    <div class="list-head" style="padding:4px 18px 0">All Entries<span class="spacer"></span>${KF.icon("arrow-down-wide-narrow", "ico-sm")}</div>
+    <div class="sh-rows">${es.map((e) => `<div class="row ${e.id === selId ? "is-selected" : ""}">${KF.avatar(e, 24)}<div style="min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.25"><span class="t truncate">${KF.esc(e.title)}</span><span class="u truncate">${KF.esc(e.username)}</span></div></div>`).join("")}</div>
+  </section>`;
+}
+const entryObj = () => (urlState === "empty" ? KF.entry("e4") : KF.entry("e1"));
+function detail(openBtn) {
+  const e = entryObj(), c = current;
+  return `<div class="toolbar">
+      <div class="crumbs">Personal ${KF.icon("chevron-right", "ico-sm subtle")} <b>${KF.esc(c.title)}</b></div><span class="spacer"></span>
+      <span class="sh-status"><span class="status-dot"></span>Saved</span>
+      <button class="btn ghost sm ${openBtn ? "" : ""}" data-openhist title="History (Ctrl H)">${KF.icon("history")}History</button>
+      <button class="btn secondary sm">${KF.icon("pencil")}Edit <kbd>E</kbd></button>
+    </div>
+    <div class="sh-body"><div style="max-width:640px">
+      <div class="sh-head">${KF.avatar(e, 40)}<div><h1 class="sh-title">${KF.esc(c.title)}</h1><div class="subtle" style="font-size:var(--text-sm)">${KF.esc(KF.host(c.url))} · Modified ${fmtShort(c.saved)}</div></div></div>
+      <div class="fld"><span class="k">Username</span><span>${KF.esc(c.username)}</span></div>
+      <div class="fld"><span class="k">Password</span><span class="mono">${KF.mask(14)}</span></div>
+      <div class="fld"><span class="k">URL</span><a>${KF.esc(c.url)}</a></div>
+      <div class="fld"><span class="k">TOTP</span>${c.totp === "Set up" ? `<span class="mono hstack">482 913 <span class="ring" style="--p:.6"></span></span>` : `<span class="subtle">Not set up</span>`}</div>
+      <div class="fld"><span class="k">Notes</span><span class="muted">${KF.esc(c.notes) || "—"}</span></div>
+    </div></div>`;
+}
+
+/* =================== Variant A — side sheet with a timeline =================== */
+function renderA(root) {
+  let sel = Math.min(urlState === "password" ? 2 : 4, versions().length - 1), open = true, revealed = false;
+  function item(v, i, vs) {
+    const older = vs[i + 1];
+    const cs = diff(older, v);
+    const isSel = i === sel;
+    return `<div class="tl-item ${i === 0 ? "is-current" : ""} ${isSel ? "is-selected" : ""}" data-i="${i}">
+      <span class="tl-dot"></span>
+      <div class="tl-top"><span class="tl-title">${i === 0 ? "Current version" : `Version of ${fmt(v.saved)}`}</span><span class="tl-when">${i === 0 ? fmtShort(v.saved) : rel(v.saved)}</span></div>
+      <div class="tl-chips">${cs.map(chipFor).join("")}</div>
+      ${isSel ? `<div class="tl-diff">
+          ${cs.map((c) => `<div class="dl"><span class="k">${KF.esc(c.label)}</span><span class="v">${changeHtml(c, revealed)}</span></div>`).join("")}
+          <div class="tl-actions">
+            ${i > 0 ? `<button class="btn secondary sm" data-restore>${KF.icon("rotate-ccw")}Restore this version</button>` : `<span class="hint">This is the Entry as it is now.</span>`}
+            <span class="spacer"></span>
+            ${cs.some((c) => c.prot) ? `<button class="btn ghost sm" data-reveal>${KF.icon(revealed ? "eye-off" : "eye")}${revealed ? "Hide" : "Show"}</button>` : ""}
+          </div></div>` : ""}
+    </div>`;
+  }
+  function paint() {
+    const vs = versions();
+    const sheet = !open ? "" : `<div class="sheet hs" data-sheet>
+      <div class="hs-head">${KF.icon("history", "subtle")}<h2>History of ${KF.esc(current.title)}</h2><span class="spacer"></span><button class="btn ghost sm icon" data-close title="Close (Esc)">${KF.icon("x")}</button></div>
+      ${history.length ? `<div class="hs-sub">${vs.length} versions<span>·</span>Created ${fmt(vs[vs.length - 1].saved)}</div>
+        <div class="hs-body"><div class="tl">${vs.map((v, i) => item(v, i, vs)).join("")}</div></div>
+        <div class="hs-foot"><span>${KF.kbd("↑", "↓")} newer / older</span><span>${KF.kbd("Esc")} close</span></div>`
+      : `<div class="empty"><div><div class="ico">${KF.icon("history", "ico-lg")}</div><p>This Entry has no earlier versions yet. Each edit keeps the version it replaces here.</p><button class="btn secondary sm" data-close>Close</button></div></div>`}
+    </div>`;
+    root.innerHTML = `<div class="sh">${sidebar()}${entryList(urlState === "empty" ? "e4" : "e1")}<section class="sh-detail">${detail()}</section></div>${sheet}`;
+    const $ = (s) => root.querySelector(s);
+    root.querySelectorAll("[data-i]").forEach((el) => (el.onclick = (e) => { if (e.target.closest("button")) return; const i = +el.dataset.i; if (i !== sel) { sel = i; revealed = false; paint(); } }));
+    root.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { open = false; paint(); }));
+    $("[data-openhist]").onclick = () => { open = true; paint(); };
+    const r = $("[data-restore]"); if (r) r.onclick = () => { if (restore(sel)) { sel = 1; paint(); } };
+    const rv = $("[data-reveal]"); if (rv) rv.onclick = () => { revealed = !revealed; paint(); };
+    $(".tl-item.is-selected")?.scrollIntoView({ block: "nearest" });
+  }
+  onKeys((e) => {
+    if (e.ctrlKey && e.key.toLowerCase() === "h") { e.preventDefault(); open = true; paint(); return; }
+    if (!open) return;
+    const n = versions().length;
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(n - 1, sel + 1); revealed = false; paint(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(0, sel - 1); revealed = false; paint(); }
+    else if (e.key === "Escape") { open = false; paint(); }
+  });
+  paint();
+}
+
+/* =================== Variant B — full-window split: versions | comparison =================== */
+function renderB(root) {
+  let sel = Math.min(urlState === "compare" ? 4 : 3, versions().length - 1), against = urlState === "compare" ? "current" : "previous", onlyChanges = false, revealed = false, open = true;
+  function bucket(d) {
+    const days = (NOW - d) / 864e5;
+    return days < 7 ? "This week" : d.getFullYear() === NOW.getFullYear() ? "Earlier this year" : String(d.getFullYear());
+  }
+  function list(vs) {
+    let last = null, out = "";
+    vs.forEach((v, i) => {
+      const g = i === 0 ? "Now" : bucket(v.saved);
+      if (g !== last) { out += `<div class="vh-group">${g}</div>`; last = g; }
+      const cs = diff(vs[i + 1], v);
+      const ic = i === 0 ? "circle-dot" : cs[0]?.k === "created" ? "sparkles" : "git-commit-vertical";
+      out += `<div class="vr ${i === 0 ? "is-current" : ""} ${i === sel ? "is-selected" : ""}" data-i="${i}">
+        <span class="ic">${KF.icon(ic)}</span>
+        <div style="min-width:0"><div class="t">${i === 0 ? "Current version" : `Version of ${fmtShort(v.saved)}`}</div><div class="s">${KF.esc(summaryText(cs))}</div></div></div>`;
+    });
+    return out;
+  }
+  function table(v, base) {
+    // Rows: every field of the selected version; changed ones show base → v.
+    const cs = base ? diff(base, v) : [];
+    const changed = new Map(cs.map((c) => [c.k, c]));
+    const rows = [];
+    for (const [k, label, prot] of FIELDS) rows.push({ k, label, prot, value: v[k] });
+    const names = new Set([...Object.keys(v.fields), ...(base ? Object.keys(base.fields) : [])]);
+    for (const n of names) if (v.fields[n] != null || (base && base.fields[n] != null)) rows.push({ k: "field:" + n, label: n, prot: true, value: v.fields[n] });
+    rows.push({ k: "attachments", label: "Attachments", value: v.attachments });
+    return rows.map((r) => {
+      const c = changed.get(r.k);
+      const hide = onlyChanges && !c;
+      const inner = c ? changeHtml(c, revealed) : shown(r.value, r.prot, revealed);
+      return `<div class="dr ${c ? "is-changed" : ""} ${hide ? "is-hidden" : ""}"><span class="k">${KF.esc(r.label)}</span><span class="v">${inner}</span></div>`;
+    }).join("");
+  }
+  function main(vs) {
+    const v = vs[sel];
+    const base = against === "previous" ? vs[sel + 1] : sel === 0 ? null : vs[0];
+    const cs = base ? diff(base, v) : diff(undefined, v);
+    const nChanged = base ? cs.length : 0;
+    const label = sel === 0 ? "Current version" : `Version of ${fmt(v.saved)}`;
+    const note = against === "previous"
+      ? (vs[sel + 1] ? `${nChanged} field${nChanged === 1 ? "" : "s"} changed in this version` : "The first saved version of this Entry")
+      : sel === 0 ? "This is the Entry as it is now" : `Restoring changes ${nChanged} field${nChanged === 1 ? "" : "s"} of the current version`;
+    return `<div class="vh-top">
+        ${KF.avatar(entryObj(), 36)}
+        <div style="min-width:0"><h1>${KF.esc(label)}</h1><div class="sub">${sel === 0 ? `Saved ${fmtShort(v.saved)}` : rel(v.saved)} · ${note}</div></div>
+        <span class="spacer"></span>
+        ${sel > 0 ? `<button class="btn primary sm" data-restore>${KF.icon("rotate-ccw")}Restore this version</button>` : ""}
+      </div>
+      <div class="vh-bar">
+        <span>Compare with</span>
+        <div class="seg" data-against><button data-a="previous" class="${against === "previous" ? "is-on" : ""}">Previous version</button><button data-a="current" class="${against === "current" ? "is-on" : ""}">Current version</button></div>
+        <span class="spacer"></span>
+        <label class="hstack" data-only style="gap:8px;cursor:default"><span class="switch ${onlyChanges ? "is-on" : ""}"></span>Only changes</label>
+        <span class="vdivider" style="height:16px;align-self:center"></span>
+        <button class="btn ghost sm" data-reveal>${KF.icon(revealed ? "eye-off" : "eye")}${revealed ? "Hide" : "Show"} passwords</button>
+      </div>
+      <div class="vh-body"><div class="dt">${table(v, base)}</div></div>`;
+  }
+  function paint() {
+    const vs = versions();
+    if (!open) {
+      root.innerHTML = `<div class="sh">${sidebar()}${entryList("e1")}<section class="sh-detail">${detail()}</section></div>`;
+      root.querySelector("[data-openhist]").onclick = () => { open = true; paint(); };
+      return;
+    }
+    const head = `<div class="toolbar">
+        <button class="btn ghost sm" data-close>${KF.icon("arrow-left")}Back</button>
+        <div class="crumbs">Personal ${KF.icon("chevron-right", "ico-sm subtle")} ${KF.esc(current.title)} ${KF.icon("chevron-right", "ico-sm subtle")} <b>History of ${KF.esc(current.title)}</b></div>
+        <span class="spacer"></span>
+        <span class="hint hstack" style="gap:6px">${KF.kbd("↑", "↓")} newer / older <span style="width:8px"></span>${KF.kbd("Esc")} close</span>
+      </div>`;
+    const body = history.length
+      ? `<div class="vh" style="flex:1;min-height:0">
+          <div class="vh-list"><div class="scroll">${list(vs)}</div></div>
+          <div class="vh-main">${main(vs)}</div></div>`
+      : `<div class="empty"><div><div class="ico">${KF.icon("history", "ico-lg")}</div><p>This Entry has no earlier versions yet. Each edit keeps the version it replaces here.</p><button class="btn secondary sm" data-close>Back to ${KF.esc(current.title)}</button></div></div>`;
+    root.innerHTML = `<div class="sh split">${sidebar()}<section class="sh-detail">${head}${body}</section></div>`;
+    const $ = (s) => root.querySelector(s);
+    root.querySelectorAll("[data-i]").forEach((el) => (el.onclick = () => { sel = +el.dataset.i; revealed = false; paint(); }));
+    root.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { open = false; paint(); }));
+    root.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => { against = b.dataset.a; paint(); }));
+    const o = $("[data-only]"); if (o) o.onclick = () => { onlyChanges = !onlyChanges; paint(); };
+    const rv = $("[data-reveal]"); if (rv) rv.onclick = () => { revealed = !revealed; paint(); };
+    const r = $("[data-restore]"); if (r) r.onclick = () => { if (restore(sel)) { sel = 1; paint(); } };
+    $(".vr.is-selected")?.scrollIntoView({ block: "nearest" });
+  }
+  onKeys((e) => {
+    if (e.ctrlKey && e.key.toLowerCase() === "h") { e.preventDefault(); open = true; paint(); return; }
+    if (!open || !history.length) { if (open && e.key === "Escape") { open = false; paint(); } return; }
+    const n = versions().length;
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(n - 1, sel + 1); revealed = false; paint(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(0, sel - 1); revealed = false; paint(); }
+    else if (e.key === "Escape") { open = false; paint(); }
+  });
+  paint();
+}
+
+KF.variants({
+  A: { name: "Side sheet with timeline", render: renderA },
+  B: { name: "Full-window split: versions | comparison", render: renderB },
+});
+</script>
+</body>
+</html>

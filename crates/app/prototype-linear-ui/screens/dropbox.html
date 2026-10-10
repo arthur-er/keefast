@@ -1,0 +1,529 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Open from Dropbox — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+  /* ---------- Window shell ---------- */
+  .win { display: flex; height: 100%; }
+  .sb { width: var(--sidebar-w); flex: none; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .sb-top { display: flex; align-items: center; gap: 6px; height: var(--toolbar-h); padding: 0 8px 0 12px; }
+  .vault-switch { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; margin-left: -6px; border-radius: var(--r-sm); font-weight: 600; }
+  .vault-tile { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px; background: var(--accent-bg); color: var(--accent-fg); }
+  .vault-tile svg.lucide { width: 12px; height: 12px; }
+  .sb-scroll { flex: 1; overflow: auto; }
+  .sb-foot { padding: 8px; border-top: 1px solid var(--border); }
+  .nav-item .sync { margin-left: auto; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-0); }
+  .bg-list { width: var(--list-w); flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .bg-detail { flex: 1; padding: 28px 32px; }
+  .page-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; line-height: 1.2; }
+
+  /* ---------- Dropbox mark + sync status ---------- */
+  .dbx { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px; background: #0061fe; color: #fff; }
+  .dbx svg { width: 12px; height: 12px; }
+  .dbx.lg { width: 44px; height: 44px; border-radius: 11px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .dbx.lg svg { width: 24px; height: 24px; }
+  .dbx.md { width: 32px; height: 32px; border-radius: 8px; }
+  .dbx.md svg { width: 17px; height: 17px; }
+  .sync { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); font-weight: 450; color: var(--fg-2); white-space: nowrap; }
+  .sync svg.lucide { width: 12px; height: 12px; }
+  .sync.synced .status-dot { background: var(--ok); }
+  .sync.syncing { color: var(--fg-1); }
+  .sync.offline { color: var(--fg-2); }
+  .sync.error { color: var(--danger); }
+  .sync.lg { font-size: var(--text-sm); gap: 6px; }
+  .sync.lg svg.lucide { width: 14px; height: 14px; }
+  .spin { animation: kf-spin 900ms linear infinite; }
+  @keyframes kf-spin { to { transform: rotate(360deg); } }
+  .sync-btn { all: unset; display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border-radius: var(--r-sm); }
+  .sync-btn:hover { background: var(--bg-hover); }
+  .anchor { position: relative; }
+  .pop-at { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; transform-origin: top right; }
+  .sync-pop { width: 300px; padding: 12px; }
+  .sync-pop .ttl { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .sync-pop p { margin: 6px 0 0; color: var(--fg-1); font-size: var(--text-sm); line-height: 1.5; }
+  .sync-pop .loc { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: grid; grid-template-columns: 84px 1fr; row-gap: 6px; font-size: var(--text-sm); }
+  .sync-pop .loc .k { color: var(--fg-2); }
+  .sync-pop .loc .v { color: var(--fg-0); min-width: 0; }
+  .sync-legend { display: flex; gap: 6px; margin-top: 10px; }
+  .sync-legend button { all: unset; height: 22px; padding: 0 7px; border-radius: var(--r-xs); font-size: var(--text-xs); color: var(--fg-2); border: 1px solid var(--border); }
+  .sync-legend button.is-on { color: var(--fg-0); background: var(--bg-active); border-color: var(--border-strong); }
+
+  /* ---------- Variant A: dialog ---------- */
+  .dlg { width: 720px; height: 540px; max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); overflow: hidden; animation: kf-pop var(--dur) var(--ease); }
+  .dlg-head { display: flex; align-items: center; gap: 12px; padding: 16px 16px 14px 20px; }
+  .dlg-head .t { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+  .dlg-head .d { font-size: var(--text-sm); color: var(--fg-2); margin-top: 1px; }
+  .acct { font: inherit; background: transparent; cursor: default; display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px 0 4px; border-radius: 99px; border: 1px solid var(--border); font-size: var(--text-sm); color: var(--fg-1); }
+  .acct:hover { background: var(--bg-hover); }
+  .acct .av { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-0); font-size: 11px; font-weight: 600; }
+  .bar { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-inset); }
+  .bc { display: flex; align-items: center; gap: 2px; min-width: 0; font-size: var(--text-md); }
+  .bc button { all: unset; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; border-radius: 5px; color: var(--fg-1); white-space: nowrap; }
+  .bc button:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .bc button.cur { color: var(--fg-0); font-weight: 500; }
+  .bc .sep { color: var(--fg-2); display: inline-flex; }
+  .bc .sep svg.lucide { width: 13px; height: 13px; }
+  .files { flex: 1; overflow: auto; padding: 4px 8px 8px; position: relative; }
+  .fhead { display: grid; grid-template-columns: 1fr 140px 72px; align-items: center; height: 30px; padding: 0 10px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 500; }
+  .frow { display: grid; grid-template-columns: 1fr 140px 72px; align-items: center; height: 36px; padding: 0 10px; border-radius: var(--r-sm); cursor: default; }
+  .frow:hover { background: var(--bg-hover); }
+  .frow.is-selected { background: var(--bg-active); }
+  .frow .n { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .frow .m, .frow .s { color: var(--fg-2); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+  .frow .s { text-align: right; }
+  .frow .chev { margin-left: auto; color: var(--fg-2); opacity: 0; }
+  .frow:hover .chev { opacity: 1; }
+  .ficon { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex: none; color: var(--fg-1); }
+  .ficon svg.lucide { width: 16px; height: 16px; }
+  .ficon.vault { background: var(--accent-bg); color: var(--accent-fg); }
+  .ficon.vault svg.lucide { width: 13px; height: 13px; }
+  .ext { color: var(--fg-2); }
+  .skel { height: 10px; border-radius: 4px; background: var(--bg-active); animation: kf-shimmer 1.2s ease-in-out infinite; }
+  @keyframes kf-shimmer { 50% { opacity: .45; } }
+  .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 32px; }
+  .center .ico { color: var(--fg-2); }
+  .center .ico svg.lucide { width: 22px; height: 22px; }
+  .center .msg { color: var(--fg-1); max-width: 380px; text-wrap: pretty; }
+  .center h3 { margin: 4px 0 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+  .banner { display: flex; align-items: center; gap: 10px; margin: 8px 8px 0; padding: 8px 8px 8px 12px; border-radius: var(--r-sm); background: var(--danger-bg); color: var(--fg-0); font-size: var(--text-sm); }
+  .banner svg.lucide { color: var(--danger); width: 15px; height: 15px; }
+  .dlg-foot { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px 0 20px; border-top: 1px solid var(--border); background: var(--bg-inset); flex: none; }
+  .dlg-foot .sel { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--text-sm); color: var(--fg-2); }
+  .dlg-foot .sel .mono { color: var(--fg-1); font-size: var(--text-sm); letter-spacing: 0; }
+  .privacy { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; text-align: left; }
+  .privacy div { display: flex; align-items: center; gap: 10px; font-size: var(--text-sm); color: var(--fg-1); }
+  .privacy svg.lucide { width: 14px; height: 14px; color: var(--ok); }
+  .pulse { position: relative; }
+  .pulse::after { content: ""; position: absolute; inset: -6px; border-radius: 16px; border: 1px solid var(--accent); opacity: 0; animation: kf-ping 1.6s var(--ease) infinite; }
+  @keyframes kf-ping { 0% { opacity: .6; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.25); } }
+  .handoff { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .handoff .dots { display: flex; gap: 4px; }
+  .handoff .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-2); animation: kf-shimmer 1.2s ease-in-out infinite; }
+  .handoff .dots i:nth-child(2) { animation-delay: .2s; } .handoff .dots i:nth-child(3) { animation-delay: .4s; }
+  .app-tile { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--accent-fg); }
+  .app-tile svg.lucide { width: 22px; height: 22px; }
+
+  /* ---------- Variant B: open screen with stepped panel ---------- */
+  .open-rail { width: 300px; flex: none; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px; font-weight: 600; }
+  .brand .logo { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: var(--fg-on-accent); }
+  .brand .logo svg.lucide { width: 14px; height: 14px; }
+  .src { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: var(--r-sm); color: var(--fg-1); font-weight: 500; }
+  .src:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .src.is-selected { background: var(--bg-active); color: var(--fg-0); }
+  .src .kbds { margin-left: auto; }
+  .recent { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; border-radius: var(--r-sm); }
+  .recent:hover { background: var(--bg-hover); }
+  .recent .ficon { width: 28px; height: 28px; border-radius: 7px; }
+  .recent .nm { font-weight: 500; }
+  .recent .pt { font-size: var(--text-xs); color: var(--fg-2); font-family: var(--font-mono); letter-spacing: 0; }
+  .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-0); }
+  .stage-scroll { flex: 1; overflow: auto; display: flex; justify-content: center; padding: 40px 40px 80px; }
+  .flow { width: 100%; max-width: 760px; }
+  .flow-head { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+  .flow-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
+  .flow-head .d { color: var(--fg-2); font-size: var(--text-sm); margin-top: 2px; }
+  .stp { display: grid; grid-template-columns: 28px 1fr; column-gap: 14px; }
+  .stp-rail { display: flex; flex-direction: column; align-items: center; }
+  .stp-rail .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: var(--text-xs); font-weight: 600; color: var(--fg-2); border: 1px solid var(--border-strong); background: var(--bg-0); flex: none; }
+  .stp-rail .line { flex: 1; width: 1px; background: var(--border-strong); margin: 4px 0; min-height: 12px; }
+  .stp.is-on .n { background: var(--accent); border-color: var(--accent); color: var(--fg-on-accent); box-shadow: 0 0 0 4px var(--accent-bg); }
+  .stp.is-done .n { background: var(--accent-bg); border-color: transparent; color: var(--accent-fg); }
+  .stp.is-done .n svg.lucide { width: 12px; height: 12px; stroke-width: 2.5; }
+  .stp-body { padding-bottom: 20px; min-width: 0; }
+  .stp-title { display: flex; align-items: center; gap: 10px; min-height: 24px; font-weight: 600; }
+  .stp:not(.is-on):not(.is-done) .stp-title { color: var(--fg-2); font-weight: 500; }
+  .stp-title .aside { margin-left: auto; font-weight: 400; font-size: var(--text-sm); color: var(--fg-2); display: flex; align-items: center; gap: 8px; }
+  .stp-card { margin-top: 12px; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+  .stp-card.pad { padding: 18px; }
+  .lead { margin: 0; color: var(--fg-1); text-wrap: pretty; max-width: 520px; }
+  .done-line { display: flex; align-items: center; gap: 8px; color: var(--fg-1); font-weight: 400; font-size: var(--text-sm); }
+  /* Miller columns */
+  .cols-bar { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 8px; border-bottom: 1px solid var(--border); }
+  .cols { display: flex; height: 260px; overflow-x: auto; }
+  .col { width: 236px; flex: none; overflow: auto; padding: 4px; border-right: 1px solid var(--border); position: relative; }
+  .col:last-child { border-right: 0; flex: 1; }
+  .citem { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 5px; cursor: default; }
+  .citem:hover { background: var(--bg-hover); }
+  .citem.is-open { background: var(--bg-active); }
+  .citem.is-selected { background: var(--accent-bg); color: var(--fg-0); }
+  .citem .ficon { width: 18px; height: 18px; border-radius: 4px; }
+  .citem .ficon svg.lucide { width: 15px; height: 15px; }
+  .citem .ficon.vault svg.lucide { width: 11px; height: 11px; }
+  .citem .chev { margin-left: auto; color: var(--fg-2); }
+  .citem .chev svg.lucide { width: 13px; height: 13px; }
+  .col-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--fg-2); font-size: var(--text-sm); padding: 16px; text-align: center; }
+  .preview { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .preview .big { width: 40px; height: 40px; border-radius: 10px; }
+  .preview .big svg.lucide { width: 20px; height: 20px; }
+  .preview .kv { grid-template-columns: 72px 1fr; min-height: 24px; font-size: var(--text-sm); }
+  .cols-foot { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 10px 0 14px; border-top: 1px solid var(--border); background: var(--bg-inset); }
+  .unlock-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+  .is-hidden { display: none !important; }
+  .sync-note { margin: 20px 0 0 42px; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: var(--r-md); display: flex; flex-direction: column; gap: 8px; }
+  .sync-note p { margin: 0; color: var(--fg-2); font-size: var(--text-sm); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  .cols .col:nth-last-child(1) .preview { max-width: 260px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const P = new URL(location.href).searchParams;
+const STATE = P.get("state") || "browse";
+const I = KF.icon;
+const DBX_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 1.807 0 5.629l6 3.822 6.001-3.822L6 1.807zm12 0-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6.001-3.822L6 9.452l-6 3.822zm18-3.822-6 3.822 6 3.822 6-3.822-6-3.822zM6 18.371l6.001 3.822 6-3.822-6-3.822L6 18.371z"/></svg>`;
+const dbx = (cls = "") => `<span class="dbx ${cls}">${DBX_SVG}</span>`;
+const ACCOUNT = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
+
+/* ---------- fake Dropbox ---------- */
+const TREE = {
+  "": [["Apps", 1], ["Documents", 1], ["Photos", 1], ["Shared", 1], ["Old-2019.kdbx", 0, "12 Mar 2019", "64 KB"]],
+  "/Apps": [["keefast", 1], ["Obsidian", 1]],
+  "/Apps/keefast": [["Archive", 1], ["Backups", 1], ["Shared with Ana", 1], ["Family.kdbx", 0, "Yesterday, 21:40", "96 KB"], ["Old-laptop.kdbx", 0, "14 Feb 2025", "57 KB"], ["Travel.kdbx", 0, "3 Aug 2026", "24 KB"], ["Work.kdbx", 0, "Today, 09:12", "212 KB"]],
+  "/Apps/keefast/Archive": [["Personal-2023.kdbx", 0, "31 Dec 2023", "71 KB"]],
+  "/Apps/keefast/Shared with Ana": [],
+  "/Apps/keefast/Backups": [["Work-2026-09.kdbx", 0, "30 Sep 2026", "208 KB"], ["Work-2026-08.kdbx", 0, "31 Aug 2026", "201 KB"]],
+  "/Apps/Obsidian": [],
+  "/Documents": [["Taxes", 1], ["Household.kdbx", 0, "2 Jun 2026", "38 KB"]],
+  "/Documents/Taxes": [],
+  "/Photos": [],
+  "/Shared": [["Team.kdbx", 0, "Today, 08:03", "140 KB"]],
+};
+const ls = (p) => (TREE[p] || []).map(([name, folder, mod, size]) => ({ name, folder: !!folder, mod, size, path: p + "/" + name }));
+const parent = (p) => p.slice(0, p.lastIndexOf("/"));
+const segs = (p) => p.split("/").filter(Boolean);
+
+/* ---------- sync status (shared) ---------- */
+const SYNC = {
+  synced: { cls: "synced", word: "Synced", ico: `<span class="status-dot"></span>`, title: "Synced with Dropbox", body: "The Vault file in Dropbox matches this Vault. Last synced 2 minutes ago." },
+  syncing: { cls: "syncing", word: "Syncing…", ico: I("refresh-cw", "spin"), title: "Syncing…", body: "Uploading your saved changes to the Vault file in Dropbox." },
+  offline: { cls: "offline", word: "Offline", ico: I("cloud-off"), title: "Offline", body: "Dropbox can't be reached. Saves go to the Local cache and upload when Dropbox is back." },
+  error: { cls: "error", word: "Sync error", ico: I("circle-alert"), title: "Sync error", body: "The Vault file changed in Dropbox since keefast read it." },
+};
+let syncState = ["synced", "syncing", "offline", "error"].includes(P.get("sync")) ? P.get("sync") : STATE === "error" ? "offline" : "synced";
+const syncHTML = (s, lg = "") => `<span class="sync ${SYNC[s].cls} ${lg}">${SYNC[s].ico}${SYNC[s].word}</span>`;
+function syncPop() {
+  const s = SYNC[syncState];
+  return `<div class="popover sync-pop pop-at" data-menu>
+    <div class="ttl">${syncHTML(syncState, "lg")}</div>
+    <p>${s.body}</p>
+    ${syncState === "error" ? `<div class="hstack" style="margin-top:10px"><button class="btn sm secondary" data-act="retry-sync">${I("refresh-cw")}Retry</button><span class="hint">keefast will Merge both versions.</span></div>` : ""}
+    <div class="loc"><span class="k">Vault file</span><span class="v mono truncate" style="font-size:12px;letter-spacing:0">Dropbox: /Apps/keefast/Work.kdbx</span><span class="k">Account</span><span class="v truncate">${ACCOUNT.email}</span></div>
+    <div class="sync-legend">${Object.keys(SYNC).map((k) => `<button data-sync="${k}" class="${k === syncState ? "is-on" : ""}">${SYNC[k].word}</button>`).join("")}</div>
+  </div>`;
+}
+
+/* ---------- Variant A: dialog file browser over the main window ---------- */
+function backdrop() {
+  const W = KF.vault("work");
+  const ents = W.entries;
+  const e = ents[0];
+  return `
+  <div class="win">
+    <aside class="sb">
+      <div class="sb-top"><div class="vault-switch">${dbx()}Work${I("chevron-down", "ico-sm subtle")}</div><span class="spacer"></span><button class="btn sm ghost icon">${I("search")}</button></div>
+      <div class="sb-scroll">
+        <div class="nav-section"><div class="nav-item is-selected">${I("layers")}All Entries<span class="count">${ents.length}</span></div><div class="nav-item">${I("star")}Favourites<span class="count">2</span></div></div>
+        <div class="nav-section"><div class="nav-head">Groups</div>
+          ${W.groups.filter((g) => g.parent).map((g) => `<div class="nav-item">${I(g.icon)}${g.name}<span class="count">${ents.filter((x) => x.group === g.id).length}</span></div>`).join("")}
+        </div>
+        <div class="nav-section"><div class="nav-head">Vaults</div>
+          <div class="nav-item">${I("database")}Personal</div>
+          <div class="nav-item is-selected" data-sb-sync>${I("cloud")}Work${syncHTML(syncState)}</div>
+          <div class="nav-item">${I("lock")}Family</div>
+          <div class="nav-item" style="color:var(--fg-2)">${I("plus")}Open Vault…</div>
+        </div>
+      </div>
+      <div class="sb-foot"><div class="nav-item">${I("settings")}Settings</div></div>
+    </aside>
+    <div class="bg-list">
+      <div class="toolbar"><div class="search" style="flex:1">${I("search", "ico-sm")}<input placeholder="Search Work"></div></div>
+      <div style="padding:6px">${ents.map((x, i) => `<div class="row ${i === 0 ? "is-selected" : ""}" style="height:44px">${KF.avatar(x, 26)}<div style="min-width:0"><div class="truncate">${x.title}</div><div class="subtle truncate" style="font-size:12px">${x.username}</div></div></div>`).join("")}</div>
+    </div>
+    <div class="main">
+      <div class="toolbar"><div class="crumbs"><b>Work</b>${I("chevron-right", "ico-sm subtle")}Infrastructure</div><span class="spacer"></span><div class="anchor"><button class="sync-btn" data-act="sync" data-tb-sync>${syncHTML(syncState, "lg")}</button></div></div>
+      <div class="bg-detail"><div class="hstack" style="gap:12px">${KF.avatar(e, 40)}<div><div class="page-title">${e.title}</div><div class="subtle">${e.url}</div></div></div>
+        <div style="margin-top:24px">${[["Username", e.username], ["Password", KF.mask(16)], ["Website", KF.host(e.url)]].map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderA(root) {
+  let st = { phase: { checking: "checking", connect: "connect", connecting: "connecting" }[STATE] || "connected", path: STATE === "empty" ? "/Photos" : "/Apps/keefast", loading: STATE === "loading", error: STATE === "error" ? "Dropbox can't be reached. Check your connection." : null, sel: STATE === "browse" ? "/Apps/keefast/Work.kdbx" : null, acctOpen: false };
+  root.innerHTML = backdrop() + `<div class="scrim" data-dlg-scrim style="${P.get("closed") ? "display:none" : ""}"><div class="dlg" role="dialog"></div></div>`;
+  const dlg = root.querySelector(".dlg");
+  let timer;
+
+  const body = () => {
+    if (st.phase === "checking") return `<div class="center"><span class="ico">${I("loader-circle", "spin")}</span><div class="msg">Looking for your Dropbox account…</div></div>`;
+    if (st.phase === "connect") return `<div class="center">
+        ${dbx("lg")}
+        <h3>Connect your Dropbox</h3>
+        <div class="msg">Connect your Dropbox account to open Vault files stored there.</div>
+        <div class="privacy">
+          <div>${I("shield-check")}Dropbox asks you in your browser</div>
+          <div>${I("shield-check")}keefast never sees your Dropbox password</div>
+          <div>${I("shield-check")}Vault files stay encrypted end to end</div>
+        </div>
+        ${st.error ? `<div class="error-msg">${I("circle-alert", "ico-sm")}${st.error}</div>` : ""}
+        <button class="btn primary lg" data-act="connect" style="margin-top:8px">${I("external-link")}Connect Dropbox ${KF.kbd("↵")}</button>
+      </div>`;
+    if (st.phase === "connecting") return `<div class="center">
+        <div class="handoff"><span class="app-tile">${I("database")}</span><span class="dots"><i></i><i></i><i></i></span><span class="pulse">${dbx("lg")}</span></div>
+        <h3>Waiting for Dropbox</h3>
+        <div class="msg">Allow keefast in the Dropbox page that opened in your browser, then come back here.</div>
+        <div class="hstack" style="margin-top:8px"><button class="btn secondary" data-act="reopen">${I("external-link")}Open the page again</button><button class="btn ghost" data-act="stop">Stop</button></div>
+        <button class="btn sm ghost" data-act="simulate-allow" style="margin-top:20px;color:var(--fg-2)">${I("mouse-pointer-click")}Simulate “Allow” in the browser</button>
+      </div>`;
+    // connected → file browser
+    const items = ls(st.path);
+    let list;
+    if (st.loading) list = Array.from({ length: 6 }, (_, i) => `<div class="frow"><span class="n"><span class="ficon"><span class="skel" style="width:16px;height:16px;border-radius:4px"></span></span><span class="skel" style="width:${[140, 90, 170, 120, 100, 150][i]}px"></span></span><span class="skel" style="width:70px"></span><span class="skel" style="width:36px;margin-left:auto"></span></div>`).join("") + `<div class="center" style="top:auto;height:60px;bottom:12px;flex-direction:row;gap:8px;color:var(--fg-2);font-size:12px">${I("loader-circle", "spin ico-sm")}Loading…</div>`;
+    else if (st.error) list = `<div class="center"><span class="ico">${I("cloud-off")}</span><div class="msg">Dropbox can't be reached. Check your connection.</div><button class="btn secondary sm" data-act="retry">${I("refresh-cw")}Try again</button></div>`;
+    else if (!items.length) list = `<div class="center"><span class="ico">${I("folder-open")}</span><div class="msg">This folder is empty.</div><button class="btn ghost sm" data-act="up">${I("arrow-up")}Up</button></div>`;
+    else list = items.map((it) => `<div class="frow ${st.sel === it.path ? "is-selected" : ""}" data-item="${KF.esc(it.path)}" data-folder="${it.folder ? 1 : ""}">
+        <span class="n">${it.folder ? `<span class="ficon">${I("folder")}</span>` : `<span class="ficon vault">${I("file-lock-2")}</span>`}<span class="truncate">${it.folder ? KF.esc(it.name) : KF.esc(it.name.replace(/\.kdbx$/, "")) + `<span class="ext">.kdbx</span>`}</span>${it.folder ? `<span class="chev">${I("chevron-right", "ico-sm")}</span>` : ""}</span>
+        <span class="m">${it.folder ? "" : it.mod}</span><span class="s">${it.folder ? "" : it.size}</span></div>`).join("");
+    const crumbs = [["", "Dropbox"], ...segs(st.path).map((s, i, a) => ["/" + a.slice(0, i + 1).join("/"), s])];
+    return `
+      <div class="bar">
+        <button class="btn sm ghost icon" data-act="up" title="Up (Backspace)" ${st.path ? "" : "disabled"}>${I("arrow-up")}</button>
+        <div class="vdivider" style="margin:10px 2px"></div>
+        <div class="bc">${crumbs.map(([p, n], i) => `${i ? `<span class="sep">${I("chevron-right")}</span>` : ""}<button data-crumb="${KF.esc(p)}" class="${p === st.path ? "cur" : ""}">${i === 0 ? dbx() : ""}${KF.esc(n)}</button>`).join("")}</div>
+        <span class="spacer"></span>
+        <button class="btn sm ghost icon" data-act="refresh" title="Refresh">${I("rotate-cw")}</button>
+      </div>
+            ${!st.error && !st.loading && items.length ? `<div class="fhead" style="margin:0 8px"><span>Name</span><span>Modified</span><span style="text-align:right">Size</span></div>` : ""}
+      <div class="files" style="${!st.error && !st.loading && items.length ? "padding-top:0" : ""}">${list}</div>`;
+  };
+  const paint = () => {
+    const connected = st.phase === "connected";
+    dlg.innerHTML = `
+      <div class="dlg-head">
+        ${dbx("md")}
+        <div style="flex:1;min-width:0"><div class="t">Open from Dropbox</div><div class="d">${connected ? "Choose the Vault file to open." : "Open a Vault file stored in your Dropbox."}</div></div>
+        ${connected ? `<div class="anchor"><button class="acct" data-act="acct"><span class="av">AR</span><span class="truncate" style="max-width:260px">Connected as ${ACCOUNT.email}</span>${I("chevron-down", "ico-sm")}</button>${st.acctOpen ? `<div class="menu pop-at" data-menu style="width:240px"><div class="menu-label">Connected as ${ACCOUNT.name}</div><div class="menu-item" data-act="switch">${I("repeat")}Use another account…</div><div class="menu-sep"></div><div class="menu-item danger" data-act="disconnect">${I("unplug")}Disconnect</div></div>` : ""}</div>` : ""}
+        <button class="btn sm ghost icon" data-act="close" title="Cancel (Esc)">${I("x")}</button>
+      </div>
+      ${connected ? body() : `<div class="files" style="border-top:1px solid var(--border)">${body()}</div>`}
+      <div class="dlg-foot">
+        ${connected
+          ? `<div class="sel">${st.sel ? `${I("file-lock-2", "ico-sm")}<span class="mono truncate">Dropbox: ${KF.esc(st.sel)}</span>` : `<span>Select a Vault file</span>`}</div><span class="spacer"></span>
+             <button class="btn ghost" data-act="close">Cancel</button><button class="btn primary" data-act="open" ${st.sel ? "" : "disabled"}>Open ${KF.kbd("↵")}</button>`
+          : `<div class="sel">${I("lock", "ico-sm")}<span>Your Dropbox sign-in is kept in the OS secret store.</span></div><span class="spacer"></span><button class="btn ghost" data-act="close">Cancel ${KF.kbd("Esc")}</button>`}
+      </div>`;
+  };
+  const open = (path) => {
+    st.path = path; st.sel = null; st.error = null; st.loading = true; paint();
+    clearTimeout(timer); timer = setTimeout(() => { st.loading = false; paint(); }, 450);
+  };
+  dlg.addEventListener("click", (e) => {
+    const t = e.target;
+    const row = t.closest("[data-item]");
+    if (row) {
+      if (row.dataset.folder) open(row.dataset.item);
+      else { st.sel = row.dataset.item; paint(); }
+      return;
+    }
+    const cr = t.closest("[data-crumb]");
+    if (cr) { open(cr.dataset.crumb); return; }
+    const a = t.closest("[data-act]")?.dataset.act;
+    if (a !== "acct" && st.acctOpen && !t.closest("[data-menu]")) { st.acctOpen = false; paint(); }
+    if (a === "up" && st.path) open(parent(st.path));
+    if (a === "refresh" || a === "retry") open(st.path);
+    if (a === "connect") { st.phase = "connecting"; st.error = null; paint(); KF.toast("Dropbox opened in your browser", { icon: "external-link" }); }
+    if (a === "reopen") KF.toast("Dropbox opened in your browser again", { icon: "external-link" });
+    if (a === "stop") { st.phase = "connect"; st.error = "Dropbox was not connected."; paint(); }
+    if (a === "simulate-allow") { st.phase = "checking"; paint(); setTimeout(() => { st.phase = "connected"; open("/Apps/keefast"); KF.toast(`Connected as ${ACCOUNT.email}`, { icon: "check" }); }, 700); }
+    if (a === "acct") { st.acctOpen = !st.acctOpen; paint(); }
+    if (a === "disconnect") { st.acctOpen = false; st.phase = "connect"; st.sel = null; paint(); KF.toast("Dropbox disconnected", { icon: "unplug" }); }
+    if (a === "switch") { st.acctOpen = false; st.phase = "connecting"; paint(); }
+    if (a === "open") { KF.toast(`Opening <span class="mono">${KF.esc(st.sel.split("/").pop())}</span>…`, { icon: "loader-circle" }); }
+    if (a === "close") { root.querySelector("[data-dlg-scrim]").style.display = "none"; KF.toast("Click the Work sync status in the toolbar to see Sync status", { icon: "info" }); }
+  });
+  dlg.addEventListener("dblclick", (e) => { const row = e.target.closest("[data-item]"); if (row && !row.dataset.folder) KF.toast(`Opening <span class="mono">${KF.esc(row.dataset.item.split("/").pop())}</span>…`, { icon: "loader-circle" }); });
+  window.addEventListener("keydown", (e) => {
+    if (root.querySelector("[data-dlg-scrim]").style.display === "none" || e.target.closest("input")) return;
+    if (e.key === "Backspace" && st.phase === "connected" && st.path) { e.preventDefault(); open(parent(st.path)); }
+  });
+  // toolbar sync status popover (works when the dialog is closed)
+  root.querySelector(".win").addEventListener("click", (e) => {
+    const sb = e.target.closest("[data-sync]");
+    if (sb) { syncState = sb.dataset.sync; repaintSync(); return; }
+    if (e.target.closest('[data-act="retry-sync"]')) { syncState = "syncing"; repaintSync(); setTimeout(() => { syncState = "synced"; repaintSync(); }, 1200); return; }
+    const btn = e.target.closest('[data-act="sync"]');
+    const anchor = root.querySelector("[data-tb-sync]").parentElement;
+    const had = anchor.querySelector("[data-menu]");
+    if (btn) { if (had) had.remove(); else anchor.insertAdjacentHTML("beforeend", syncPop()); }
+    else if (had && !e.target.closest("[data-menu]")) had.remove();
+  });
+  function repaintSync() {
+    root.querySelector("[data-tb-sync]").innerHTML = syncHTML(syncState, "lg");
+    const sb = root.querySelector("[data-sb-sync] .sync"); sb.outerHTML = syncHTML(syncState);
+    const pop = root.querySelector(".sync-pop"); if (pop) pop.outerHTML = syncPop();
+  }
+  paint();
+  if (STATE === "checking") setTimeout(() => {}, 0);
+  if (STATE === "sync") { root.querySelector("[data-dlg-scrim]").style.display = "none"; root.querySelector("[data-tb-sync]").click(); }
+}
+
+/* ---------- Variant B: stepped panel inside the "Open a Vault" screen ---------- */
+function renderB(root) {
+  const st = {
+    phase: { checking: "checking", connect: "connect", connecting: "connecting" }[STATE] || "connected",
+    path: STATE === "empty" ? "/Photos" : "/Apps/keefast",
+    sel: STATE === "browse" || STATE === "unlock" ? "/Apps/keefast/Work.kdbx" : null,
+    loadingCol: STATE === "loading" ? "/Apps/keefast" : null,
+    error: STATE === "error" ? "Dropbox can't be reached. Check your connection." : null,
+    step: STATE === "unlock" ? 3 : 0,
+  };
+  const recents = [
+    { name: "Personal", path: "~/Vaults/Personal.kdbx", dbx: false, when: "Today" },
+    { name: "Work", path: "/Apps/keefast/Work.kdbx", dbx: true, sync: STATE === "error" ? "offline" : "synced", when: "Today" },
+    { name: "Team", path: "/Shared/Team.kdbx", dbx: true, sync: "offline", when: "2 days ago" },
+    { name: "Family", path: "~/Vaults/Family.kdbx", dbx: false, when: "Yesterday" },
+  ];
+  root.innerHTML = `
+  <div class="win">
+    <aside class="open-rail">
+      <div class="brand"><span class="logo">${I("database")}</span>keefast</div>
+      <div style="padding:4px 8px">
+        <div class="nav-head">Open a Vault</div>
+        <div class="src">${I("folder-open")}Choose Vault file…${KF.kbd("Ctrl", "O")}</div>
+        <div class="src is-selected">${dbx()}From Dropbox…</div>
+        <div class="src">${I("plus")}New Vault…${KF.kbd("Ctrl", "Shift", "N")}</div>
+      </div>
+      <div style="padding:12px 8px 4px;flex:1;overflow:auto">
+        <div class="nav-head">Recent Vault files</div>
+        ${recents.map((r) => `<div class="recent">
+          <span class="ficon ${r.dbx ? "" : "vault"}" style="${r.dbx ? "" : ""}">${r.dbx ? dbx() : I("database")}</span>
+          <div style="min-width:0;flex:1"><div class="hstack" style="gap:8px"><span class="nm truncate">${r.name}</span>${r.dbx ? syncHTML(r.sync) : ""}</div><div class="pt truncate">${r.dbx ? "Dropbox: " : ""}${r.path}</div></div>
+        </div>`).join("")}
+      </div>
+      <div class="sb-foot"><div class="nav-item">${I("settings")}Settings</div></div>
+    </aside>
+    <main class="stage">
+      <div class="toolbar"><div class="crumbs">Open a Vault ${I("chevron-right", "ico-sm subtle")}<b>From Dropbox</b></div><span class="spacer"></span><button class="btn sm ghost">Cancel ${KF.kbd("Esc")}</button></div>
+      <div class="stage-scroll"><div class="flow" data-flow></div></div>
+    </main>
+  </div>`;
+  const flow = root.querySelector("[data-flow]");
+  const stepState = (n) => {
+    const cur = st.phase !== "connected" ? 1 : st.step === 3 ? 3 : 2;
+    return n < cur ? "is-done" : n === cur ? "is-on" : "";
+  };
+  const step = (n, title, aside, inner, last) => `
+    <div class="stp ${stepState(n)}">
+      <div class="stp-rail"><span class="n">${stepState(n) === "is-done" ? I("check") : n}</span>${last ? "" : '<span class="line"></span>'}</div>
+      <div class="stp-body"><div class="stp-title">${title}${aside ? `<span class="aside">${aside}</span>` : ""}</div>${inner || ""}</div>
+    </div>`;
+  const connectInner = () => {
+    if (st.phase === "checking") return `<div class="stp-card pad hstack" style="gap:10px;color:var(--fg-1)">${I("loader-circle", "spin")}Looking for your Dropbox account…</div>`;
+    if (st.phase === "connect") return `<div class="stp-card pad">
+        <div class="hstack" style="gap:16px;align-items:flex-start">
+          <div style="flex:1">
+            <p class="lead">Connect your Dropbox account to open Vault files stored there.</p>
+            ${st.connErr ? `<div class="error-msg" style="margin-top:10px">${I("circle-alert", "ico-sm")}${st.connErr}</div>` : ""}
+            <div class="privacy" style="margin:14px 0 0"><div>${I("shield-check")}Dropbox asks you in your browser</div><div>${I("shield-check")}keefast never sees your Dropbox password</div><div>${I("shield-check")}Your sign-in is kept in the OS secret store</div></div>
+            <div class="hstack" style="margin-top:18px"><button class="btn primary" data-act="connect">${I("external-link")}Connect Dropbox ${KF.kbd("↵")}</button></div>
+          </div>
+        </div></div>`;
+    if (st.phase === "connecting") return `<div class="stp-card pad">
+        <div class="hstack" style="gap:16px;align-items:flex-start">
+          <span class="pulse">${dbx("lg")}</span>
+          <div style="flex:1">
+            <div class="hstack" style="gap:8px;font-weight:500">${I("loader-circle", "spin ico-sm")}Waiting for Dropbox…</div>
+            <p class="lead" style="margin-top:4px">Allow keefast in the Dropbox page that opened in your browser, then come back here.</p>
+            <div class="hstack" style="margin-top:16px"><button class="btn secondary" data-act="reopen">${I("external-link")}Open the page again</button><button class="btn ghost" data-act="stop">Stop</button><span class="spacer"></span><button class="btn sm ghost" data-act="simulate-allow" style="color:var(--fg-2)">Simulate “Allow”</button></div>
+          </div>
+        </div></div>`;
+    return "";
+  };
+  const column = (p, openChild) => {
+    if (st.loadingCol === p) return `<div class="col">${Array.from({ length: 4 }, (_, i) => `<div class="citem"><span class="skel" style="width:16px;height:16px"></span><span class="skel" style="width:${[110, 80, 130, 90][i]}px"></span></div>`).join("")}<div class="col-empty" style="top:auto;height:40px">${I("loader-circle", "spin ico-sm")}Loading…</div></div>`;
+    const items = ls(p);
+    if (!items.length) return `<div class="col"><div class="col-empty">${I("folder-open")}This folder is empty.</div></div>`;
+    return `<div class="col">${items.map((it) => `<div class="citem ${it.folder && openChild === it.path ? "is-open" : ""} ${st.sel === it.path ? "is-selected" : ""}" data-item="${KF.esc(it.path)}" data-folder="${it.folder ? 1 : ""}">
+      <span class="ficon ${it.folder ? "" : "vault"}">${I(it.folder ? "folder" : "file-lock-2")}</span><span class="truncate">${KF.esc(it.name)}</span>${it.folder ? `<span class="chev">${I("chevron-right")}</span>` : ""}</div>`).join("")}</div>`;
+  };
+  const browserInner = () => {
+    if (st.phase !== "connected") return "";
+    if (st.step === 3) return "";
+    const chain = ["", ...segs(st.path).map((_, i, a) => "/" + a.slice(0, i + 1).join("/"))];
+    const sel = st.sel && ls(parent(st.sel)).find((x) => x.path === st.sel);
+    const shown = chain.slice(sel ? -2 : -3);
+    let cols;
+    if (st.error) cols = `<div class="col" style="flex:1"><div class="col-empty">${I("cloud-off")}<span style="color:var(--fg-1)">${st.error}</span><button class="btn sm secondary" data-act="retry" style="margin-top:6px">${I("refresh-cw")}Try again</button></div></div>`;
+    else cols = shown.map((p, i) => column(p, shown[i + 1])).join("") + (sel ? `<div class="col"><div class="preview">
+        <span class="ficon vault big">${I("file-lock-2")}</span>
+        <div><div style="font-weight:600" class="truncate">${KF.esc(sel.name)}</div><div class="subtle" style="font-size:12px">KeePass Vault file</div></div>
+        <div><div class="kv"><span class="k">Modified</span><span class="v">${sel.mod}</span></div><div class="kv"><span class="k">Size</span><span class="v">${sel.size}</span></div><div class="kv"><span class="k">Cached</span><span class="v">${/Work/.test(sel.name) ? "On this machine" : "Not yet"}</span></div></div>
+      </div></div>` : "");
+    const crumbs = chain.map((p, i) => `${i ? `<span class="sep">${I("chevron-right")}</span>` : ""}<button data-crumb="${KF.esc(p)}" class="${p === st.path ? "cur" : ""}">${i ? KF.esc(segs(p).pop()) : "Dropbox"}</button>`).join("");
+    return `<div class="stp-card">
+      <div class="cols-bar"><button class="btn sm ghost" data-act="up" ${st.path ? "" : "disabled"} title="Backspace">${I("arrow-up")}Up</button><div class="vdivider" style="margin:10px 2px"></div><div class="bc">${crumbs}</div></div>
+      <div class="cols">${cols}</div>
+      <div class="cols-foot"><span class="hint truncate">${st.sel ? `<span class="mono" style="color:var(--fg-1);letter-spacing:0">Dropbox: ${KF.esc(st.sel)}</span>` : "Only folders and Vault files (.kdbx) are shown"}</span><span class="spacer"></span><button class="btn primary sm" data-act="choose" ${st.sel ? "" : "disabled"}>Continue ${KF.kbd("↵")}</button></div>
+    </div>`;
+  };
+  const unlockInner = () => st.step !== 3 ? "" : `<div class="stp-card pad">
+      <div class="hstack" style="gap:10px;margin-bottom:16px">${dbx("md")}<div style="min-width:0;flex:1"><div style="font-weight:600">${KF.esc(st.sel.split("/").pop())}</div><div class="subtle mono truncate" style="font-size:12px;letter-spacing:0">Dropbox: ${KF.esc(st.sel)}</div></div>${syncHTML("synced", "lg")}</div>
+      <div class="unlock-row">
+        <div class="field"><label>Master password</label><div class="input mono"><input type="password" placeholder="Type your master password" data-pw autofocus><button class="btn sm ghost icon" style="width:22px;height:22px;margin-right:-4px" data-act="eye">${I("eye", "ico-sm")}</button></div></div>
+        <div class="field"><label>Key file</label><div class="input" style="color:var(--fg-2)">${I("file-key-2", "ico-sm")}<span class="truncate" style="flex:1">None (optional)</span><button class="btn sm ghost" style="height:22px;margin-right:-6px">Choose key file…</button></div></div>
+        <button class="btn primary" data-act="unlock">Unlock ${KF.kbd("↵")}</button>
+      </div>
+      <div class="error-msg is-hidden" data-unlock-err style="margin-top:10px">${I("circle-alert", "ico-sm")}Wrong master password or key file.</div>
+    </div>`;
+  const paint = () => {
+    const connected = st.phase === "connected";
+    flow.innerHTML = `
+      <div class="flow-head">${dbx("lg")}<div><h1>Open from Dropbox</h1><div class="d">Three steps: connect, choose a Vault file, unlock it. keefast keeps a Local cache so it opens offline next time.</div></div></div>
+      ${step(1, "Connect Dropbox", connected ? `<span class="done-line">${I("circle-check", "ico-sm")}Connected as ${ACCOUNT.email}</span><button class="btn sm ghost" data-act="disconnect">Disconnect</button>` : "", connectInner())}
+      ${step(2, "Choose a Vault file", st.step === 3 ? `<span class="done-line mono" style="letter-spacing:0">${KF.esc(st.sel)}</span><button class="btn sm ghost" data-act="change">Change</button>` : "", browserInner())}
+      ${step(3, "Unlock", "", unlockInner(), true)}
+      <div class="sync-note">
+        <div class="hstack" style="gap:8px;color:var(--fg-1);font-weight:500">${I("refresh-cw", "ico-sm")}Sync status</div>
+        <p>Once open, a Dropbox Vault shows where it stands with its Vault file beside its name in the sidebar and in the toolbar.</p>
+        <div class="hstack" style="gap:16px;flex-wrap:wrap">${Object.keys(SYNC).map((k) => `<span class="hstack" style="gap:8px">${syncHTML(k, "lg")}</span>`).join("")}</div>
+      </div>`;
+    flow.querySelector("[data-pw]")?.focus();
+  };
+  let timer;
+  const openPath = (p) => { st.path = p; st.error = null; st.loadingCol = p; paint(); clearTimeout(timer); timer = setTimeout(() => { st.loadingCol = null; paint(); }, 400); };
+  flow.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-item]");
+    if (row) { if (row.dataset.folder) { st.sel = null; openPath(row.dataset.item); } else { st.sel = row.dataset.item; st.path = parent(row.dataset.item); paint(); } return; }
+    const cr = e.target.closest("[data-crumb]");
+    if (cr) { st.sel = null; openPath(cr.dataset.crumb); return; }
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (a === "up" && st.path) { st.sel = null; openPath(parent(st.path)); }
+    if (a === "retry") openPath(st.path);
+    if (a === "connect") { st.phase = "connecting"; st.connErr = null; paint(); KF.toast("Dropbox opened in your browser", { icon: "external-link" }); }
+    if (a === "reopen") KF.toast("Dropbox opened in your browser again", { icon: "external-link" });
+    if (a === "stop") { st.phase = "connect"; st.connErr = "Dropbox was not connected."; paint(); }
+    if (a === "simulate-allow") { st.phase = "checking"; paint(); setTimeout(() => { st.phase = "connected"; openPath("/Apps/keefast"); }, 700); }
+    if (a === "disconnect") { st.phase = "connect"; st.sel = null; st.step = 0; paint(); KF.toast("Dropbox disconnected", { icon: "unplug" }); }
+    if (a === "choose" && st.sel) { st.step = 3; paint(); }
+    if (a === "change") { st.step = 0; paint(); }
+    if (a === "eye") { const i = flow.querySelector("[data-pw]"); i.type = i.type === "password" ? "text" : "password"; }
+    if (a === "unlock") { const i = flow.querySelector("[data-pw]"); if (!i.value) { flow.querySelector("[data-unlock-err]").classList.remove("is-hidden"); i.parentElement.classList.add("invalid"); } else KF.toast("Unlocking… deriving the key", { icon: "loader-circle" }); }
+  });
+  paint();
+}
+
+KF.variants({
+  A: { name: "File browser dialog over the window", render: renderA },
+  B: { name: "Stepped panel in the Open a Vault screen", render: renderB },
+});
+</script>
+</body>
+</html>

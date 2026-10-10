@@ -1,0 +1,841 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dialogs — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- App backdrop ---------- */
+.win { position: absolute; inset: 0; display: grid; grid-template-columns: var(--sidebar-w) var(--list-w) 1fr; }
+.sb { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sb-top { height: var(--toolbar-h); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; flex: none; }
+.sb-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
+.sb-logo { width: 20px; height: 20px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--fg-on-accent); }
+.sb-logo svg.lucide { width: 12px; height: 12px; stroke-width: 2.25; }
+.sb-scroll { flex: 1; overflow: auto; padding-bottom: 8px; }
+.sb .nav-section { padding: 2px 8px 6px; }
+.sb .nav-head { gap: 6px; }
+.sb .nav-head .nh-act { margin-left: auto; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-2); }
+.sb .nav-head .nh-act svg.lucide { width: 13px; height: 13px; }
+.sb .nav-head .nh-act.is-on { background: var(--bg-active); color: var(--fg-0); }
+.sb .nav-item svg.lucide { color: var(--fg-2); }
+.sb .nav-item.is-selected svg.lucide { color: var(--fg-1); }
+.sb .nav-item.sub { padding-left: 24px; }
+.sb .nav-item .count.pill { background: var(--accent); color: var(--fg-on-accent); border-radius: 99px; min-width: 18px; height: 16px; display: inline-grid; place-items: center; padding: 0 5px; font-weight: 600; font-size: 10.5px; }
+.sb-foot { border-top: 1px solid var(--border); padding: 6px 8px; flex: none; }
+.locking-mark { color: var(--warn); font-weight: 500; }
+
+.ls { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg-0); }
+.ls .toolbar { gap: 6px; }
+.ls .search { flex: 1; }
+.ls-scroll { flex: 1; overflow: hidden; padding: 0 6px; }
+.erow { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--r-sm); }
+.erow:hover { background: var(--bg-hover); }
+.erow.is-selected { background: var(--bg-active); }
+.erow .t { font-weight: 500; line-height: 1.25; }
+.erow .u { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.3; }
+.erow .ind { margin-left: auto; display: flex; gap: 6px; color: var(--fg-2); }
+.erow .ind svg.lucide { width: 13px; height: 13px; }
+
+.dt { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-0); position: relative; }
+.dt-body { padding: 28px 40px; overflow: hidden; }
+.dt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+.dt-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; line-height: 1.2; }
+.dt-sub { color: var(--fg-2); font-size: var(--text-sm); margin-top: 2px; }
+.dt .kv { border-bottom: 1px solid var(--border); min-height: 40px; }
+.dt .kv:last-of-type { border-bottom: 0; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-1); margin-right: 4px; }
+.status.unsaved .status-dot { background: var(--warn); }
+.status.unsaved { color: var(--warn); }
+.dt-tags { display: flex; gap: 6px; }
+.hidden-pane { display: grid; place-items: center; grid-column: 2 / 4; background: var(--bg-0); }
+
+/* dimmed backdrop under a modal */
+.win.is-dimmed { filter: saturate(0.85); }
+
+/* ---------- Shared dialog bits ---------- */
+.dg-kicker { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); margin-bottom: 10px; }
+.dg-kicker svg.lucide { width: 13px; height: 13px; }
+.dg-kicker .sep { width: 2px; height: 2px; border-radius: 50%; background: var(--fg-2); }
+.dg-addr { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px 0 10px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border-strong); }
+.dg-addr .host { font-family: var(--font-mono); font-size: 15px; letter-spacing: 0; color: var(--fg-0); font-weight: 500; }
+.dg-addr .host .scheme { color: var(--fg-2); font-weight: 400; }
+.dg-addr .via { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; }
+.dg-addr .lockico { color: var(--ok); }
+.dg-addr .lockico svg.lucide { width: 14px; height: 14px; }
+.dg-desc b, .dialog-desc b { color: var(--fg-0); font-weight: 500; }
+.dg-list { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.dg-list .li { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; }
+.dg-list .li + .li { border-top: 1px solid var(--border); }
+.dg-list .li .t { font-weight: 500; line-height: 1.25; }
+.dg-list .li .u { font-size: var(--text-sm); color: var(--fg-1); line-height: 1.3; }
+.dg-list .li .badge { margin-left: auto; }
+.dg-checkrow { display: flex; align-items: center; gap: 10px; cursor: default; color: var(--fg-1); }
+.dg-checkrow:hover .check:not(.is-on) { border-color: var(--fg-2); }
+.dg-checkrow b { color: var(--fg-0); font-weight: 500; }
+.dg-foot-hint { font-size: var(--text-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; margin-right: auto; }
+.dg-tile { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); margin-bottom: 14px; box-shadow: inset 0 0 0 1px var(--border); }
+.dg-tile svg.lucide { width: 18px; height: 18px; }
+.dg-tile.warn { background: var(--warn-bg); color: var(--warn); box-shadow: none; }
+.dg-tile.danger { background: var(--danger-bg); color: var(--danger); box-shadow: none; }
+.dg-tile.accent { background: var(--accent-bg); color: var(--accent-fg); box-shadow: none; }
+.dg-subject { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); }
+.dg-subject .t { font-weight: 500; line-height: 1.25; }
+.dg-subject .u { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.3; }
+.dg-subject .gico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.dg-known { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--text-sm); color: var(--fg-2); }
+.btn.danger:hover { filter: brightness(1.08); }
+.btn.danger kbd { background: rgb(255 255 255 / 0.16); border-color: rgb(255 255 255 / 0.2); color: inherit; }
+.btn.is-arming { opacity: 0.5; pointer-events: none; }
+
+/* Save-login target list (variant A) */
+.tl.scroll { -webkit-mask: linear-gradient(#000 calc(100% - 28px), transparent); mask: linear-gradient(#000 calc(100% - 28px), transparent); padding-bottom: 20px; }
+.tl { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: var(--r-md); padding: 4px; }
+.tl-head { display: flex; align-items: center; height: 28px; padding: 0 8px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.tl-head:not(:first-child) { margin-top: 4px; }
+.tl-row { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: var(--r-sm); cursor: default; }
+.tl-row:hover { background: var(--bg-hover); }
+.tl-row.is-on { background: var(--bg-active); }
+.tl-row .lbl { flex: 1; min-width: 0; }
+.tl-row svg.lucide { color: var(--fg-2); width: 15px; height: 15px; }
+.tl-row.tall { height: 44px; }
+.tl-row .t { font-weight: 500; line-height: 1.25; }
+.tl-row .u { font-size: var(--text-sm); color: var(--fg-1); line-height: 1.3; }
+.tl-row .new-mark { color: var(--accent-fg); }
+
+/* ---------- Variant B: request stack + anchored popovers ---------- */
+.rq-stack { position: absolute; top: calc(var(--toolbar-h) + 8px); right: 12px; width: 368px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
+.rq { background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); position: relative; animation: kf-rise var(--dur) var(--ease); }
+.rq-top { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 14px; font-size: var(--text-sm); color: var(--fg-2); border-bottom: 1px solid var(--border); }
+.rq-top svg.lucide { width: 13px; height: 13px; }
+.rq-top .btn.sm.icon { margin-left: auto; }
+.rq-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.rq-title { font-size: var(--text-md); font-weight: 600; }
+.rq-host { display: flex; align-items: center; gap: 10px; }
+.rq-host .host { font-family: var(--font-mono); font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.rq-host .host .scheme { color: var(--fg-2); font-weight: 400; }
+.rq-host .what { font-size: var(--text-sm); color: var(--fg-1); }
+.rq-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rq-acts .btn { width: 100%; }
+.rq-mini { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 10px 0 12px; background: var(--bg-popover); border-radius: var(--r-md); box-shadow: var(--shadow-pop); cursor: default; animation: kf-rise var(--dur) var(--ease); }
+.rq-mini:hover { background: var(--bg-2); }
+.rq-mini .t { font-weight: 500; font-size: var(--text-md); line-height: 1.25; }
+.rq-mini .u { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.3; }
+.rq-mini .time { margin-left: auto; font-size: var(--text-xs); color: var(--fg-2); }
+.rq-mini .ico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.rq-mini .ico svg.lucide { width: 14px; height: 14px; }
+.rq-count { align-self: flex-end; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 99px; background: var(--bg-popover); box-shadow: var(--shadow-pop); font-size: var(--text-xs); font-weight: 500; color: var(--fg-1); }
+.picker { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--r-md); border: 1px solid var(--border-strong); background: var(--bg-1); cursor: default; width: 100%; text-align: left; }
+.picker:hover { background: var(--bg-2); }
+.picker.is-open { border-color: var(--accent); box-shadow: var(--ring); }
+.picker .t { font-weight: 500; line-height: 1.25; }
+.picker .u { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.3; }
+.picker .chev { margin-left: auto; color: var(--fg-2); }
+.picker .gico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.picker-menu { position: absolute; left: 14px; right: 14px; z-index: 5; max-height: 300px; overflow: auto; transform-origin: top center; }
+.seg.full { display: flex; }
+.seg.full > button { flex: 1; justify-content: center; }
+.anchor-pop { position: absolute; z-index: 35; width: 300px; padding: 14px; background: var(--bg-popover); border-radius: var(--r-md); box-shadow: var(--shadow-pop); animation: kf-pop var(--dur) var(--ease); }
+.anchor-pop h3 { margin: 0; font-size: var(--text-md); font-weight: 600; line-height: 1.35; }
+.anchor-pop p { margin: 4px 0 0; color: var(--fg-1); font-size: var(--text-sm); }
+.anchor-pop .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 14px; }
+.anchor-pop::before { content: ""; position: absolute; width: 10px; height: 10px; background: var(--bg-popover); transform: rotate(45deg); box-shadow: -1px -1px 0 0 var(--border-strong); }
+.anchor-pop.from-top-right::before { top: -5px; right: 14px; }
+.anchor-pop.from-left::before { left: -5px; top: 14px; box-shadow: -1px 1px 0 0 var(--border-strong); }
+.btn.is-pressed { background: var(--bg-active); color: var(--fg-0); }
+.btn.danger-ghost.is-pressed { background: var(--danger-bg); color: var(--danger); }
+
+/* In-place takeover (locking Vault) */
+.takeover { width: 400px; text-align: left; }
+.takeover .card-section { padding: 20px; }
+.takeover h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; line-height: 1.35; }
+.takeover p { margin: 6px 0 0; color: var(--fg-1); }
+.takeover .acts { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-inset); border-radius: 0 0 var(--r-md) var(--r-md); }
+.takeover .file { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: var(--text-sm); color: var(--fg-2); }
+
+/* ---------- Variant C: Requests inbox panel ---------- */
+.inbox { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; background: var(--bg-0); border-left: 1px solid var(--border); box-shadow: -24px 0 48px rgb(0 0 0 / 0.35); display: flex; flex-direction: column; z-index: 40; animation: kf-slide var(--dur) var(--ease); }
+.inbox .toolbar { gap: 8px; }
+.inbox .toolbar .ttl { font-weight: 600; }
+.ib-list { padding: 6px; border-bottom: 1px solid var(--border); flex: none; }
+.ib-row { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--r-sm); cursor: default; position: relative; }
+.ib-row:hover { background: var(--bg-hover); }
+.ib-row.is-selected { background: var(--bg-active); }
+.ib-row .ico { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.ib-row .ico svg.lucide { width: 14px; height: 14px; }
+.ib-row .t { font-weight: 500; line-height: 1.25; }
+.ib-row .u { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.3; }
+.ib-row .time { margin-left: auto; font-size: var(--text-xs); color: var(--fg-2); flex: none; }
+.ib-row .unread { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); position: absolute; left: 3px; top: 19px; }
+.ib-detail { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.ib-detail h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+.ib-detail .lead { margin: -8px 0 0; color: var(--fg-1); }
+.ib-detail .lead b { color: var(--fg-0); font-weight: 500; }
+.ib-section-label { font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); margin-bottom: -8px; }
+.ib-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-inset); flex: none; }
+.ib-empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--fg-2); }
+.ib-empty .vstack { align-items: center; }
+.ib-meta { display: grid; grid-template-columns: 96px 1fr; row-gap: 6px; font-size: var(--text-sm); }
+.ib-meta .k { color: var(--fg-2); }
+.ib-meta .v { color: var(--fg-1); }
+.inline-confirm { display: flex; align-items: center; gap: 10px; height: var(--toolbar-h); padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); background: var(--danger-bg); animation: kf-fade var(--dur) var(--ease); flex: none; }
+.inline-confirm .ic { color: var(--danger); display: grid; place-items: center; }
+.inline-confirm b { font-weight: 600; }
+.inline-confirm .sub { color: var(--fg-1); font-size: var(--text-sm); }
+
+/* Dev picker (prototype chrome) */
+.proto-bar.dev { left: 14px; transform: none; }
+.proto-bar.dev button.is-on { background: #111; color: #fafafa; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ======================================================================
+   State from URL: &state=pair|access|save-login|lock-unsaved|delete
+   extras: &err=empty|taken (pair), &mode=auto (lock-unsaved), &target=group (delete)
+   ====================================================================== */
+const STATES = ["pair", "access", "save-login", "lock-unsaved", "delete"];
+const STATE_LABEL = { pair: "Pair", access: "Access", "save-login": "Save login", "lock-unsaved": "Lock", delete: "Delete" };
+const q = () => new URL(location.href).searchParams;
+const S = () => {
+  const p = q();
+  return { state: STATES.includes(p.get("state")) ? p.get("state") : "access", err: p.get("err"), mode: p.get("mode"), target: p.get("target") };
+};
+const P = KF.vault("personal"), W = KF.vault("work");
+const esc = KF.esc, I = KF.icon;
+
+/* ---------- Scenario data (shared story) ---------- */
+const BROWSER = "Chrome on my laptop";
+const ACCESS = {
+  site: "github.com",
+  entries: [
+    { ...KF.entry("e1"), vault: "Personal" },
+    { id: "wx", title: "GitHub (CI bot)", brand: "github", username: "rezende-ci", vault: "Work" },
+  ],
+};
+const LOGIN = {
+  site: "linear.app", username: "arthur@rezende.dev",
+  // rows in the order the app builds them: matches, then every Group of each Vault
+  targets: [
+    { head: "Update an existing Entry" },
+    { id: "u:w5", kind: "update", entry: KF.entry("w5"), vault: "Work" },
+    { head: "Save as a new Entry in" },
+    { id: "n:personal", kind: "new", label: "Personal", depth: 1, icon: "book-key", vault: "Personal" },
+    ...P.groups.filter((g) => g.parent === "root" && !g.recycle).map((g) => ({ id: "n:p:" + g.id, kind: "new", label: g.name, depth: 2, icon: g.icon, vault: "Personal", browser: !!g.browserGroup })),
+    { id: "n:work", kind: "new", label: "Work", depth: 1, icon: "book-key", vault: "Work" },
+    { id: "n:w:new", kind: "new", label: "Browser logins (new Group)", depth: 2, icon: "folder-plus", vault: "Work", browser: true, isNew: true },
+    { id: "n:w:infra", kind: "new", label: "Infrastructure", depth: 2, icon: "server", vault: "Work" },
+    { id: "n:w:servers", kind: "new", label: "Servers", depth: 3, icon: "hard-drive", vault: "Work" },
+    { id: "n:w:saas", kind: "new", label: "SaaS", depth: 2, icon: "cloud", vault: "Work" },
+  ],
+};
+const DEL_GROUP = { name: "Old accounts", entries: 6, groups: 1 };
+
+/* ---------- Backdrop: sidebar | list | detail ---------- */
+function scenario(s) {
+  if (s.state === "lock-unsaved") return { vault: W, group: "saas", entry: "w5", unsaved: true, locking: s.mode === "auto" };
+  if (s.state === "delete") return { vault: P, group: "bin", entry: s.target === "group" ? null : "e14", binGroup: true };
+  return { vault: P, group: "all", entry: "e1" };
+}
+function countIn(v, gid) { return v.entries.filter((e) => e.group === gid).length; }
+
+function sidebar(sc, opts = {}) {
+  const vaultSection = (v, sel) => {
+    const isSel = sc.vault === v;
+    const groups = v.groups.filter((g) => g.parent === "root");
+    const locking = isSel && sc.locking;
+    return `<div class="nav-section">
+      <div class="nav-head">${esc(v.name)}${locking ? `<span class="locking-mark">· locking…</span>` : ""}
+        <span class="nh-act ${opts.lockPressed && v === sc.vault ? "is-on" : ""}" data-lock-anchor="${v.id}" title="Lock (Ctrl L)">${I("lock")}</span></div>
+      ${locking ? "" : groups.map((g) => {
+        const subs = v.groups.filter((x) => x.parent === g.id);
+        const n = countIn(v, g.id) + subs.reduce((a, x) => a + countIn(v, x.id), 0) + (g.recycle && v === P ? DEL_GROUP.entries : 0);
+        return `<div class="nav-item ${isSel && sc.group === g.id && !opts.requestsSelected ? "is-selected" : ""}">${I(g.icon)}<span class="truncate">${esc(g.name)}</span><span class="count">${n || ""}</span></div>`;
+      }).join("")}
+    </div>`;
+  };
+  const allSel = sc.group === "all" && !opts.requestsSelected;
+  return `<aside class="sb">
+    <div class="sb-top"><div class="sb-brand"><span class="sb-logo">${I("key-round")}</span>keefast</div><span class="spacer"></span>
+      <button class="btn sm icon ghost" title="Search (Ctrl K)">${I("search")}</button><button class="btn sm icon ghost" title="New Entry (Ctrl N)">${I("square-pen")}</button></div>
+    <div class="sb-scroll">
+      <div class="nav-section">
+        <div class="nav-item ${allSel ? "is-selected" : ""}">${I("layers")}<span>All Entries</span><span class="count">${P.entries.length + W.entries.length - 1}</span></div>
+        ${opts.requests != null ? `<div class="nav-item ${opts.requestsSelected ? "is-selected" : ""}" data-open-inbox>${I("inbox")}<span>Requests</span>${opts.requests ? `<span class="count pill">${opts.requests}</span>` : `<span class="count"></span>`}</div>` : ""}
+        <div class="nav-item">${I("clock")}<span>Recently used</span></div>
+      </div>
+      ${vaultSection(P)}
+      ${vaultSection(W)}
+      <div class="nav-section"><div class="nav-head">Family<span class="nh-act">${I("lock-keyhole")}</span></div>
+        <div class="nav-item">${I("lock")}<span class="subtle">Locked</span><span class="count">Unlock…</span></div></div>
+    </div>
+    <div class="sb-foot"><div class="nav-item">${I("settings")}<span>Settings</span><span class="count">${KF.kbd("Ctrl", ",")}</span></div></div>
+  </aside>`;
+}
+
+function listPane(sc) {
+  const v = sc.vault;
+  let entries;
+  if (sc.group === "all") entries = [...P.entries, ...W.entries].filter((e) => e.group !== "bin").sort((a, b) => a.title.localeCompare(b.title));
+  else entries = v.entries.filter((e) => e.group === sc.group);
+  const gname = sc.group === "all" ? "All Entries" : v.groups.find((g) => g.id === sc.group).name;
+  const groupRow = sc.binGroup ? `<div class="erow ${sc.entry ? "" : "is-selected"}"><span class="avatar" style="width:28px;height:28px;border-radius:7px;background:var(--bg-active);color:var(--fg-1);box-shadow:none">${I("folder")}</span><div class="truncate"><div class="t">${DEL_GROUP.name}</div><div class="u">${DEL_GROUP.entries} Entries · ${DEL_GROUP.groups} Group</div></div></div>` : "";
+  return `<section class="ls">
+    <div class="toolbar"><div class="search">${I("search", "ico-sm")}<input placeholder="Search ${esc(gname)}" tabindex="-1"><kbd>/</kbd></div></div>
+    <div class="list-head"><span>${esc(gname)}</span><span class="spacer"></span><span>${entries.length + (sc.binGroup ? 1 : 0)}</span></div>
+    <div class="ls-scroll">${groupRow}${entries.map((e) => `<div class="erow ${e.id === sc.entry ? "is-selected" : ""}">${KF.avatar(e, 28)}<div class="truncate"><div class="t truncate">${esc(e.title)}</div><div class="u truncate">${esc(e.username)}</div></div><span class="ind">${e.totp ? I("timer") : ""}${e.color ? `<span class="dot" style="background:${KF.colorVar(e.color)};width:6px;height:6px;margin-top:4px"></span>` : ""}</span></div>`).join("")}</div>
+  </section>`;
+}
+
+function detailPane(sc, opts = {}) {
+  const v = sc.vault;
+  const e = sc.entry ? KF.entry(sc.entry) : null;
+  const path = e ? KF.groupPath(v, e.group).map((g) => g.name) : [v.name, "Recycle Bin", DEL_GROUP.name];
+  const status = sc.unsaved ? `<span class="status unsaved"><span class="status-dot"></span>Unsaved</span>` : v.storage === "dropbox" ? `<span class="status"><span class="status-dot"></span>Synced</span>` : `<span class="status"><span class="status-dot"></span>Saved</span>`;
+  const bar = opts.inlineConfirm || `<div class="toolbar">
+      <div class="crumbs">${path.map((p, i) => (i === path.length - 1 ? `<b>${esc(p)}</b>` : `${esc(p)} ${I("chevron-right", "ico-sm subtle")}`)).join(" ")}</div>
+      <span class="spacer"></span>${status}
+      ${sc.binGroup ? `<button class="btn sm ghost">${I("undo-2")} Restore</button>` : `<button class="btn sm ghost">${I("pencil")} Edit ${KF.kbd("E")}</button>`}
+      <button class="btn sm icon ghost">${I("copy")}</button>
+      <button class="btn sm icon ${opts.deletePressed ? "danger-ghost is-pressed" : "ghost"}" data-delete-anchor title="Delete">${I("trash-2")}</button>
+      <button class="btn sm icon ghost">${I("ellipsis")}</button>
+    </div>`;
+  if (!e) {
+    return `<section class="dt">${bar}<div class="dt-body"><div class="dt-head"><span class="avatar" style="width:44px;height:44px;border-radius:11px;background:var(--bg-active);color:var(--fg-1);box-shadow:none">${I("folder", "ico-lg")}</span><div><div class="dt-title">${DEL_GROUP.name}</div><div class="dt-sub">Group in the Recycle Bin · ${DEL_GROUP.entries} Entries, ${DEL_GROUP.groups} Group</div></div></div>
+      ${["Old Yahoo", "MySpace", "Orkut", "Hotmail", "ICQ", "Last.fm"].map((t) => `<div class="kv"><span class="k">Entry</span><span class="v muted">${t}</span></div>`).join("")}</div></section>`;
+  }
+  return `<section class="dt">${bar}
+    <div class="dt-body">
+      <div class="dt-head">${KF.avatar(e, 44)}<div class="truncate"><div class="dt-title">${esc(e.title)}</div><div class="dt-sub">${esc(KF.host(e.url) || "No website")} · edited ${esc(e.modified)}</div></div></div>
+      <div class="kv"><span class="k">Username</span><span class="v">${esc(e.username)}</span></div>
+      <div class="kv"><span class="k">Password</span><span class="v mono muted">${KF.mask(16)}</span></div>
+      <div class="kv"><span class="k">Website</span><span class="v"><a>${esc(e.url || "—")}</a></span></div>
+      ${e.totp ? `<div class="kv"><span class="k">One-time code</span><span class="v hstack"><span class="mono">${e.totp.code.replace(/\s/g, "").replace(/(\d{3})(\d{3})/, "$1 $2")}</span><span class="ring" style="--p:${e.totp.left / 30}"></span></span></div>` : ""}
+      <div class="kv"><span class="k">Notes</span><span class="v muted truncate">${esc(e.notes || "—")}</span></div>
+      <div class="kv"><span class="k">Tags</span><span class="v dt-tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("") || "—"}</span></div>
+    </div></section>`;
+}
+
+function lockingPane(inner) { return `<div class="hidden-pane">${inner}</div>`; }
+
+function backdrop(s, opts = {}) {
+  const sc = scenario(s);
+  const main = sc.locking ? lockingPane(opts.lockingInner || `<div class="vstack" style="align-items:center;color:var(--fg-2)">${I("lock", "ico-lg")}<span>Locking “Work”…</span></div>`) : listPane(sc) + detailPane(sc, opts);
+  return `<div class="win ${opts.dim ? "is-dimmed" : ""}">${sidebar(sc, opts)}${main}</div>`;
+}
+
+/* ---------- Small shared renderers ---------- */
+const addr = (site, extra = "") => `<div class="dg-addr"><span class="lockico">${I("lock")}</span><span class="host"><span class="scheme">https://</span>${esc(site)}</span>${extra}</div>`;
+const entryLi = (e) => `<div class="li">${KF.avatar(e, 28)}<div class="truncate"><div class="t truncate">${esc(e.title)}</div><div class="u truncate">${esc(e.username)}</div></div><span class="badge">${esc(e.vault)}</span></div>`;
+const check = (on) => `<span class="check ${on ? "is-on" : ""}"></span>`;
+function pairError(err) {
+  if (err === "empty") return "Give this browser a name.";
+  if (err === "taken") return "This Vault already has a browser with this name.";
+  return "";
+}
+function validatePair(name) {
+  if (!name.trim()) return "empty";
+  if (KF.data.pairings.some((p) => p.name.toLowerCase() === name.trim().toLowerCase())) return "taken";
+  return null;
+}
+function arm(root) {
+  // Allow/Pair are armed after a beat so a keystroke meant for another window can't approve a request.
+  KF.$$(".js-arm", root).forEach((b) => { b.classList.add("is-arming"); setTimeout(() => b.classList.remove("is-arming"), 700); });
+}
+let KEYS = null; // current dialog's key handler
+window.addEventListener("keydown", (e) => {
+  if (!KEYS) return;
+  if (e.key === "Enter" || e.key === "Escape" || (e.key >= "1" && e.key <= "9") || e.key === "ArrowUp" || e.key === "ArrowDown" || e.key.toLowerCase() === "j" || e.key.toLowerCase() === "k") {
+    if (KEYS(e)) { e.preventDefault(); e.stopPropagation(); }
+  }
+}, true);
+
+/* ---------- Dev picker (prototype chrome) ---------- */
+let RERENDER = () => {};
+function devPicker() {
+  let bar = document.querySelector(".proto-bar.dev");
+  if (!bar) { bar = document.createElement("div"); bar.className = "proto-bar dev"; document.body.appendChild(bar); if (new URL(location.href).searchParams.get("shot") === "1") bar.hidden = true; }
+  const s = S();
+  bar.innerHTML = STATES.map((k) => `<button data-st="${k}" class="${s.state === k ? "is-on" : ""}">${STATE_LABEL[k]}</button>`).join("");
+  bar.querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => setState({ state: b.dataset.st, err: null, mode: null, target: null })));
+}
+function setState(patch) {
+  const u = new URL(location.href);
+  for (const [k, v] of Object.entries(patch)) { if (v == null) u.searchParams.delete(k); else u.searchParams.set(k, v); }
+  history.replaceState(null, "", u);
+  RERENDER();
+}
+
+/* ======================================================================
+   Variant A — centred modal dialogs
+   ====================================================================== */
+function renderA(root) {
+  const s = S();
+  RERENDER = () => renderA(root);
+  devPicker();
+  const sc = scenario(s);
+  root.innerHTML = backdrop(s, { dim: true }) + `<div class="scrim" id="scrim"></div>`;
+  const scrim = KF.$("#scrim", root);
+  const close = (msg, icon = "check") => { scrim.remove(); KEYS = null; KF.$(".win", root).classList.remove("is-dimmed"); if (msg) KF.toast(msg, { icon }); };
+
+  if (s.state === "access") {
+    let remember = false;
+    scrim.innerHTML = `<div class="dialog" style="width:500px" role="alertdialog">
+      <div class="dialog-head">
+        <div class="dg-kicker">${I("chrome")}<span>${BROWSER}</span><span class="sep"></span><span>Browser request</span><span class="sep"></span><span>just now</span></div>
+        <h2 class="dialog-title">Allow access?</h2>
+      </div>
+      <div class="dialog-body">
+        ${addr(ACCESS.site, `<span class="via">asks for ${ACCESS.entries.length} Entries</span>`)}
+        <p class="dialog-desc" style="margin:0"><b>${ACCESS.site}</b> asks for these Entries. Allow only if you are signing in there.</p>
+        <div class="dg-list">${ACCESS.entries.map(entryLi).join("")}</div>
+        <label class="dg-checkrow" id="rem">${check(remember)}<span>Remember this decision for <b>${ACCESS.site}</b></span></label>
+      </div>
+      <div class="dialog-foot">
+        <span class="dg-foot-hint">${I("shield", "ico-sm")}Not signing in? Deny.</span>
+        <button class="btn secondary" id="deny">Deny ${KF.kbd("Esc")}</button>
+        <button class="btn primary js-arm" id="allow">Allow ${KF.kbd("↵")}</button>
+      </div></div>`;
+    const remEl = KF.$("#rem", scrim);
+    remEl.onclick = () => { remember = !remember; remEl.querySelector(".check").classList.toggle("is-on", remember); };
+    const allow = () => close(`Allowed <b>${ACCESS.site}</b>${remember ? ` <span class="subtle">· remembered on 2 Entries</span>` : ""}`);
+    const deny = () => close(`Denied <b>${ACCESS.site}</b>${remember ? ` <span class="subtle">· remembered</span>` : ""}`, "shield-x");
+    KF.$("#allow", scrim).onclick = allow; KF.$("#deny", scrim).onclick = deny;
+    KEYS = (e) => { if (e.key === "Escape") { deny(); return true; } if (e.key === "Enter" && !KF.$("#allow", scrim).classList.contains("is-arming")) { allow(); return true; } };
+    arm(scrim);
+  }
+
+  if (s.state === "pair") {
+    const err = s.err;
+    const val = err === "taken" ? "Chrome on my laptop" : "";
+    scrim.innerHTML = `<div class="dialog" style="width:460px" role="alertdialog">
+      <div class="dialog-head">
+        <div class="dg-tile accent">${I("link-2")}</div>
+        <h2 class="dialog-title">Pair a browser</h2>
+        <p class="dialog-desc">A browser extension asks to pair with the Vault <b>“Personal”</b>. If this was you, name this browser so you can recognise it later.</p>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="bname">Browser name</label>
+          <div class="input ${err ? "invalid" : ""}" id="bwrap">${I("chrome", "ico-sm subtle")}<input id="bname" placeholder="e.g. Chrome on my laptop" value="${esc(val)}" autocomplete="off"></div>
+          <div class="error-msg" id="berr" ${err ? "" : "hidden"}>${I("circle-alert", "ico-sm")}<span>${pairError(err)}</span></div>
+          <div class="dg-known" id="bknown" ${err ? "hidden" : ""}>Already paired: ${KF.data.pairings.map((p) => `<span class="badge">${esc(p.name)}</span>`).join("")}</div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <span class="dg-foot-hint">${I("info", "ico-sm")}It can ask for logins while the Vault is open.</span>
+        <button class="btn secondary" id="deny">Deny</button>
+        <button class="btn primary js-arm" id="pair">Pair ${KF.kbd("↵")}</button>
+      </div></div>`;
+    const input = KF.$("#bname", scrim);
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+    const showErr = (code) => {
+      KF.$("#bwrap", scrim).classList.toggle("invalid", !!code);
+      KF.$("#berr", scrim).hidden = !code; KF.$("#bknown", scrim).hidden = !!code;
+      if (code) KF.$("#berr span", scrim).textContent = pairError(code);
+    };
+    input.oninput = () => showErr(null);
+    const pair = () => { const code = validatePair(input.value); if (code) { showErr(code); input.focus(); return; } close(`Paired <b>${esc(input.value.trim())}</b> with “Personal”`, "link-2"); };
+    const deny = () => close("Pairing denied", "x");
+    KF.$("#pair", scrim).onclick = pair; KF.$("#deny", scrim).onclick = deny;
+    KEYS = (e) => { if (e.key === "Escape") { deny(); return true; } if (e.key === "Enter") { pair(); return true; } };
+    arm(scrim);
+  }
+
+  if (s.state === "save-login") {
+    let chosen = "u:w5";
+    const rowHtml = (t) => {
+      if (t.head) return `<div class="tl-head">${t.head}</div>`;
+      if (t.kind === "update") return `<div class="tl-row tall ${chosen === t.id ? "is-on" : ""}" data-t="${t.id}"><span class="radio ${chosen === t.id ? "is-on" : ""}"></span>${KF.avatar(t.entry, 26)}<div class="lbl truncate"><div class="t">${esc(t.entry.title)}</div><div class="u truncate">${esc(t.entry.username)}</div></div><span class="badge">${t.vault}</span></div>`;
+      return `<div class="tl-row ${chosen === t.id ? "is-on" : ""}" data-t="${t.id}" style="padding-left:${8 + (t.depth - 1) * 20}px"><span class="radio ${chosen === t.id ? "is-on" : ""}"></span>${I(t.icon)}<span class="lbl truncate ${t.depth === 1 ? "" : ""}" style="${t.depth === 1 ? "font-weight:500" : ""}">${t.isNew ? `Browser logins <span class="subtle">(new Group)</span>` : esc(t.label)}</span>${t.browser ? `<span class="badge accent">Browser group</span>` : ""}</div>`;
+    };
+    scrim.innerHTML = `<div class="dialog" style="width:520px" role="dialog">
+      <div class="dialog-head">
+        <div class="dg-kicker">${I("chrome")}<span>${BROWSER}</span><span class="sep"></span><span>Captured login</span></div>
+        <h2 class="dialog-title">Save login?</h2>
+        <p class="dialog-desc">You signed in to <b>${LOGIN.site}</b> as <b>“${LOGIN.username}”</b>. Choose where keefast saves this login.</p>
+      </div>
+      <div class="dialog-body"><div class="tl scroll" id="tl"></div></div>
+      <div class="dialog-foot">
+        <span class="dg-foot-hint">${KF.kbd("↑", "↓")} to choose</span>
+        <button class="btn secondary" id="cancel">Cancel ${KF.kbd("Esc")}</button>
+        <button class="btn primary" id="save">Save ${KF.kbd("↵")}</button>
+      </div></div>`;
+    const tl = KF.$("#tl", scrim);
+    const selectable = LOGIN.targets.filter((t) => !t.head);
+    const paint = () => { tl.innerHTML = LOGIN.targets.map(rowHtml).join(""); KF.$$("[data-t]", tl).forEach((r) => (r.onclick = () => { chosen = r.dataset.t; paint(); })); KF.$(".is-on", tl)?.scrollIntoView({ block: "nearest" }); };
+    paint();
+    const save = () => { const t = selectable.find((x) => x.id === chosen); close(t.kind === "update" ? `Updated <b>${esc(t.entry.title)}</b> in Work` : `Saved <b>linear.app</b> to ${t.isNew ? "Browser logins" : esc(t.label)}`); };
+    KF.$("#save", scrim).onclick = save; KF.$("#cancel", scrim).onclick = () => close();
+    KEYS = (e) => {
+      if (e.key === "Escape") { close(); return true; }
+      if (e.key === "Enter") { save(); return true; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { const i = selectable.findIndex((x) => x.id === chosen); chosen = selectable[Math.max(0, Math.min(selectable.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))].id; paint(); return true; }
+    };
+  }
+
+  if (s.state === "lock-unsaved") {
+    const auto = s.mode === "auto";
+    scrim.innerHTML = `<div class="dialog" style="width:440px" role="alertdialog">
+      <div class="dialog-head">
+        <div class="dg-tile warn">${I(auto ? "timer" : "lock")}</div>
+        <h2 class="dialog-title">“Work” has unsaved changes. Save them before locking?</h2>
+        <p class="dialog-desc">${auto ? "keefast is locking, and the Vault stays hidden until you choose. Discarding loses the changes." : "Discarding loses them."}</p>
+      </div>
+      <div class="dialog-body" style="padding-top:12px"><div class="dg-subject"><span class="gico">${I("briefcase")}</span><div class="truncate"><div class="t">Work</div><div class="u truncate">${esc(W.file)}</div></div><span class="badge warn" style="margin-left:auto">Unsaved</span></div></div>
+      <div class="dialog-foot">
+        <button class="btn danger-ghost" id="discard" style="margin-right:auto">Discard</button>
+        ${auto ? "" : `<button class="btn secondary" id="cancel">Cancel ${KF.kbd("Esc")}</button>`}
+        <button class="btn primary" id="save">Save and lock ${KF.kbd("↵")}</button>
+      </div></div>`;
+    const save = () => close("Saved “Work” and locked it", "lock");
+    const discard = () => close("Discarded changes and locked “Work”", "lock");
+    KF.$("#save", scrim).onclick = save; KF.$("#discard", scrim).onclick = discard;
+    if (!auto) KF.$("#cancel", scrim).onclick = () => close("Lock cancelled", "lock-open");
+    KEYS = (e) => { if (e.key === "Enter") { save(); return true; } if (e.key === "Escape") { if (!auto) close("Lock cancelled", "lock-open"); return true; } };
+  }
+
+  if (s.state === "delete") {
+    const group = s.target === "group";
+    const e = KF.entry("e14");
+    scrim.innerHTML = `<div class="dialog" style="width:440px" role="alertdialog">
+      <div class="dialog-head">
+        <div class="dg-tile danger">${I("trash-2")}</div>
+        <h2 class="dialog-title">${group ? "Delete this Group and everything in it for good?" : "Delete this Entry for good?"}</h2>
+        <p class="dialog-desc">This cannot be undone.</p>
+      </div>
+      <div class="dialog-body" style="padding-top:12px">
+        ${group
+          ? `<div class="dg-subject"><span class="gico">${I("folder")}</span><div class="truncate"><div class="t">${DEL_GROUP.name}</div><div class="u">${DEL_GROUP.entries} Entries and ${DEL_GROUP.groups} Group inside</div></div><span class="badge" style="margin-left:auto">${I("trash-2", "ico-sm")}Recycle Bin</span></div>`
+          : `<div class="dg-subject">${KF.avatar(e, 28)}<div class="truncate"><div class="t">${esc(e.title)}</div><div class="u truncate">${esc(e.username)} · ${esc(KF.host(e.url))}</div></div><span class="badge" style="margin-left:auto">${I("trash-2", "ico-sm")}Recycle Bin</span></div>`}
+      </div>
+      <div class="dialog-foot">
+        <button class="btn secondary" id="cancel">Cancel ${KF.kbd("Esc")}</button>
+        <button class="btn danger" id="del">Delete for good ${KF.kbd("↵")}</button>
+      </div></div>`;
+    const del = () => close(group ? `Deleted <b>${DEL_GROUP.name}</b>` : `Deleted <b>${esc(e.title)}</b>`, "trash-2");
+    KF.$("#del", scrim).onclick = del; KF.$("#cancel", scrim).onclick = () => close();
+    KEYS = (ev) => { if (ev.key === "Escape") { close(); return true; } if (ev.key === "Enter") { del(); return true; } };
+  }
+}
+
+/* ======================================================================
+   Requests queue (variants B and C)
+   ====================================================================== */
+function makeQueue(first) {
+  const all = [
+    { id: "access", kind: "Allow access?", sub: `${ACCESS.site} · ${ACCESS.entries.length} Entries`, icon: "key-round", time: "now", brand: KF.entry("e1") },
+    { id: "save-login", kind: "Save login?", sub: `${LOGIN.site} · ${LOGIN.username}`, icon: "download", time: "1m", brand: KF.entry("w5") },
+    { id: "pair", kind: "Pair a browser", sub: `${BROWSER.replace("Chrome on my laptop", "New browser")} → Personal`, icon: "link-2", time: "3m" },
+  ];
+  const i = all.findIndex((r) => r.id === first);
+  if (i > 0) all.unshift(all.splice(i, 1)[0]);
+  return all;
+}
+const reqIcon = (r, size = 28) => (r.brand ? KF.avatar(r.brand, size) : `<span class="ico">${I(r.icon)}</span>`);
+
+/* Save-login picker contents (B/C) */
+function loginPickerMenu(chosen) {
+  return LOGIN.targets.filter((t) => t.kind !== "update").map((t) => t.head ? (t.head.startsWith("Save") ? "" : "") :
+    `<div class="menu-item ${chosen === t.id ? "is-active" : ""}" data-pick="${t.id}" style="padding-left:${8 + (t.depth - 1) * 16}px">${I(t.icon)}<span class="truncate" style="${t.depth === 1 ? "font-weight:500" : ""}">${t.isNew ? `Browser logins <span class="subtle">(new Group)</span>` : esc(t.label)}</span>${t.browser ? `<span class="badge accent" style="margin-left:auto">Browser group</span>` : ""}${chosen === t.id ? `<span style="margin-left:${t.browser ? "6px" : "auto"};color:var(--accent-fg)">${I("check", "ico-sm")}</span>` : ""}</div>`).join("");
+}
+function targetSummary(id) {
+  const t = LOGIN.targets.find((x) => x.id === id);
+  const path = t.depth === 1 ? t.vault : t.depth === 3 ? `${t.vault} / Infrastructure` : t.vault;
+  return `<span class="gico">${I(t.icon)}</span><div class="truncate"><div class="t truncate">${t.isNew ? `Browser logins <span class="subtle" style="font-weight:400">(new Group)</span>` : esc(t.label)}</div><div class="u truncate">${t.depth === 1 ? "Top of the Vault" : esc(path)}${t.browser ? " · Browser group" : ""}</div></div>`;
+}
+
+/* ======================================================================
+   Variant B — request cards (top-right) + anchored popovers
+   ====================================================================== */
+function renderB(root) {
+  const s = S();
+  RERENDER = () => renderB(root);
+  devPicker();
+  KEYS = null;
+  const browserState = ["pair", "access", "save-login"].includes(s.state);
+  const sc = scenario(s);
+
+  if (browserState) {
+    let queue = makeQueue(s.state);
+    let loginMode = "update", loginNew = "n:p:browser", pickerOpen = false, remember = false, pairErr = s.err;
+    root.innerHTML = backdrop(s) + `<div class="rq-stack" id="stack"></div>`;
+    const stack = KF.$("#stack", root);
+    const resolve = (msg, icon = "check") => { queue.shift(); if (msg) KF.toast(msg, { icon }); paint(); };
+    function cardHtml(r) {
+      const top = (label, icon, who = BROWSER) => `<div class="rq-top">${I(icon)}<span>${label}</span><span class="dg-kicker" style="margin:0;gap:6px"><span class="sep"></span>${I("chrome")}${who}</span><button class="btn sm icon ghost" id="later" title="Later — keep in the queue">${I("minus")}</button></div>`;
+      if (r.id === "access") return `<div class="rq">${top("Browser request", "key-round")}
+        <div class="rq-body">
+          <div class="rq-title">Allow access?</div>
+          ${addr(ACCESS.site, "")}
+          <div class="muted" style="font-size:var(--text-sm);margin-top:-2px"><b style="color:var(--fg-0);font-weight:500">${ACCESS.site}</b> asks for these Entries. Allow only if you are signing in there.</div>
+          <div class="dg-list">${ACCESS.entries.map(entryLi).join("")}</div>
+          <label class="dg-checkrow" id="rem" style="font-size:var(--text-sm)">${check(remember)}<span>Remember this decision for <b>${ACCESS.site}</b></span></label>
+          <div class="rq-acts"><button class="btn secondary" id="deny">Deny</button><button class="btn primary js-arm" id="allow">Allow</button></div>
+        </div></div>`;
+      if (r.id === "save-login") return `<div class="rq">${top("Captured login", "download")}
+        <div class="rq-body" style="position:relative">
+          <div class="rq-host">${KF.avatar(KF.entry("w5"), 32)}<div class="truncate"><div class="rq-title">Save login?</div><div class="what truncate">Signed in to <b style="color:var(--fg-0);font-weight:500">${LOGIN.site}</b> as “${LOGIN.username}”</div></div></div>
+          <div class="seg full" id="lmode"><button data-m="update" class="${loginMode === "update" ? "is-on" : ""}">${I("refresh-cw", "ico-sm")}Update Entry</button><button data-m="new" class="${loginMode === "new" ? "is-on" : ""}">${I("plus", "ico-sm")}New Entry</button></div>
+          ${loginMode === "update"
+            ? `<button class="picker" tabindex="-1">${KF.avatar(KF.entry("w5"), 28)}<div class="truncate"><div class="t">Linear <span class="subtle" style="font-weight:400">· Work / SaaS</span></div><div class="u truncate">${LOGIN.username}</div></div><span class="chev">${I("check", "ico-sm")}</span></button>
+               <div class="hint" style="margin-top:-4px">The new password replaces the old one, which is kept in the Entry's history.</div>`
+            : `<button class="picker ${pickerOpen ? "is-open" : ""}" id="pick">${targetSummary(loginNew)}<span class="chev">${I("chevrons-up-down", "ico-sm")}</span></button>
+               ${pickerOpen ? `<div class="menu picker-menu">${loginPickerMenu(loginNew)}</div>` : ""}`}
+          <div class="rq-acts"><button class="btn secondary" id="notnow">Not now</button><button class="btn primary" id="save">Save</button></div>
+        </div></div>`;
+      if (r.id === "pair") return `<div class="rq">${top("Pairing request", "link-2", "Unpaired browser")}
+        <div class="rq-body">
+          <div><div class="rq-title">Pair a browser</div><div class="muted" style="font-size:var(--text-sm);margin-top:4px">A browser extension asks to pair with the Vault <b style="color:var(--fg-0);font-weight:500">“Personal”</b>. If this was you, name this browser so you can recognise it later.</div></div>
+          <div class="field"><label for="bname">Browser name</label>
+            <div class="input ${pairErr ? "invalid" : ""}" id="bwrap"><input id="bname" placeholder="e.g. Chrome on my laptop" value="${pairErr === "taken" ? "Chrome on my laptop" : ""}" autocomplete="off"></div>
+            ${pairErr ? `<div class="error-msg">${I("circle-alert", "ico-sm")}${pairError(pairErr)}</div>` : ""}</div>
+          <div class="rq-acts"><button class="btn secondary" id="deny">Deny</button><button class="btn primary js-arm" id="pairb">Pair</button></div>
+        </div></div>`;
+    }
+    function miniHtml(r, i) {
+      return `<div class="rq-mini" data-i="${i}">${reqIcon(r)}<div class="truncate"><div class="t">${r.kind}</div><div class="u truncate">${esc(r.sub)}</div></div><span class="time">${r.time}</span></div>`;
+    }
+    function paint() {
+      if (!queue.length) { stack.innerHTML = ""; KEYS = null; return; }
+      const [head, ...rest] = queue;
+      stack.innerHTML = cardHtml(head) + (rest.length ? `<div class="rq-count">${rest.length} more waiting</div>` + rest.map((r, i) => miniHtml(r, i + 1)).join("") : "");
+      KF.$$("[data-i]", stack).forEach((m) => (m.onclick = () => { const r = queue.splice(+m.dataset.i, 1)[0]; queue.unshift(r); pairErr = null; paint(); }));
+      const later = KF.$("#later", stack);
+      if (later) later.onclick = () => { queue.push(queue.shift()); paint(); };
+      if (head.id === "access") {
+        const remEl = KF.$("#rem", stack);
+        remEl.onclick = () => { remember = !remember; remEl.querySelector(".check").classList.toggle("is-on", remember); };
+        KF.$("#allow", stack).onclick = () => resolve(`Allowed <b>${ACCESS.site}</b>`);
+        KF.$("#deny", stack).onclick = () => resolve(`Denied <b>${ACCESS.site}</b>`, "shield-x");
+        arm(stack);
+      }
+      if (head.id === "save-login") {
+        KF.$$("[data-m]", stack).forEach((b) => (b.onclick = () => { loginMode = b.dataset.m; pickerOpen = false; paint(); }));
+        const pick = KF.$("#pick", stack); if (pick) pick.onclick = () => { pickerOpen = !pickerOpen; paint(); };
+        const pm = KF.$(".picker-menu", stack); if (pm && pick) pm.style.top = pick.offsetTop + pick.offsetHeight + 6 + "px";
+        KF.$$("[data-pick]", stack).forEach((m) => (m.onclick = () => { loginNew = m.dataset.pick; pickerOpen = false; paint(); }));
+        KF.$("#save", stack).onclick = () => resolve(loginMode === "update" ? "Updated <b>Linear</b> in Work" : `Saved <b>linear.app</b> as a new Entry`);
+        KF.$("#notnow", stack).onclick = () => resolve();
+      }
+      if (head.id === "pair") {
+        const input = KF.$("#bname", stack);
+        input.oninput = () => { if (pairErr) { pairErr = null; KF.$("#bwrap", stack).classList.remove("invalid"); KF.$(".error-msg", stack)?.remove(); } };
+        KF.$("#pairb", stack).onclick = () => { const code = validatePair(input.value); if (code) { pairErr = code; const v = input.value; paint(); KF.$("#bname", stack).value = v; KF.$("#bname", stack).focus(); return; } resolve(`Paired <b>${esc(input.value.trim())}</b> with “Personal”`, "link-2"); };
+        KF.$("#deny", stack).onclick = () => resolve("Pairing denied", "x");
+        arm(stack);
+      }
+    }
+    paint();
+    return;
+  }
+
+  if (s.state === "delete") {
+    const group = s.target === "group";
+    root.innerHTML = backdrop(s, { deletePressed: true });
+    const btn = KF.$("[data-delete-anchor]", root);
+    const r = btn.getBoundingClientRect();
+    const pop = document.createElement("div");
+    pop.className = "anchor-pop from-top-right";
+    pop.style.top = r.bottom + 8 + "px";
+    pop.style.left = r.right - 300 + 13 + "px";
+    pop.style.transformOrigin = "top right";
+    pop.innerHTML = `<h3>${group ? "Delete this Group and everything in it for good?" : "Delete this Entry for good?"}</h3>
+      <p>${group ? `${DEL_GROUP.entries} Entries and ${DEL_GROUP.groups} Group go with it. ` : ""}This cannot be undone.</p>
+      <div class="acts"><button class="btn sm ghost" id="cancel">Cancel ${KF.kbd("Esc")}</button><button class="btn sm danger" id="del">Delete ${KF.kbd("↵")}</button></div>`;
+    root.appendChild(pop);
+    const close = (msg) => { pop.remove(); btn.classList.remove("is-pressed"); KEYS = null; if (msg) KF.toast(msg, { icon: "trash-2" }); };
+    KF.$("#del", pop).onclick = () => close(group ? `Deleted <b>${DEL_GROUP.name}</b>` : "Deleted <b>Old Yahoo</b>");
+    KF.$("#cancel", pop).onclick = () => close();
+    btn.onclick = () => (document.body.contains(pop) ? close() : renderB(root));
+    KEYS = (e) => { if (e.key === "Escape") { close(); return true; } if (e.key === "Enter") { KF.$("#del", pop).click(); return true; } };
+    return;
+  }
+
+  if (s.state === "lock-unsaved") {
+    const auto = s.mode === "auto";
+    if (auto) {
+      // Auto-lock: the Vault is hidden in place until the user decides. No Cancel.
+      root.innerHTML = backdrop(s, { lockingInner: takeoverHtml(true) });
+      wireTakeover(root);
+      return;
+    }
+    root.innerHTML = backdrop(s, { lockPressed: true });
+    const anchor = KF.$('[data-lock-anchor="work"]', root);
+    const r = anchor.getBoundingClientRect();
+    const pop = document.createElement("div");
+    pop.className = "anchor-pop from-left";
+    pop.style.top = r.top - 8 + "px";
+    pop.style.left = r.right + 12 + "px";
+    pop.style.width = "320px";
+    pop.style.transformOrigin = "top left";
+    pop.innerHTML = `<h3>“Work” has unsaved changes. Save them before locking?</h3><p>Discarding loses them.</p>
+      <div class="acts"><button class="btn sm danger-ghost" id="discard" style="margin-right:auto">Discard</button><button class="btn sm ghost" id="cancel">Cancel</button><button class="btn sm primary" id="save">Save and lock ${KF.kbd("↵")}</button></div>`;
+    root.appendChild(pop);
+    const close = (msg, icon = "lock") => { pop.remove(); anchor.classList.remove("is-on"); KEYS = null; if (msg) KF.toast(msg, { icon }); };
+    KF.$("#save", pop).onclick = () => close("Saved “Work” and locked it");
+    KF.$("#discard", pop).onclick = () => close("Discarded changes and locked “Work”");
+    KF.$("#cancel", pop).onclick = () => close();
+    KEYS = (e) => { if (e.key === "Escape") { close(); return true; } if (e.key === "Enter") { KF.$("#save", pop).click(); return true; } };
+  }
+}
+
+function takeoverHtml(auto) {
+  return `<div class="card takeover" style="box-shadow:var(--shadow-pop);border:0">
+    <div class="card-section">
+      <div class="dg-tile warn">${I(auto ? "timer" : "lock")}</div>
+      <h2>“Work” has unsaved changes. Save them before locking?</h2>
+      <p>${auto ? "keefast is locking, and the Vault stays hidden until you choose. Discarding loses the changes." : "Discarding loses them."}</p>
+      <div class="file">${I("cloud", "ico-sm")}<span class="truncate">${esc(W.file)}</span></div>
+    </div>
+    <div class="acts"><button class="btn danger-ghost" id="discard" style="margin-right:auto">Discard</button>${auto ? "" : `<button class="btn secondary" id="cancel">Cancel ${KF.kbd("Esc")}</button>`}<button class="btn primary" id="save">Save and lock ${KF.kbd("↵")}</button></div>
+  </div>`;
+}
+function wireTakeover(root, onCancel) {
+  const done = (msg) => { KEYS = null; KF.$(".hidden-pane", root).innerHTML = `<div class="vstack" style="align-items:center;gap:12px;color:var(--fg-2)">${I("lock", "ico-lg")}<span>“Work” is locked.</span><button class="btn secondary sm" onclick="RERENDER()">Unlock…</button></div>`; KF.toast(msg, { icon: "lock" }); };
+  KF.$("#save", root).onclick = () => done("Saved “Work” and locked it");
+  KF.$("#discard", root).onclick = () => done("Discarded changes and locked “Work”");
+  const c = KF.$("#cancel", root); if (c) c.onclick = onCancel;
+  KEYS = (e) => { if (e.key === "Enter") { KF.$("#save", root).click(); return true; } if (e.key === "Escape") { if (c) c.click(); return true; } };
+}
+
+/* ======================================================================
+   Variant C — "Requests" inbox panel + inline confirms
+   ====================================================================== */
+function renderC(root) {
+  const s = S();
+  RERENDER = () => renderC(root);
+  devPicker();
+  KEYS = null;
+  const browserState = ["pair", "access", "save-login"].includes(s.state);
+
+  if (browserState) {
+    let queue = makeQueue("access");
+    let sel = Math.max(0, queue.findIndex((r) => r.id === s.state)), remember = false, chosen = "u:w5", other = "n:w:infra", pairErr = s.err;
+    const unread = new Set(queue.filter((r, i) => i !== sel).map((r) => r.id));
+    function draw() {
+      root.innerHTML = backdrop(s, { requests: queue.length, requestsSelected: true }) + `<aside class="inbox" id="ib"></aside>`;
+      const ib = KF.$("#ib", root);
+      ib.innerHTML = `<div class="toolbar">${I("inbox")}<span class="ttl">Requests</span><span class="badge">${queue.length}</span><span class="spacer"></span><span class="dg-foot-hint" style="margin:0">${KF.kbd("J")}${KF.kbd("K")} move</span><button class="btn sm icon ghost" id="ibclose" title="Close (Esc)">${I("x")}</button></div>` +
+        (queue.length ? `<div class="ib-list">${queue.map((r, i) => `<div class="ib-row ${i === sel ? "is-selected" : ""}" data-i="${i}">${unread.has(r.id) ? `<span class="unread"></span>` : ""}${reqIcon(r, 26)}<div class="truncate"><div class="t">${r.kind}</div><div class="u truncate">${esc(r.sub)}</div></div><span class="time">${r.time}</span></div>`).join("")}</div>${detail(queue[sel])}`
+          : `<div class="ib-empty"><div class="vstack">${I("inbox", "ico-lg")}<span>No requests waiting. The browser asks here.</span><button class="btn sm secondary" onclick="RERENDER()">Replay requests</button></div></div>`);
+      wire(ib);
+    }
+    function detail(r) {
+      unread.delete(r.id);
+      const meta = (rows) => `<div class="ib-meta">${rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div>`;
+      if (r.id === "access") return `<div class="ib-detail">
+          ${addr(ACCESS.site, `<span class="via">now</span>`)}
+          <h2>Allow access?</h2>
+          <p class="lead"><b>${ACCESS.site}</b> asks for these Entries. Allow only if you are signing in there.</p>
+          <div class="ib-section-label">Entries asked for</div>
+          <div class="dg-list">${ACCESS.entries.map(entryLi).join("")}</div>
+          <label class="dg-checkrow" id="rem">${check(remember)}<span>Remember this decision for <b>${ACCESS.site}</b></span></label>
+          ${meta([["From", `${I("chrome", "ico-sm")} ${BROWSER}`.replace("<i", "<i style='vertical-align:-2px'")], ["Vaults", "Personal, Work"]])}
+        </div>
+        <div class="ib-foot"><span class="dg-foot-hint">Not signing in? Deny.</span><button class="btn secondary" id="deny">Deny ${KF.kbd("Esc")}</button><button class="btn primary js-arm" id="allow">Allow ${KF.kbd("↵")}</button></div>`;
+      if (r.id === "save-login") {
+        const opt = (id, body) => `<div class="tl-row ${chosen === id ? "is-on" : ""}" data-t="${id}">${body}</div>`;
+        return `<div class="ib-detail">
+          <div class="rq-host">${KF.avatar(KF.entry("w5"), 36)}<div><div class="rq-host"><span class="host"><span class="scheme">https://</span>${LOGIN.site}</span></div><div class="what">${LOGIN.username}</div></div></div>
+          <h2>Save login?</h2>
+          <p class="lead">You signed in to <b>${LOGIN.site}</b> as <b>“${LOGIN.username}”</b>. Choose where keefast saves this login.</p>
+          <div class="ib-section-label">Update an existing Entry</div>
+          <div class="tl" style="max-height:none">${opt("u:w5", `<span class="radio ${chosen === "u:w5" ? "is-on" : ""}"></span>${KF.avatar(KF.entry("w5"), 24)}<div class="lbl truncate"><span style="font-weight:500">Linear</span> <span class="subtle">· Work / SaaS</span></div>`)}</div>
+          <div class="ib-section-label">Save as a new Entry in</div>
+          <div class="tl" style="max-height:none">
+            ${opt("n:p:browser", `<span class="radio ${chosen === "n:p:browser" ? "is-on" : ""}"></span>${I("globe")}<div class="lbl truncate">Browser logins <span class="subtle">· Personal</span></div><span class="badge accent">Browser group</span>`)}
+            ${opt("n:w:new", `<span class="radio ${chosen === "n:w:new" ? "is-on" : ""}"></span>${I("folder-plus")}<div class="lbl truncate">Browser logins <span class="subtle">· Work</span></div><span class="badge accent">${I("plus", "ico-sm")}New Group</span>`)}
+            ${opt("other", `<span class="radio ${chosen === "other" ? "is-on" : ""}"></span>${I("folder-tree")}<div class="lbl truncate">Another Group…</div><span class="subtle">${I(chosen === "other" ? "chevron-down" : "chevron-right", "ico-sm")}</span>`)}
+            ${chosen === "other" ? `<div style="padding:4px 8px 6px 34px"><select class="input" id="other">${["Personal", "Work"].map((v) => `<optgroup label="${v}">${LOGIN.targets.filter((t) => t.kind === "new" && t.vault === v && !t.isNew && !t.browser).map((t) => `<option value="${t.id}" ${t.id === other ? "selected" : ""}>${"\u00a0\u00a0".repeat(t.depth - 1)}${esc(t.label)}</option>`).join("")}</optgroup>`).join("")}</select></div>` : ""}
+          </div>
+        </div>
+        <div class="ib-foot"><span class="dg-foot-hint">${KF.kbd("1")}–${KF.kbd("4")} choose</span><button class="btn secondary" id="notnow">Not now</button><button class="btn primary" id="save">Save ${KF.kbd("↵")}</button></div>`;
+      }
+      if (r.id === "pair") return `<div class="ib-detail">
+          <div class="dg-tile accent" style="margin:0">${I("link-2")}</div>
+          <h2>Pair a browser</h2>
+          <p class="lead">A browser extension asks to pair with the Vault <b>“Personal”</b>. If this was you, name this browser so you can recognise it later.</p>
+          <div class="field"><label for="bname">Browser name</label>
+            <div class="input ${pairErr ? "invalid" : ""}" id="bwrap"><input id="bname" placeholder="e.g. Chrome on my laptop" value="${pairErr === "taken" ? "Chrome on my laptop" : ""}" autocomplete="off"></div>
+            ${pairErr ? `<div class="error-msg">${I("circle-alert", "ico-sm")}${pairError(pairErr)}</div>` : `<div class="hint">These browsers can ask this Vault for logins while it is open.</div>`}</div>
+          <div class="ib-section-label">Paired browsers</div>
+          <div class="dg-list">${KF.data.pairings.map((p) => `<div class="li" style="height:44px"><span class="subtle">${I("chrome")}</span><div class="truncate"><div class="t">${esc(p.name)}</div><div class="u">Last used ${esc(p.lastUsed.toLowerCase())}</div></div></div>`).join("")}</div>
+        </div>
+        <div class="ib-foot"><span class="spacer"></span><button class="btn secondary" id="deny">Deny ${KF.kbd("Esc")}</button><button class="btn primary js-arm" id="pairb">Pair ${KF.kbd("↵")}</button></div>`;
+    }
+    function resolve(msg, icon = "check") { queue.splice(sel, 1); sel = Math.min(sel, Math.max(0, queue.length - 1)); pairErr = null; if (msg) KF.toast(msg, { icon }); draw(); }
+    function wire(ib) {
+      KF.$("#ibclose", ib).onclick = () => { ib.remove(); KEYS = null; KF.$("[data-open-inbox]", root).onclick = () => draw(); KF.$("[data-open-inbox]", root).classList.remove("is-selected"); };
+      KF.$$("[data-i]", ib).forEach((row) => (row.onclick = () => { sel = +row.dataset.i; pairErr = null; draw(); }));
+      if (!queue.length) { KEYS = null; return; }
+      const r = queue[sel];
+      let primary = () => {}, secondary = () => {};
+      if (r.id === "access") {
+        const remEl = KF.$("#rem", ib);
+        remEl.onclick = () => { remember = !remember; remEl.querySelector(".check").classList.toggle("is-on", remember); };
+        primary = () => { if (!KF.$("#allow", ib).classList.contains("is-arming")) resolve(`Allowed <b>${ACCESS.site}</b>`); };
+        secondary = () => resolve(`Denied <b>${ACCESS.site}</b>`, "shield-x");
+        KF.$("#allow", ib).onclick = primary; KF.$("#deny", ib).onclick = secondary;
+      }
+      if (r.id === "save-login") {
+        KF.$$("[data-t]", ib).forEach((row) => (row.onclick = () => { chosen = row.dataset.t; draw(); }));
+        const o = KF.$("#other", ib); if (o) o.onchange = () => (other = o.value);
+        primary = () => resolve(chosen === "u:w5" ? "Updated <b>Linear</b> in Work" : "Saved <b>linear.app</b> as a new Entry");
+        secondary = () => resolve();
+        KF.$("#save", ib).onclick = primary; KF.$("#notnow", ib).onclick = secondary;
+      }
+      if (r.id === "pair") {
+        const input = KF.$("#bname", ib);
+        primary = () => { const code = validatePair(input.value); if (code) { pairErr = code; const v = input.value; draw(); KF.$("#bname", root).value = v; KF.$("#bname", root).focus(); return; } resolve(`Paired <b>${esc(input.value.trim())}</b> with “Personal”`, "link-2"); };
+        secondary = () => resolve("Pairing denied", "x");
+        KF.$("#pairb", ib).onclick = primary; KF.$("#deny", ib).onclick = secondary;
+      }
+      arm(ib);
+      KEYS = (e) => {
+        const inInput = e.target.closest && e.target.closest("input");
+        if (e.key === "Enter") { primary(); return true; }
+        if (e.key === "Escape") { secondary(); return true; }
+        if (inInput) return false;
+        if (e.key.toLowerCase() === "j" || e.key === "ArrowDown") { sel = Math.min(queue.length - 1, sel + 1); draw(); return true; }
+        if (e.key.toLowerCase() === "k" || e.key === "ArrowUp") { sel = Math.max(0, sel - 1); draw(); return true; }
+        if (r.id === "save-login" && e.key >= "1" && e.key <= "4") { chosen = ["u:w5", "n:p:browser", "n:w:new", "other"][+e.key - 1]; draw(); return true; }
+      };
+    }
+    draw();
+    return;
+  }
+
+  if (s.state === "delete") {
+    const group = s.target === "group";
+    const confirmBar = `<div class="inline-confirm"><span class="ic">${I("trash-2")}</span><div class="truncate"><b>${group ? "Delete this Group and everything in it for good?" : "Delete this Entry for good?"}</b> <span class="sub">This cannot be undone.</span></div><span class="spacer"></span><button class="btn sm ghost" id="cancel">Cancel ${KF.kbd("Esc")}</button><button class="btn sm danger" id="del">Delete ${KF.kbd("↵")}</button></div>`;
+    root.innerHTML = backdrop(s, { inlineConfirm: confirmBar, requests: 0 });
+    const done = (msg) => { KEYS = null; if (msg) KF.toast(msg, { icon: "trash-2" }); const sc = scenario(s); KF.$(".dt", root).outerHTML = detailPane(sc); KF.$("[data-delete-anchor]", root).onclick = () => renderC(root); };
+    KF.$("#del", root).onclick = () => done(group ? `Deleted <b>${DEL_GROUP.name}</b>` : "Deleted <b>Old Yahoo</b>");
+    KF.$("#cancel", root).onclick = () => done();
+    KEYS = (e) => { if (e.key === "Escape") { done(); return true; } if (e.key === "Enter") { KF.$("#del", root).click(); return true; } };
+    return;
+  }
+
+  if (s.state === "lock-unsaved") {
+    // Both manual and automatic locks hide the Vault in place; manual can be cancelled.
+    const auto = s.mode === "auto";
+    const sc = scenario(s);
+    sc.locking = true;
+    root.innerHTML = `<div class="win">${sidebar(sc, { requests: 0 })}${lockingPane(takeoverHtml(auto))}</div>`;
+    wireTakeover(root, () => { s.mode = null; root.innerHTML = backdrop({ ...s, state: "lock-unsaved" }, { requests: 0 }); KEYS = null; KF.toast("Lock cancelled", { icon: "lock-open" }); });
+  }
+}
+
+KF.variants({
+  A: { name: "Centred modals", render: renderA },
+  B: { name: "Request cards + anchored popovers", render: renderB },
+  C: { name: "Requests inbox + inline confirms", render: renderC },
+});
+</script>
+</body>
+</html>

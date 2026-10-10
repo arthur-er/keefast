@@ -1,0 +1,668 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vault settings — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+  /* ---------- Window shell ---------- */
+  .win { display: flex; height: 100%; }
+  .sb { width: var(--sidebar-w); flex: none; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .sb-top { display: flex; align-items: center; gap: 6px; height: var(--toolbar-h); padding: 0 8px 0 12px; }
+  .vault-switch { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; margin-left: -6px; border-radius: var(--r-sm); font-weight: 600; }
+  .vault-switch:hover { background: var(--bg-hover); }
+  .vault-tile { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px; background: var(--accent-bg); color: var(--accent-fg); }
+  .vault-tile svg.lucide { width: 12px; height: 12px; }
+  .vault-tile.lg { width: 40px; height: 40px; border-radius: 10px; }
+  .vault-tile.lg svg.lucide { width: 20px; height: 20px; }
+  .sb-scroll { flex: 1; overflow: auto; }
+  .sb-foot { padding: 8px; border-top: 1px solid var(--border); }
+  .nav-item .kbds { margin-left: auto; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+  .nav-item:hover .kbds { opacity: 1; }
+  .nav-item .sync { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 450; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-0); }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); }
+  .status.warn { color: var(--warn); } .status.warn .status-dot { background: var(--warn); }
+  .status.busy .status-dot { background: var(--fg-2); animation: kf-blink 900ms ease-in-out infinite; }
+  @keyframes kf-blink { 50% { opacity: .3; } }
+
+  /* ---------- Settings content ---------- */
+  .page-scroll { flex: 1; overflow: auto; scroll-behavior: smooth; }
+  .page { max-width: 720px; margin: 0 auto; padding: 36px 40px 200px; }
+  .page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 32px; }
+  .page-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; line-height: 1.2; }
+  .page-sub { color: var(--fg-2); font-size: var(--text-sm); margin-top: 3px; }
+  .sec { margin-bottom: 36px; scroll-margin-top: 24px; }
+  .sec-head { display: flex; align-items: flex-end; gap: 12px; margin: 0 0 10px; }
+  .sec-title { font-size: var(--text-md); font-weight: 600; margin: 0; }
+  .sec-desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+  .group { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); }
+  .srow { display: flex; align-items: center; gap: 24px; min-height: 60px; padding: 12px 16px; }
+  .srow + .srow, .group > * + .srow { border-top: 1px solid var(--border); }
+  .srow .txt { flex: 1; min-width: 0; }
+  .srow .lbl { font-weight: 500; color: var(--fg-0); }
+  .srow .desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; line-height: 1.45; text-wrap: pretty; }
+  .srow .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+  .srow.stack { flex-direction: column; align-items: stretch; gap: 10px; }
+  .path { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); letter-spacing: 0; }
+  .name-input { width: 240px; }
+  .pick { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; min-width: 200px; background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-sm); font-weight: 500; position: relative; }
+  .pick:hover { background: var(--bg-2); }
+  .pick svg.lucide { color: var(--fg-1); }
+  .pick .chev { margin-left: auto; color: var(--fg-2); }
+  .anchor { position: relative; }
+  .pop-at { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; transform-origin: top right; }
+  .pop-up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
+  .menu-item .check-ico { margin-left: auto; color: var(--accent-fg) !important; }
+  .menu-item.is-disabled { color: var(--fg-2); }
+  .menu-item.is-disabled:hover { background: transparent; }
+  .menu-note { padding: 4px 8px 6px 31px; font-size: var(--text-xs); color: var(--fg-2); margin-top: -4px; }
+
+  /* Pairings */
+  .pair { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 16px; }
+  .pair + .pair { border-top: 1px solid var(--border); }
+  .pair-ico { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-1); flex: none; }
+  .pair-name { font-weight: 500; }
+  .pair-meta { font-size: var(--text-sm); color: var(--fg-2); display: flex; gap: 6px; align-items: center; }
+  .pair-meta .live { color: var(--ok); display: inline-flex; align-items: center; gap: 5px; }
+  .confirm-pop { width: 300px; padding: 14px; }
+  .confirm-pop h4 { margin: 0; font-size: var(--text-md); font-weight: 600; line-height: 1.35; }
+  .confirm-pop p { margin: 4px 0 14px; color: var(--fg-1); font-size: var(--text-sm); }
+  .empty { display: flex; align-items: center; gap: 12px; padding: 18px 16px; color: var(--fg-2); }
+
+  /* Master key summary */
+  .kv-grid { display: grid; grid-template-columns: 140px 1fr; row-gap: 10px; column-gap: 16px; font-size: var(--text-md); }
+  .kv-grid .k { color: var(--fg-2); font-size: var(--text-sm); padding-top: 1px; }
+  .kv-grid .v { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px; border-radius: var(--r-xs); background: var(--bg-active); color: var(--fg-0); font-size: var(--text-sm); font-weight: 500; }
+  .chip svg.lucide { width: 12px; height: 12px; color: var(--fg-1); }
+  .chip.mono { font-family: var(--font-mono); font-weight: 400; font-size: var(--text-xs); }
+
+  /* Key form */
+  .kform { display: flex; flex-direction: column; gap: 16px; }
+  .kform .sub-title { font-size: var(--text-sm); font-weight: 600; color: var(--fg-0); display: flex; align-items: center; gap: 8px; }
+  .kform .sub-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .toggle-row { display: flex; align-items: center; gap: 16px; }
+  .toggle-row .txt { flex: 1; }
+  .toggle-row .lbl { font-weight: 500; }
+  .toggle-row .desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 1px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+  .input .eye { all: unset; display: grid; place-items: center; width: 22px; height: 22px; margin-right: -4px; border-radius: 4px; color: var(--fg-2); }
+  .input .eye:hover { color: var(--fg-0); background: var(--bg-hover); }
+  .input .unit { color: var(--fg-2); font-size: var(--text-sm); font-family: var(--font-ui); letter-spacing: 0; }
+  .meter { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  .meter .strength { flex: 1; }
+  .meter .bits { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+  .kfile { display: flex; gap: 8px; }
+  .kfile .input { flex: 1; color: var(--fg-2); }
+  .kfile .input.has { color: var(--fg-0); }
+  .kfile .input .x { all: unset; margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-2); }
+  .kfile .input .x:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .callout { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--r-sm); font-size: var(--text-sm); line-height: 1.5; }
+  .callout svg.lucide { width: 15px; height: 15px; margin-top: 1px; }
+  .callout.warn { background: var(--warn-bg); color: var(--fg-0); }
+  .callout.warn svg.lucide { color: var(--warn); }
+  .callout.info { background: var(--bg-inset); border: 1px solid var(--border); color: var(--fg-1); }
+  .callout.info svg.lucide { color: var(--fg-2); }
+  .seg.full { display: flex; }
+  .seg.full > button { flex: 1; justify-content: center; }
+  .seg .sub { color: var(--fg-2); font-weight: 400; }
+  .is-hidden { display: none !important; }
+  .two > *, .three > * { min-width: 0; }
+  .xcard.first { border-top: 0; }
+  .kdim { opacity: .45; pointer-events: none; }
+
+  /* Inline expanding card (A) */
+  .xcard { margin-top: 0; border-top: 1px solid var(--border); overflow: hidden; }
+  .xcard-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 0; }
+  .xcard-head h3 { margin: 0; font-size: var(--text-md); font-weight: 600; flex: 1; }
+  .xcard-body { padding: 16px; }
+  .xcard-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-inset); border-radius: 0 0 var(--r-md) var(--r-md); }
+  .xcard-foot .hint { display: inline-flex; align-items: center; gap: 6px; }
+  .open-anim { animation: kf-rise var(--dur) var(--ease); }
+
+  /* ---------- Variant B: modal ---------- */
+  .bg-list { width: var(--list-w); flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .bg-detail { flex: 1; padding: 28px 32px; }
+  .vsd { width: 900px; height: 560px; max-height: calc(100% - 48px); display: grid; grid-template-columns: 220px 1fr; background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); overflow: hidden; animation: kf-pop var(--dur) var(--ease); }
+  .vsd-rail { background: var(--bg-inset); border-right: 1px solid var(--border); padding: 16px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .vsd-vault { display: flex; align-items: center; gap: 10px; padding: 0 8px 16px; }
+  .vsd-vault .n { font-weight: 600; }
+  .vsd-vault .p { font-size: var(--text-xs); color: var(--fg-2); font-family: var(--font-mono); letter-spacing: 0; }
+  .vsd-main { display: flex; flex-direction: column; min-width: 0; }
+  .vsd-head { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px 0 28px; flex: none; }
+  .vsd-head h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; flex: 1; }
+  .vsd-body { flex: 1; overflow: auto; padding: 4px 28px 24px; }
+  .vsd-foot { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 16px 0 28px; border-top: 1px solid var(--border); background: var(--bg-inset); flex: none; }
+  .vsd .group { background: transparent; }
+  .vsd .srow { padding-left: 14px; padding-right: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 16px; border: 1px solid var(--border); border-radius: var(--r-md); }
+  .stats > div { padding: 12px 14px; }
+  .stats > div + div { border-left: 1px solid var(--border); }
+  .stats .k { font-size: var(--text-xs); color: var(--fg-2); font-weight: 500; }
+  .stats .v { font-size: var(--text-md); font-weight: 500; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .lead { color: var(--fg-1); margin: 0 0 18px; font-size: var(--text-md); }
+  /* Stepper */
+  .kdf-est { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+  .est { display: flex; align-items: center; gap: 10px; font-size: var(--text-sm); }
+  .est .k { color: var(--fg-2); } .est .v { color: var(--fg-0); }
+  .est .bar { width: 120px; height: 4px; border-radius: 4px; background: var(--border-strong); overflow: hidden; }
+  .est .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width var(--dur) var(--ease); }
+  .stepbar { display: flex; align-items: center; margin: 0 28px 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .stepper { display: flex; align-items: center; gap: 6px; }
+  .step { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 8px 0 4px; border-radius: 99px; font-size: var(--text-sm); color: var(--fg-2); font-weight: 500; }
+  .step .n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: var(--text-xs); border: 1px solid var(--border-strong); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .step.is-on { color: var(--fg-0); background: var(--bg-active); }
+  .step.is-on .n { background: var(--accent); border-color: var(--accent); color: var(--fg-on-accent); }
+  .step.is-done { color: var(--fg-1); }
+  .step.is-done .n { background: var(--accent-bg); border-color: transparent; color: var(--accent-fg); }
+  .step.is-done .n svg.lucide { width: 11px; height: 11px; stroke-width: 2.5; }
+  .step-line { width: 20px; height: 1px; background: var(--border-strong); }
+  .review { display: flex; flex-direction: column; }
+  .review .r { display: grid; grid-template-columns: 150px 1fr auto; gap: 16px; align-items: center; min-height: 44px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .review .r:first-child { border-top: 0; }
+  .review .k { color: var(--fg-2); font-size: var(--text-sm); }
+  .review .was { color: var(--fg-2); text-decoration: line-through; font-size: var(--text-sm); margin-right: 6px; }
+  .review .changed { color: var(--accent-fg); font-size: var(--text-xs); font-weight: 500; }
+  .spin { animation: kf-spin 800ms linear infinite; }
+  @keyframes kf-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const S = new URL(location.href).searchParams.get("state");
+const V = KF.vault("personal");
+const I = KF.icon;
+
+/* ---------------- shared state ---------------- */
+function freshState() {
+  return {
+    name: V.name, file: V.file, status: "saved", recycle: true,
+    policy: "ask", browserGroup: "browser",
+    pairings: KF.data.pairings.map((p) => ({ ...p })),
+    key: { mode: "password+file", cipher: "AES-256", kdf: "Argon2id", mem: 64, it: 10, par: 2, rounds: 60000 },
+  };
+}
+function freshKey(st) {
+  return { setKey: false, pw: "", pw2: "", show: false, keyFile: null, cipher: st.key.cipher, kdf: st.key.kdf, mem: String(st.key.mem), it: String(st.key.it), par: String(st.key.par), rounds: String(st.key.rounds), tried: false };
+}
+const POLICIES = [["ask", "Ask me"], ["allow", "Always allow"], ["deny", "Always deny"]];
+const fmtDate = (d) => new Date(d + "T00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const groupName = (id) => V.groups.find((g) => g.id === id)?.name;
+const encSummary = (k) => k.kdf === "AES-KDF" ? `${k.rounds.toLocaleString("en")} rounds` : `${k.mem} MiB · ${k.it} iterations · ${k.par} lanes`;
+
+/* ---------------- key form (shared by both variants) ---------------- */
+function strengthOf(pw) {
+  if (!pw) return { score: 0, bits: 0 };
+  let pool = 0;
+  if (/[a-z]/.test(pw)) pool += 26; if (/[A-Z]/.test(pw)) pool += 26; if (/\d/.test(pw)) pool += 10; if (/[^a-zA-Z0-9]/.test(pw)) pool += 33;
+  const bits = Math.round(pw.length * Math.log2(Math.max(pool, 2)));
+  return { bits, score: bits < 40 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4 };
+}
+function masterKeyFields(K) {
+  return `
+  <div class="toggle-row">
+    <div class="txt"><div class="lbl">Set a new master key</div><div class="desc">Leave this off to keep the current master key and change only the encryption.</div></div>
+    <button class="switch ${K.setKey ? "is-on" : ""}" data-act="toggle-set"></button>
+  </div>
+  <div class="kform" data-part="key" style="gap:14px">
+    <div class="two">
+      <div class="field"><label>Master password</label>
+        <div class="input mono"><input type="${K.show ? "text" : "password"}" data-k="pw" value="${KF.esc(K.pw)}" placeholder="Type your master password" spellcheck="false"><button class="eye" data-act="eye" title="Show password">${I(K.show ? "eye-off" : "eye", "ico-sm")}</button></div>
+        <div class="meter"><div class="strength" data-strength data-score="0"><i></i><i></i><i></i><i></i></div><span class="bits" data-bits></span></div>
+      </div>
+      <div class="field"><label>Repeat the master password</label>
+        <div class="input mono" data-wrap="pw2"><input type="${K.show ? "text" : "password"}" data-k="pw2" value="${KF.esc(K.pw2)}" placeholder="Type it again" spellcheck="false"></div>
+        <div class="error-msg is-hidden" data-err="mismatch">${I("circle-alert", "ico-sm")}The two master passwords are different.</div>
+      </div>
+    </div>
+    <div class="field"><label>Key file</label>
+      <div class="kfile">
+        <div class="input" data-keyfile>${I("file-key-2", "ico-sm")}<span class="truncate" data-keyfile-label>None (optional)</span><button class="x is-hidden" data-act="clear-file" title="Remove key file">${I("x", "ico-sm")}</button></div>
+        <button class="btn secondary" data-act="choose-file">Choose…</button>
+        <button class="btn secondary" data-act="create-file">${I("plus")}Create new…</button>
+      </div>
+    </div>
+    <div class="callout warn">${I("triangle-alert")}<span>Use a master password, a key file, or both. Keep a copy of the key file somewhere safe: without it the Vault can't be opened.</span></div>
+    <div class="error-msg is-hidden" data-err="none">${I("circle-alert", "ico-sm")}Set a master password, a key file, or both.</div>
+  </div>`;
+}
+function encryptionFields(K) {
+  const seg = (name, opts, cur) => `<div class="seg full" data-seg="${name}">${opts.map(([v, l, sub]) => `<button class="${v === cur ? "is-on" : ""}" data-v="${v}">${l}${sub ? ` <span class="sub">${sub}</span>` : ""}</button>`).join("")}</div>`;
+  return `
+  <div class="two">
+    <div class="field"><label>Cipher</label>${seg("cipher", [["AES-256", "AES-256"], ["ChaCha20", "ChaCha20"], ["Twofish", "Twofish"]], K.cipher)}</div>
+    <div class="field"><label>Key derivation</label>${seg("kdf", [["Argon2id", "Argon2id"], ["Argon2d", "Argon2d"], ["AES-KDF", "AES-KDF"]], K.kdf)}</div>
+  </div>
+  <div class="three" data-part="argon">
+    <div class="field"><label>Memory (MiB)</label><div class="input mono" data-wrap="mem"><input data-k="mem" value="${K.mem}" inputmode="numeric"><span class="unit">MiB</span></div></div>
+    <div class="field"><label>Iterations</label><div class="input mono" data-wrap="it"><input data-k="it" value="${K.it}" inputmode="numeric"></div></div>
+    <div class="field"><label>Parallelism</label><div class="input mono" data-wrap="par"><input data-k="par" value="${K.par}" inputmode="numeric"><span class="unit">lanes</span></div></div>
+  </div>
+  <div class="three" data-part="aes">
+    <div class="field" style="grid-column: span 1"><label>Rounds</label><div class="input mono" data-wrap="rounds"><input data-k="rounds" value="${K.rounds}" inputmode="numeric"></div></div>
+  </div>
+  <div class="error-msg is-hidden" data-err="kdf"></div>
+  <div class="hint hstack" style="gap:6px;align-items:flex-start">${I("gauge", "ico-sm")}<span>Higher values make guessing the master password slower, and unlocking and saving too.</span></div>`;
+}
+function kdfError(K) {
+  const nums = K.kdf === "AES-KDF" ? [K.rounds] : [K.mem, K.it, K.par];
+  if (nums.some((n) => !/^\d+$/.test(String(n).trim()))) return ["Enter whole numbers for the key derivation settings.", null];
+  if (K.kdf === "AES-KDF") return +K.rounds < 1 ? ["AES-KDF needs at least 1 round.", "rounds"] : null;
+  if (+K.it < 1) return ["Argon2 needs at least 1 iteration.", "it"];
+  if (+K.par < 1 || +K.par > 16777215) return ["Argon2's parallelism must be between 1 and 16777215.", "par"];
+  if (+K.mem * 1024 < 8 * +K.par) return ["Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 TiB.", "mem"];
+  return null;
+}
+function keyValid(K) {
+  if (K.setKey && K.pw2 && K.pw !== K.pw2) return false;
+  if (K.setKey && !K.pw && !K.keyFile) return false;
+  return !kdfError(K);
+}
+/** Wire the key form inside `box`; calls onChange() after each change. */
+function bindKey(box, K, onChange = () => {}) {
+  const refresh = () => {
+    const keyPart = box.querySelector('[data-part="key"]');
+    if (keyPart) keyPart.classList.toggle("kdim", !K.setKey);
+    box.querySelectorAll('[data-act="toggle-set"]').forEach((s) => s.classList.toggle("is-on", K.setKey));
+    const st = strengthOf(K.pw), sEl = box.querySelector("[data-strength]");
+    if (sEl) { sEl.dataset.score = st.score; box.querySelector("[data-bits]").textContent = K.pw ? `${st.bits} bits` : ""; }
+    const mism = K.setKey && K.pw2 && K.pw !== K.pw2;
+    box.querySelector('[data-err="mismatch"]')?.classList.toggle("is-hidden", !mism);
+    box.querySelector('[data-wrap="pw2"]')?.classList.toggle("invalid", !!mism);
+    box.querySelector('[data-err="none"]')?.classList.toggle("is-hidden", !(K.tried && K.setKey && !K.pw && !K.keyFile));
+    const kf = box.querySelector("[data-keyfile]");
+    if (kf) { kf.classList.toggle("has", !!K.keyFile); box.querySelector("[data-keyfile-label]").textContent = K.keyFile || "None (optional)"; box.querySelector('[data-act="clear-file"]').classList.toggle("is-hidden", !K.keyFile); }
+    box.querySelectorAll("[data-seg]").forEach((sg) => sg.querySelectorAll("button").forEach((b) => b.classList.toggle("is-on", b.dataset.v === K[sg.dataset.seg])));
+    box.querySelector('[data-part="argon"]')?.classList.toggle("is-hidden", K.kdf === "AES-KDF");
+    box.querySelector('[data-part="aes"]')?.classList.toggle("is-hidden", K.kdf !== "AES-KDF");
+    const ke = kdfError(K), kEl = box.querySelector('[data-err="kdf"]');
+    if (kEl) { kEl.classList.toggle("is-hidden", !ke); kEl.innerHTML = ke ? `${I("circle-alert", "ico-sm")}${ke[0]}` : ""; }
+    box.querySelectorAll("[data-wrap]").forEach((w) => { if (w.dataset.wrap !== "pw2") w.classList.toggle("invalid", !!ke && (ke[1] === w.dataset.wrap || (!ke[1] && !/^\d+$/.test(String(K[w.dataset.wrap]).trim())))); });
+    box.querySelectorAll("[data-needs-valid]").forEach((b) => (b.disabled = !!mism || !!kdfError(K)));
+    onChange();
+  };
+  box.addEventListener("input", (e) => { const k = e.target.dataset.k; if (k) { K[k] = e.target.value; refresh(); } });
+  box.addEventListener("click", (e) => {
+    const sb = e.target.closest("[data-seg] button");
+    if (sb) { K[sb.parentElement.dataset.seg] = sb.dataset.v; refresh(); return; }
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (a === "toggle-set") { K.setKey = !K.setKey; refresh(); if (K.setKey) setTimeout(() => box.querySelector('[data-k="pw"]')?.focus(), 30); }
+    else if (a === "eye") { K.show = !K.show; box.querySelectorAll('[data-k="pw"],[data-k="pw2"]').forEach((i) => (i.type = K.show ? "text" : "password")); e.target.closest("[data-act]").innerHTML = I(K.show ? "eye-off" : "eye", "ico-sm"); }
+    else if (a === "choose-file") { K.keyFile = "~/Keys/Personal.keyx"; refresh(); }
+    else if (a === "create-file") { K.keyFile = "~/Vaults/Vault.keyx"; refresh(); KF.toast(`Key file created <span class="subtle">· ~/Vaults/Vault.keyx</span>`, { icon: "file-key-2" }); }
+    else if (a === "clear-file") { K.keyFile = null; refresh(); }
+  });
+  refresh();
+  return refresh;
+}
+
+/* ---------------- shared pieces ---------------- */
+function statusHTML(st) {
+  const m = { saved: ["", "All changes saved"], unsaved: ["warn", "Unsaved changes"], saving: ["busy", "Saving…"] }[st.status];
+  return `<span class="status ${m[0]}"><span class="status-dot"></span>${m[1]}</span>`;
+}
+function browserGroupMenu(st) {
+  const items = V.groups.filter((g) => g.parent);
+  return `<div class="menu pop-at" style="width:240px" data-menu="bg">
+    <div class="menu-label">Save browser logins here</div>
+    ${items.map((g) => g.recycle
+      ? `<div class="menu-sep"></div><div class="menu-item is-disabled">${I(g.icon)}${g.name}</div><div class="menu-note">Logins can't be saved in the Recycle Bin.</div>`
+      : `<div class="menu-item" data-pick-group="${g.id}">${I(g.icon)}${g.name}${st.browserGroup === g.id ? I("check", "check-ico") : ""}</div>`).join("")}
+  </div>`;
+}
+function pairingsHTML(st) {
+  if (!st.pairings.length) return `<div class="empty">${I("plug-zap")}<span>No browser is paired with this Vault.</span></div>`;
+  return st.pairings.map((p, i) => `
+    <div class="pair">
+      <div class="pair-ico">${I(/brave/i.test(p.name) ? "shield" : "chrome")}</div>
+      <div style="flex:1;min-width:0">
+        <div class="pair-name truncate">${KF.esc(p.name)}</div>
+        <div class="pair-meta">${/minute/.test(p.lastUsed) ? `<span class="live"><span class="status-dot"></span>Used ${p.lastUsed}</span>` : `<span>Used ${p.lastUsed.toLowerCase()}</span>`}<span>·</span><span>Paired ${fmtDate(p.created)}</span></div>
+      </div>
+      <div class="anchor"><button class="btn sm secondary" data-revoke="${i}">Revoke</button></div>
+    </div>`).join("");
+}
+function revokePop(p) {
+  return `<div class="popover confirm-pop pop-at pop-up" data-menu="revoke">
+    <h4>Revoke the Pairing “${KF.esc(p.name)}”?</h4>
+    <p>It must pair again to fill logins.</p>
+    <div class="hstack" style="justify-content:flex-end"><button class="btn sm ghost" data-act="cancel-revoke">Cancel</button><button class="btn sm danger" data-act="do-revoke">Revoke</button></div>
+  </div>`;
+}
+function closeMenus(root) { root.querySelectorAll("[data-menu]").forEach((m) => m.remove()); }
+/** Common handlers for policy, recycle, browser group, revoke. `rerender(section)` repaints. */
+function bindCommon(root, st, rerender, markDirty) {
+  root.addEventListener("click", (e) => {
+    const t = e.target;
+    const pol = t.closest("[data-policy] button");
+    if (pol) { st.policy = pol.dataset.v; pol.parentElement.querySelectorAll("button").forEach((b) => b.classList.toggle("is-on", b === pol)); markDirty(); return; }
+    if (t.closest('[data-act="recycle"]')) { st.recycle = !st.recycle; t.closest('[data-act="recycle"]').classList.toggle("is-on", st.recycle); markDirty(); return; }
+    const pg = t.closest("[data-pick-group]");
+    if (pg) { st.browserGroup = pg.dataset.pickGroup; closeMenus(root); rerender("browser"); markDirty(); return; }
+    if (t.closest('[data-act="open-bg"]')) { const a = t.closest(".anchor"); const had = a.querySelector("[data-menu]"); closeMenus(root); if (!had) a.insertAdjacentHTML("beforeend", browserGroupMenu(st)); return; }
+    const rv = t.closest("[data-revoke]");
+    if (rv) { const a = rv.parentElement; const had = a.querySelector("[data-menu]"); closeMenus(root); if (!had) { a.insertAdjacentHTML("beforeend", revokePop(st.pairings[+rv.dataset.revoke])); a.querySelector('[data-act="do-revoke"]').focus(); a.dataset.idx = rv.dataset.revoke; } return; }
+    if (t.closest('[data-act="cancel-revoke"]')) { closeMenus(root); return; }
+    if (t.closest('[data-act="do-revoke"]')) { const i = +t.closest(".anchor").dataset.idx; const p = st.pairings.splice(i, 1)[0]; rerender("pairings"); KF.toast(`Pairing “${KF.esc(p.name)}” revoked`, { icon: "unplug" }); markDirty(); return; }
+    if (!t.closest("[data-menu]")) closeMenus(root);
+  });
+  root.addEventListener("keydown", (e) => { if (e.key === "Escape" && root.querySelector("[data-menu]")) { closeMenus(root); e.stopPropagation(); } });
+}
+function fakeSave(st, paint) {
+  st.status = "saving"; paint();
+  setTimeout(() => { st.status = "saved"; paint(); }, 700);
+}
+
+/* ---------------- Variant A sections ---------------- */
+function secGeneral(st) {
+  return `
+  <div class="sec-head"><div><h2 class="sec-title">General</h2></div></div>
+  <div class="group">
+    <div class="srow"><div class="txt"><div class="lbl">Name</div><div class="desc">Shown in the sidebar and when a browser asks for logins.</div></div>
+      <div class="ctl"><div class="input name-input"><input data-name value="${KF.esc(st.name)}" spellcheck="false"></div></div></div>
+    <div class="srow"><div class="txt"><div class="lbl">Vault file</div><div class="desc path truncate" style="margin-top:3px">${KF.esc(st.file)}</div></div>
+      <div class="ctl"><button class="btn sm ghost" data-act="reveal">${I("folder-open")}Show in folder</button></div></div>
+    <div class="srow"><div class="txt"><div class="lbl">Recycle Bin</div><div class="desc">Deleted Entries and Groups move to the Recycle Bin, so a delete can be undone.</div></div>
+      <div class="ctl"><button class="switch ${st.recycle ? "is-on" : ""}" data-act="recycle"></button></div></div>
+  </div>`;
+}
+function secBrowser(st) {
+  return `
+  <div class="sec-head"><div><h2 class="sec-title">Browser access</h2><div class="sec-desc">How this Vault answers the Companion extension.</div></div></div>
+  <div class="group">
+    <div class="srow"><div class="txt"><div class="lbl">Default access policy</div><div class="desc">When a site asks for an Entry you haven't decided on for it. A decision remembered on the Entry always comes first.</div></div>
+      <div class="ctl"><div class="seg" data-policy>${POLICIES.map(([v, l]) => `<button class="${st.policy === v ? "is-on" : ""}" data-v="${v}">${l}</button>`).join("")}</div></div></div>
+    <div class="srow"><div class="txt"><div class="lbl">Browser group</div><div class="desc">Where logins captured in the browser are saved by default.</div></div>
+      <div class="ctl anchor"><button class="pick" data-act="open-bg">${I(V.groups.find((g) => g.id === st.browserGroup).icon)}${groupName(st.browserGroup)}${I("chevrons-up-down", "chev ico-sm")}</button></div></div>
+  </div>`;
+}
+function secPairings(st) {
+  return `
+  <div class="sec-head"><div style="flex:1"><h2 class="sec-title">Paired browsers <span class="subtle" style="font-weight:400;margin-left:4px">${st.pairings.length}</span></h2><div class="sec-desc">These browsers can ask this Vault for logins while it is open.</div></div></div>
+  <div class="group" data-pairings>${pairingsHTML(st)}</div>`;
+}
+function keySummary(st) {
+  const k = st.key;
+  return `<div class="kv-grid">
+    <div class="k">Master key</div><div class="v"><span class="chip">${I("key-round")}Master password</span><span class="subtle">+</span><span class="chip">${I("file-key-2")}Key file</span></div>
+    <div class="k">Cipher</div><div class="v">${k.cipher}</div>
+    <div class="k">Key derivation</div><div class="v">${k.kdf}<span class="chip mono">${encSummary(k)}</span></div>
+  </div>`;
+}
+function secKeyA(st, open) {
+  return `
+  <div class="sec-head"><div><h2 class="sec-title">Master key and encryption</h2><div class="sec-desc">Saved to the Vault file straight away. You'll need the new master key next time you unlock.</div></div></div>
+  <div class="group" data-keygroup>
+    ${open ? "" : `<div class="srow" style="align-items:flex-start;padding-top:16px;padding-bottom:16px">
+      <div class="txt">${keySummary(st)}</div>
+      <div class="ctl"><button class="btn sm secondary" data-act="open-key">${I("key-round")}Change master key and encryption…</button></div>
+    </div>`}
+    ${open ? `<div class="xcard first open-anim" data-key-card>
+      <div class="xcard-head"><span class="vault-tile">${I("key-round")}</span><h3>Master key and encryption of “${KF.esc(st.name)}”</h3><span class="subtle" style="font-size:12px">Now: ${st.key.cipher} · ${st.key.kdf}</span><button class="btn sm ghost icon" data-act="close-key" title="Cancel (Esc)">${I("x")}</button></div>
+      <div class="xcard-body kform">
+        ${masterKeyFields(st.K)}
+        <div class="sub-title">Encryption</div>
+        ${encryptionFields(st.K)}
+      </div>
+      <div class="xcard-foot">
+        <span class="hint">${I("info", "ico-sm")}keefast saves the Vault file as soon as you apply.</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" data-act="close-key">Cancel</button>
+        <button class="btn primary" data-act="save-key" data-needs-valid>Save changes ${KF.kbd("Ctrl", "↵")}</button>
+      </div>
+    </div>` : ""}
+  </div>`;
+}
+
+function renderA(root) {
+  const st = freshState();
+  let keyOpen = S === "key";
+  st.K = freshKey(st);
+  if (S === "key") Object.assign(st.K, { setKey: true, pw: "lantern-orbit-maple-07!", pw2: "lantern-orbit-maple-7", keyFile: "~/Keys/Personal.keyx" });
+  const nav = [["general", "General", "settings-2"], ["browser", "Browser access", "globe"], ["pairings", "Paired browsers", "plug"], ["key", "Master key and encryption", "key-round"]];
+  root.innerHTML = `
+  <div class="win">
+    <aside class="sb">
+      <div class="sb-top"><button class="btn ghost sm" data-act="back" style="margin-left:-6px;color:var(--fg-1)">${I("chevron-left")}Back to Vault</button><span class="spacer"></span>${KF.kbd("Esc")}</div>
+      <div class="sb-scroll">
+        <div class="nav-section">
+          <div class="nav-head" style="gap:8px"><span class="vault-tile" style="width:16px;height:16px;border-radius:4px">${I("database")}</span><span data-sbname>${KF.esc(st.name)}</span></div>
+          ${nav.map(([id, l, ic], i) => `<div class="nav-item ${i === (keyOpen ? 3 : 0) ? "is-selected" : ""}" data-goto="${id}">${I(ic)}<span class="truncate">${l}</span>${id === "pairings" ? `<span class="count" data-pcount>${st.pairings.length}</span>` : ""}</div>`).join("")}
+        </div>
+        <div class="nav-section">
+          <div class="nav-head">Other Vaults</div>
+          <div class="nav-item">${I("cloud")}Work<span class="sync"><span class="status-dot"></span>Synced</span></div>
+          <div class="nav-item">${I("lock")}Family<span class="sync">Locked</span></div>
+        </div>
+        <div class="nav-section">
+          <div class="nav-head">keefast</div>
+          <div class="nav-item">${I("sliders-horizontal")}General Settings${KF.kbd("Ctrl", ",")}</div>
+        </div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="toolbar">
+        <div class="crumbs"><span data-crumb>${KF.esc(st.name)}</span>${I("chevron-right", "ico-sm subtle")}<b>Vault settings</b></div>
+        <span class="spacer"></span>
+        <span data-status>${statusHTML(st)}</span>
+        <div class="vdivider" style="margin:12px 4px"></div>
+        <button class="btn sm ghost" data-act="save">Save ${KF.kbd("Ctrl", "S")}</button>
+        <button class="btn sm ghost" data-act="lock">${I("lock")}Lock</button>
+      </div>
+      <div class="page-scroll">
+        <div class="page">
+          <div class="page-head">
+            <span class="vault-tile lg">${I("database")}</span>
+            <div><h1 class="page-title" data-title>${KF.esc(st.name)}</h1><div class="page-sub">${V.entries.filter((e) => e.group !== "bin").length} Entries · ${V.groups.length - 2} Groups · Local Vault file</div></div>
+          </div>
+          <section class="sec" id="general">${secGeneral(st)}</section>
+          <section class="sec" id="browser">${secBrowser(st)}</section>
+          <section class="sec" id="pairings">${secPairings(st)}</section>
+          <section class="sec" id="key">${secKeyA(st, keyOpen)}</section>
+        </div>
+      </div>
+    </main>
+  </div>`;
+  const $ = (s) => root.querySelector(s);
+  const paintStatus = () => ($("[data-status]").innerHTML = statusHTML(st));
+  const markDirty = () => { if (st.status !== "saving") { st.status = "unsaved"; paintStatus(); } };
+  const rerender = (id) => {
+    if (id === "browser") $("#browser").innerHTML = secBrowser(st);
+    if (id === "pairings") { $("#pairings").innerHTML = secPairings(st); $("[data-pcount]").textContent = st.pairings.length; }
+    if (id === "key") { $("#key").innerHTML = secKeyA(st, keyOpen); if (keyOpen) st.refresh = bindKey($("[data-key-card]"), st.K); }
+  };
+  bindCommon(root, st, rerender, markDirty);
+  if (keyOpen) st.refresh = bindKey($("[data-key-card]"), st.K);
+  $("[data-name]").addEventListener("input", (e) => {
+    st.name = e.target.value || "Personal";
+    ["[data-title]", "[data-crumb]", "[data-sbname]"].forEach((s) => ($(s).textContent = st.name));
+    markDirty();
+  });
+  root.addEventListener("click", (e) => {
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    const go = e.target.closest("[data-goto]");
+    if (go) { root.querySelectorAll("[data-goto]").forEach((n) => n.classList.toggle("is-selected", n === go)); $("#" + go.dataset.goto).scrollIntoView({ block: "start" }); }
+    if (a === "save") fakeSave(st, paintStatus);
+    if (a === "lock") KF.toast("“" + KF.esc(st.name) + "” locked", { icon: "lock" });
+    if (a === "back") KF.toast("Back to the Entry list", { icon: "arrow-left" });
+    if (a === "reveal") KF.toast("Opened ~/Vaults in the file manager", { icon: "folder-open" });
+    if (a === "open-key") { keyOpen = true; st.K = freshKey(st); rerender("key"); setTimeout(() => $("[data-key-card]").scrollIntoView({ block: "nearest" }), 20); }
+    if (a === "close-key") { keyOpen = false; rerender("key"); }
+    if (a === "save-key") {
+      st.K.tried = true;
+      if (!keyValid(st.K)) { st.refresh && st.refresh(); return; }
+      const K = st.K; Object.assign(st.key, { cipher: K.cipher, kdf: K.kdf, mem: +K.mem, it: +K.it, par: +K.par, rounds: +K.rounds });
+      keyOpen = false; rerender("key"); fakeSave(st, paintStatus);
+      KF.toast(K.setKey ? "New master key saved to the Vault file" : "Encryption settings saved to the Vault file", { icon: "shield-check" });
+    }
+  });
+  // scroll-spy
+  const sc = $(".page-scroll");
+  sc.addEventListener("scroll", () => {
+    let cur = "general";
+    nav.forEach(([id]) => { if ($("#" + id).offsetTop - sc.scrollTop < 140) cur = id; });
+    if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) cur = "key";
+    root.querySelectorAll("[data-goto]").forEach((n) => n.classList.toggle("is-selected", n.dataset.goto === cur));
+  });
+  if (keyOpen) setTimeout(() => { sc.style.scrollBehavior = "auto"; sc.scrollTop += $("#key").getBoundingClientRect().top - sc.getBoundingClientRect().top - 16; sc.style.scrollBehavior = ""; }, 0);
+}
+
+/* ---------------- Variant B: modal over the main window ---------------- */
+function backdropWindow() {
+  const ents = V.entries.filter((e) => e.group !== "bin").slice(0, 12);
+  const e = ents[0];
+  return `
+  <div class="win">
+    <aside class="sb">
+      <div class="sb-top"><div class="vault-switch"><span class="vault-tile">${I("database")}</span>Personal${I("chevron-down", "ico-sm subtle")}</div><span class="spacer"></span><button class="btn sm ghost icon">${I("search")}</button></div>
+      <div class="sb-scroll">
+        <div class="nav-section"><div class="nav-item is-selected">${I("layers")}All Entries<span class="count">13</span></div><div class="nav-item">${I("star")}Favourites<span class="count">4</span></div></div>
+        <div class="nav-section"><div class="nav-head">Groups</div>
+          ${V.groups.filter((g) => g.parent).map((g) => `<div class="nav-item">${I(g.icon)}${g.name}<span class="count">${V.entries.filter((x) => x.group === g.id).length}</span></div>`).join("")}
+        </div>
+        <div class="nav-section"><div class="nav-head">Vaults</div>
+          <div class="nav-item">${I("database")}Personal<span class="sync">Saved</span></div>
+          <div class="nav-item">${I("cloud")}Work<span class="sync"><span class="status-dot"></span>Synced</span></div>
+          <div class="nav-item">${I("lock")}Family</div>
+        </div>
+      </div>
+      <div class="sb-foot"><div class="nav-item">${I("settings")}Settings</div></div>
+    </aside>
+    <div class="bg-list">
+      <div class="toolbar"><div class="search" style="flex:1">${I("search", "ico-sm")}<input placeholder="Search Personal"></div></div>
+      <div style="padding:6px">${ents.map((x, i) => `<div class="row ${i === 0 ? "is-selected" : ""}" style="height:44px">${KF.avatar(x, 26)}<div style="min-width:0"><div class="truncate">${x.title}</div><div class="subtle truncate" style="font-size:12px">${x.username}</div></div></div>`).join("")}</div>
+    </div>
+    <div class="main">
+      <div class="toolbar"><span class="spacer"></span><span class="status"><span class="status-dot"></span>All changes saved</span></div>
+      <div class="bg-detail"><div class="hstack" style="gap:12px">${KF.avatar(e, 40)}<div><div class="page-title">${e.title}</div><div class="subtle">${e.url}</div></div></div>
+        <div style="margin-top:24px">${[["Username", e.username], ["Password", KF.mask(16)], ["Website", KF.host(e.url)]].map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+function renderB(root) {
+  const st = freshState();
+  st.K = freshKey(st);
+  let tab = S === "key" ? "key" : "general";
+  let flow = S === "key" ? 1 : 0; // 0 = not in change-key flow, 1..3 = step
+  if (S === "key") Object.assign(st.K, { setKey: true, pw: "lantern-orbit-maple-07!", pw2: "lantern-orbit-maple-7" });
+  const tabs = [["general", "General", "settings-2", "General"], ["browser", "Browser", "globe", "Browser access"], ["key", "Master key", "key-round", "Master key and encryption"]];
+  root.innerHTML = backdropWindow() + `<div class="scrim" data-scrim><div class="vsd" role="dialog"></div></div>`;
+  const dlg = root.querySelector(".vsd");
+  const markDirty = () => {};
+  const tabBody = () => {
+    if (tab === "general") return `
+      <div class="group">
+        <div class="srow"><div class="txt"><div class="lbl">Name</div><div class="desc">Shown in the sidebar and when a browser asks for logins.</div></div><div class="ctl"><div class="input name-input"><input data-name value="${KF.esc(st.name)}"></div></div></div>
+        <div class="srow"><div class="txt"><div class="lbl">Vault file</div><div class="desc path" style="margin-top:3px">${KF.esc(st.file)}</div></div><div class="ctl"><button class="btn sm ghost">${I("folder-open")}Show in folder</button></div></div>
+        <div class="srow"><div class="txt"><div class="lbl">Recycle Bin</div><div class="desc">Deleted Entries and Groups move to the Recycle Bin, so a delete can be undone.</div></div><div class="ctl"><button class="switch ${st.recycle ? "is-on" : ""}" data-act="recycle"></button></div></div>
+        <div class="srow"><div class="txt"><div class="lbl">Save and lock</div><div class="desc" data-bstatus>${st.status === "saved" ? "All changes saved" : st.status === "saving" ? "Saving…" : "Unsaved changes"}</div></div><div class="ctl"><button class="btn sm secondary" data-act="save">Save ${KF.kbd("Ctrl", "S")}</button><button class="btn sm secondary">${I("lock")}Lock</button></div></div>
+      </div>
+      <div class="stats">${[["Entries", "13"], ["Groups", "5"], ["Format", "KDBX 4.1"], ["File size", "48 KB"], ["Last saved", "2 min ago"]].map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>`;
+    if (tab === "browser") return `
+      <p class="lead">How this Vault answers the Companion extension.</p>
+      <div class="group">
+        <div class="srow stack"><div class="txt"><div class="lbl">Default access policy</div><div class="desc">When a site asks for an Entry you haven't decided on for it. A decision remembered on the Entry always comes first.</div></div>
+          <div class="seg full" data-policy>${POLICIES.map(([v, l]) => `<button class="${st.policy === v ? "is-on" : ""}" data-v="${v}">${l}</button>`).join("")}</div></div>
+        <div class="srow"><div class="txt"><div class="lbl">Browser group</div><div class="desc">Where logins captured in the browser are saved by default.</div></div>
+          <div class="ctl anchor"><button class="pick" data-act="open-bg">${I(V.groups.find((g) => g.id === st.browserGroup).icon)}${groupName(st.browserGroup)}${I("chevrons-up-down", "chev ico-sm")}</button></div></div>
+      </div>
+      <div class="sec-head" style="margin-top:24px"><div><h3 class="sec-title">Paired browsers <span class="subtle" style="font-weight:400;margin-left:4px">${st.pairings.length}</span></h3><div class="sec-desc">These browsers can ask this Vault for logins while it is open.</div></div></div>
+      <div class="group" data-pairings>${pairingsHTML(st)}</div>`;
+    return `
+      <p class="lead">What it takes to unlock “${KF.esc(st.name)}”, and how its Vault file is encrypted.</p>
+      <div class="group"><div class="srow" style="padding-top:16px;padding-bottom:16px">${keySummary(st)}</div></div>
+      <div class="callout info" style="margin-top:16px">${I("info")}<span>Changes are saved to the Vault file straight away. Other devices need the new master key the next time they unlock it.</span></div>`;
+  };
+  const stepBody = () => {
+    const K = st.K;
+    if (flow === 1) return `<div class="kform">${masterKeyFields(K)}</div>`;
+    if (flow === 2) return `<div class="kform">${encryptionFields(K)}<div class="kdf-est" data-kdf-desc></div></div>`;
+    const k = st.key;
+    const row = (label, was, now) => `<div class="r"><span class="k">${label}</span><span>${was !== now ? `<span class="was">${was}</span>` : ""}${now}</span>${was !== now ? `<span class="changed">Changed</span>` : `<span class="subtle" style="font-size:11px">Unchanged</span>`}</div>`;
+    const newKey = K.setKey ? [K.pw && "Master password", K.keyFile && "Key file"].filter(Boolean).join(" + ") : "Master password + Key file";
+    const enc = { ...k, kdf: K.kdf, mem: +K.mem, it: +K.it, par: +K.par, rounds: +K.rounds };
+    return `<div class="review">
+        ${row("Master key", "Master password + Key file", K.setKey ? newKey + " (new)" : "Master password + Key file")}
+        ${row("Cipher", k.cipher, K.cipher)}
+        ${row("Key derivation", k.kdf, K.kdf)}
+        ${row("Parameters", encSummary(k), encSummary(enc))}
+      </div>
+      ${K.setKey && K.keyFile ? `<div class="callout warn" style="margin-top:16px">${I("triangle-alert")}<span>Keep a copy of <span class="mono">${KF.esc(K.keyFile)}</span> somewhere safe: without it the Vault can't be opened.</span></div>` : ""}
+      <div class="callout info" style="margin-top:12px">${I("hard-drive-download")}<span>keefast re-encrypts “${KF.esc(st.name)}” and saves the Vault file as soon as you select Save changes.</span></div>`;
+  };
+  const paint = () => {
+    const inFlow = flow > 0;
+    dlg.innerHTML = `
+      <nav class="vsd-rail">
+        <div class="vsd-vault"><span class="vault-tile lg" style="width:32px;height:32px;border-radius:8px">${I("database")}</span><div style="min-width:0"><div class="n truncate">${KF.esc(st.name)}</div><div class="p truncate">${KF.esc(st.file)}</div></div></div>
+        ${tabs.map(([id, l, ic]) => `<div class="nav-item ${tab === id ? "is-selected" : ""}" data-tab="${id}">${I(ic)}<span class="truncate">${l}</span>${id === "browser" ? `<span class="count">${st.pairings.length} paired</span>` : ""}</div>`).join("")}
+        <span class="spacer"></span>
+        <div class="nav-item" style="color:var(--fg-2)">${I("sliders-horizontal")}General Settings</div>
+      </nav>
+      <section class="vsd-main">
+        <header class="vsd-head">
+          ${inFlow ? `<button class="btn sm ghost icon" data-act="exit-flow" title="Back" style="margin-left:-8px">${I("arrow-left")}</button>` : ""}
+          <h2>${inFlow ? "Change master key and encryption" : tabs.find((t) => t[0] === tab)[3]}</h2>
+          <button class="btn sm ghost icon" data-act="close" title="Close (Esc)">${I("x")}</button>
+        </header>
+        ${inFlow ? `<div class="stepbar"><div class="stepper">${["Master key", "Encryption", "Review"].map((l, i) => `${i ? '<span class="step-line"></span>' : ""}<span class="step ${flow === i + 1 ? "is-on" : flow > i + 1 ? "is-done" : ""}"><span class="n">${flow > i + 1 ? I("check") : i + 1}</span>${l}</span>`).join("")}</div><span class="spacer"></span><span class="subtle" style="font-size:12px">“${KF.esc(st.name)}”</span></div>` : ""}
+        <div class="vsd-body" data-body>${inFlow ? stepBody() : tabBody()}</div>
+        <footer class="vsd-foot">
+          ${inFlow
+            ? `<span class="hint">Step ${flow} of 3</span><span class="spacer"></span>
+               <button class="btn ghost" data-act="${flow === 1 ? "exit-flow" : "prev"}">${flow === 1 ? "Cancel" : "Back"}</button>
+               ${flow < 3 ? `<button class="btn primary" data-act="next" ${flow === 1 ? "data-needs-valid" : ""}>Continue ${KF.kbd("↵")}</button>` : `<button class="btn primary" data-act="apply">${I("shield-check")}Save changes ${KF.kbd("Ctrl", "↵")}</button>`}`
+            : tab === "key"
+              ? `<span class="hint">Applies to this Vault only</span><span class="spacer"></span><button class="btn primary" data-act="start-flow">${I("key-round")}Change master key and encryption…</button>`
+              : `<span class="status"><span class="status-dot"></span>Changes apply straight away</span><span class="spacer"></span><button class="btn secondary" data-act="close">Done ${KF.kbd("Esc")}</button>`}
+        </footer>
+      </section>`;
+    if (inFlow && flow < 3) bindKey(dlg.querySelector("[data-body]"), st.K, () => {
+      const nb = dlg.querySelector('[data-act="next"]');
+      if (nb && flow === 2) nb.disabled = !!kdfError(st.K);
+      const d = dlg.querySelector("[data-kdf-desc]");
+      if (d) {
+        const K = st.K, desc = { "Argon2id": "Recommended. Memory-hard, and resists both GPU guessing and side-channel attacks.", "Argon2d": "Memory-hard and the strongest against GPU guessing. Fine on a machine only you use.", "AES-KDF": "Compatible with older KeePass apps, but cheap to guess on a GPU. Prefer Argon2id." }[K.kdf];
+        const secs = K.kdf === "AES-KDF" ? (+K.rounds || 0) / 2.4e6 : ((+K.mem || 0) * (+K.it || 0)) / Math.max(+K.par || 1, 1) / 420;
+        d.innerHTML = kdfError(K) ? "" : `<div class="callout info">${I(K.kdf === "AES-KDF" ? "triangle-alert" : "shield-check")}<div><div style="color:var(--fg-0);font-weight:500">${K.kdf}</div><div>${desc}</div></div></div>
+          <div class="est"><span class="k">Unlocking takes about</span><span class="v mono">${secs < 0.1 ? "<0.1" : secs.toFixed(1)} s</span><span class="bar"><i style="width:${Math.min(100, secs * 40)}%"></i></span><span class="k">on this machine</span></div>`;
+      }
+      if (nb && flow === 1) nb.disabled = !keyValid(st.K);
+    });
+    const nm = dlg.querySelector("[data-name]");
+    if (nm) nm.addEventListener("input", (e) => { st.name = e.target.value || "Personal"; dlg.querySelector(".vsd-vault .n").textContent = st.name; });
+  };
+  bindCommon(dlg, st, () => paint(), markDirty);
+  dlg.addEventListener("click", (e) => {
+    const tb = e.target.closest("[data-tab]");
+    if (tb) { tab = tb.dataset.tab; flow = 0; paint(); return; }
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (a === "start-flow") { st.K = freshKey(st); flow = 1; paint(); }
+    if (a === "exit-flow") { flow = 0; paint(); }
+    if (a === "next") { flow++; paint(); }
+    if (a === "prev") { flow--; paint(); }
+    if (a === "save") { st.status = "saving"; paint(); setTimeout(() => { st.status = "saved"; paint(); }, 700); }
+    if (a === "apply") {
+      const K = st.K; Object.assign(st.key, { cipher: K.cipher, kdf: K.kdf, mem: +K.mem, it: +K.it, par: +K.par, rounds: +K.rounds });
+      const b = dlg.querySelector('[data-act="apply"]'); b.innerHTML = `${I("loader-circle", "spin")}Re-encrypting…`; b.disabled = true;
+      setTimeout(() => { flow = 0; paint(); KF.toast(K.setKey ? "New master key saved to the Vault file" : "Encryption settings saved to the Vault file", { icon: "shield-check" }); }, 900);
+    }
+    if (a === "close") KF.toast("Vault settings closed", { icon: "x" });
+  });
+  paint();
+}
+
+KF.variants({
+  A: { name: "Settings page in the window · inline key card", render: renderA },
+  B: { name: "Settings dialog · stepped key change", render: renderB },
+});
+</script>
+</body>
+</html>

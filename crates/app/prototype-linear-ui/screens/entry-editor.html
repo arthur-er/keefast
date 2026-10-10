@@ -1,0 +1,818 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Entry editor — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+[hidden] { display: none !important; }
+/* ---------- Shell ---------- */
+.ed-wrap { position: absolute; inset: 0; display: flex; }
+.ed-side { width: var(--sidebar-w); flex: none; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.ed-side-head { height: var(--toolbar-h); display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; flex: none; }
+.ed-mark { width: 20px; height: 20px; border-radius: 5px; background: var(--accent); display: grid; place-items: center; color: var(--fg-on-accent); }
+.ed-mark svg.lucide { width: 12px; height: 12px; stroke-width: 2.25; }
+.ed-side-head b { font-weight: 600; font-size: var(--text-md); }
+.ed-side-scroll { flex: 1; overflow: auto; padding-bottom: 8px; }
+.ed-side-foot { display: flex; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid var(--border); }
+.nav-item .lock { margin-left: auto; color: var(--fg-2); }
+.nav-item .lock svg.lucide { width: 13px; height: 13px; }
+
+.ed-list { width: var(--list-w); flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: opacity var(--dur) var(--ease); }
+.ed-list.is-dim { opacity: .5; }
+.ed-list-head { height: var(--toolbar-h); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); flex: none; }
+.ed-list-head b { font-weight: 600; }
+.ed-list-search { padding: 10px 10px 6px; }
+.ed-rows { flex: 1; overflow: hidden; padding: 0 6px; }
+.ed-row { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--r-sm); }
+.ed-row:hover { background: var(--bg-hover); }
+.ed-row.is-selected { background: var(--bg-active); }
+.ed-row .t { font-weight: 500; line-height: 1.25; }
+.ed-row .u { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.3; }
+.ed-row .c { margin-left: auto; }
+
+.ed-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.ed-bar { height: var(--toolbar-h); flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--border); }
+.ed-status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); }
+.ed-status .status-dot.warn { background: var(--warn); }
+.ed-dirty { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); transition: color var(--dur) var(--ease); }
+.ed-dirty i.pip { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-2); opacity: .5; }
+.ed-dirty.is-on { color: var(--warn); }
+.ed-dirty.is-on i.pip { background: var(--warn); opacity: 1; box-shadow: 0 0 0 3px var(--warn-bg); }
+
+/* ---------- Shared editor bits ---------- */
+.std-tile { display: inline-grid; place-items: center; flex: none; background: var(--bg-2); color: var(--fg-0); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.icon-btn { all: unset; position: relative; display: inline-grid; border-radius: 9px; cursor: default; }
+.icon-btn::after { content: ""; position: absolute; inset: -3px; border-radius: 11px; border: 1px solid transparent; transition: border-color var(--dur-fast) var(--ease); }
+.icon-btn:hover::after, .icon-btn.is-open::after { border-color: var(--border-strong); }
+.icon-btn .edit-pip { position: absolute; right: -5px; bottom: -5px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-popover); color: var(--fg-1); box-shadow: var(--shadow-pop); }
+.icon-btn .edit-pip svg.lucide { width: 10px; height: 10px; stroke-width: 2.25; }
+
+/* Ghost inputs: sit exactly where the value sits; editable affordance is a faint hairline */
+.gi { all: unset; box-sizing: border-box; display: block; width: 100%; height: 30px; padding: 0 8px; border-radius: var(--r-sm); border: 1px solid var(--border); color: var(--fg-0); transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+.gi::placeholder { color: var(--fg-2); }
+.gi:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.gi:focus { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
+.gi.mono { font-family: var(--font-mono); letter-spacing: .02em; }
+.gi.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
+textarea.gi { height: auto; min-height: 64px; padding: 6px 8px; line-height: 1.5; resize: none; white-space: pre-wrap; }
+.gi-group { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px 0 0; border: 1px solid var(--border); border-radius: var(--r-sm); transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+.gi-group:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.gi-group:focus-within { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
+.gi-group > input { all: unset; flex: 1; min-width: 0; height: 100%; padding: 0 8px; }
+.gi-group > input.mono { font-family: var(--font-mono); letter-spacing: .02em; }
+.gi-group > input::placeholder { color: var(--fg-2); }
+.gi-group .btn.sm { height: 22px; }
+.gi-group .btn.sm.icon { width: 22px; }
+
+.input-group { display: flex; align-items: center; gap: 2px; padding-right: 3px; }
+.input-group input { all: unset; flex: 1; min-width: 0; height: 100%; padding: 0; }
+.input-group .btn.sm { height: 24px; }
+.input-group .btn.sm.icon { width: 24px; }
+.input.mono input, .input-group input.mono { font-family: var(--font-mono); letter-spacing: .02em; }
+.A-tags .tok input, .C-props .tok input { min-width: 56px; }
+
+.strength-line { display: flex; align-items: center; gap: 10px; }
+.strength-line .strength { width: 120px; }
+.strength-line span { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+
+/* Colour swatches */
+.swatches { display: flex; align-items: center; gap: 6px; }
+.sw { all: unset; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; cursor: default; position: relative; }
+.sw i.fill { width: 14px; height: 14px; border-radius: 50%; display: block; }
+.sw:hover { background: var(--bg-hover); }
+.sw.is-on { box-shadow: 0 0 0 1.5px var(--fg-0); }
+.sw.none i.fill { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-2); position: relative; overflow: hidden; }
+.sw.none i.fill::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1.5px; background: var(--fg-2); transform: rotate(45deg); }
+
+/* Tag token input */
+.tok { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 30px; padding: 3px 4px; border-radius: var(--r-sm); border: 1px solid var(--border); transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+.tok:hover { border-color: var(--border-strong); }
+.tok:focus-within { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
+.tok.boxed { background: var(--bg-1); border-color: var(--border-strong); min-height: 32px; }
+.tok input { all: unset; flex: 1; min-width: 90px; height: 22px; padding: 0 4px; font-size: var(--text-md); }
+.tok input::placeholder { color: var(--fg-2); }
+.tk { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 2px 0 8px; border-radius: 99px; border: 1px solid var(--border-strong); font-size: var(--text-sm); color: var(--fg-0); background: var(--bg-1); white-space: nowrap; }
+.tk button { all: unset; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); }
+.tk button:hover { background: var(--bg-active); color: var(--fg-0); }
+.tk button svg.lucide { width: 11px; height: 11px; stroke-width: 2.25; }
+
+/* Custom fields */
+.cf-row { display: grid; grid-template-columns: 148px 1fr auto auto; align-items: center; gap: 8px; }
+.cf-prot { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-1); padding: 0 4px; cursor: default; }
+.cf-prot .switch { transform: scale(.86); }
+
+/* Attachments */
+.att-row { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 6px 0 10px; border-radius: var(--r-sm); }
+.att-row:hover { background: var(--bg-hover); }
+.att-ic { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--border); flex: none; }
+.att-ic svg.lucide { width: 14px; height: 14px; }
+.att-row .nm { font-weight: 500; }
+.att-row .sz { color: var(--fg-2); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.att-actions { margin-left: auto; display: flex; gap: 2px; }
+.att-prev { margin: 4px 0 8px 46px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); padding: 10px 12px; font: 12px/1.6 var(--font-mono); color: var(--fg-1); white-space: pre; overflow: hidden; animation: kf-fade var(--dur) var(--ease); }
+.att-prev .cut { font-family: var(--font-ui); color: var(--fg-2); font-size: var(--text-xs); margin-top: 6px; display: block; }
+
+.sec-head { display: flex; align-items: center; gap: 8px; height: 28px; }
+.sec-head h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.sec-head .n { color: var(--fg-2); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.sec-head .btn { margin-left: auto; }
+
+.err-banner { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--danger-bg); color: var(--danger); font-size: var(--text-sm); font-weight: 500; animation: kf-rise var(--dur) var(--ease); }
+.err-banner svg.lucide { width: 14px; height: 14px; }
+
+/* Popover layer */
+.pop-layer { position: absolute; inset: 0; pointer-events: none; z-index: 60; }
+.pop-layer > * { position: absolute; pointer-events: auto; }
+.pop { background: var(--bg-popover); border-radius: var(--r-md); box-shadow: var(--shadow-pop); animation: kf-pop var(--dur) var(--ease); transform-origin: top left; }
+.pop-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; }
+.pop-head b { font-weight: 600; font-size: var(--text-md); }
+.pop-sec { padding: 4px 10px 8px; }
+.pop-sec .menu-label { padding: 6px 2px 6px; display: flex; align-items: center; }
+.pop-sec .menu-label .btn { margin-left: auto; }
+.pop-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
+.icon-grid { display: grid; grid-template-columns: repeat(10, 30px); gap: 2px; }
+.icon-cell { all: unset; width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; color: var(--fg-1); cursor: default; position: relative; }
+.icon-cell:hover { background: var(--bg-active); color: var(--fg-0); }
+.icon-cell.is-on { background: var(--accent-bg); color: var(--accent-fg); box-shadow: inset 0 0 0 1px var(--accent); }
+.icon-cell.import { color: var(--fg-2); box-shadow: inset 0 0 0 1px var(--border-strong); border: 0; background-image: none; }
+.icon-cell.import:hover { color: var(--fg-0); }
+.icon-cell .avatar { box-shadow: none; }
+.pop-search { display: flex; align-items: center; gap: 8px; height: 30px; margin: 0 10px 4px; padding: 0 8px; border-radius: var(--r-sm); background: var(--bg-hover); color: var(--fg-2); }
+.pop-search input { all: unset; flex: 1; color: var(--fg-0); font-size: var(--text-md); }
+.pop-search input::placeholder { color: var(--fg-2); }
+.gen-out { margin: 4px 12px 8px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--bg-inset); border: 1px solid var(--border); font: 14px/1.4 var(--font-mono); letter-spacing: .03em; word-break: break-all; color: var(--fg-0); }
+.gen-out .d { color: var(--info); } .gen-out .s { color: var(--accent-fg); }
+
+/* ===== Variant A: edit in place ===== */
+.A-pane { flex: 1; overflow: auto; }
+.A-doc { max-width: 640px; margin: 0 auto; padding: 28px 32px 48px; }
+.A-title-row { display: flex; align-items: center; gap: 14px; }
+.A-title { all: unset; flex: 1; min-width: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; height: 36px; padding: 0 8px; margin-left: -9px; border-radius: var(--r-sm); border: 1px solid transparent; }
+.A-title:hover { background: var(--bg-hover); }
+.A-title:focus { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
+.A-props { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 0 54px; }
+.chip { all: unset; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: var(--r-sm); border: 1px solid var(--border-strong); color: var(--fg-1); font-size: var(--text-sm); font-weight: 500; cursor: default; white-space: nowrap; transition: background var(--dur-fast) var(--ease); }
+.chip:hover, .chip.is-open { background: var(--bg-hover); color: var(--fg-0); }
+.chip svg.lucide { width: 13px; height: 13px; }
+.chip .dot { width: 9px; height: 9px; }
+.chip.dashed { border-style: dashed; color: var(--fg-2); }
+.chip .badge { height: 18px; margin-right: -4px; }
+.A-tags .tok, .C-props .tok { border-color: transparent; padding-left: 0; }
+.A-tags .tok:hover, .C-props .tok:hover { border-color: var(--border); }
+.A-tags .tok:focus-within, .C-props .tok:focus-within { padding-left: 4px; }
+.A-sec { margin-top: 28px; }
+.A-sec .sec-head { margin-bottom: 6px; }
+.A-kv { display: grid; grid-template-columns: 104px 1fr; align-items: center; column-gap: 12px; min-height: 38px; }
+.A-kv > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.A-kv.top { align-items: start; } .A-kv.top > .k { padding-top: 6px; }
+.A-totp { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 9px; }
+.A-totp .code { font-family: var(--font-mono); font-size: 14px; letter-spacing: .04em; }
+.A-hr { height: 1px; background: var(--border); margin: 24px 0 0; }
+.A-foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 10px 0 0; }
+
+/* ===== Variant B: side sheet ===== */
+.B-detail { flex: 1; overflow: hidden; padding: 28px 32px; }
+.B-detail .kv { min-height: 40px; border-bottom: 1px solid var(--border); }
+.B-scrim { position: absolute; inset: 0; background: var(--scrim); animation: kf-fade var(--dur) var(--ease); z-index: 30; }
+.B-sheet { width: 500px; }
+.B-sheet-head { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--border); flex: none; }
+.B-sheet-head .ttl { font-weight: 600; font-size: var(--text-lg); letter-spacing: -0.01em; line-height: 1.2; }
+.B-sheet-head .sub { color: var(--fg-2); font-size: var(--text-sm); }
+.B-body { flex: 1; overflow: auto; padding: 4px 20px 24px; }
+.B-sec { padding: 18px 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px; }
+.B-sec:last-child { border-bottom: 0; }
+.B-sec > h3 { margin: 0; font-size: var(--text-sm); font-weight: 500; color: var(--fg-2); }
+.B-sec .sec-head h3 { font-size: var(--text-sm); font-weight: 500; color: var(--fg-2); }
+.B-sec .field > label { display: flex; align-items: center; gap: 8px; }
+.B-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.B-cf { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-1); }
+.B-cf-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 6px; }
+.B-cf-item + .B-cf-item { border-top: 1px solid var(--border); }
+.B-cf-item .inputs { display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 6px; }
+.B-cf-item .input { background: var(--bg-0); }
+.B-cf-item .opts { display: flex; align-items: center; gap: 2px; margin-left: -4px; }
+.B-body { overflow-x: hidden; }
+.B-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px 12px 20px; border-top: 1px solid var(--border); flex: none; background: var(--bg-0); }
+.B-exp { display: flex; align-items: center; gap: 10px; }
+.B-exp .input { width: 150px; }
+
+/* ===== Variant C: focused full-window ===== */
+.C-body { flex: 1; display: flex; min-height: 0; }
+.C-doc-scroll { flex: 1; overflow: auto; }
+.C-doc { max-width: 680px; margin: 0 auto; padding: 32px 40px 56px; }
+.C-title { all: unset; display: block; width: 100%; font-size: var(--text-2xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; margin-top: 18px; }
+.C-title::placeholder { color: var(--fg-2); }
+.C-url { all: unset; display: block; width: 100%; color: var(--fg-1); margin-top: 4px; font-size: var(--text-md); }
+.C-card { margin-top: 24px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-1); }
+.C-crow { display: grid; grid-template-columns: 112px 1fr auto; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 14px; }
+.C-crow + .C-crow { border-top: 1px solid var(--border); }
+.C-crow > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.C-crow input { all: unset; min-width: 0; height: 32px; }
+.C-crow input.mono { font-family: var(--font-mono); letter-spacing: .02em; }
+.C-crow input::placeholder { color: var(--fg-2); }
+.C-crow:focus-within { background: var(--bg-hover); }
+.C-crow:first-child { border-radius: var(--r-md) var(--r-md) 0 0; } .C-crow:last-child { border-radius: 0 0 var(--r-md) var(--r-md); }
+.C-crow .tools { display: flex; gap: 2px; }
+.C-strength { display: flex; align-items: center; gap: 10px; padding: 0 14px 10px 134px; margin-top: -6px; }
+.C-strength .strength { width: 120px; }
+.C-strength span { font-size: var(--text-xs); color: var(--fg-2); }
+.C-notes { all: unset; display: block; width: 100%; min-height: 44px; margin-top: 8px; line-height: 1.6; white-space: pre-wrap; color: var(--fg-0); }
+.C-notes::placeholder { color: var(--fg-2); }
+.C-sec { margin-top: 32px; }
+.C-sec .sec-head { margin-bottom: 8px; }
+.C-table { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.C-thead, .C-tr { display: grid; grid-template-columns: 170px 1fr 92px 32px; align-items: center; gap: 0; }
+.C-thead { height: 30px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); background: var(--bg-inset); border-bottom: 1px solid var(--border); }
+.C-thead > span { padding: 0 12px; }
+.C-tr { min-height: 40px; }
+.C-tr + .C-tr { border-top: 1px solid var(--border); }
+.C-tr > * { min-width: 0; }
+.C-tr input { all: unset; box-sizing: border-box; width: 100%; height: 40px; padding: 0 12px; }
+.C-tr input::placeholder { color: var(--fg-2); }
+.C-tr input.mono { font-family: var(--font-mono); letter-spacing: .02em; }
+.C-tr input:focus { background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--accent); }
+.C-tr input.invalid { box-shadow: inset 0 0 0 1px var(--danger); background: var(--danger-bg); }
+.C-tr .name { border-right: 1px solid var(--border); color: var(--fg-1); }
+.C-tr .val { display: flex; align-items: center; padding-right: 4px; }
+.C-tr .prot { display: flex; justify-content: center; border-left: 1px solid var(--border); height: 100%; align-items: center; }
+.C-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.C-tile { position: relative; border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-1); min-height: 100px; }
+.C-tile:hover { border-color: var(--border-strong); }
+.C-tile .nm { font-weight: 500; font-size: var(--text-sm); line-height: 1.35; word-break: break-all; }
+.C-tile .sz { color: var(--fg-2); font-size: var(--text-xs); }
+.C-tile .acts { display: flex; gap: 2px; margin-top: auto; margin-left: -4px; }
+.C-tile.add { border-style: dashed; align-items: center; justify-content: center; color: var(--fg-2); background: transparent; gap: 6px; font-size: var(--text-sm); font-weight: 500; }
+.C-tile.add:hover { color: var(--fg-0); background: var(--bg-hover); }
+.C-props { width: 300px; flex: none; border-left: 1px solid var(--border); overflow: auto; padding: 14px 16px 24px; }
+.C-pgroup { padding: 10px 0 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+.C-pgroup:last-child { border-bottom: 0; }
+.C-pgroup > .menu-label { padding: 2px 0 6px; }
+.C-prop { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; min-height: 34px; }
+.C-prop.top { align-items: start; } .C-prop.top > .k { padding-top: 7px; }
+.C-prop > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.C-prop > .v { min-width: 0; font-size: var(--text-md); }
+.prop-btn { all: unset; display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; margin-left: -8px; border-radius: var(--r-sm); cursor: default; max-width: 100%; }
+.prop-btn:hover, .prop-btn.is-open { background: var(--bg-hover); }
+.C-prop .input { height: 30px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(() => {
+const { esc, icon, kbd } = KF;
+const TODAY = "2026-10-09";
+const vault = KF.vault("personal");
+const base = KF.entry("e1");
+const STD = ["key","globe","triangle-alert","server","folder-check","messages-square","puzzle","notepad-text","plug","id-card","file-check","camera","radio","key-round","zap","scan","sparkles","disc","monitor","mail","settings","clipboard-check","file-plus","tv","battery-warning","mailbox","save","hard-drive","file-question","square-terminal","terminal","printer","layout-grid","play","wrench","network","archive","landmark","app-window","clock","mail-search","flag","memory-stick","trash","sticky-note","ban","info","package","folder","folder-open","folder-archive","lock-open","file-lock","circle-check","pen","image","book","list","user","hammer","house","star","bird","feather","apple","book-open","banknote","award","smartphone"];
+const COLOR_NAMES = { red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", blue: "Blue", purple: "Purple" };
+const RESERVED = ["title", "username", "password", "url", "notes"];
+const PREVIEW = `GitHub recovery codes — arthur-er
+Keep these somewhere safe. Each works once.
+
+8f2a1-c9d4e   3b7e0-a51f2   d41c9-0e7ba
+77a3f-b2c18   e90d4-5f6a1   1c8b2-9d3e7
+a6f05-4b1c9   52e8d-c07fa   9b3a6-e1d48
+…`;
+const TAG_COLORS = ["purple", "blue", "green", "orange", "red", "yellow"];
+const tagColor = (t) => TAG_COLORS[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % TAG_COLORS.length];
+
+function makeState() {
+  const st = {
+    title: base.title, username: base.username, password: base.password, url: base.url, notes: base.notes,
+    tags: [...base.tags], tagdraft: "", color: base.color,
+    customIcons: [{ title: "GitHub", brand: "github" }, { title: "Nubank", brand: "bank" }, { title: "Proton", brand: "proton" }, { title: "Stripe", brand: "stripe" }],
+    icon: { kind: "custom", n: 0 }, iconFilter: "",
+    expires: true, expiry: "2026-10-01",
+    fields: base.fields.map((f) => ({ ...f, value: "ghp_4fT9xQ2LmZ8kPw1vR7nY3sD6", reveal: false })),
+    attachments: base.attachments.map((a) => ({ ...a, preview: false })),
+    reveal: false, pop: null, gen: { mode: "chars", value: "" },
+    dirty: false, vaultStatus: "saved", err: null,
+  };
+  return st;
+}
+
+/* ---------- Validation ---------- */
+function validDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + "T00:00:00Z");
+  return !isNaN(d) && d.toISOString().slice(0, 10) === s;
+}
+const isExpired = (st) => st.expires && validDate(st.expiry) && st.expiry <= TODAY;
+function validate(st) {
+  const err = { msgs: [], fields: new Set(), expiry: false };
+  const seen = new Set();
+  st.fields.forEach((f, i) => {
+    const n = f.name.trim();
+    if (!n) { err.fields.add(i); if (!err.msgs.includes("empty")) err.msgs.push("empty"); return; }
+    if (RESERVED.includes(n.toLowerCase()) || seen.has(n)) { err.fields.add(i); if (!err.msgs.includes("taken")) err.msgs.push("taken"); }
+    seen.add(n);
+  });
+  if (st.expires && !validDate(st.expiry)) { err.expiry = true; err.msgs.push("expiry"); }
+  return err.msgs.length ? err : null;
+}
+const ERR_TEXT = {
+  empty: "Give every custom field a name.",
+  taken: "Each field needs a name of its own, other than Title, UserName, Password, URL or Notes.",
+  expiry: "Type the expiry date as YYYY-MM-DD, such as 2027-01-31.",
+};
+const errFirst = (st) => st.err && ERR_TEXT[st.err.msgs[0]];
+
+/* ---------- Password strength ---------- */
+function strength(pw) {
+  let pool = 0;
+  if (/[a-z]/.test(pw)) pool += 26; if (/[A-Z]/.test(pw)) pool += 26; if (/\d/.test(pw)) pool += 10; if (/[^a-zA-Z0-9]/.test(pw)) pool += 33;
+  const bits = Math.round(pw.length * Math.log2(pool || 1));
+  const score = !pw ? 0 : bits < 40 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4;
+  return { bits, score };
+}
+const strengthHtml = (st, cls = "strength-line") => { const s = strength(st.password); return `<div class="${cls}" data-live="strength"><div class="strength" data-score="${s.score}"><i></i><i></i><i></i><i></i></div><span>${s.bits} bits</span></div>`; };
+function genPw(mode) {
+  if (mode === "phrase") { const w = ["lantern","orbit","maple","cobalt","ember","quartz","harbor","velvet","tundra","saffron","nimbus","pebble"]; return Array.from({ length: 5 }, () => w[Math.random() * w.length | 0]).join("-") + "-" + (Math.random() * 90 + 10 | 0); }
+  const cs = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*?"; return Array.from({ length: 20 }, () => cs[Math.random() * cs.length | 0]).join("");
+}
+const colorPw = (pw) => esc(pw).replace(/(\d+)/g, '<span class="d">$1</span>').replace(/([!@#$%&*?^]+)/g, '<span class="s">$1</span>');
+
+/* ---------- Shared renderers ---------- */
+function iconTile(st, size = 40) {
+  if (st.icon.kind === "custom") return KF.avatar(st.customIcons[st.icon.n], size);
+  const r = Math.max(5, Math.round(size * 0.24));
+  const isz = Math.round(size * 0.5);
+  return `<span class="std-tile" style="width:${size}px;height:${size}px;border-radius:${r}px"><i data-lucide="${STD[st.icon.n]}" style="width:${isz}px;height:${isz}px"></i></span>`;
+}
+const iconButton = (st, size) => `<button class="icon-btn ${st.pop === "icon" && st.popAnchor === "icon" ? "is-open" : ""}" data-act="pop" data-arg="icon" data-anchor="icon" title="Icon · Change…">${iconTile(st, size)}<span class="edit-pip">${icon("pencil")}</span></button>`;
+const swatches = (st) => `<div class="swatches">
+  <button class="sw none ${!st.color ? "is-on" : ""}" data-act="color" data-arg="" title="None"><i class="fill"></i></button>
+  ${KF.data.colors.map((c) => `<button class="sw ${st.color === c ? "is-on" : ""}" data-act="color" data-arg="${c}" title="${COLOR_NAMES[c]}"><i class="fill" style="background:var(--c-${c})"></i></button>`).join("")}
+</div>`;
+const tagInput = (st, boxed = false) => `<div class="tok ${boxed ? "boxed" : ""}" data-anchor="tags" data-focus="tagdraft">
+  ${st.tags.map((t, i) => `<span class="tk"><span class="dot" style="background:var(--c-${tagColor(t)})"></span>${esc(t)}<button data-act="tag-rm" data-arg="${i}" title="Remove ${esc(t)}">${icon("x")}</button></span>`).join("")}
+  <input data-k="tagdraft" value="${esc(st.tagdraft)}" placeholder="${st.tags.length ? "Add tag" : "Separate tags with commas"}">
+</div>`;
+const pwTools = (st) => `
+  <button class="btn ghost sm icon" data-act="reveal" title="${st.reveal ? "Hide" : "Show"}">${icon(st.reveal ? "eye-off" : "eye")}</button>
+  <button class="btn ghost sm icon" data-act="copy" data-arg="Password" title="Copy ${"Ctrl C"}">${icon("copy")}</button>
+  <button class="btn secondary sm ${st.pop === "gen" ? "is-open" : ""}" data-act="pop" data-arg="gen" data-anchor="gen">${icon("wand-sparkles")}Generate</button>`;
+const pwInput = (st) => `<input class="mono" data-k="password" type="${st.reveal ? "text" : "password"}" value="${esc(st.password)}" spellcheck="false" autocomplete="off">`;
+const expiredBadge = (st) => `<span class="badge danger" data-live="expired" ${isExpired(st) ? "" : "hidden"}>${icon("clock-alert", "ico-sm")}Expired</span>`;
+const dirtyHtml = (st) => `<span class="ed-dirty ${st.dirty ? "is-on" : ""}" data-live="dirty"><i class="pip"></i><span>${st.dirty ? "Unsaved changes" : "No changes"}</span></span>`;
+const errBanner = (st) => st.err ? `<div class="vstack" style="gap:6px">${st.err.msgs.map((m) => `<div class="err-banner">${icon("circle-alert")}<span>${ERR_TEXT[m]}</span></div>`).join("")}</div>` : "";
+const footButtons = () => `<button class="btn ghost" data-act="cancel">Cancel <kbd>Esc</kbd></button><button class="btn primary" data-act="done">Done ${kbd("Ctrl", "S")}</button>`;
+const fileIcon = (name) => /\.(png|jpe?g|gif|webp)$/i.test(name) ? "file-image" : /\.(txt|md)$/i.test(name) ? "file-text" : /\.(pub|key)$|id_/.test(name) ? "file-key" : "file";
+
+function attRow(st, a, i) {
+  return `<div class="att-row">
+    <span class="att-ic">${icon(fileIcon(a.name))}</span>
+    <span class="nm truncate">${esc(a.name)}</span><span class="sz">${esc(a.size)}</span>
+    <span class="att-actions">
+      <button class="btn ghost sm" data-act="a-prev" data-arg="${i}">${a.preview ? "Hide preview" : "Preview"}</button>
+      <button class="btn ghost sm" data-act="a-save" data-arg="${i}">Save…</button>
+      <button class="btn ghost sm danger-ghost" data-act="a-rm" data-arg="${i}">Remove</button>
+    </span>
+  </div>${a.preview ? `<div class="att-prev">${esc(a.previewText || PREVIEW)}<span class="cut">Only the start is shown.</span></div>` : ""}`;
+}
+const protSwitch = (f, i) => `<span class="cf-prot" data-act="f-prot" data-arg="${i}" title="Protected values are masked and kept encrypted in memory"><span class="switch ${f.protected ? "is-on" : ""}"></span>Protected</span>`;
+
+/* ---------- Popovers ---------- */
+function iconPopover(st) {
+  const q = st.iconFilter.trim().toLowerCase();
+  const std = STD.map((n, i) => ({ n, i })).filter((x) => !q || x.n.includes(q));
+  return `<div class="pop" style="width:332px" data-pop="icon">
+    <div class="pop-head"><b>Icon</b><span class="spacer"></span><span class="subtle" style="font-size:var(--text-xs)">${KF.kbd("Esc")}</span></div>
+    <div class="pop-search">${icon("search", "ico-sm")}<input data-k="iconFilter" placeholder="Filter standard icons" value="${esc(st.iconFilter)}"></div>
+    <div class="pop-sec"><div class="menu-label">Standard icons</div>
+      <div class="icon-grid">${std.map((x) => `<button class="icon-cell ${st.icon.kind === "std" && st.icon.n === x.i ? "is-on" : ""}" data-act="icon-std" data-arg="${x.i}" title="${x.n}">${icon(x.n)}</button>`).join("") || `<span class="subtle" style="grid-column:1/-1;font-size:var(--text-sm);padding:6px 2px">No standard icon matches.</span>`}</div>
+    </div>
+    <div class="menu-sep" style="margin:0"></div>
+    <div class="pop-sec"><div class="menu-label">This Vault's icons<button class="btn ghost sm" data-act="icon-import">${icon("image-up")}Import PNG…</button></div>
+      <div class="icon-grid">${st.customIcons.map((c, i) => `<button class="icon-cell ${st.icon.kind === "custom" && st.icon.n === i ? "is-on" : ""}" data-act="icon-custom" data-arg="${i}" title="${esc(c.title)}">${KF.avatar(c, 20)}</button>`).join("")}</div>
+    </div>
+  </div>`;
+}
+function genPopover(st) {
+  if (!st.gen.value) st.gen.value = genPw(st.gen.mode);
+  const s = strength(st.gen.value);
+  return `<div class="pop" style="width:340px" data-pop="gen">
+    <div class="pop-head"><b>Generate</b><span class="spacer"></span><div class="seg"><button class="${st.gen.mode === "chars" ? "is-on" : ""}" data-act="gen-mode" data-arg="chars">Characters</button><button class="${st.gen.mode === "phrase" ? "is-on" : ""}" data-act="gen-mode" data-arg="phrase">Passphrase</button></div></div>
+    <div class="gen-out">${colorPw(st.gen.value)}</div>
+    <div class="strength-line" style="padding:0 12px 10px"><div class="strength" data-score="${s.score}"><i></i><i></i><i></i><i></i></div><span>${s.bits} bits · ${st.gen.mode === "chars" ? "20 characters" : "5 words"}</span></div>
+    <div class="pop-foot"><button class="btn ghost sm">${icon("sliders-horizontal")}Settings…</button><span class="spacer"></span><button class="btn ghost sm icon" data-act="gen-again" title="Regenerate">${icon("refresh-cw")}</button><button class="btn primary sm" data-act="gen-use">Use password</button></div>
+  </div>`;
+}
+const colorPopover = (st) => `<div class="menu" style="width:200px" data-pop="color">
+  <div class="menu-label">Colour</div>
+  <div class="menu-item ${!st.color ? "is-active" : ""}" data-act="color" data-arg=""><span class="sw none" style="width:16px;height:16px"><i class="fill" style="width:12px;height:12px"></i></span>None${!st.color ? `<span style="margin-left:auto">${icon("check")}</span>` : ""}</div>
+  ${KF.data.colors.map((c) => `<div class="menu-item ${st.color === c ? "is-active" : ""}" data-act="color" data-arg="${c}"><span class="dot" style="background:var(--c-${c});width:10px;height:10px;margin:0 3px"></span>${COLOR_NAMES[c]}${st.color === c ? `<span style="margin-left:auto">${icon("check")}</span>` : ""}</div>`).join("")}
+</div>`;
+const expiryPopover = (st) => `<div class="pop" style="width:280px" data-pop="expiry">
+  <div class="pop-head"><b>Expires</b><span class="spacer"></span><span class="switch ${st.expires ? "is-on" : ""}" data-act="exp-toggle"></span></div>
+  <div style="padding:2px 12px 12px" class="vstack">
+    <div class="input mono ${st.err?.expiry ? "invalid" : ""}" style="${st.expires ? "" : "opacity:.45"}">${icon("calendar", "ico-sm")}<input data-k="expiry" placeholder="YYYY-MM-DD" value="${esc(st.expiry)}" ${st.expires ? "" : "disabled"}></div>
+    ${st.err?.expiry ? `<div class="error-msg">${ERR_TEXT.expiry}</div>` : `<div class="hint">At the start of that day, UTC.</div>`}
+    <div class="hstack" style="gap:4px;margin-top:2px">${[["In 30 days", "2026-11-08"], ["In 90 days", "2027-01-07"], ["In a year", "2027-10-09"]].map(([l, d]) => `<button class="btn secondary sm" data-act="exp-set" data-arg="${d}">${l}</button>`).join("")}</div>
+  </div>
+</div>`;
+function tagPopover(st) {
+  const q = st.tagdraft.trim().toLowerCase();
+  const opts = KF.data.tags.filter((t) => !st.tags.includes(t) && t.includes(q)).slice(0, 6);
+  return `<div class="menu" style="width:220px" data-pop="tags">
+    ${opts.map((t) => `<div class="menu-item" data-act="tag-add" data-arg="${esc(t)}"><span class="dot" style="background:var(--c-${tagColor(t)})"></span>${esc(t)}</div>`).join("")}
+    ${q && !KF.data.tags.includes(q) && !st.tags.includes(q) ? `${opts.length ? '<div class="menu-sep"></div>' : ""}<div class="menu-item" data-act="tag-add" data-arg="${esc(q)}">${icon("plus")}Create tag “${esc(q)}”<kbd style="margin-left:auto">↵</kbd></div>` : ""}
+  </div>`;
+}
+const POPS = { icon: iconPopover, gen: genPopover, color: colorPopover, expiry: expiryPopover, tags: tagPopover };
+
+/* ---------- App chrome ---------- */
+function sidebar() {
+  const count = (g) => vault.entries.filter((e) => e.group === g).length;
+  const groups = vault.groups.filter((g) => g.parent === "root" && !g.recycle);
+  return `<aside class="ed-side">
+    <div class="ed-side-head"><span class="ed-mark">${icon("key-round")}</span><b>Personal</b>${icon("chevron-down", "ico-sm subtle")}<span class="spacer"></span><button class="btn ghost sm icon" title="Search ${"Ctrl K"}">${icon("search")}</button><button class="btn ghost sm icon" title="New Entry">${icon("square-pen")}</button></div>
+    <div class="ed-side-scroll">
+      <div class="nav-section"><div class="nav-item is-selected">${icon("layers")}All Items<span class="count">${vault.entries.filter((e) => e.group !== "bin").length}</span></div></div>
+      <div class="nav-section"><div class="nav-head">Groups</div>
+        ${groups.map((g) => `<div class="nav-item">${icon(g.icon)}${esc(g.name)}<span class="count">${count(g.id)}</span></div>`).join("")}
+        <div class="nav-item">${icon("trash-2")}Recycle Bin<span class="count">${count("bin")}</span></div>
+      </div>
+      <div class="nav-section"><div class="nav-head">Tags</div>
+        ${["2fa", "dev", "email", "shared"].map((t) => `<div class="nav-item"><span class="dot" style="background:var(--c-${tagColor(t)});margin:0 3px"></span>${t}</div>`).join("")}
+      </div>
+      <div class="nav-section"><div class="nav-head">Vaults</div>
+        <div class="nav-item">${icon("cloud")}Work<span class="count">Synced</span></div>
+        <div class="nav-item">${icon("vault")}Family<span class="lock">${icon("lock")}</span></div>
+      </div>
+    </div>
+    <div class="ed-side-foot"><button class="btn ghost sm">${icon("folder-open")}Open / New</button><span class="spacer"></span><button class="btn ghost sm icon" title="Settings">${icon("settings")}</button></div>
+  </aside>`;
+}
+function list(dim) {
+  const es = vault.entries.filter((e) => e.group !== "bin").sort((a, b) => a.title.localeCompare(b.title));
+  return `<section class="ed-list ${dim ? "is-dim" : ""}">
+    <div class="ed-list-head"><b>All Items</b><span class="subtle">${es.length}</span><span class="spacer"></span><button class="btn ghost sm icon" title="Sort">${icon("arrow-down-wide-narrow")}</button><button class="btn ghost sm icon" title="New Entry">${icon("plus")}</button></div>
+    <div class="ed-list-search"><div class="search">${icon("search", "ico-sm")}<input placeholder="Search Entries"><kbd>/</kbd></div></div>
+    <div class="ed-rows">${es.map((e) => `<div class="ed-row ${e.id === "e1" ? "is-selected" : ""}">${KF.avatar(e, 28)}<div style="min-width:0"><div class="t truncate">${esc(e.title)}${e.id === "e1" ? ' <span class="subtle" data-live="list-dirty" style="color:var(--warn)"></span>' : ""}</div><div class="u truncate">${esc(e.username)}</div></div>${e.color ? `<span class="c dot" style="background:var(--c-${e.color})"></span>` : ""}</div>`).join("")}</div>
+  </section>`;
+}
+const vaultStatus = (st) => st.vaultStatus === "saved" ? `<span class="ed-status"><span class="status-dot"></span>All changes saved</span>` : `<span class="ed-status" style="color:var(--warn)"><span class="status-dot warn"></span>Unsaved changes</span>`;
+
+/* ---------- Mount: state + delegation + focus-preserving rerender ---------- */
+let active = null;
+function mount(root, view, opts = {}) {
+  const st = makeState();
+  const host = document.createElement("div");
+  host.className = "ed-wrap";
+  root.appendChild(host);
+  const ctx = { st, host, rerender, opts };
+  active = ctx;
+
+  const params = new URL(location.href).searchParams;
+  const s = params.get("state");
+  if (s === "error") {
+    st.fields.push({ name: "", value: "8f2a1-c9d4e", protected: true, reveal: false });
+    st.fields.push({ name: "Password", value: "old-password-2025", protected: false, reveal: false });
+    st.expiry = "2026-13-01"; st.dirty = true; st.err = validate(st);
+  }
+  if (s === "icon") { st.pop = "icon"; st.popAnchor = "icon-prop"; }
+  if (s === "gen") { st.pop = "gen"; }
+  if (s === "preview") { st.attachments[0].preview = true; }
+
+  function rerender() {
+    const a = document.activeElement;
+    const k = a && host.contains(a) ? a.dataset.k : null;
+    const sel = k ? [a.selectionStart, a.selectionEnd] : null;
+    const scrolls = {};
+    host.querySelectorAll("[data-scroll]").forEach((el) => (scrolls[el.dataset.scroll] = el.scrollTop));
+    host.innerHTML = view(st) + `<div class="pop-layer">${st.pop && POPS[st.pop] ? POPS[st.pop](st) : ""}</div>`;
+    host.querySelectorAll("[data-scroll]").forEach((el) => { if (scrolls[el.dataset.scroll] != null) el.scrollTop = scrolls[el.dataset.scroll]; });
+    if (k) { const el = host.querySelector(`[data-k="${k}"]`); if (el) { el.focus(); try { el.setSelectionRange(...sel); } catch {} } }
+    place();
+    live();
+    ctx.renderedAt = performance.now();
+  }
+  function place() {
+    const pop = host.querySelector(".pop-layer > *");
+    if (!pop) return;
+    const anchor = host.querySelector(`[data-anchor="${st.popAnchor || st.pop}"]`) || host.querySelector(`[data-anchor="${st.pop}"]`);
+    if (!anchor) return;
+    const hr = host.getBoundingClientRect(), ar = anchor.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+    let left = ar.left - hr.left, top = ar.bottom - hr.top + 6;
+    if (left + pr.width > hr.width - 12) left = Math.max(12, ar.right - hr.left - pr.width);
+    if (top + pr.height > hr.height - 12) { top = ar.top - hr.top - pr.height - 6; pop.style.transformOrigin = "bottom left"; }
+    if (top < 12) top = 12;
+    pop.style.left = left + "px"; pop.style.top = top + "px";
+  }
+  function live() {
+    host.querySelectorAll('[data-live="dirty"]').forEach((el) => { el.classList.toggle("is-on", st.dirty); el.lastElementChild.textContent = st.dirty ? "Unsaved changes" : "No changes"; });
+    host.querySelectorAll('[data-live="list-dirty"]').forEach((el) => (el.textContent = st.dirty ? "•" : ""));
+    host.querySelectorAll('[data-live="expired"]').forEach((el) => (el.hidden = !isExpired(st)));
+    host.querySelectorAll('[data-live="expiry-text"]').forEach((el) => (el.textContent = st.expires ? (st.expiry || "YYYY-MM-DD") : "No expiry"));
+    host.querySelectorAll('[data-live="title"]').forEach((el) => (el.textContent = st.title || "(untitled)"));
+    host.querySelectorAll('[data-live="strength"]').forEach((el) => { const s = strength(st.password); el.querySelector(".strength").dataset.score = s.score; el.querySelector("span").textContent = `${s.bits} bits`; });
+  }
+  const touch = () => { st.dirty = true; };
+
+  const act = {
+    pop: (a, el) => { st.popAnchor = el?.dataset.anchor || a; st.pop = st.pop === a ? null : a; if (a === "gen") st.gen.value = ""; if (a === "icon") st.iconFilter = ""; },
+    reveal: () => { st.reveal = !st.reveal; },
+    copy: (what) => KF.copy(what),
+    color: (c) => { st.color = c || null; touch(); if (st.pop === "color") st.pop = null; },
+    "icon-std": (n) => { st.icon = { kind: "std", n: +n }; st.pop = null; touch(); },
+    "icon-custom": (n) => { st.icon = { kind: "custom", n: +n }; st.pop = null; touch(); },
+    "icon-import": () => { st.customIcons.push({ title: "Keefast", brand: "" }); st.icon = { kind: "custom", n: st.customIcons.length - 1 }; touch(); KF.toast("Imported github-mark.png into this Vault's icons", { icon: "image-up" }); },
+    "tag-rm": (i) => { st.tags.splice(+i, 1); touch(); },
+    "tag-add": (t) => { addTag(t); st.pop = null; },
+    "exp-toggle": () => { st.expires = !st.expires; if (st.expires && !st.expiry) st.expiry = TODAY; touch(); },
+    "exp-set": (d) => { st.expires = true; st.expiry = d; touch(); if (st.err) st.err.expiry = false; },
+    "f-add": () => { st.fields.push({ name: "", value: "", protected: false, reveal: true }); touch(); ctx.focusNext = `f.${st.fields.length - 1}.name`; },
+    "f-rm": (i) => { st.fields.splice(+i, 1); touch(); if (st.err) st.err = validate(st); },
+    "f-prot": (i) => { st.fields[+i].protected = !st.fields[+i].protected; touch(); },
+    "f-reveal": (i) => { st.fields[+i].reveal = !st.fields[+i].reveal; },
+    "a-add": () => { st.attachments.push({ name: "github-2fa-backup.png", size: "34.6 KB", preview: false }); touch(); KF.toast("Attached github-2fa-backup.png", { icon: "paperclip" }); },
+    "a-rm": (i) => { const [a] = st.attachments.splice(+i, 1); touch(); KF.toast(`Removed ${esc(a.name)}`, { icon: "trash-2" }); },
+    "a-prev": (i) => { st.attachments[+i].preview = !st.attachments[+i].preview; },
+    "a-save": (i) => KF.toast(`Saved ${esc(st.attachments[+i].name)} to ~/Downloads/${esc(st.attachments[+i].name)}.`, { icon: "download" }),
+    "gen-mode": (m) => { st.gen.mode = m; st.gen.value = genPw(m); },
+    "gen-again": () => { st.gen.value = genPw(st.gen.mode); },
+    "gen-use": () => { st.password = st.gen.value; st.pop = null; st.reveal = true; touch(); KF.toast("Password replaced · the old one stays in this Entry's history", { icon: "wand-sparkles" }); },
+    done: () => done(),
+    cancel: () => cancel(),
+  };
+  ctx.act = act;
+  function addTag(t) {
+    t.split(",").map((x) => x.trim()).filter(Boolean).forEach((x) => { if (!st.tags.includes(x)) st.tags.push(x); });
+    st.tagdraft = ""; touch();
+  }
+  function done() {
+    st.pop = null;
+    st.err = validate(st);
+    if (st.err) { rerender(); const bad = host.querySelector(".invalid input, input.invalid"); bad?.scrollIntoView({ block: "center", behavior: "smooth" }); bad?.focus({ preventScroll: true }); return; }
+    if (!st.dirty) { KF.toast("No changes to GitHub", { icon: "check" }); return; }
+    st.dirty = false; st.vaultStatus = "unsaved";
+    KF.toast(`${esc(st.title || "(untitled)")} updated <span class="subtle">· Ctrl S saves the Vault</span>`, { icon: "check" });
+  }
+  function cancel() {
+    const was = st.dirty;
+    Object.assign(st, makeState(), { vaultStatus: st.vaultStatus });
+    KF.toast(was ? "Changes discarded" : "Closed the editor", { icon: was ? "undo-2" : "x" });
+  }
+
+  host.addEventListener("click", (e) => {
+    const f = e.target.closest("[data-focus]");
+    if (f && e.target === f) host.querySelector(`[data-k="${f.dataset.focus}"]`)?.focus();
+    const el = e.target.closest("[data-act]");
+    if (!el || !host.contains(el)) return;
+    e.preventDefault();
+    const fn = act[el.dataset.act];
+    if (!fn) return;
+    fn(el.dataset.arg, el);
+    rerender();
+    if (ctx.focusNext) { host.querySelector(`[data-k="${ctx.focusNext}"]`)?.focus(); ctx.focusNext = null; }
+  });
+  host.addEventListener("input", (e) => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    const v = e.target.value;
+    if (k.startsWith("f.")) { const [, i, p] = k.split("."); st.fields[+i][p] = v; e.target.classList.remove("invalid"); }
+    else st[k] = v;
+    if (k === "iconFilter") { rerender(); return; }
+    if (k === "tagdraft") {
+      if (v.includes(",")) { addTag(v); st.pop = null; rerender(); return; }
+      const want = v.trim() ? "tags" : null; st.popAnchor = "tags";
+      if (st.pop !== want) { st.pop = want; rerender(); } else if (want) { rerender(); }
+      return;
+    }
+    st.dirty = true;
+    if (k === "expiry" && st.err?.expiry && validDate(v)) { e.target.closest(".invalid")?.classList.remove("invalid"); }
+    live();
+  });
+  host.addEventListener("keydown", (e) => {
+    if (e.target.dataset.k === "tagdraft") {
+      if (e.key === "Enter" && st.tagdraft.trim()) { e.preventDefault(); addTag(st.tagdraft); st.pop = null; rerender(); }
+      else if (e.key === "Backspace" && !st.tagdraft && st.tags.length) { st.tags.pop(); touch(); rerender(); }
+    }
+  });
+  host.addEventListener("scroll", (e) => { if (e.target.closest?.(".pop-layer")) return; if (performance.now() - ctx.renderedAt < 150) return; if (st.pop) { st.pop = null; rerender(); } }, true);
+  rerender();
+  if (s === "error") requestAnimationFrame(() => host.querySelector("input.invalid")?.scrollIntoView({ block: opts.errScroll || "nearest" }));
+  return ctx;
+}
+
+/* Global keys + outside click (one listener, routed to the mounted variant) */
+document.addEventListener("mousedown", (e) => {
+  if (!active || !active.st.pop) return;
+  if (e.target.closest(".pop-layer > *") || e.target.closest("[data-anchor]")) return;
+  active.st.pop = null; active.rerender();
+});
+window.addEventListener("keydown", (e) => {
+  if (!active || !document.body.contains(active.host)) return;
+  if (e.key === "Escape") { e.preventDefault(); if (active.st.pop) { active.st.pop = null; active.rerender(); } else { active.act.cancel(); active.rerender(); } }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "Enter")) { e.preventDefault(); active.act.done(); active.rerender(); }
+});
+
+/* ================= Variant A — edit in place ================= */
+function viewA(st) {
+  const er = st.err;
+  return `${sidebar()}${list(true)}
+  <main class="ed-main">
+    <div class="ed-bar">
+      <div class="crumbs">Personal ${icon("chevron-right", "ico-sm subtle")} <b data-live="title"></b></div>
+      <span class="badge accent" style="margin-left:4px">${icon("pencil", "ico-sm")}Editing</span>
+      <span class="spacer"></span>
+      ${dirtyHtml(st)}
+      <span class="vdivider" style="height:16px;align-self:center;margin:0 4px"></span>
+      ${footButtons()}
+    </div>
+    <div class="A-pane" data-scroll="a">
+      <div class="A-doc">
+        <div class="A-title-row">${iconButton(st, 40)}<input class="A-title" data-k="title" value="${esc(st.title)}" placeholder="(untitled)"></div>
+        <div class="A-props">
+          <button class="chip ${st.pop === "color" ? "is-open" : ""}" data-act="pop" data-arg="color" data-anchor="color">${st.color ? `<span class="dot" style="background:var(--c-${st.color})"></span>${COLOR_NAMES[st.color]}` : `${icon("circle-dashed")}Colour`}</button>
+          <button class="chip ${st.pop === "expiry" ? "is-open" : ""} ${st.err?.expiry ? "" : ""}" data-act="pop" data-arg="expiry" data-anchor="expiry" style="${er?.expiry ? "border-color:var(--danger);color:var(--danger)" : ""}">${icon("calendar-clock")}<span data-live="expiry-text"></span>${expiredBadge(st)}</button>
+          <span class="vdivider" style="height:16px;align-self:center;margin:0 4px"></span>
+          <div class="A-tags" style="flex:1;min-width:200px">${tagInput(st)}</div>
+        </div>
+        ${er ? `<div style="margin:16px 0 0 54px">${errBanner(st)}</div>` : ""}
+
+        <div class="A-sec">
+          <div class="sec-head"><h3>Login</h3></div>
+          <div class="A-kv"><span class="k">Username</span><div class="gi-group"><input data-k="username" value="${esc(st.username)}" spellcheck="false"><button class="btn ghost sm icon" data-act="copy" data-arg="Username" title="Copy · Ctrl B">${icon("copy")}</button></div></div>
+          <div class="A-kv"><span class="k">Password</span><div class="gi-group">${pwInput(st)}${pwTools(st)}</div></div>
+          <div class="A-kv" style="min-height:22px;margin-top:-2px"><span></span>${strengthHtml(st)}</div>
+          <div class="A-kv"><span class="k">URL</span><div class="gi-group"><input data-k="url" value="${esc(st.url)}" placeholder="https://" spellcheck="false"><button class="btn ghost sm icon" title="Open">${icon("arrow-up-right")}</button></div></div>
+          <div class="A-kv"><span class="k">TOTP</span><div class="A-totp"><span class="ring" style="--p:.6"></span><span class="code">482 913</span><span class="subtle" style="font-size:var(--text-sm)">18 s</span><span class="spacer"></span><button class="btn ghost sm">TOTP…</button></div></div>
+          <div class="A-kv top"><span class="k">Notes</span><textarea class="gi" data-k="notes" rows="2" placeholder="Add notes…">${esc(st.notes)}</textarea></div>
+        </div>
+
+        <div class="A-sec">
+          <div class="sec-head"><h3>Custom fields</h3><span class="n">${st.fields.length}</span><button class="btn ghost sm" data-act="f-add">${icon("plus")}Field</button></div>
+          <div class="vstack" style="gap:6px">
+          ${st.fields.map((f, i) => `<div class="cf-row">
+            <input class="gi ${er?.fields.has(i) ? "invalid" : ""}" data-k="f.${i}.name" value="${esc(f.name)}" placeholder="Name" style="color:var(--fg-1)">
+            <div class="gi-group"><input class="${f.protected ? "mono" : ""}" data-k="f.${i}.value" type="${f.protected && !f.reveal ? "password" : "text"}" value="${esc(f.value)}" placeholder="Value" spellcheck="false">${f.protected ? `<button class="btn ghost sm icon" data-act="f-reveal" data-arg="${i}" title="${f.reveal ? "Hide" : "Show"}">${icon(f.reveal ? "eye-off" : "eye")}</button>` : ""}<button class="btn ghost sm icon" data-act="copy" data-arg="Field" title="Copy">${icon("copy")}</button></div>
+            ${protSwitch(f, i)}
+            <button class="btn ghost sm icon" data-act="f-rm" data-arg="${i}" title="Remove">${icon("x")}</button>
+          </div>`).join("") || `<div class="subtle" style="font-size:var(--text-sm);padding:6px 0">No custom fields.</div>`}
+          </div>
+        </div>
+
+        <div class="A-sec">
+          <div class="sec-head"><h3>Attachments</h3><span class="n">${st.attachments.length}</span><button class="btn ghost sm" data-act="a-add">${icon("plus")}File</button></div>
+          <div style="margin:0 -10px">${st.attachments.map((a, i) => attRow(st, a, i)).join("") || `<div class="subtle" style="font-size:var(--text-sm);padding:6px 10px">No attachments.</div>`}</div>
+        </div>
+        <div class="A-hr"></div>
+        <div class="hstack subtle" style="font-size:var(--text-sm);padding-top:12px;gap:6px">${icon("folder", "ico-sm")}Personal<span>·</span>Created Mar 2, 2024<span>·</span>Modified Oct 7, 2026<span class="spacer"></span><button class="btn ghost sm">${icon("history")}7 versions</button></div>
+      </div>
+    </div>
+  </main>`;
+}
+
+/* ================= Variant B — side sheet ================= */
+function viewB(st) {
+  const er = st.err;
+  return `${sidebar()}${list(false)}
+  <main class="ed-main">
+    <div class="ed-bar"><div class="crumbs">Personal ${icon("chevron-right", "ico-sm subtle")} <b>GitHub</b></div><span class="spacer"></span>${vaultStatus(st)}<button class="btn secondary sm">${icon("pencil")}Edit <kbd>E</kbd></button><button class="btn ghost sm icon">${icon("ellipsis")}</button></div>
+    <div class="B-detail">
+      <div class="hstack" style="gap:14px">${KF.avatar(base, 40)}<div><div style="font-size:var(--text-xl);font-weight:600;letter-spacing:-.015em">GitHub</div><div class="subtle">github.com</div></div></div>
+      <div style="margin-top:20px">
+        <div class="kv"><span class="k">Username</span><span class="v">arthur-er</span></div>
+        <div class="kv"><span class="k">Password</span><span class="v mono">${KF.mask(14)}</span></div>
+        <div class="kv"><span class="k">TOTP</span><span class="v mono">482 913</span></div>
+        <div class="kv"><span class="k">URL</span><span class="v">https://github.com</span></div>
+      </div>
+    </div>
+  </main>
+  <div class="B-scrim" data-act="cancel"></div>
+  <aside class="sheet B-sheet">
+    <div class="B-sheet-head">${iconButton(st, 32)}<div style="min-width:0"><div class="ttl truncate">Edit Entry</div><div class="sub truncate">Personal · <span data-live="title"></span></div></div><span class="spacer"></span>${dirtyHtml(st)}<button class="btn ghost sm icon" data-act="cancel" title="Close · Esc" style="margin-left:6px">${icon("x")}</button></div>
+    <div class="B-body" data-scroll="b">
+      ${er ? `<div style="padding-top:16px">${errBanner(st)}</div>` : ""}
+      <div class="B-sec">
+        <div class="field"><label>Title</label><input class="input" data-k="title" value="${esc(st.title)}" placeholder="(untitled)"></div>
+        <div class="field"><label>Username</label><input class="input" data-k="username" value="${esc(st.username)}" spellcheck="false"></div>
+        <div class="field"><label>Password</label>
+          <div class="input input-group">${pwInput(st)}${pwTools(st)}</div>
+          ${strengthHtml(st)}
+        </div>
+        <div class="field"><label>URL</label><input class="input" data-k="url" value="${esc(st.url)}" placeholder="https://" spellcheck="false"></div>
+        <div class="field"><label>Notes</label><textarea class="input" data-k="notes" rows="3" placeholder="Add notes…">${esc(st.notes)}</textarea></div>
+      </div>
+      <div class="B-sec">
+        <h3>Organise</h3>
+        <div class="B-two">
+          <div class="field"><label>Icon</label><div class="hstack">${iconTile(st, 32)}<button class="btn secondary sm" data-act="pop" data-arg="icon" data-anchor="icon">Change…</button></div></div>
+          <div class="field"><label>Colour</label><div style="height:32px;display:flex;align-items:center">${swatches(st)}</div></div>
+        </div>
+        <div class="field"><label>Tags</label>${tagInput(st, true)}</div>
+        <div class="field"><label><span class="switch ${st.expires ? "is-on" : ""}" data-act="exp-toggle"></span>Expires</label>
+          ${st.expires ? `<div class="B-exp"><div class="input mono ${er?.expiry ? "invalid" : ""}">${icon("calendar", "ico-sm")}<input data-k="expiry" placeholder="YYYY-MM-DD" value="${esc(st.expiry)}"></div>${expiredBadge(st)}</div>
+          ${er?.expiry ? `<div class="error-msg">${icon("circle-alert", "ico-sm")}${ERR_TEXT.expiry}</div>` : `<div class="hint">At the start of that day, UTC.</div>`}` : ""}
+        </div>
+      </div>
+      <div class="B-sec">
+        <div class="sec-head"><h3>Custom fields</h3><button class="btn ghost sm" data-act="f-add">${icon("plus")}Field</button></div>
+        ${st.fields.length ? `<div class="B-cf">${st.fields.map((f, i) => `<div class="B-cf-item">
+          <div class="inputs">
+            <input class="input ${er?.fields.has(i) ? "invalid" : ""}" data-k="f.${i}.name" value="${esc(f.name)}" placeholder="Name">
+            <div class="input input-group"><input class="${f.protected ? "mono" : ""}" data-k="f.${i}.value" type="${f.protected && !f.reveal ? "password" : "text"}" value="${esc(f.value)}" placeholder="Value" spellcheck="false">${f.protected ? `<button class="btn ghost sm icon" data-act="f-reveal" data-arg="${i}">${icon(f.reveal ? "eye-off" : "eye")}</button>` : ""}</div>
+          </div>
+          <div class="opts">${protSwitch(f, i)}<span class="spacer"></span><button class="btn ghost sm danger-ghost" data-act="f-rm" data-arg="${i}">Remove</button></div>
+        </div>`).join("")}</div>
+        ${er?.fields.size ? `<div class="error-msg">${icon("circle-alert", "ico-sm")}${er.msgs.includes("empty") ? ERR_TEXT.empty : ERR_TEXT.taken}</div>` : ""}` : `<div class="hint">Extra values kept with this Entry, such as a PIN or an API token.</div>`}
+      </div>
+      <div class="B-sec">
+        <div class="sec-head"><h3>Attachments</h3><button class="btn ghost sm" data-act="a-add">${icon("plus")}File</button></div>
+        <div style="margin:-4px -10px 0">${st.attachments.map((a, i) => attRow(st, a, i)).join("") || `<div class="hint" style="padding:0 10px">No attachments.</div>`}</div>
+      </div>
+    </div>
+    <div class="B-foot">${er ? `<span class="error-msg truncate" style="flex:1">${icon("circle-alert", "ico-sm")}<span class="truncate">${esc(errFirst(st))}</span></span>` : `<span class="spacer"></span>`}${footButtons()}</div>
+  </aside>`;
+}
+
+/* ================= Variant C — focused full-window editor ================= */
+function viewC(st) {
+  const er = st.err;
+  return `${sidebar()}
+  <main class="ed-main">
+    <div class="ed-bar">
+      <button class="btn ghost sm icon" data-act="cancel" title="Back · Esc">${icon("arrow-left")}</button>
+      <div class="crumbs">Personal ${icon("chevron-right", "ico-sm subtle")} <span data-live="title"></span> ${icon("chevron-right", "ico-sm subtle")} <b>Edit</b></div>
+      <span class="spacer"></span>
+      ${er ? `<span class="error-msg" style="margin-right:4px">${icon("circle-alert", "ico-sm")}${er.msgs.length} ${er.msgs.length > 1 ? "problems" : "problem"} to fix</span>` : dirtyHtml(st)}
+      <span class="vdivider" style="height:16px;align-self:center;margin:0 4px"></span>
+      ${footButtons()}
+    </div>
+    <div class="C-body">
+      <div class="C-doc-scroll" data-scroll="c">
+        <div class="C-doc">
+          ${iconButton(st, 48)}
+          <input class="C-title" data-k="title" value="${esc(st.title)}" placeholder="(untitled)">
+          <input class="C-url" data-k="url" value="${esc(st.url)}" placeholder="Add a URL" spellcheck="false">
+          ${er ? `<div style="margin-top:16px" class="vstack">${er.msgs.map((m) => `<div class="err-banner">${icon("circle-alert")}<span>${ERR_TEXT[m]}</span></div>`).join("")}</div>` : ""}
+          <div class="C-card">
+            <div class="C-crow"><span class="k">Username</span><input data-k="username" value="${esc(st.username)}" placeholder="Username" spellcheck="false"><div class="tools"><button class="btn ghost sm icon" data-act="copy" data-arg="Username">${icon("copy")}</button></div></div>
+            <div class="C-crow" style="border-bottom:0"><span class="k">Password</span>${pwInput(st)}<div class="tools">${pwTools(st)}</div></div>
+            ${strengthHtml(st, "C-strength")}
+            <div class="C-crow"><span class="k">TOTP</span><span class="hstack"><span class="ring"></span><span class="mono" style="font-size:14px">482 913</span><span class="subtle" style="font-size:var(--text-sm)">18 s</span></span><div class="tools"><button class="btn ghost sm">TOTP…</button></div></div>
+          </div>
+          <div class="C-sec"><div class="sec-head"><h3>Notes</h3></div><textarea class="C-notes" data-k="notes" placeholder="Add notes…">${esc(st.notes)}</textarea></div>
+          <div class="C-sec">
+            <div class="sec-head"><h3>Custom fields</h3><span class="n">${st.fields.length}</span><button class="btn ghost sm" data-act="f-add">${icon("plus")}Field</button></div>
+            ${st.fields.length ? `<div class="C-table"><div class="C-thead"><span>Name</span><span>Value</span><span style="text-align:center">Protected</span><span></span></div>
+              ${st.fields.map((f, i) => `<div class="C-tr">
+                <div class="name"><input class="${er?.fields.has(i) ? "invalid" : ""}" data-k="f.${i}.name" value="${esc(f.name)}" placeholder="Name"></div>
+                <div class="val"><input class="${f.protected ? "mono" : ""}" data-k="f.${i}.value" type="${f.protected && !f.reveal ? "password" : "text"}" value="${esc(f.value)}" placeholder="Value" spellcheck="false">${f.protected ? `<button class="btn ghost sm icon" data-act="f-reveal" data-arg="${i}">${icon(f.reveal ? "eye-off" : "eye")}</button>` : ""}</div>
+                <div class="prot"><span class="switch ${f.protected ? "is-on" : ""}" data-act="f-prot" data-arg="${i}" title="Protected"></span></div>
+                <div class="hstack" style="justify-content:center"><button class="btn ghost sm icon" data-act="f-rm" data-arg="${i}" title="Remove">${icon("x")}</button></div>
+              </div>`).join("")}</div>` : `<div class="hint">No custom fields.</div>`}
+          </div>
+          <div class="C-sec">
+            <div class="sec-head"><h3>Attachments</h3><span class="n">${st.attachments.length}</span></div>
+            <div class="C-tiles">
+              ${st.attachments.map((a, i) => `<div class="C-tile"><div class="hstack" style="align-items:flex-start"><span class="att-ic">${icon(fileIcon(a.name))}</span><span class="spacer"></span><button class="btn ghost sm icon" data-act="a-rm" data-arg="${i}" title="Remove" style="margin:-4px -4px 0 0">${icon("x")}</button></div><div><div class="nm">${esc(a.name)}</div><div class="sz">${esc(a.size)}</div></div><div class="acts"><button class="btn ghost sm" data-act="a-prev" data-arg="${i}">${a.preview ? "Hide preview" : "Preview"}</button><button class="btn ghost sm" data-act="a-save" data-arg="${i}">Save…</button></div></div>`).join("")}
+              <button class="C-tile add" data-act="a-add">${icon("paperclip")}File<span class="subtle" style="font-weight:400;font-size:var(--text-xs)">or drop files here</span></button>
+            </div>
+            ${st.attachments.filter((a) => a.preview).map((a) => `<div class="att-prev" style="margin:10px 0 0">${esc(PREVIEW)}<span class="cut">${esc(a.name)} · Only the start is shown.</span></div>`).join("")}
+          </div>
+        </div>
+      </div>
+      <aside class="C-props">
+        <div class="C-pgroup">
+          <div class="menu-label">Properties</div>
+          <div class="C-prop"><span class="k">Icon</span><div class="v"><button class="prop-btn ${st.pop === "icon" ? "is-open" : ""}" data-act="pop" data-arg="icon" data-anchor="icon-prop">${iconTile(st, 20)}<span>${st.icon.kind === "custom" ? esc(st.customIcons[st.icon.n].title) : STD[st.icon.n]}</span>${icon("chevron-down", "ico-sm subtle")}</button></div></div>
+          <div class="C-prop"><span class="k">Colour</span><div class="v">${swatches(st)}</div></div>
+          <div class="C-prop top"><span class="k">Tags</span><div class="v">${tagInput(st)}</div></div>
+          <div class="C-prop"><span class="k">Expires</span><div class="v hstack"><span class="switch ${st.expires ? "is-on" : ""}" data-act="exp-toggle"></span>${st.expires ? expiredBadge(st) : `<span class="subtle">Never</span>`}</div></div>
+          ${st.expires ? `<div class="C-prop" style="margin-top:-2px"><span></span><div class="v vstack" style="gap:6px"><div class="input mono ${er?.expiry ? "invalid" : ""}" style="width:140px">${icon("calendar", "ico-sm")}<input data-k="expiry" placeholder="YYYY-MM-DD" value="${esc(st.expiry)}"></div>${er?.expiry ? `<div class="error-msg" style="font-size:var(--text-xs);line-height:1.4">Type the date as YYYY-MM-DD, such as 2027-01-31.</div>` : `<div class="hint" style="font-size:var(--text-xs)">At the start of that day, UTC.</div>`}</div></div>` : ""}
+        </div>
+        <div class="C-pgroup">
+          <div class="menu-label">Details</div>
+          <div class="C-prop"><span class="k">Group</span><div class="v"><button class="prop-btn">${icon("folder", "ico-sm")}Personal${icon("chevron-down", "ico-sm subtle")}</button></div></div>
+          <div class="C-prop"><span class="k">Vault</span><div class="v muted">Personal.kdbx</div></div>
+          <div class="C-prop"><span class="k">History</span><div class="v"><button class="prop-btn">${icon("history", "ico-sm")}7 versions</button></div></div>
+          <div class="C-prop"><span class="k">Modified</span><div class="v muted">Oct 7, 2026</div></div>
+          <div class="C-prop"><span class="k">Created</span><div class="v muted">Mar 2, 2024</div></div>
+        </div>
+        <div class="C-pgroup">
+          <div class="menu-label">Shortcuts</div>
+          <div class="C-prop"><span class="k">Done</span><div class="v">${kbd("Ctrl", "S")}</div></div>
+          <div class="C-prop"><span class="k">Cancel</span><div class="v"><kbd>Esc</kbd></div></div>
+        </div>
+      </aside>
+    </div>
+  </main>`;
+}
+
+KF.variants({
+  A: { name: "Edit in place", render(root) { mount(root, viewA); } },
+  B: { name: "Side sheet", render(root) { mount(root, viewB, { errScroll: "center" }); } },
+  C: { name: "Focused editor + properties", render(root) { mount(root, viewC); } },
+});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>keefast — Linear-grade UI prototype (throwaway)</title>
+<link rel="stylesheet" href="kit/tokens.css">
+<link rel="stylesheet" href="kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="manifest.js"></script>
+<style>
+  body { overflow: auto; user-select: text; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 48px 32px 96px; }
+  header.top { display: flex; align-items: flex-end; gap: 24px; margin-bottom: 40px; }
+  .logo { width: 40px; height: 40px; border-radius: 10px; background: #c026d3; display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #fff; }
+  h1 { font-size: var(--text-2xl); font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+  .lede { color: var(--fg-1); margin: 6px 0 0; max-width: 720px; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 40px; }
+  nav.toc a { color: var(--fg-1); }
+  section.screen { margin-bottom: 56px; scroll-margin-top: 24px; }
+  .screen-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .screen-head h2 { font-size: var(--text-lg); font-weight: 600; margin: 0; }
+  .screen-head code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-2); }
+  .variant { display: grid; grid-template-columns: 200px 1fr; gap: 20px; padding: 12px 0; }
+  .variant + .variant { border-top: 1px dashed var(--border); }
+  .vmeta b { display: block; font-size: var(--text-md); font-weight: 600; margin-bottom: 2px; }
+  .vmeta .vkey { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--accent-bg); color: var(--accent-fg); font-weight: 600; font-size: var(--text-sm); margin-bottom: 8px; }
+  .vmeta a { font-size: var(--text-sm); display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  figure { margin: 0; }
+  figure img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--border-strong); cursor: zoom-in; transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
+  figure img:hover { box-shadow: 0 0 0 1px var(--accent); transform: translateY(-1px); }
+  figcaption { margin-top: 6px; font-size: var(--text-sm); color: var(--fg-2); display: flex; justify-content: space-between; }
+  .lightbox { position: fixed; inset: 0; background: rgb(0 0 0 / 0.85); display: grid; place-items: center; z-index: 100; cursor: zoom-out; }
+  .lightbox img { max-width: 94vw; max-height: 92vh; border-radius: var(--r-md); box-shadow: var(--shadow-dialog); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">K</div>
+    <div>
+      <h1>keefast, Linear-grade UI</h1>
+      <p class="lede">Throwaway HTML prototypes of every desktop screen, all built on one design system (<a href="DESIGN.md">DESIGN.md</a>). Each screen has 2–3 structurally different variants. Open one and use ← / → to flip variants, T for light/dark.</p>
+    </div>
+  </header>
+  <nav class="toc" id="toc"></nav>
+  <main id="main"></main>
+</div>
+<script>
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  document.getElementById("toc").innerHTML = MANIFEST.map((s) => `<a class="tag" href="#${s.key}">${esc(s.title)}</a>`).join("");
+  document.getElementById("main").innerHTML = MANIFEST.map((s) => `
+    <section class="screen" id="${s.key}">
+      <div class="screen-head"><h2>${esc(s.title)}</h2><code>screens/${s.key}.html</code></div>
+      ${Object.entries(s.variants).map(([v, [name, states]]) => `
+        <div class="variant">
+          <div class="vmeta"><span class="vkey">${v}</span><b>${esc(name)}</b>
+            <a href="screens/${s.key}.html?variant=${v}">Open prototype <i data-lucide="arrow-up-right"></i></a></div>
+          <div class="shots">${states.map(([q, cap]) => `
+            <figure><img loading="lazy" src="shots/${shotName(s.key, v, q)}" alt="${esc(s.title)} ${v}: ${esc(cap)}">
+              <figcaption><span>${esc(cap)}</span><a href="screens/${s.key}.html?variant=${v}${q ? "&" + q : ""}">open</a></figcaption></figure>`).join("")}
+          </div>
+        </div>`).join("")}
+    </section>`).join("");
+  lucide.createIcons();
+  document.addEventListener("click", (e) => {
+    if (e.target.matches("figure img")) {
+      const lb = document.createElement("div");
+      lb.className = "lightbox";
+      lb.innerHTML = `<img src="${e.target.src}">`;
+      lb.onclick = () => lb.remove();
+      document.body.appendChild(lb);
+    }
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.querySelector(".lightbox")?.remove(); });
+</script>
+</body>
+</html>

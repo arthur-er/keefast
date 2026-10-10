@@ -1,0 +1,888 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Command palette — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- Backdrop: simplified main window ---------- */
+.win { position: absolute; inset: 0; display: grid; grid-template-columns: var(--sidebar-w) var(--list-w) 1fr; }
+.win > * { min-width: 0; min-height: 0; }
+.sb { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.sb-top { display: flex; align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 14px; }
+.sb-logo { width: 20px; height: 20px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--fg-on-accent); }
+.sb-logo svg.lucide { width: 12px; height: 12px; }
+.sb-top b { font-weight: 600; font-size: var(--text-md); }
+.sb-scroll { flex: 1; overflow: hidden; }
+.nav-item.child { padding-left: 28px; }
+.nav-item .lock { margin-left: auto; color: var(--fg-2); }
+.sb-foot { padding: 8px; border-top: 1px solid var(--border); }
+.lst { border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg-0); }
+.lst-search { padding: 8px 10px 6px; }
+.lst-rows { padding: 2px 6px; overflow: hidden; flex: 1; }
+.lst-rows .row { gap: 10px; }
+.lst-rows .row .t { font-weight: 500; }
+.lst-rows .row .u { color: var(--fg-2); font-size: var(--text-sm); }
+.det { display: flex; flex-direction: column; background: var(--bg-0); }
+.det-body { padding: 24px 32px; display: flex; flex-direction: column; gap: 4px; max-width: 640px; }
+.det-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.det-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+.det-sub { color: var(--fg-2); font-size: var(--text-sm); }
+.kv { border-bottom: 1px solid var(--border); }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-1); }
+.cmdk-btn { color: var(--fg-2); gap: 8px; }
+
+/* ---------- Palette common ---------- */
+.scrim.top { place-items: start center; padding-top: 96px; }
+.pal { background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); overflow: hidden; display: flex; flex-direction: column; animation: kf-pop var(--dur) var(--ease); transform-origin: top center; }
+.pal-q { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; border-bottom: 1px solid var(--border); flex: none; }
+.pal-q input { all: unset; flex: 1; min-width: 0; font-size: var(--text-lg); color: var(--fg-0); caret-color: var(--accent); }
+.pal-q input::placeholder { color: var(--fg-2); }
+.pal-q > svg.lucide { color: var(--fg-2); width: 18px; height: 18px; }
+.pal-list { overflow-y: auto; padding: 4px 0 6px; scroll-padding: 8px; }
+.pal-sec { display: flex; align-items: center; gap: 6px; height: 28px; padding: 8px 18px 0; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.pal-sec .avatar { box-shadow: none; }
+.pi { position: relative; display: flex; align-items: center; gap: 10px; height: 38px; margin: 0 6px; padding: 0 12px; border-radius: var(--r-sm); color: var(--fg-0); cursor: default; }
+.pi > svg.lucide { color: var(--fg-2); }
+.pi.is-sel { background: var(--bg-active); }
+.pi.is-sel > svg.lucide { color: var(--fg-0); }
+.pi .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi .ctx { color: var(--fg-2); font-size: var(--text-sm); white-space: nowrap; }
+.pi .sub { color: var(--fg-2); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.pi .trail { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.pi.danger, .pi.danger > svg.lucide { color: var(--danger); }
+.pi .chev { color: var(--fg-2); width: 14px; height: 14px; }
+.pi.is-check .tick { color: var(--accent-fg); }
+mark { background: none; color: var(--accent-fg); font-weight: 600; }
+.pal-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px 16px 44px; color: var(--fg-1); text-align: center; }
+.pal-empty svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
+.pal-empty .subtle { font-size: var(--text-sm); }
+.pal-foot { display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 14px; border-top: 1px solid var(--border); background: var(--bg-inset); font-size: var(--text-sm); color: var(--fg-2); flex: none; }
+.pal-foot .h { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pal-foot kbd { font-size: 10.5px; min-width: 17px; height: 17px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 4px; border-radius: var(--r-sm); background: var(--bg-active); border: 1px solid var(--border); color: var(--fg-0); font-size: var(--text-sm); font-weight: 500; white-space: nowrap; flex: none; }
+.chip .avatar { box-shadow: none; }
+.chip:not(:has(.x)) { padding-right: 8px; }
+.chip .x { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; color: var(--fg-2); }
+.chip .x:hover { background: var(--bg-hover); color: var(--fg-0); }
+.chip .x svg.lucide { width: 12px; height: 12px; }
+.chip.plain { padding: 0 8px; color: var(--fg-1); }
+.chip-sep { color: var(--fg-2); }
+.chip-sep svg.lucide { width: 12px; height: 12px; }
+.qa { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 5px; color: var(--fg-1); }
+.qa svg.lucide { width: 14px; height: 14px; }
+.qa:hover { background: var(--bg-hover); color: var(--fg-0); }
+.totp-inline { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); letter-spacing: .04em; }
+.totp-inline .ring { width: 12px; height: 12px; -webkit-mask: radial-gradient(circle, transparent 3.5px, #000 4px); mask: radial-gradient(circle, transparent 3.5px, #000 4px); }
+.mono-val { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); letter-spacing: .02em; }
+
+/* ---------- A ---------- */
+.pal-a { width: 640px; }
+.pal-a .pal-list { max-height: 440px; }
+.pal-a .ctxrow { display: flex; align-items: center; gap: 6px; padding: 12px 14px 0; }
+.pal-a .pal-q { height: 50px; }
+
+/* ---------- B (Raycast-style, preview pane) ---------- */
+.pal-b { width: 860px; height: 552px; }
+.pal-b .pal-q { height: 56px; }
+.pal-b .body { flex: 1; display: grid; grid-template-columns: 384px 1fr; min-height: 0; }
+.pal-b .pal-list { border-right: 1px solid var(--border); }
+.pal-b .pi { height: 38px; }
+.pal-b .pi .kind { font-size: var(--text-xs); color: var(--fg-2); }
+.pv { padding: 20px 24px; overflow: hidden; display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.pv-head { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; }
+.pv-title { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+.pv-sub { color: var(--fg-2); font-size: var(--text-sm); }
+.pv .kv { grid-template-columns: 92px 1fr; min-height: 34px; }
+.pv .kv:last-of-type { border-bottom: 0; }
+.pv .v .copyable { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border-radius: 4px; padding: 2px 4px; margin-left: -4px; }
+.pv .v .copyable:hover { background: var(--bg-hover); }
+.pv .v .copyable.is-copied { color: var(--ok); }
+.pv-desc { color: var(--fg-1); line-height: 1.55; margin: 0 0 16px; }
+.pv-notes { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); color: var(--fg-1); font-size: var(--text-sm); line-height: 1.5; }
+.cmd-tile { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--fg-0); flex: none; }
+.cmd-tile svg.lucide { width: 18px; height: 18px; }
+.pal-b .pal-foot { height: 44px; gap: 10px; padding: 0 8px 0 14px; color: var(--fg-1); }
+.pal-b .pal-foot .act { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg-0); font-weight: 500; }
+.pal-b .pal-foot .act:hover { background: var(--bg-hover); }
+.pal-b .pal-foot .act.muted { color: var(--fg-1); font-weight: 400; }
+.actmenu { position: absolute; right: 8px; bottom: 50px; width: 300px; padding: 0; overflow: hidden; transform-origin: bottom right; z-index: 2; }
+.actmenu .menu-q { display: flex; align-items: center; height: 38px; padding: 0 12px; border-top: 1px solid var(--border); }
+.actmenu .menu-q input { all: unset; flex: 1; font-size: var(--text-md); }
+.actmenu .menu-q input::placeholder { color: var(--fg-2); }
+.actmenu .items { padding: 4px; }
+.seg.scope > button { height: 22px; padding: 0 8px; }
+
+/* ---------- C (contextual, anchored to the Entry) ---------- */
+.scrim.soft { background: transparent; display: block; }
+.scrim.soft::before { content: ""; position: absolute; inset: 0; background: var(--scrim); opacity: .75; }
+.c-anchor { position: absolute; top: 56px; left: calc(var(--sidebar-w) + var(--list-w)); right: 0; display: flex; justify-content: center; }
+.pal-c { width: 520px; position: relative; }
+.pal-c .pal-list { max-height: 520px; }
+.pal-c .crumbrow { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.pal-c .pal-q { height: 44px; border-bottom: 1px solid var(--border); }
+.pal-c .pal-q input { font-size: var(--text-md); }
+.pal-c .pi { height: 34px; }
+.lift { position: absolute; pointer-events: none; border-radius: var(--r-sm); background: var(--bg-2); box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-bg), 0 8px 24px rgb(0 0 0 / .35); display: flex; align-items: center; gap: 10px; padding: 0 10px; animation: kf-fade var(--dur) var(--ease); }
+.lift .t { font-weight: 500; }
+.lift .u { color: var(--fg-2); font-size: var(--text-sm); margin-left: auto; }
+.swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ======================================================================
+   Data
+   ====================================================================== */
+const P = KF.vault("personal"), W = KF.vault("work");
+const ENTRIES = [
+  ...P.entries.filter((e) => e.group !== "bin").map((e) => Object.assign(e, { vault: P })),
+  ...W.entries.map((e) => Object.assign(e, { vault: W })),
+];
+const params = new URL(location.href).searchParams;
+const INIT_Q = params.get("q") || "";
+const STATE = params.get("state") || "";
+let SORT = "title";
+
+const SORTS = [
+  { id: "title", name: "Sort Entries by Title", short: "Title", icon: "arrow-down-a-z" },
+  { id: "username", name: "Sort Entries by Username", short: "Username", icon: "user-round" },
+  { id: "url", name: "Sort Entries by URL", short: "URL", icon: "link" },
+  { id: "created", name: "Sort Entries by Creation Time", short: "Creation Time", icon: "calendar-plus" },
+  { id: "modified", name: "Sort Entries by Last Change", short: "Last Change", icon: "clock" },
+];
+
+/* Every command the real palette lists (strings.rs command_name), with its binding. */
+const CMDS = [
+  { id: "copy-pass", name: "Copy Password", icon: "key-round", keys: ["Ctrl", "C"], scope: "entry", desc: "Copies the selected Entry's password. The clipboard clears itself after 30 seconds." },
+  { id: "copy-user", name: "Copy Username", icon: "user-round", keys: ["Ctrl", "B"], scope: "entry", desc: "Copies the selected Entry's username." },
+  { id: "copy-totp", name: "Copy TOTP Code", icon: "timer", keys: ["Ctrl", "T"], scope: "entry", needs: "totp", desc: "Copies the current one-time code of the selected Entry." },
+  { id: "copy-field", name: "Copy Custom Field", icon: "text-cursor-input", scope: "entry", needs: "fields", desc: "Copies the focused custom field of the selected Entry." },
+  { id: "edit", name: "Edit Entry", icon: "pencil", keys: ["Enter"], scope: "entry", desc: "Opens the selected Entry for editing." },
+  { id: "history", name: "Show Entry History", icon: "history", keys: ["Ctrl", "H"], scope: "entry", desc: "Shows the selected Entry's earlier versions, and restores one." },
+  { id: "save", name: "Save All Vaults", icon: "save", keys: ["Ctrl", "S"], scope: "vault", desc: "Writes every Vault with unsaved changes to its Vault file." },
+  { id: "lock", name: "Lock All Vaults", icon: "lock", keys: ["Ctrl", "L"], scope: "vault", desc: "Locks every open Vault. Their decrypted contents are dropped until each is unlocked again." },
+  { id: "sync", name: "Sync Dropbox Vaults Now", icon: "refresh-cw", scope: "vault", desc: "Checks every Dropbox Vault for changes made elsewhere now, and uploads saves made offline." },
+  { id: "vset", name: "Vault Settings", icon: "settings-2", scope: "vault", desc: "Opens the settings of the Vault shown, or of the selected Entry's." },
+  { id: "mkey", name: "Change Master Key and Encryption…", icon: "key-square", scope: "vault", desc: "Changes the Master key, cipher and key derivation of the Vault shown. The Vault file is re-encrypted on the next save." },
+  { id: "search", name: "Search Entries", icon: "search", keys: ["Ctrl", "F"], scope: "view", desc: "Moves the keyboard to the search field above the Entry list." },
+  ...SORTS.map((s) => ({ id: "sort-" + s.id, sort: s.id, name: s.name, icon: s.icon, scope: "sort", desc: `Sorts the Entry list by ${s.short.toLowerCase()}.` })),
+  { id: "open", name: "Open Another Vault…", icon: "folder-open", keys: ["Ctrl", "O"], scope: "app", desc: "Opens a Vault file from this machine or from Dropbox, next to the Vaults already open." },
+  { id: "new", name: "New Vault…", icon: "file-plus-2", keys: ["Ctrl", "Shift", "N"], scope: "app", desc: "Creates a new Vault file." },
+  { id: "settings", name: "Open App Settings", icon: "settings", keys: ["Ctrl", ","], scope: "app", desc: "Opens the app settings: the app-wide preferences kept on this machine." },
+  { id: "next", name: "Select Next Entry", icon: "arrow-down", keys: ["↓"], scope: "nav", desc: "Selects the Entry below in the list." },
+  { id: "prev", name: "Select Previous Entry", icon: "arrow-up", keys: ["↑"], scope: "nav", desc: "Selects the Entry above in the list." },
+  { id: "first", name: "Select First Entry", icon: "chevrons-up", keys: ["Home"], scope: "nav", desc: "Selects the first Entry in the list." },
+  { id: "last", name: "Select Last Entry", icon: "chevrons-down", keys: ["End"], scope: "nav", desc: "Selects the last Entry in the list." },
+];
+const CMD = Object.fromEntries(CMDS.map((c) => [c.id, c]));
+const SCOPE_LABEL = { entry: "Entry", vault: "Vaults", view: "View", sort: "View", app: "App", nav: "Navigation" };
+const cmdFits = (c, e) => !c.needs || (e && (c.needs === "totp" ? !!e.totp : e.fields.length > 0));
+
+/* ======================================================================
+   Fuzzy match — a port of keefast_core::fuzzy_match
+   ====================================================================== */
+const isAlnum = (c) => /[\p{L}\p{N}]/u.test(c);
+const isLower = (c) => c !== c.toUpperCase() && c === c.toLowerCase();
+const isUpper = (c) => c !== c.toLowerCase() && c === c.toUpperCase();
+function fuzzy(query, name) {
+  const q = Array.from(query).filter((c) => !/\s/.test(c)).map((c) => c.toLowerCase());
+  let prev = null;
+  const n = Array.from(name).map((ch) => {
+    const ws = prev === null ? true : !isAlnum(prev) || (isLower(prev) && isUpper(ch));
+    prev = ch;
+    return { ch: ch.toLowerCase(), ws };
+  });
+  if (q.length > n.length) return null;
+  if (!q.length) return { score: 0, positions: [] };
+  const MATCH = 16, WORD = 24, CONS = 20, GAP = 3, LEAD = 1, MAXLEAD = 3;
+  const best = q.map(() => new Array(n.length).fill(null));
+  const from = q.map(() => new Array(n.length).fill(0));
+  for (let i = 0; i < q.length; i++) {
+    for (let j = i; j < n.length; j++) {
+      if (n[j].ch !== q[i]) continue;
+      const s = MATCH + (n[j].ws ? WORD : 0);
+      if (i === 0) { best[i][j] = s - Math.min(j, MAXLEAD) * LEAD; continue; }
+      for (let k = i - 1; k < j; k++) {
+        const b = best[i - 1][k];
+        if (b === null) continue;
+        const gap = j - k - 1;
+        const c = b + s + (gap === 0 ? CONS : -gap * GAP);
+        if (best[i][j] === null || c > best[i][j]) { best[i][j] = c; from[i][j] = k; }
+      }
+    }
+  }
+  const last = q.length - 1;
+  let bj = -1, bs = null;
+  best[last].forEach((s, j) => { if (s !== null && (bs === null || s > bs)) { bs = s; bj = j; } });
+  if (bj < 0) return null;
+  const positions = new Array(q.length);
+  for (let i = last, j = bj; i >= 0; i--) { positions[i] = j; j = from[i][j]; }
+  return { score: bs, positions };
+}
+/** Name with matched characters wrapped in <mark>, runs merged. */
+function hl(text, positions = []) {
+  const set = new Set(positions);
+  let out = "", open = false;
+  Array.from(text).forEach((c, i) => {
+    const m = set.has(i);
+    if (m && !open) { out += "<mark>"; open = true; }
+    if (!m && open) { out += "</mark>"; open = false; }
+    out += KF.esc(c);
+  });
+  return out + (open ? "</mark>" : "");
+}
+function rankCommands(q, list) {
+  return list
+    .map((c) => ({ c, m: fuzzy(q, c.name) }))
+    .filter((x) => x.m)
+    .map((x, i) => ({ ...x, i }))
+    .sort((a, b) => b.m.score - a.m.score || a.i - b.i);
+}
+function rankEntries(q) {
+  if (!q.trim()) return [];
+  const out = [];
+  ENTRIES.forEach((e, i) => {
+    const t = fuzzy(q, e.title);
+    if (t) return out.push({ e, score: t.score + 8, pos: t.positions, field: "title", i });
+    const u = fuzzy(q, e.username) || fuzzy(q, KF.host(e.url));
+    // Only confident matches outside the title (a run of the query at a word start).
+    if (u && u.score >= q.replace(/\s/g, "").length * 36) out.push({ e, score: u.score - 30, pos: [], field: "other", i });
+  });
+  return out.sort((a, b) => b.score - a.score || a.i - b.i);
+}
+
+/* ======================================================================
+   Shared helpers
+   ====================================================================== */
+const T0 = Date.now();
+const totpLeft = (e) => { const l = (((e.totp.left - Math.floor((Date.now() - T0) / 1000)) % 30) + 30) % 30; return l || 30; };
+const totpCode = (e) => { const d = String(e.totp.code).replace(/\D/g, ""); return `${d.slice(0, 3)} ${d.slice(3)}`; };
+const totpInline = (e) => `<span class="totp-inline" data-totp="${e.id}"><span class="ring" style="--p:${totpLeft(e) / 30}"></span>${totpCode(e)}</span>`;
+setInterval(() => {
+  KF.$$("[data-totp]").forEach((el) => {
+    const e = KF.entry(el.dataset.totp); const l = totpLeft(e);
+    const r = el.querySelector(".ring"); if (r) r.style.setProperty("--p", l / 30);
+    const s = el.querySelector("[data-secs]"); if (s) s.textContent = l + "s";
+  });
+}, 1000);
+const groupPathStr = (e) => KF.groupPath(e.vault, e.group).map((g) => g.name).join(" / ");
+const groupOf = (e) => e.vault.groups.find((g) => g.id === e.group);
+
+/** Run a command (or an Entry action) and say so with a toast, as the real app would act. */
+function runCommand(id, e, extra) {
+  const c = CMD[id];
+  const t = e ? KF.esc(e.title) : "";
+  switch (id) {
+    case "copy-pass": return KF.copy(e ? `${e.title} password` : "Password");
+    case "copy-user": return KF.copy(e ? `${e.title} username` : "Username");
+    case "copy-totp": return KF.copy(e ? `${e.title} TOTP code` : "TOTP code");
+    case "copy-field": return KF.copy(extra || (e && e.fields[0] ? e.fields[0].name : "Custom field"));
+    case "copy-url": return KF.toast(`URL copied <span class="subtle">· ${KF.esc(KF.host(e.url))}</span>`, { icon: "clipboard-check" });
+    case "open-url": return KF.toast(`Opened <b>${KF.esc(KF.host(e.url))}</b> in your browser`, { icon: "external-link" });
+    case "edit": return KF.toast(`Editing <b>${t}</b>`, { icon: "pencil" });
+    case "history": return KF.toast(`<b>${t}</b> · ${e && e.history ? e.history + " earlier versions" : "No earlier versions"}`, { icon: "history" });
+    case "save": return KF.toast("Saved Personal and Work", { icon: "check" });
+    case "lock": return KF.toast("Locked 2 Vaults", { icon: "lock" });
+    case "sync": return KF.toast(`Work synced with Dropbox <span class="subtle">· no changes elsewhere</span>`, { icon: "refresh-cw" });
+    case "vset": return KF.toast(`Vault Settings · <b>${KF.esc(e ? e.vault.name : "Personal")}</b>`, { icon: "settings-2" });
+    case "mkey": return KF.toast(`Change Master Key and Encryption · <b>${KF.esc(e ? e.vault.name : "Personal")}</b>`, { icon: "key-square" });
+    case "search": return KF.toast("Search field focused", { icon: "search" });
+    case "open": return KF.toast("Open Another Vault…", { icon: "folder-open" });
+    case "new": return KF.toast("New Vault…", { icon: "file-plus-2" });
+    case "settings": return KF.toast("App settings", { icon: "settings" });
+    case "move": return KF.toast(`Moved <b>${t}</b> to ${KF.esc(extra)}`, { icon: "folder-input" });
+    case "delete": return KF.toast(`Moved <b>${t}</b> to the Recycle Bin <span class="subtle">· Ctrl Z to undo</span>`, { icon: "trash-2" });
+    default:
+      if (c && c.sort) { SORT = c.sort; return KF.toast(`Entries sorted by ${SORTS.find((s) => s.id === c.sort).short}`, { icon: c.icon }); }
+      return KF.toast(`Ran <b>${KF.esc(c ? c.name : id)}</b>`, { icon: "corner-down-left" });
+  }
+}
+
+/* ---------- Backdrop window ---------- */
+function backdrop(selId) {
+  const sel = KF.entry(selId);
+  const v = sel.vault;
+  const count = (vault, gid) => vault.entries.filter((x) => x.group === gid).length;
+  const groupItems = (vault, open) => vault.groups.filter((g) => g.parent).map((g) => `
+    <div class="nav-item child ${open && g.id === sel.group && vault === v ? "is-selected" : ""}">${KF.icon(g.icon)}<span class="truncate">${KF.esc(g.name)}</span><span class="count">${count(vault, g.id) || ""}</span></div>`).join("");
+  const list = v.entries.filter((x) => x.group !== "bin");
+  const kv = (k, val) => `<div class="kv"><div class="k">${k}</div><div class="v">${val}</div></div>`;
+  return `<div class="win">
+    <aside class="sb">
+      <div class="sb-top"><span class="sb-logo">${KF.icon("shield")}</span><b>keefast</b><span class="spacer"></span><span class="btn sm icon ghost">${KF.icon("plus")}</span></div>
+      <div class="sb-scroll">
+        <div class="nav-section">
+          <div class="nav-item">${KF.icon("search")}<span>Search</span><span class="count">${KF.kbd("Ctrl", "F")}</span></div>
+          <div class="nav-item">${KF.icon("star")}<span>Favourites</span></div>
+        </div>
+        <div class="nav-section">
+          <div class="nav-head">Vaults</div>
+          <div class="nav-item ${v === P && sel.group === "root" ? "is-selected" : ""}">${KF.icon("vault")}<span>Personal</span><span class="count">${P.entries.length - 1}</span></div>
+          ${groupItems(P, true)}
+          <div class="nav-item ${v === W && sel.group === "root" ? "is-selected" : ""}">${KF.icon("briefcase")}<span>Work</span><span class="count">${KF.icon("cloud", "ico-sm")}</span></div>
+          ${groupItems(W, true)}
+          <div class="nav-item">${KF.icon("vault")}<span>Family</span><span class="lock">${KF.icon("lock", "ico-sm")}</span></div>
+        </div>
+      </div>
+      <div class="sb-foot"><div class="nav-item">${KF.icon("settings")}<span>Settings</span><span class="count">${KF.kbd("Ctrl", ",")}</span></div></div>
+    </aside>
+    <section class="lst">
+      <div class="toolbar"><div class="crumbs"><b>${KF.esc(v.name)}</b><span class="subtle">${list.length}</span></div><span class="spacer"></span><span class="btn sm ghost">${KF.icon("arrow-down-a-z")} Title</span><span class="btn sm icon ghost">${KF.icon("plus")}</span></div>
+      <div class="lst-search"><div class="search">${KF.icon("search", "ico-sm")}<input placeholder="Search Entries" tabindex="-1"><kbd>/</kbd></div></div>
+      <div class="lst-rows">${list.map((x) => `
+        <div class="row ${x.id === selId ? "is-selected" : ""}" data-eid="${x.id}">${KF.avatar(x, 20)}<span class="t truncate">${KF.esc(x.title)}</span><span class="u truncate" style="margin-left:auto;max-width:150px">${KF.esc(x.username)}</span></div>`).join("")}
+      </div>
+    </section>
+    <section class="det">
+      <div class="toolbar"><div class="crumbs"><span>${KF.esc(groupPathStr(sel))}</span>${KF.icon("chevron-right", "ico-sm")}<b>${KF.esc(sel.title)}</b></div><span class="spacer"></span>
+        <span class="status"><span class="status-dot"></span>Saved</span>
+        <span class="btn sm ghost cmdk-btn" data-open-palette>${KF.icon("command")} Commands ${KF.kbd("Ctrl", "K")}</span>
+        <span class="btn sm secondary">${KF.icon("pencil")} Edit</span></div>
+      <div class="det-body">
+        <div class="det-head">${KF.avatar(sel, 44)}<div><h1 class="det-title">${KF.esc(sel.title)}</h1><div class="det-sub">${KF.esc(KF.host(sel.url))}</div></div></div>
+        ${kv("Username", KF.esc(sel.username))}
+        ${kv("Password", `<span class="mono">${KF.mask(14)}</span>`)}
+        ${sel.totp ? kv("One-time code", totpInline(sel)) : ""}
+        ${kv("Website", `<a>${KF.esc(KF.host(sel.url))}</a>`)}
+        ${kv("Tags", `<span class="hstack">${sel.tags.map((t) => `<span class="tag">${KF.esc(t)}</span>`).join("")}</span>`)}
+        ${sel.notes ? kv("Notes", `<span class="muted">${KF.esc(sel.notes)}</span>`) : ""}
+        ${kv("Modified", `<span class="muted">${sel.modified}</span>`)}
+      </div>
+    </section>
+  </div>`;
+}
+
+/* ---------- Global key routing: one live controller at a time ---------- */
+let LIVE = null;
+window.addEventListener("keydown", (ev) => {
+  const k = ev.key.toLowerCase();
+  if (ev.ctrlKey && (k === "k" || (ev.shiftKey && k === "p"))) {
+    ev.preventDefault();
+    if (LIVE && LIVE.toggleShortcut && LIVE.toggleShortcut(ev)) return;
+    if (LIVE) LIVE.isOpen() ? LIVE.close() : LIVE.open();
+  }
+}, true);
+document.addEventListener("click", (ev) => { if (ev.target.closest("[data-open-palette]") && LIVE) LIVE.open(); });
+
+/** Moves a selection index with wrap-around, as the real palette does. */
+const wrap = (i, n) => (n ? (i + n) % n : 0);
+const footHint = (keys, label) => `<span class="h">${keys}<span>${label}</span></span>`;
+const kbdKeys = (keys) => (keys ? KF.kbd(...keys) : "");
+function scrollSel(root) { const s = root.querySelector(".pi.is-sel"); if (s) s.scrollIntoView({ block: "nearest" }); }
+
+/* ======================================================================
+   Variant A — classic centred palette, grouped sections, Entries mixed in,
+   Enter on an Entry opens a nested page of its actions.
+   ====================================================================== */
+function variantA(root) {
+  let selId = "e1";
+  let open = true, q = INIT_Q, sel = 0, page = null; // page: {kind:'entry', e} | {kind:'sort'}
+  if (STATE === "empty") q = "zzq";
+  if (STATE === "entry") page = { kind: "entry", e: KF.entry("e1") };
+  let items = [];
+
+  root.innerHTML = `${backdrop(selId)}<div class="pal-host"></div>`;
+  const host = root.querySelector(".pal-host");
+
+  function entryActions(e) {
+    const a = [
+      { id: "copy-pass", label: "Copy Password", icon: "key-round", keys: ["Ctrl", "C"], trail: `<span class="mono-val">${KF.mask(10)}</span>` },
+      { id: "copy-user", label: "Copy Username", icon: "user-round", keys: ["Ctrl", "B"], trail: `<span class="ctx">${KF.esc(e.username)}</span>` },
+    ];
+    if (e.totp) a.push({ id: "copy-totp", label: "Copy TOTP Code", icon: "timer", keys: ["Ctrl", "T"], trail: totpInline(e) });
+    e.fields.forEach((f) => a.push({ id: "copy-field", extra: f.name, label: `Copy ${f.name}`, icon: "text-cursor-input", trail: `<span class="ctx">Custom field</span>` }));
+    if (e.url) a.push({ id: "open-url", label: `Open ${KF.host(e.url)}`, icon: "external-link" });
+    a.push({ id: "edit", label: "Edit Entry", icon: "pencil", keys: ["Enter"] });
+    a.push({ id: "history", label: "Show Entry History", icon: "history", keys: ["Ctrl", "H"], trail: e.history ? `<span class="ctx">${e.history} versions</span>` : "" });
+    a.push({ id: "vset", label: "Vault Settings", icon: "settings-2", trail: `<span class="ctx">${KF.esc(e.vault.name)}</span>` });
+    return a.map((x) => ({ type: "act", ...x, e }));
+  }
+
+  function build() {
+    const sel = KF.entry(selId);
+    const secs = [];
+    if (page && page.kind === "entry") {
+      const acts = entryActions(page.e);
+      const r = q ? rankCommands(q, acts.map((a) => ({ ...a, name: a.label }))).map((x) => ({ ...x.c, pos: x.m.positions })) : acts;
+      if (r.length) secs.push({ label: null, items: r });
+    } else if (page && page.kind === "sort") {
+      const r = rankCommands(q, SORTS.map((s) => CMD["sort-" + s.id]));
+      if (r.length) secs.push({ label: null, items: r.map((x) => ({ type: "cmd", c: x.c, pos: x.m.positions, check: x.c.sort === SORT, label: SORTS.find((s) => s.id === x.c.sort).short })) });
+    } else if (!q.trim()) {
+      const g = (scopes) => CMDS.filter((c) => scopes.includes(c.scope) && cmdFits(c, sel)).map((c) => ({ type: "cmd", c, ctx: c.scope === "entry" }));
+      secs.push({ label: `${KF.avatar(sel, 16)}<span>${KF.esc(sel.title)}</span>`, items: g(["entry"]) });
+      secs.push({ label: "Vaults", items: g(["vault"]) });
+      secs.push({ label: "View", items: [...g(["view"]), { type: "sortpage" }] });
+      secs.push({ label: "App", items: g(["app"]) });
+      secs.push({ label: "Navigation", items: g(["nav"]) });
+    } else {
+      const ents = rankEntries(q).slice(0, 5).map((x) => ({ type: "entry", e: x.e, pos: x.pos, score: x.score }));
+      const cmds = rankCommands(q, CMDS.filter((c) => cmdFits(c, sel))).map((x) => ({ type: "cmd", c: x.c, pos: x.m.positions, score: x.m.score, ctx: x.c.scope === "entry" }));
+      const es = ents.length && { label: "Entries", items: ents };
+      // A confident title match also offers that Entry's top actions right away.
+      const top = ents[0];
+      const as = top && top.pos.length && (ents.length === 1 || top.score - ents[1].score > 12) && {
+        label: `${KF.avatar(top.e, 16)}<span>Actions for ${KF.esc(top.e.title)}</span>`,
+        items: entryActions(top.e).filter((a) => ["copy-pass", "copy-user", "copy-totp", "open-url"].includes(a.id)),
+      };
+      const cs = cmds.length && { label: "Commands", items: cmds };
+      const order = es && cs && cs.items[0].score > es.items[0].score ? [cs, es] : [es, cs];
+      order.filter(Boolean).forEach((s) => { secs.push(s); if (s === es && as) secs.push(as); });
+    }
+    return secs;
+  }
+
+  function itemHTML(it, i) {
+    const s = i === sel ? "is-sel" : "";
+    const ent = KF.entry(selId);
+    if (it.type === "entry") {
+      const e = it.e;
+      const trail = i === sel
+        ? `<span class="qa" title="Copy password (Ctrl C)" data-qa="copy-pass">${KF.icon("key-round")}</span>${e.totp ? `<span class="qa" title="Copy TOTP code (Ctrl T)" data-qa="copy-totp">${KF.icon("timer")}</span>` : ""}<span class="qa" title="Actions (Enter)" data-qa="page">${KF.icon("corner-down-left")}</span>`
+        : `<span class="ctx">${KF.esc(e.vault.name)}${groupOf(e).parent ? " / " + KF.esc(groupOf(e).name) : ""}</span>`;
+      return `<div class="pi ${s}" data-i="${i}">${KF.avatar(e, 20)}<span class="lbl" style="flex:none;max-width:200px">${hl(e.title, it.pos)}</span><span class="sub">${KF.esc(e.username)}</span><span class="trail">${trail}</span></div>`;
+    }
+    if (it.type === "sortpage") {
+      const cur = SORTS.find((x) => x.id === SORT);
+      return `<div class="pi ${s}" data-i="${i}">${KF.icon("arrow-up-down")}<span class="lbl">Sort Entries by…</span><span class="trail"><span class="ctx">${cur.short}</span>${KF.icon("chevron-right", "chev")}</span></div>`;
+    }
+    if (it.type === "act") {
+      return `<div class="pi ${s}" data-i="${i}">${KF.icon(it.icon)}<span class="lbl">${hl(it.label, it.pos)}</span><span class="trail">${it.trail || ""}${kbdKeys(it.keys)}</span></div>`;
+    }
+    const c = it.c;
+    const label = it.label ? hl(it.label, it.pos && it.label === c.name ? it.pos : []) : hl(c.name, it.pos);
+    const ctx = it.ctx && q.trim() ? `<span class="ctx">${KF.esc(ent.title)}</span>` : "";
+    return `<div class="pi ${s} ${it.check ? "is-check" : ""}" data-i="${i}">${KF.icon(c.icon)}<span class="lbl">${label}</span><span class="trail">${ctx}${it.check ? KF.icon("check", "tick") : ""}${kbdKeys(c.keys)}</span></div>`;
+  }
+
+  function render() {
+    if (!open) { host.innerHTML = ""; return; }
+    const secs = build();
+    items = secs.flatMap((s) => s.items);
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    let i = 0;
+    const list = items.length
+      ? secs.map((s) => `${s.label ? `<div class="pal-sec">${s.label}</div>` : ""}${s.items.map((it) => itemHTML(it, i++)).join("")}`).join("")
+      : `<div class="pal-empty">${KF.icon("search-x")}<div>No matching commands</div><div class="subtle">Nothing matches “${KF.esc(q)}” in commands or Entries.</div></div>`;
+    const cur = items[sel];
+    let foot;
+    if (cur && cur.type === "entry") foot = footHint(KF.kbd("↵"), "Actions") + footHint(KF.kbd("Ctrl", "C"), "Copy password") + (cur.e.totp ? footHint(KF.kbd("Ctrl", "T"), "Copy TOTP") : "");
+    else if (cur) foot = footHint(KF.kbd("↑", "↓"), "Navigate") + footHint(KF.kbd("↵"), cur.type === "sortpage" ? "Open" : "Run");
+    else foot = footHint(KF.kbd("⌫"), "Edit query");
+    foot += `<span class="spacer"></span>` + footHint(KF.kbd("Esc"), page ? "Back" : "Close");
+
+    const chips = page && page.kind === "entry"
+      ? `<span class="chip">${KF.avatar(page.e, 16)}${KF.esc(page.e.title)}<span class="x" data-back>${KF.icon("x")}</span></span>`
+      : page && page.kind === "sort"
+        ? `<span class="chip plain">${KF.icon("arrow-up-down", "ico-sm")}Sort Entries by…<span class="x" data-back>${KF.icon("x")}</span></span>`
+        : `<span class="chip plain">${KF.icon("vault", "ico-sm")}${KF.esc(KF.entry(selId).vault.name)}</span><span class="chip-sep">${KF.icon("chevron-right")}</span><span class="chip plain">${KF.avatar(KF.entry(selId), 16)}${KF.esc(KF.entry(selId).title)}</span>`;
+    const ph = page && page.kind === "entry" ? `Search actions for ${page.e.title}…` : page ? "Pick a sort order…" : "Type a command or search Entries…";
+
+    let pal = host.querySelector(".pal");
+    if (!pal) {
+      host.innerHTML = `<div class="scrim top"><div class="pal pal-a">
+        <div class="ctxrow"></div>
+        <div class="pal-q"><input autocomplete="off" spellcheck="false"></div>
+        <div class="pal-list"></div>
+        <div class="pal-foot"></div></div></div>`;
+      pal = host.querySelector(".pal");
+      const input = pal.querySelector("input");
+      input.value = q;
+      input.addEventListener("input", () => { q = input.value; sel = 0; render(); });
+      input.addEventListener("keydown", onKey);
+      host.querySelector(".scrim").addEventListener("mousedown", (ev) => { if (!ev.target.closest(".pal")) { ev.preventDefault(); close(); } });
+      pal.addEventListener("mousemove", (ev) => { const r = ev.target.closest(".pi"); if (r && +r.dataset.i !== sel) { sel = +r.dataset.i; render(); } });
+      pal.addEventListener("mousedown", (ev) => { if (ev.target.closest(".pal")) ev.preventDefault(); });
+      pal.addEventListener("click", (ev) => {
+        if (ev.target.closest("[data-back]")) return back();
+        const qa = ev.target.closest("[data-qa]");
+        const r = ev.target.closest(".pi");
+        if (qa && r) { const it = items[+r.dataset.i]; if (qa.dataset.qa === "page") return enter(it); return finish(qa.dataset.qa, it.e); }
+        if (r) { sel = +r.dataset.i; enter(items[sel]); }
+      });
+      setTimeout(() => input.focus(), 0);
+    }
+    pal.querySelector(".ctxrow").innerHTML = chips;
+    pal.querySelector("input").placeholder = ph;
+    pal.querySelector(".pal-list").innerHTML = list;
+    pal.querySelector(".pal-foot").innerHTML = foot;
+    scrollSel(pal);
+  }
+
+  function setQ(v) { q = v; const i = host.querySelector("input"); if (i) i.value = v; }
+  function finish(id, e, extra) { close(); runCommand(id, e, extra); }
+  function enter(it) {
+    if (!it) return;
+    if (it.type === "entry") { page = { kind: "entry", e: it.e }; setQ(""); sel = 0; return render(); }
+    if (it.type === "sortpage") { page = { kind: "sort" }; setQ(""); sel = SORTS.findIndex((s) => s.id === SORT); return render(); }
+    if (it.type === "act") return finish(it.id, it.e, it.extra);
+    finish(it.c.id, KF.entry(selId));
+  }
+  function back() { page = null; setQ(""); sel = 0; render(); host.querySelector("input")?.focus(); }
+  function onKey(ev) {
+    const it = items[sel];
+    if (ev.key === "ArrowDown") { ev.preventDefault(); sel = wrap(sel + 1, items.length); render(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); sel = wrap(sel - 1, items.length); render(); }
+    else if (ev.key === "Enter") { ev.preventDefault(); enter(it); }
+    else if (ev.key === "Escape") { ev.preventDefault(); page ? back() : close(); }
+    else if (ev.key === "Backspace" && !q && page) { ev.preventDefault(); back(); }
+    else if (ev.key === "Tab") ev.preventDefault();
+    else if (ev.ctrlKey && it && it.type === "entry") {
+      const map = { c: "copy-pass", b: "copy-user", t: "copy-totp" };
+      const id = map[ev.key.toLowerCase()];
+      if (id && (id !== "copy-totp" || it.e.totp) && ev.target.selectionStart === ev.target.selectionEnd) { ev.preventDefault(); finish(id, it.e); }
+    }
+  }
+  function close() { open = false; page = null; q = ""; sel = 0; host.innerHTML = ""; }
+  LIVE = { isOpen: () => open, open: () => { open = true; render(); }, close };
+  render();
+}
+
+/* ======================================================================
+   Variant B — Raycast-style: list + preview pane, scope tabs, action bar
+   with an "Actions" menu (Ctrl K) for the highlighted item.
+   ====================================================================== */
+function variantB(root) {
+  const selId = "e1";
+  let open = true, q = INIT_Q, sel = 0, scope = "all", menu = null, mq = "", msel = 0, reveal = false;
+  const RECENT = ["e1", "w1", "e2", "e6", "w3"].map(KF.entry);
+  const SUGGESTED = ["lock", "save", "sync", "new", "settings"].map((id) => CMD[id]);
+  let items = [];
+  root.innerHTML = `${backdrop(selId)}<div class="pal-host"></div>`;
+  const host = root.querySelector(".pal-host");
+
+  function build() {
+    const secs = [];
+    const ctxE = KF.entry(selId);
+    if (!q.trim()) {
+      if (scope !== "commands") secs.push({ label: scope === "entries" ? "All Entries" : "Recent Entries", items: (scope === "entries" ? ENTRIES : RECENT).map((e) => ({ type: "entry", e })) });
+      if (scope !== "entries") secs.push({ label: scope === "commands" ? "All commands" : "Suggested", items: (scope === "commands" ? CMDS.filter((c) => cmdFits(c, ctxE)) : SUGGESTED).map((c) => ({ type: "cmd", c })) });
+    } else {
+      if (scope !== "commands") { const r = rankEntries(q).slice(0, scope === "entries" ? 50 : 5); if (r.length) secs.push({ label: "Entries", items: r.map((x) => ({ type: "entry", e: x.e, pos: x.pos })) }); }
+      if (scope !== "entries") { const r = rankCommands(q, CMDS.filter((c) => cmdFits(c, ctxE))); if (r.length) secs.push({ label: "Commands", items: r.map((x) => ({ type: "cmd", c: x.c, pos: x.m.positions })) }); }
+    }
+    return secs;
+  }
+  function actionsFor(it) {
+    if (!it) return [];
+    if (it.type === "entry") {
+      const e = it.e, a = [
+        { id: "copy-pass", label: "Copy Password", icon: "key-round", keys: ["↵"] },
+        { id: "copy-user", label: "Copy Username", icon: "user-round", keys: ["Ctrl", "B"] },
+      ];
+      if (e.totp) a.push({ id: "copy-totp", label: "Copy TOTP Code", icon: "timer", keys: ["Ctrl", "T"] });
+      if (e.url) a.push({ id: "open-url", label: "Open in Browser", icon: "external-link", keys: ["Ctrl", "↵"] }, { id: "copy-url", label: "Copy URL", icon: "link" });
+      a.push({ id: "reveal", label: reveal ? "Hide Password" : "Reveal Password", icon: reveal ? "eye-off" : "eye", keys: ["Ctrl", "R"] });
+      a.push({ sep: true }, { id: "edit", label: "Edit Entry", icon: "pencil", keys: ["Ctrl", "E"] }, { id: "history", label: "Show Entry History", icon: "history", keys: ["Ctrl", "H"] });
+      return a;
+    }
+    return [{ id: "run", label: "Run Command", icon: "corner-down-left", keys: ["↵"] }, { id: "pin", label: "Add to Suggested", icon: "pin" }];
+  }
+
+  function rowHTML(it, i) {
+    const s = i === sel ? "is-sel" : "";
+    if (it.type === "entry") {
+      const e = it.e;
+      return `<div class="pi ${s}" data-i="${i}">${KF.avatar(e, 22)}<span class="lbl" style="flex:none;max-width:150px">${hl(e.title, it.pos)}</span><span class="sub">${KF.esc(e.username)}</span><span class="trail">${e.totp ? `<span class="kind" title="Has TOTP">${KF.icon("timer", "ico-sm")}</span>` : ""}<span class="kind">${KF.esc(e.vault.name)}</span></span></div>`;
+    }
+    const c = it.c;
+    return `<div class="pi ${s}" data-i="${i}">${KF.icon(c.icon)}<span class="lbl">${hl(c.name, it.pos)}</span><span class="trail">${c.keys ? kbdKeys(c.keys) : `<span class="kind">Command</span>`}</span></div>`;
+  }
+
+  function previewHTML(it) {
+    if (!it) return `<div class="pal-empty" style="flex:1">${KF.icon("square-dashed-mouse-pointer")}<div class="subtle">Nothing selected</div></div>`;
+    const kv = (k, v) => `<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    if (it.type === "entry") {
+      const e = it.e;
+      return `<div class="pv-head">${KF.avatar(e, 40)}<div style="min-width:0"><div class="pv-title truncate">${KF.esc(e.title)}</div><div class="pv-sub truncate">${KF.esc(e.vault.name)} · ${KF.esc(groupPathStr(e).split(" / ").slice(1).join(" / ") || "Top level")}</div></div></div>
+        ${kv("Username", `<span class="copyable truncate" data-copy="copy-user">${KF.esc(e.username)}</span>`)}
+        ${kv("Password", e.password ? `<span class="hstack" style="gap:4px"><span class="copyable mono" data-copy="copy-pass">${reveal ? KF.esc(e.password) : KF.mask(14)}</span><span class="qa" data-reveal title="${reveal ? "Hide" : "Reveal"} (Ctrl R)">${KF.icon(reveal ? "eye-off" : "eye")}</span></span>` : `<span class="subtle">None</span>`)}
+        ${e.totp ? kv("One-time code", `<span class="copyable" data-copy="copy-totp"><span class="totp-inline" data-totp="${e.id}" style="font-size:13px;color:var(--fg-0)"><span class="ring" style="--p:${totpLeft(e) / 30}"></span>${totpCode(e)}<span class="subtle" data-secs style="font-size:11px">${totpLeft(e)}s</span></span></span>`) : ""}
+        ${e.url ? kv("Website", `<a class="truncate">${KF.esc(KF.host(e.url))}</a>`) : ""}
+        ${e.tags.length ? kv("Tags", `<span class="hstack" style="gap:6px">${e.tags.map((t) => `<span class="tag">${KF.esc(t)}</span>`).join("")}</span>`) : ""}
+        ${kv("Modified", `<span class="muted">${e.modified}${e.history ? ` · ${e.history} earlier versions` : ""}</span>`)}
+        ${e.notes ? `<div class="pv-notes">${KF.esc(e.notes)}</div>` : ""}`;
+    }
+    const c = it.c, ctxE = KF.entry(selId);
+    const applies = c.scope === "entry" ? `<span class="chip">${KF.avatar(ctxE, 16)}${KF.esc(ctxE.title)}</span>`
+      : c.scope === "vault" ? (c.id === "vset" || c.id === "mkey" ? `<span class="chip plain">${KF.icon("vault", "ico-sm")}Personal</span>` : c.id === "sync" ? `<span class="chip plain">${KF.icon("cloud", "ico-sm")}Work</span>` : `<span class="muted">All open Vaults · Personal, Work</span>`)
+      : c.scope === "sort" ? `<span class="muted">Entry list · now by ${SORTS.find((s) => s.id === SORT).short}</span>`
+      : `<span class="muted">${c.scope === "app" ? "keefast" : "Entry list"}</span>`;
+    return `<div class="pv-head"><span class="cmd-tile">${KF.icon(c.icon)}</span><div><div class="pv-title">${KF.esc(c.name)}</div><div class="pv-sub">${SCOPE_LABEL[c.scope]} command</div></div></div>
+      <p class="pv-desc">${KF.esc(c.desc)}</p>
+      ${kv("Shortcut", c.keys ? kbdKeys(c.keys) : `<span class="subtle">None</span>`)}
+      ${kv("Applies to", applies)}`;
+  }
+
+  function menuHTML(it) {
+    const acts = actionsFor(it).filter((a) => a.sep || fuzzy(mq, a.label));
+    const pickable = acts.filter((a) => !a.sep);
+    msel = Math.min(msel, Math.max(0, pickable.length - 1));
+    let j = 0;
+    const title = it.type === "entry" ? `${KF.avatar(it.e, 16)}${KF.esc(it.e.title)}` : KF.esc(it.c.name);
+    return `<div class="menu actmenu"><div class="menu-label hstack" style="gap:6px;padding:8px 12px 4px">${title}</div><div class="items">${acts.map((a) => a.sep ? (mq ? "" : `<div class="menu-sep"></div>`) : `<div class="menu-item ${j === msel ? "is-active" : ""}" data-m="${j++}">${KF.icon(a.icon)}<span>${hl(a.label, fuzzy(mq, a.label).positions)}</span>${kbdKeys(a.keys)}</div>`).join("") || `<div class="menu-item subtle">No matching actions</div>`}</div>
+      <div class="menu-q"><input placeholder="Search actions…" autocomplete="off"></div></div>`;
+  }
+
+  function render() {
+    if (!open) { host.innerHTML = ""; return; }
+    const secs = build();
+    items = secs.flatMap((s) => s.items);
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    const cur = items[sel];
+    let i = 0;
+    const list = items.length
+      ? secs.map((s) => `<div class="pal-sec">${s.label}</div>${s.items.map((it) => rowHTML(it, i++)).join("")}`).join("")
+      : `<div class="pal-empty" style="padding-top:120px">${KF.icon("search-x")}<div>${scope === "entries" ? "No matching Entries" : "No matching commands"}</div><div class="subtle">Try fewer letters${scope !== "all" ? ", or search everything with Tab" : ""}.</div></div>`;
+    const primary = cur ? (cur.type === "entry" ? "Copy Password" : "Run Command") : "";
+    let pal = host.querySelector(".pal");
+    if (!pal) {
+      host.innerHTML = `<div class="scrim top" style="padding-top:110px"><div class="pal pal-b" style="position:relative">
+        <div class="pal-q">${KF.icon("search")}<input autocomplete="off" spellcheck="false" placeholder="Search Entries and commands…"><div class="seg scope"></div></div>
+        <div class="body"><div class="pal-list"></div><div class="pv"></div></div>
+        <div class="pal-foot"></div><div class="menu-host"></div></div></div>`;
+      pal = host.querySelector(".pal");
+      const input = pal.querySelector(".pal-q input");
+      input.value = q;
+      input.addEventListener("input", () => { q = input.value; sel = 0; reveal = false; render(); });
+      input.addEventListener("keydown", onKey);
+      host.querySelector(".scrim").addEventListener("mousedown", (ev) => { if (!ev.target.closest(".pal")) { ev.preventDefault(); close(); } });
+      pal.addEventListener("mousedown", (ev) => { if (!ev.target.closest("input")) ev.preventDefault(); });
+      pal.addEventListener("mousemove", (ev) => { const r = ev.target.closest(".pal-list .pi"); if (r && +r.dataset.i !== sel && !menu) { sel = +r.dataset.i; reveal = false; render(); } });
+      pal.addEventListener("click", (ev) => {
+        const t = ev.target;
+        if (t.closest("[data-scope]")) { scope = t.closest("[data-scope]").dataset.scope; sel = 0; return render(); }
+        if (t.closest("[data-reveal]")) { reveal = !reveal; return render(); }
+        const cp = t.closest("[data-copy]"); if (cp) { cp.classList.add("is-copied"); setTimeout(() => cp.classList.remove("is-copied"), 900); return runCommand(cp.dataset.copy, items[sel].e); }
+        if (t.closest("[data-actions]")) return toggleMenu();
+        if (t.closest("[data-primary]")) return primaryRun();
+        const m = t.closest("[data-m]"); if (m) { msel = +m.dataset.m; return runMenu(); }
+        const r = t.closest(".pal-list .pi"); if (r) { sel = +r.dataset.i; primaryRun(); }
+      });
+      setTimeout(() => input.focus(), 0);
+    }
+    pal.querySelector(".seg").innerHTML = [["all", "All"], ["entries", "Entries"], ["commands", "Commands"]].map(([k, l]) => `<button data-scope="${k}" class="${scope === k ? "is-on" : ""}">${l}</button>`).join("");
+    pal.querySelector(".pal-list").innerHTML = list;
+    pal.querySelector(".pv").innerHTML = previewHTML(cur);
+    pal.querySelector(".pal-foot").innerHTML = `
+      <span class="h">${KF.icon("vault", "ico-sm")}<span>Personal, Work</span></span><span class="subtle">·</span><span class="h subtle">${KF.kbd("Tab")}<span>Switch scope</span></span>
+      <span class="spacer"></span>
+      ${cur ? `<span class="act" data-primary>${primary} ${KF.kbd("↵")}</span><span class="vdivider" style="margin:10px 0"></span><span class="act muted" data-actions>Actions ${KF.kbd("Ctrl", "K")}</span>` : ""}`;
+    const mh = pal.querySelector(".menu-host");
+    if (menu && cur) {
+      const had = mh.querySelector(".menu-q input");
+      if (!had) {
+        mh.innerHTML = menuHTML(cur);
+        const mi = mh.querySelector(".menu-q input");
+        mi.addEventListener("input", () => { mq = mi.value; msel = 0; render(); });
+        mi.addEventListener("keydown", onMenuKey);
+        setTimeout(() => mi.focus(), 0);
+      } else {
+        const tmp = document.createElement("div"); tmp.innerHTML = menuHTML(cur);
+        mh.querySelector(".items").replaceWith(tmp.querySelector(".items"));
+      }
+    } else mh.innerHTML = "";
+    scrollSel(pal.querySelector(".pal-list"));
+  }
+
+  function primaryRun() { const it = items[sel]; if (!it) return; close(); it.type === "entry" ? runCommand("copy-pass", it.e) : runCommand(it.c.id, KF.entry(selId)); }
+  function toggleMenu() {
+    if (!items[sel]) return;
+    menu = !menu; mq = ""; msel = 0; render();
+    if (!menu) host.querySelector(".pal-q input").focus();
+  }
+  function runMenu() {
+    const it = items[sel];
+    const a = actionsFor(it).filter((x) => !x.sep && fuzzy(mq, x.label))[msel];
+    if (!a) return;
+    if (a.id === "reveal") { reveal = !reveal; menu = false; render(); host.querySelector(".pal-q input").focus(); return; }
+    close();
+    if (a.id === "run") return runCommand(it.c.id, KF.entry(selId));
+    if (a.id === "pin") return KF.toast(`Added <b>${KF.esc(it.c.name)}</b> to Suggested`, { icon: "pin" });
+    runCommand(a.id, it.e);
+  }
+  function onMenuKey(ev) {
+    const n = actionsFor(items[sel]).filter((x) => !x.sep && fuzzy(mq, x.label)).length;
+    if (ev.key === "ArrowDown") { ev.preventDefault(); msel = wrap(msel + 1, n); render(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); msel = wrap(msel - 1, n); render(); }
+    else if (ev.key === "Enter") { ev.preventDefault(); runMenu(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); toggleMenu(); }
+  }
+  function onKey(ev) {
+    const it = items[sel];
+    const k = ev.key.toLowerCase();
+    if (ev.key === "ArrowDown") { ev.preventDefault(); sel = wrap(sel + 1, items.length); reveal = false; render(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); sel = wrap(sel - 1, items.length); reveal = false; render(); }
+    else if (ev.key === "Enter" && ev.ctrlKey && it && it.type === "entry") { ev.preventDefault(); close(); runCommand("open-url", it.e); }
+    else if (ev.key === "Enter") { ev.preventDefault(); primaryRun(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    else if (ev.key === "Tab") { ev.preventDefault(); const o = ["all", "entries", "commands"]; scope = o[wrap(o.indexOf(scope) + (ev.shiftKey ? -1 : 1), 3)]; sel = 0; render(); }
+    else if (ev.ctrlKey && it && it.type === "entry" && ev.target.selectionStart === ev.target.selectionEnd) {
+      const map = { b: "copy-user", t: it.e.totp && "copy-totp", e: "edit", h: "history", c: "copy-pass" };
+      if (k === "r") { ev.preventDefault(); reveal = !reveal; return render(); }
+      if (map[k]) { ev.preventDefault(); close(); runCommand(map[k], it.e); }
+    }
+  }
+  function close() { open = false; menu = null; q = ""; sel = 0; reveal = false; host.innerHTML = ""; }
+  LIVE = {
+    isOpen: () => open, open: () => { open = true; render(); }, close,
+    // Inside the open palette Ctrl K opens the Actions menu (Raycast), Ctrl Shift P still toggles.
+    toggleShortcut: (ev) => { if (open && !ev.shiftKey) { toggleMenu(); return true; } return false; },
+  };
+  if (STATE === "actions") menu = true;
+  render();
+}
+
+/* ======================================================================
+   Variant C — contextual Entry actions palette, anchored over the detail
+   pane, scoped by a breadcrumb chip; Alt ↑/↓ switches the scoped Entry;
+   Backspace drops the scope to every command. Nested "Move to Group…".
+   ====================================================================== */
+function variantC(root) {
+  const vaultList = P.entries.filter((x) => x.group !== "bin");
+  let selId = "e1", scoped = true, open = true, q = INIT_Q, sel = 0, page = STATE === "move" ? "move" : null;
+  let items = [];
+  root.innerHTML = `<div class="bd"></div><div class="pal-host"></div>`;
+  const bd = root.querySelector(".bd"), host = root.querySelector(".pal-host");
+
+  function actions(e) {
+    const g = (label, list) => ({ label, items: list.filter(Boolean) });
+    const fields = e.fields.map((f) => ({ id: "copy-field", extra: f.name, label: `Copy ${f.name}`, icon: "text-cursor-input", trail: `<span class="mono-val">${f.protected ? KF.mask(8) : KF.esc(f.value)}</span>` }));
+    return [
+      g("Copy", [
+        { id: "copy-pass", label: "Copy Password", icon: "key-round", keys: ["Ctrl", "C"], trail: `<span class="mono-val">${KF.mask(10)}</span>` },
+        { id: "copy-user", label: "Copy Username", icon: "user-round", keys: ["Ctrl", "B"], trail: `<span class="ctx truncate" style="max-width:150px">${KF.esc(e.username)}</span>` },
+        e.totp && { id: "copy-totp", label: "Copy TOTP Code", icon: "timer", keys: ["Ctrl", "T"], trail: totpInline(e) },
+        e.url && { id: "copy-url", label: "Copy URL", icon: "link", trail: `<span class="ctx">${KF.esc(KF.host(e.url))}</span>` },
+        ...fields,
+      ]),
+      g("Entry", [
+        { id: "edit", label: "Edit Entry", icon: "pencil", keys: ["Enter"] },
+        e.url && { id: "open-url", label: "Open in Browser", icon: "external-link" },
+        { id: "history", label: "Show Entry History", icon: "history", keys: ["Ctrl", "H"], trail: e.history ? `<span class="ctx">${e.history} versions</span>` : `<span class="ctx">None yet</span>` },
+        { id: "move", label: "Move to Group…", icon: "folder-input", page: "move", trail: `<span class="ctx">${KF.esc(groupOf(e).name)}</span>` },
+        { id: "delete", label: "Delete Entry", icon: "trash-2", danger: true, keys: ["Del"] },
+      ]),
+      g(`Vault · ${e.vault.name}`, [
+        { id: "vset", label: "Vault Settings", icon: "settings-2" },
+        { id: "mkey", label: "Change Master Key and Encryption…", icon: "key-square" },
+      ]),
+    ];
+  }
+  function globalSecs() {
+    const by = (scopes) => CMDS.filter((c) => scopes.includes(c.scope) && c.scope !== "entry").map((c) => ({ id: c.id, label: c.name, icon: c.icon, keys: c.keys, check: c.sort && c.sort === SORT }));
+    return [{ label: "Vaults", items: by(["vault"]) }, { label: "View", items: by(["view", "sort"]) }, { label: "App", items: by(["app"]) }, { label: "Navigation", items: by(["nav"]) }];
+  }
+  function build() {
+    const e = KF.entry(selId);
+    let secs;
+    if (page === "move") {
+      secs = [{ label: null, items: e.vault.groups.filter((g) => !g.recycle).map((g) => ({ id: "move-to", group: g, label: g.name, icon: g.icon, current: g.id === e.group, trail: g.id === e.group ? `<span class="ctx">Current</span>` : `<span class="ctx">${e.vault.entries.filter((x) => x.group === g.id).length || "No"} Entries</span>` })) }];
+    } else secs = scoped ? actions(e) : globalSecs();
+    if (!q.trim()) return secs;
+    // Filtering flattens the groups into one ranked list, as the real palette does.
+    const flat = secs.flatMap((s) => s.items);
+    const r = flat.map((it, i) => ({ it, m: fuzzy(q, it.label), i })).filter((x) => x.m).sort((a, b) => b.m.score - a.m.score || a.i - b.i);
+    return r.length ? [{ label: null, items: r.map((x) => ({ ...x.it, pos: x.m.positions })) }] : [];
+  }
+  function itemHTML(it, i) {
+    return `<div class="pi ${i === sel ? "is-sel" : ""} ${it.danger ? "danger" : ""} ${it.check ? "is-check" : ""}" data-i="${i}">${KF.icon(it.icon)}<span class="lbl">${hl(it.label, it.pos)}</span><span class="trail">${it.trail || ""}${it.check || it.current ? KF.icon("check", "tick") : ""}${it.page ? KF.icon("chevron-right", "chev") : ""}${kbdKeys(it.keys)}</span></div>`;
+  }
+  function placeLift() {
+    const old = host.querySelector(".lift"); if (old) old.remove();
+    if (!open || !scoped) return;
+    const row = bd.querySelector(`[data-eid="${selId}"]`); if (!row) return;
+    const r = row.getBoundingClientRect(), a = root.getBoundingClientRect();
+    const e = KF.entry(selId);
+    const el = document.createElement("div");
+    el.className = "lift";
+    Object.assign(el.style, { left: r.left - a.left + "px", top: r.top - a.top + "px", width: r.width + "px", height: r.height + "px" });
+    el.innerHTML = `${KF.avatar(e, 20)}<span class="t truncate">${KF.esc(e.title)}</span><span class="u truncate" style="max-width:150px">${KF.esc(e.username)}</span>`;
+    host.querySelector(".scrim").appendChild(el);
+  }
+  function render() {
+    bd.innerHTML = backdrop(selId);
+    if (!open) { host.innerHTML = ""; return; }
+    const e = KF.entry(selId);
+    const secs = build();
+    items = secs.flatMap((s) => s.items);
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    let i = 0;
+    const list = items.length
+      ? secs.map((s) => `${s.label ? `<div class="pal-sec">${KF.esc(s.label)}</div>` : ""}${s.items.map((it) => itemHTML(it, i++)).join("")}`).join("")
+      : `<div class="pal-empty">${KF.icon("search-x")}<div>No matching commands</div><div class="subtle">${scoped ? `Nothing for ${KF.esc(e.title)} matches. ${KF.kbd("⌫")} on an empty field searches every command.` : "Try fewer letters."}</div></div>`;
+    const crumbs = scoped
+      ? `<span class="chip plain">${KF.icon("vault", "ico-sm")}${KF.esc(e.vault.name)}</span><span class="chip-sep">${KF.icon("chevron-right")}</span><span class="chip">${KF.avatar(e, 16)}${KF.esc(e.title)}<span class="x" data-unscope title="Search every command (⌫)">${KF.icon("x")}</span></span>${page === "move" ? `<span class="chip-sep">${KF.icon("chevron-right")}</span><span class="chip plain">${KF.icon("folder-input", "ico-sm")}Move to Group</span>` : ""}`
+      : `<span class="chip plain">${KF.icon("layers", "ico-sm")}All commands</span>`;
+    const crumbTrail = scoped && !page ? `<span class="spacer"></span><span class="h subtle" style="font-size:var(--text-xs);display:inline-flex;gap:6px;align-items:center">${KF.kbd("Alt", "↑↓")} Switch Entry</span>` : "";
+    const ph = page === "move" ? "Pick a Group…" : scoped ? `What do you want to do with ${e.title}?` : "Type a command";
+    const foot = footHint(KF.kbd("↑", "↓"), "Navigate") + footHint(KF.kbd("↵"), page === "move" ? "Move here" : "Run") + `<span class="spacer"></span>` + (scoped && !page ? footHint(KF.kbd("⌫"), "All commands") : "") + footHint(KF.kbd("Esc"), page ? "Back" : "Close");
+    let pal = host.querySelector(".pal");
+    if (!pal) {
+      host.innerHTML = `<div class="scrim soft"><div class="c-anchor"><div class="pal pal-c">
+        <div class="crumbrow"></div>
+        <div class="pal-q">${KF.icon("command")}<input autocomplete="off" spellcheck="false"></div>
+        <div class="pal-list"></div><div class="pal-foot"></div></div></div></div>`;
+      pal = host.querySelector(".pal");
+      const input = pal.querySelector("input");
+      input.value = q;
+      input.addEventListener("input", () => { q = input.value; sel = 0; render(); });
+      input.addEventListener("keydown", onKey);
+      host.querySelector(".scrim").addEventListener("mousedown", (ev) => { if (!ev.target.closest(".pal")) { ev.preventDefault(); close(); } });
+      pal.addEventListener("mousedown", (ev) => { if (!ev.target.closest("input")) ev.preventDefault(); });
+      pal.addEventListener("mousemove", (ev) => { const r = ev.target.closest(".pi"); if (r && +r.dataset.i !== sel) { sel = +r.dataset.i; render(); } });
+      pal.addEventListener("click", (ev) => {
+        if (ev.target.closest("[data-unscope]")) return unscope();
+        const r = ev.target.closest(".pi"); if (r) { sel = +r.dataset.i; run(); }
+      });
+      setTimeout(() => input.focus(), 0);
+    }
+    pal.querySelector(".crumbrow").innerHTML = crumbs + crumbTrail;
+    pal.querySelector("input").placeholder = ph;
+    pal.querySelector(".pal-list").innerHTML = list;
+    pal.querySelector(".pal-foot").innerHTML = foot;
+    scrollSel(pal);
+    placeLift();
+  }
+  function setQ(v) { q = v; const i = host.querySelector(".pal-q input"); if (i) i.value = v; }
+  function run() {
+    const it = items[sel], e = KF.entry(selId); if (!it) return;
+    if (it.page) { page = it.page; setQ(""); sel = 0; return render(); }
+    if (it.id === "move-to") { if (it.current) return; close(); return runCommand("move", e, it.group.name); }
+    close(); runCommand(it.id, e, it.extra);
+  }
+  function unscope() { scoped = false; page = null; setQ(""); sel = 0; render(); host.querySelector(".pal-q input")?.focus(); }
+  function step(d) { const ix = vaultList.findIndex((x) => x.id === selId); selId = vaultList[wrap(ix + d, vaultList.length)].id; scoped = true; page = null; setQ(""); sel = 0; render(); }
+  function onKey(ev) {
+    if (ev.altKey && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) { ev.preventDefault(); return step(ev.key === "ArrowDown" ? 1 : -1); }
+    if (ev.key === "ArrowDown") { ev.preventDefault(); sel = wrap(sel + 1, items.length); render(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); sel = wrap(sel - 1, items.length); render(); }
+    else if (ev.key === "Enter") { ev.preventDefault(); run(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); if (page) { page = null; setQ(""); sel = 0; render(); } else close(); }
+    else if (ev.key === "Backspace" && !q) { ev.preventDefault(); if (page) { page = null; sel = 0; render(); } else if (scoped) unscope(); }
+    else if (ev.key === "Tab") ev.preventDefault();
+    else if (ev.ctrlKey && scoped && !page && ev.target.selectionStart === ev.target.selectionEnd) {
+      const e = KF.entry(selId), id = { c: "copy-pass", b: "copy-user", t: e.totp && "copy-totp", h: "history" }[ev.key.toLowerCase()];
+      if (id) { ev.preventDefault(); close(); runCommand(id, e); }
+    }
+  }
+  function close() { open = false; page = null; q = ""; sel = 0; render(); }
+  LIVE = { isOpen: () => open, open: () => { open = true; scoped = true; render(); }, close };
+  render();
+  window.addEventListener("resize", () => LIVE && LIVE.isOpen() && placeLift());
+  document.fonts && document.fonts.ready.then(() => open && placeLift());
+}
+
+KF.variants({
+  A: { name: "Centred palette · grouped, Entries mixed in", render: variantA },
+  B: { name: "Raycast · list + preview + actions", render: variantB },
+  C: { name: "Contextual · scoped to the Entry", render: variantC },
+});
+</script>
+</body>
+</html>

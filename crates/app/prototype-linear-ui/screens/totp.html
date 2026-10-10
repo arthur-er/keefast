@@ -1,0 +1,412 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TOTP — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- App backdrop ---------- */
+.sh { display: grid; grid-template-columns: var(--sidebar-w) var(--list-w) 1fr; height: 100%; }
+.sh-side { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sh-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sh-detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.sh-vault { display: flex; align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px 0 14px; flex: none; }
+.sh-vault b { font-weight: 600; }
+.sh-vlogo { width: 20px; height: 20px; border-radius: 5px; background: var(--accent); color: var(--fg-on-accent); display: grid; place-items: center; }
+.sh-vlogo svg.lucide { width: 12px; height: 12px; }
+.sh-foot { margin-top: auto; padding: 8px; border-top: 1px solid var(--border); }
+.sh-rows { overflow: hidden; padding: 4px 8px; flex: 1; }
+.sh-rows .row { height: 40px; gap: 10px; }
+.sh-rows .row .t { font-weight: 500; }
+.sh-rows .row .u { color: var(--fg-2); font-size: var(--text-sm); }
+.sh-body { flex: 1; overflow: auto; padding: 24px 32px 96px; }
+.sh-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.sh-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+.sh-status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); margin-right: 4px; }
+.wrap { max-width: 640px; }
+
+/* ---------- Read-only fields ---------- */
+.flds { display: flex; flex-direction: column; }
+.fld { display: grid; grid-template-columns: 112px 1fr auto; align-items: center; column-gap: 12px; min-height: 36px; padding: 0 8px; margin: 0 -8px; border-radius: var(--r-sm); }
+.fld:hover { background: var(--bg-hover); }
+.fld > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.fld > .v { min-width: 0; }
+.fld > .a { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.fld:hover > .a, .fld.is-open > .a { opacity: 1; }
+.fld .btn.sm.icon { color: var(--fg-2); }
+.fld .btn.sm.icon:hover { color: var(--fg-0); }
+.sect { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.sect-h { font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); margin-bottom: 6px; }
+.is-copied { color: var(--ok) !important; }
+
+/* ---------- TOTP code ---------- */
+.code { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; display: inline-flex; gap: 0.45em; color: var(--fg-0); }
+.code.copied { color: var(--ok); font-family: var(--font-ui); letter-spacing: 0; gap: 6px; align-items: center; }
+.cring { flex: none; transform: rotate(-90deg); }
+.cring circle { fill: none; }
+.cring .tr { stroke: var(--border-strong); }
+.cring .pr { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 1s linear, stroke var(--dur) var(--ease); }
+.cring.low .pr { stroke: var(--warn); }
+.secs { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; min-width: 28px; }
+.secs.low { color: var(--warn); }
+.next { font-size: var(--text-sm); color: var(--fg-2); }
+.next .mono { color: var(--fg-1); }
+
+/* Variant A hero card */
+.tc { display: flex; align-items: center; gap: 16px; padding: 14px 16px; border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--border); margin-bottom: 20px; }
+.tc-main { display: flex; align-items: center; gap: 14px; cursor: default; padding: 4px 8px; margin: -4px -8px; border-radius: var(--r-sm); }
+.tc-main:hover { background: var(--bg-hover); }
+.tc .code { font-size: 28px; line-height: 1.1; }
+.tc-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: var(--text-sm); color: var(--fg-2); }
+.tc-sub .hint-copy { opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.tc-main:hover .hint-copy { opacity: 1; }
+.tc-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-left: auto; }
+.tc-label { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 500; }
+
+/* Setup form */
+.tf { display: flex; flex-direction: column; gap: 14px; }
+.tf-grid { display: grid; grid-template-columns: 88px 120px 1fr; gap: 12px; align-items: start; }
+.tf .seg { width: 100%; display: flex; }
+.tf .seg > button { flex: 1; justify-content: center; height: 26px; }
+.tf .seg.is-off { opacity: 0.5; pointer-events: none; }
+.tf .input.is-off { opacity: 0.55; pointer-events: none; }
+.uri-chip { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--accent-bg); color: var(--accent-fg); font-size: var(--text-sm); }
+.uri-chip b { font-weight: 600; }
+.prevbox { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); }
+.prevbox .code { font-size: 20px; }
+.prevbox .lbl { font-size: var(--text-sm); color: var(--fg-2); }
+.prevbox.is-empty { color: var(--fg-2); font-size: var(--text-sm); }
+
+/* Variant B inline expanding section */
+.ix { margin: 2px -9px 8px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--bg-1); overflow: hidden; animation: ix-open var(--dur) var(--ease); }
+@keyframes ix-open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.ix-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px 0; }
+.ix-head h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.ix-body { padding: 12px 16px 16px; }
+.ix-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg-inset); }
+.fld.totp .v { display: flex; align-items: center; gap: 10px; }
+.fld.totp .code { font-size: 15px; cursor: default; }
+.fld.is-open { background: var(--bg-hover); }
+.setup-row { color: var(--fg-2); }
+.setup-row:hover { color: var(--fg-0); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* =================== TOTP model =================== */
+const P = new URL(location.href).searchParams;
+const urlState = P.get("state");
+function base32(s) {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"; let bits = "", out = [];
+  for (const c of s.replace(/=+$/, "")) { const v = A.indexOf(c); bits += v.toString(2).padStart(5, "0"); }
+  for (let i = 0; i + 8 <= bits.length; i += 8) out.push(parseInt(bits.slice(i, i + 8), 2));
+  return new Uint8Array(out);
+}
+async function hotp(secret, counter, digits, algo) {
+  const key = await crypto.subtle.importKey("raw", base32(secret), { name: "HMAC", hash: algo.replace("SHA", "SHA-").replace("SHA--", "SHA-") }, false, ["sign"]);
+  const msg = new ArrayBuffer(8); new DataView(msg).setUint32(4, counter); new DataView(msg).setUint32(0, Math.floor(counter / 2 ** 32));
+  const h = new Uint8Array(await crypto.subtle.sign("HMAC", key, msg));
+  const o = h[h.length - 1] & 15;
+  const n = ((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 10 ** Math.min(digits, 9)).padStart(digits, "0");
+}
+const split = (c) => { if (c.length < 6) return [c]; const h = Math.ceil(c.length / 2); return [c.slice(0, h), c.slice(h)]; };
+const codeHtml = (c) => split(c).map((p) => `<span>${p}</span>`).join("");
+
+/** Parses the form like keefast's TotpSetup::totp(). */
+function parse(f) {
+  const raw = f.secret.trim();
+  if (!raw) return { err: "Enter the secret key or otpauth:// URI.", on: "secret" };
+  let secret = raw, digits = f.digits, period = f.period, algo = f.algo, uri = null;
+  if (/^otpauth:\/\//i.test(raw)) {
+    const m = raw.match(/^otpauth:\/\/([^/]+)\/([^?]*)\??(.*)$/i);
+    if (!m || m[1].toLowerCase() !== "totp") return { err: "This isn't an otpauth://totp/ URI.", on: "secret" };
+    const q = new URLSearchParams(m[3]); const label = decodeURIComponent(m[2]);
+    secret = q.get("secret") || "";
+    digits = q.get("digits") || "6"; period = q.get("period") || "30";
+    algo = (q.get("algorithm") || "SHA1").toUpperCase().replace("-", "");
+    const [issuer, account] = label.includes(":") ? label.split(":") : [q.get("issuer") || "", label];
+    uri = { issuer: q.get("issuer") || issuer, account };
+    if (!secret) return { err: "Enter the secret key or otpauth:// URI.", on: "secret", uri };
+  }
+  secret = secret.replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z2-7]+=*$/.test(secret)) return { err: "The secret key isn't valid: use the letters A–Z and digits 2–7.", on: "secret", uri };
+  const d = Number(digits), p = Number(period);
+  if (!Number.isInteger(d) || d < 1 || d > 10) return { err: "A code has 1 to 10 digits.", on: "digits", uri };
+  if (!Number.isInteger(p) || p < 1 || p > 86400) return { err: "The period is 1 to 86400 seconds.", on: "period", uri };
+  return { secret, digits: d, period: p, algo, uri };
+}
+
+/* Live code for the Entry: starts on 482 913 like the shared story. */
+const totp = { code: "482913", next: "771204", period: 30, left: P.get("left") ? +P.get("left") : 18 };
+const rand6 = () => String(Math.floor(Math.random() * 1e6)).padStart(6, "0");
+function ring(size, left, period, stroke = 2.25) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, off = c * (1 - left / period);
+  return `<svg class="cring ${left <= 5 ? "low" : ""}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle class="tr" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"/><circle class="pr" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}" stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg>`;
+}
+let tickers = [];
+function onTick(fn) { tickers.push(fn); }
+setInterval(() => {
+  totp.left -= 1;
+  if (totp.left <= 0) { totp.code = totp.next; totp.next = rand6(); totp.left = totp.period; }
+  tickers.forEach((f) => f());
+}, 1000);
+let keyHandler = null;
+function onKeys(fn) { if (keyHandler) window.removeEventListener("keydown", keyHandler); keyHandler = fn; window.addEventListener("keydown", fn); }
+
+/* =================== App backdrop =================== */
+const V = KF.vault("personal");
+function sidebar() {
+  const counts = (g) => V.entries.filter((e) => e.group === g).length;
+  return `<aside class="sh-side">
+    <div class="sh-vault"><span class="sh-vlogo">${KF.icon("vault")}</span><b>Personal</b>${KF.icon("chevrons-up-down", "ico-sm subtle")}<span class="spacer"></span><button class="btn ghost sm icon">${KF.icon("square-pen")}</button></div>
+    <div class="nav-section">
+      <div class="nav-item is-selected">${KF.icon("layers")}All Entries<span class="count">${V.entries.length - 1}</span></div>
+      <div class="nav-item">${KF.icon("clock")}Recently modified</div>
+      <div class="nav-item">${KF.icon("triangle-alert")}Expired<span class="count">1</span></div>
+    </div>
+    <div class="nav-section"><div class="nav-head">Groups</div>
+      ${V.groups.filter((g) => g.parent).map((g) => `<div class="nav-item">${KF.icon(g.icon)}${g.name}<span class="count">${counts(g.id) || ""}</span></div>`).join("")}
+    </div>
+    <div class="nav-section"><div class="nav-head">Tags</div>
+      ${[["2fa", "purple"], ["dev", "blue"], ["email", "green"], ["shared", "orange"]].map(([t, c]) => `<div class="nav-item"><span class="dot" style="background:var(--c-${c});width:7px;height:7px;margin:0 4px"></span>${t}</div>`).join("")}
+    </div>
+    <div class="sh-foot">
+      <div class="nav-item">${KF.icon("hard-drive")}Personal<span class="count"><span class="status-dot"></span></span></div>
+      <div class="nav-item">${KF.icon("cloud")}Work<span class="count"><span class="status-dot" style="background:var(--info)"></span></span></div>
+      <div class="nav-item">${KF.icon("lock")}Family</div>
+    </div>
+  </aside>`;
+}
+function entryList(selId) {
+  const es = V.entries.filter((e) => e.group !== "bin");
+  return `<section class="sh-list">
+    <div class="toolbar"><div class="search" style="flex:1">${KF.icon("search", "ico-sm")}<input placeholder="Search Entries"><kbd>/</kbd></div><button class="btn ghost icon">${KF.icon("plus")}</button></div>
+    <div class="list-head" style="padding:4px 18px 0">All Entries<span class="spacer"></span>${KF.icon("arrow-down-wide-narrow", "ico-sm")}</div>
+    <div class="sh-rows">${es.map((e) => `<div class="row ${e.id === selId ? "is-selected" : ""}" data-entry="${e.id}">${KF.avatar(e, 24)}<div style="min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.25"><span class="t truncate">${KF.esc(e.title)}</span><span class="u truncate">${KF.esc(e.username)}</span></div>${e.totp ? `<span class="subtle" title="Has TOTP">${KF.icon("timer", "ico-sm")}</span>` : ""}</div>`).join("")}</div>
+  </section>`;
+}
+function shell(entry, detailHtml) {
+  return `<div class="sh">${sidebar()}${entryList(entry.id)}<section class="sh-detail">${detailHtml}</section></div>`;
+}
+function toolbar(e) {
+  const g = KF.groupPath(V, e.group).map((x) => x.name);
+  return `<div class="toolbar">
+    <div class="crumbs">${g.join(` ${KF.icon("chevron-right", "ico-sm subtle")} `)} ${KF.icon("chevron-right", "ico-sm subtle")} <b>${KF.esc(e.title)}</b></div>
+    <span class="spacer"></span>
+    <span class="sh-status"><span class="status-dot"></span>Saved</span>
+    <button class="btn ghost sm icon" title="History (Ctrl H)">${KF.icon("history")}</button>
+    <button class="btn ghost sm icon" title="More">${KF.icon("ellipsis")}</button>
+    <button class="btn secondary sm">${KF.icon("pencil")}Edit <kbd>E</kbd></button>
+  </div>`;
+}
+function head(e) {
+  return `<div class="sh-head">${KF.avatar(e, 40)}<div style="min-width:0"><h1 class="sh-title">${KF.esc(e.title)}</h1><div class="subtle" style="font-size:var(--text-sm)">${KF.esc(KF.host(e.url))} · Modified ${e.modified === "2026-10-07" ? "Oct 7" : e.modified}</div></div></div>`;
+}
+const fldRow = (k, v, a = "", cls = "") => `<div class="fld ${cls}"><span class="k">${k}</span><div class="v">${v}</div><div class="a">${a}</div></div>`;
+const copyBtn = (what) => `<button class="btn ghost sm icon" data-copy="${what}" title="Copy">${KF.icon("copy")}</button>`;
+function baseFields(e) {
+  return fldRow("Username", `<span class="truncate">${KF.esc(e.username)}</span>`, copyBtn("Username"))
+    + fldRow("Password", `<span class="mono">${KF.mask(14)}</span>`, `<button class="btn ghost sm icon" title="Show">${KF.icon("eye")}</button>${copyBtn("Password")}`)
+    + fldRow("URL", `<a class="truncate" style="display:block">${KF.esc(e.url)}</a>`, `<button class="btn ghost sm icon">${KF.icon("external-link")}</button>`);
+}
+function restFields(e) {
+  return `<div class="sect"><div class="sect-h">Details</div>
+    ${fldRow("Tags", `<span class="hstack" style="gap:6px">${e.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</span>`)}
+    ${e.notes ? fldRow("Notes", `<span class="muted">${KF.esc(e.notes)}</span>`) : ""}
+    ${e.attachments.map((a) => fldRow("Attachment", `<span class="hstack">${KF.icon("paperclip", "ico-sm subtle")}${KF.esc(a.name)} <span class="subtle">${a.size}</span></span>`)).join("")}
+  </div>`;
+}
+function wireCommon(root) {
+  root.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); KF.copy(b.dataset.copy, b); }));
+}
+function copyTotp(el) {
+  KF.toast(`TOTP code copied <span class="subtle">· clipboard clears in 30s</span>`, { seconds: 30, icon: "clipboard-check" });
+  if (!el) return;
+  el.classList.add("copied"); el.innerHTML = `${KF.icon("check", "ico-sm")}Copied`;
+  setTimeout(() => { el.classList.remove("copied"); el.innerHTML = codeHtml(totp.code); }, 1100);
+}
+
+/* Shared setup form */
+function newForm(fromEntry) {
+  return fromEntry ? { secret: "JBSWY3DPEHPK3PXP", digits: "6", period: "30", algo: "SHA1", tried: false } : { secret: "", digits: "6", period: "30", algo: "SHA1", tried: false };
+}
+function formHtml(f, { compact = false } = {}) {
+  const r = parse(f), show = f.tried && r.err;
+  const fromUri = !!r.uri;
+  const err = (on) => (show && r.on === on ? `<div class="error-msg">${KF.icon("circle-alert", "ico-sm")}${KF.esc(r.err)}</div>` : "");
+  const inv = (on) => (show && r.on === on ? "invalid" : "");
+  const algos = [["SHA1", "SHA-1"], ["SHA256", "SHA-256"], ["SHA512", "SHA-512"]];
+  const curAlgo = fromUri ? r.algo || f.algo : f.algo;
+  return `<div class="tf">
+    <div class="field"><label>Secret key or otpauth:// URI</label>
+      <div class="input mono ${inv("secret")}"><input data-f="secret" value="${KF.esc(f.secret)}" placeholder="e.g. JBSWY3DPEHPK3PXP" spellcheck="false" autocomplete="off"><button class="btn ghost sm" data-paste style="margin-right:-6px">${KF.icon("clipboard-paste")}Paste</button></div>
+      ${err("secret") || (fromUri ? `<div class="uri-chip">${KF.icon("link", "ico-sm")}<span>From the URI: <b>${KF.esc(r.uri.issuer || "Unknown issuer")}</b>${r.uri.account ? ` · ${KF.esc(r.uri.account)}` : ""}. Digits, period and algorithm come from it too.</span></div>` : `<div class="hint">Paste the otpauth:// URI from the site's QR code, or type its secret key and settings.</div>`)}
+    </div>
+    <div class="tf-grid">
+      <div class="field"><label>Digits</label><div class="input mono ${inv("digits")} ${fromUri ? "is-off" : ""}"><input data-f="digits" value="${KF.esc(fromUri && r.digits ? r.digits : f.digits)}" inputmode="numeric"></div></div>
+      <div class="field"><label>Period (seconds)</label><div class="input mono ${inv("period")} ${fromUri ? "is-off" : ""}"><input data-f="period" value="${KF.esc(fromUri && r.period ? r.period : f.period)}" inputmode="numeric"></div></div>
+      <div class="field"><label>Algorithm</label><div class="seg ${fromUri ? "is-off" : ""}">${algos.map(([k, l]) => `<button data-algo="${k}" class="${curAlgo === k ? "is-on" : ""}">${l}</button>`).join("")}</div></div>
+    </div>
+    ${err("digits")}${err("period")}
+    ${compact ? "" : `<div class="prevbox ${r.err ? "is-empty" : ""}" data-prev>${previewInner(r)}</div>`}
+  </div>`;
+}
+function previewInner(r) {
+  if (r.err) return `${KF.icon("timer", "ico-sm")}<span>The current code shows here once the secret key is valid.</span>`;
+  return `<span class="lbl">Code now</span><span class="code" data-pcode>${codeHtml("•".repeat(r.digits))}</span><span class="spacer"></span><span data-pring></span><span class="secs" data-psecs></span>`;
+}
+async function fillPreview(root, f) {
+  const r = parse(f); if (r.err) return;
+  const now = Date.now() / 1000, counter = Math.floor(now / r.period), left = Math.ceil(r.period - (now % r.period));
+  try {
+    const c = await hotp(r.secret, counter, r.digits, r.algo);
+    const pc = root.querySelector("[data-pcode]"); if (pc) pc.innerHTML = codeHtml(c);
+    const pr = root.querySelector("[data-pring]"); if (pr) pr.innerHTML = ring(18, left, r.period, 2.5);
+    const ps = root.querySelector("[data-psecs]"); if (ps) { ps.textContent = `${left} s`; ps.classList.toggle("low", left <= 5); }
+  } catch (e) { /* invalid key bytes */ }
+}
+function wireForm(root, f, repaint) {
+  root.querySelectorAll("[data-f]").forEach((i) => (i.oninput = () => { f[i.dataset.f] = i.value; const was = document.activeElement === i; const pos = i.selectionStart; repaint(); if (was) { const n = root.querySelector(`[data-f="${i.dataset.f}"]`); n.focus(); n.setSelectionRange(pos, pos); } }));
+  root.querySelectorAll("[data-algo]").forEach((b) => (b.onclick = () => { f.algo = b.dataset.algo; repaint(); }));
+  const p = root.querySelector("[data-paste]");
+  if (p) p.onclick = () => { f.secret = "otpauth://totp/GitHub:arthur-er?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA1&digits=6&period=30"; repaint(); };
+  fillPreview(root, f);
+}
+
+/* =================== Variant A — hero code card + dialog setup =================== */
+function renderA(root) {
+  const e = KF.entry("e1");
+  let dialog = urlState === "setup" || urlState === "error" || urlState === "uri" ? newForm(true) : null;
+  if (dialog && urlState === "error") Object.assign(dialog, { secret: "JBSWY3DP-EHPK3PXP!", tried: true });
+  if (dialog && urlState === "uri") dialog.secret = "otpauth://totp/GitHub:arthur-er?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA1&digits=6&period=30";
+  function hero() {
+    return `<div class="tc">
+      <div class="tc-main" data-totp title="Click or press Ctrl+T to copy">
+        <span data-ring>${ring(32, totp.left, totp.period, 3)}</span>
+        <div><div class="code" data-code>${codeHtml(totp.code)}</div>
+          <div class="tc-sub"><span class="secs" data-secs style="min-width:0">${totp.left} s</span><span>·</span><span class="next">Next <span class="mono" data-next>${split(totp.next).join(" ")}</span></span></div></div>
+      </div>
+      <div class="tc-meta" style="flex-direction:row;align-items:center;gap:6px">
+        <button class="btn secondary sm" data-copybtn>${KF.icon("copy")}Copy ${KF.kbd("Ctrl", "T")}</button>
+        <button class="btn ghost sm" data-setup title="Set up TOTP">TOTP…</button>
+      </div>
+    </div>`;
+  }
+  function paint() {
+    root.innerHTML = shell(e, `${toolbar(e)}<div class="sh-body"><div class="wrap">${head(e)}${hero()}<div class="flds">${baseFields(e)}</div>${restFields(e)}</div></div>`)
+      + (dialog ? `<div class="scrim" data-scrim><div class="dialog" style="width:520px" data-dialog>
+          <div class="dialog-head"><h2 class="dialog-title">Set up TOTP</h2><p class="dialog-desc">Codes for <b style="color:var(--fg-0);font-weight:500">GitHub</b> are made from this secret. Anyone with it can make them, so it's kept encrypted like the password.</p></div>
+          <div class="dialog-body" data-form>${formHtml(dialog)}</div>
+          <div class="dialog-foot"><button class="btn danger-ghost sm" data-remove>${KF.icon("trash-2")}Remove TOTP</button><span class="spacer"></span>
+            <button class="btn ghost sm" data-cancel>Cancel <kbd>Esc</kbd></button><button class="btn primary sm" data-save>Save <kbd>↵</kbd></button></div>
+        </div></div>` : "");
+    wireCommon(root);
+    const $ = (s) => root.querySelector(s);
+    $("[data-totp]").onclick = () => copyTotp($("[data-code]"));
+    $("[data-copybtn]").onclick = () => copyTotp($("[data-code]"));
+    $("[data-setup]").onclick = () => { dialog = newForm(true); paint(); setTimeout(() => $("[data-f=secret]")?.focus(), 0); };
+    if (dialog) {
+      const repaintForm = () => { $("[data-form]").innerHTML = formHtml(dialog); wireForm($("[data-form]"), dialog, repaintForm); };
+      wireForm($("[data-form]"), dialog, repaintForm);
+      $("[data-cancel]").onclick = () => { dialog = null; paint(); };
+      $("[data-scrim]").onclick = (ev) => { if (ev.target.dataset.scrim !== undefined) { dialog = null; paint(); } };
+      $("[data-remove]").onclick = () => { dialog = null; paint(); KF.toast("TOTP removed from GitHub · save to keep the change", { icon: "trash-2" }); };
+      $("[data-save]").onclick = save;
+    }
+  }
+  function save() {
+    dialog.tried = true; const r = parse(dialog);
+    if (r.err) { const fm = root.querySelector("[data-form]"); const rp = () => { fm.innerHTML = formHtml(dialog); wireForm(fm, dialog, rp); }; rp(); return; }
+    dialog = null; paint(); KF.toast("TOTP set up for GitHub", { icon: "check" });
+  }
+  tickers = [() => {
+    const r = root.querySelector("[data-ring]"); if (r) r.innerHTML = ring(32, totp.left, totp.period, 3);
+    const s = root.querySelector("[data-secs]"); if (s) { s.textContent = `${totp.left} s`; s.classList.toggle("low", totp.left <= 5); }
+    const c = root.querySelector("[data-code]"); if (c && !c.classList.contains("copied")) c.innerHTML = codeHtml(totp.code);
+    const n = root.querySelector("[data-next]"); if (n) n.textContent = split(totp.next).join(" ");
+    if (dialog) fillPreview(root, dialog);
+  }];
+  onKeys((ev) => {
+    if (ev.ctrlKey && ev.key.toLowerCase() === "t") { ev.preventDefault(); copyTotp(root.querySelector("[data-code]")); }
+    else if (dialog && ev.key === "Escape") { dialog = null; paint(); }
+    else if (dialog && ev.key === "Enter") { ev.preventDefault(); save(); }
+  });
+  paint();
+}
+
+/* =================== Variant B — TOTP is a field; setup expands inline =================== */
+function renderB(root) {
+  let entryId = urlState === "new" ? "e3" : "e1";
+  let form = urlState === "new" ? newForm(false) : urlState === "closed" ? null : newForm(true);
+  if (urlState === "error") form = Object.assign(newForm(true), { secret: "otpauth://hotp/GitHub:arthur-er?secret=JBSWY3DPEHPK3PXP&counter=4", tried: true });
+  function totpRow(e) {
+    const has = !!e.totp;
+    if (!has && !form) return `<div class="fld setup-row" data-open><span class="k">TOTP</span><div class="v hstack" style="gap:6px">${KF.icon("plus", "ico-sm")}Set up TOTP</div><div class="a"></div></div>`;
+    if (!has && form) return `<div class="fld is-open"><span class="k">TOTP</span><div class="v subtle">Not set up</div><div class="a"></div></div>`;
+    const r = form ? parse(form) : null;
+    return `<div class="fld totp ${form ? "is-open" : ""}" title="Click or press Ctrl+T to copy">
+      <span class="k">TOTP</span>
+      <div class="v"><span class="code" data-code>${codeHtml(totp.code)}</span><span data-ring>${ring(16, totp.left, totp.period, 2.25)}</span><span class="secs" data-secs>${totp.left} s</span><span class="next">Next <span class="mono" data-next>${split(totp.next).join(" ")}</span></span></div>
+      <div class="a"><button class="btn ghost sm icon" data-copytotp title="Copy (Ctrl T)">${KF.icon("copy")}</button><button class="btn ghost sm icon ${form ? "" : ""}" data-open title="TOTP…" style="${form ? "color:var(--accent-fg);background:var(--accent-bg)" : ""}">${KF.icon("settings-2")}</button></div>
+    </div>`;
+  }
+  function section(e) {
+    if (!form) return "";
+    const has = !!e.totp;
+    return `<div class="ix" data-ix>
+      <div class="ix-head"><h3>${has ? "TOTP settings" : "Set up TOTP"}</h3><span class="spacer"></span><button class="btn ghost sm icon" data-close title="Close (Esc)">${KF.icon("x")}</button></div>
+      <div class="ix-body" data-form>${formHtml(form)}</div>
+      <div class="ix-foot">${has ? `<button class="btn danger-ghost sm" data-remove>${KF.icon("trash-2")}Remove TOTP</button>` : `<span class="hint">Saved with the Entry, encrypted like its password.</span>`}<span class="spacer"></span>
+        <button class="btn ghost sm" data-close>Cancel <kbd>Esc</kbd></button><button class="btn primary sm" data-save>${has ? "Save" : "Set up TOTP"} <kbd>↵</kbd></button></div>
+    </div>`;
+  }
+  function paint() {
+    const e = KF.entry(entryId);
+    root.innerHTML = shell(e, `${toolbar(e)}<div class="sh-body"><div class="wrap">${head(e)}<div class="flds">${baseFields(e)}${totpRow(e)}${section(e)}</div>${restFields(e)}</div></div>`);
+    wireCommon(root);
+    const $ = (s) => root.querySelector(s);
+    root.querySelectorAll("[data-entry]").forEach((r) => (r.onclick = () => { entryId = r.dataset.entry; form = null; paint(); }));
+    root.querySelectorAll("[data-open]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); form = form ? null : newForm(!!e.totp); paint(); setTimeout(() => $("[data-f=secret]")?.focus(), 0); }));
+    const t = root.querySelector(".fld.totp"); if (t) t.onclick = (ev) => { if (!ev.target.closest(".a")) copyTotp($("[data-code]")); };
+    const ct = $("[data-copytotp]"); if (ct) ct.onclick = (ev) => { ev.stopPropagation(); copyTotp($("[data-code]")); };
+    if (form) {
+      const fm = $("[data-form]"); const rp = () => { fm.innerHTML = formHtml(form); wireForm(fm, form, rp); };
+      wireForm(fm, form, rp);
+      root.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { form = null; paint(); }));
+      const rm = $("[data-remove]"); if (rm) rm.onclick = () => { e.totp = null; form = null; paint(); KF.toast("TOTP removed · save to keep the change", { icon: "trash-2" }); };
+      $("[data-save]").onclick = () => save(e, rp);
+    }
+  }
+  function save(e, rp) {
+    form.tried = true; const r = parse(form);
+    if (r.err) { rp(); return; }
+    const had = !!e.totp; e.totp = { code: totp.code }; form = null; paint();
+    KF.toast(had ? "TOTP settings saved" : `TOTP set up for ${KF.esc(e.title)}`, { icon: "check" });
+  }
+  tickers = [() => {
+    const r = root.querySelector("[data-ring]"); if (r) r.innerHTML = ring(16, totp.left, totp.period, 2.25);
+    const s = root.querySelector("[data-secs]"); if (s) { s.textContent = `${totp.left} s`; s.classList.toggle("low", totp.left <= 5); }
+    const c = root.querySelector("[data-code]"); if (c && !c.classList.contains("copied")) c.innerHTML = codeHtml(totp.code);
+    const n = root.querySelector("[data-next]"); if (n) n.textContent = split(totp.next).join(" ");
+    if (form) fillPreview(root, form);
+  }];
+  onKeys((ev) => {
+    if (ev.ctrlKey && ev.key.toLowerCase() === "t") { ev.preventDefault(); const c = root.querySelector("[data-code]"); if (c) copyTotp(c); }
+    else if (form && ev.key === "Escape") { form = null; paint(); }
+    else if (form && ev.key === "Enter") { ev.preventDefault(); root.querySelector("[data-save]").click(); }
+  });
+  paint();
+}
+
+KF.variants({
+  A: { name: "Hero code card · setup dialog", render: renderA },
+  B: { name: "TOTP field · setup expands inline", render: renderB },
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1212 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vault browser — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css">
+<link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="../kit/kit.js"></script>
+<style>
+/* ---------- Shell ---------- */
+.vb { display: flex; height: 100%; }
+.vb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.vb-panes { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* ---------- Sidebar ---------- */
+.vb-side { width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--bg-sidebar); border-right: 1px solid var(--border); }
+.vb-side-top { height: var(--toolbar-h); flex: none; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; }
+.vb-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
+.vb-brand-mark { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; background: var(--accent); color: var(--fg-on-accent); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2); }
+.vb-brand-mark svg.lucide { width: 12px; height: 12px; stroke-width: 2.25; }
+.vb-side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+.vb-side-scroll::-webkit-scrollbar { width: 6px; }
+.vb-side .nav-section { padding: 2px 8px; }
+.vb-side .nav-section + .nav-section { margin-top: 10px; }
+.vb-side .nav-item { gap: 8px; }
+.vb-side .nav-item .count { min-width: 14px; text-align: right; }
+.vb-nav-vault { color: var(--fg-0); }
+.vb-nav-vault .vb-vault-ico { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.vb-nav-vault .vb-vault-ico svg.lucide { width: 11px; height: 11px; stroke-width: 2; }
+.vb-nav-vault .vb-chev { width: 12px; color: var(--fg-2); margin-left: -2px; margin-right: -4px; transition: transform var(--dur-fast) var(--ease); }
+.vb-nav-vault .vb-chev svg.lucide { width: 12px; height: 12px; }
+.vb-nav-vault.is-collapsed .vb-chev { transform: rotate(-90deg); }
+.vb-sync { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 450; margin-left: auto; }
+.vb-sync + .count { margin-left: 8px; }
+.vb-nav-locked { color: var(--fg-2); }
+.vb-nav-locked svg.lucide { color: var(--fg-2); }
+.vb-tree { position: relative; }
+.vb-tree .nav-item svg.lucide { color: var(--fg-2); }
+.vb-tree .nav-item.is-selected svg.lucide { color: var(--fg-1); }
+.vb-bmark { display: inline-grid; place-items: center; color: var(--accent-fg); margin-left: -2px; }
+.vb-bmark svg.lucide { width: 12px !important; height: 12px !important; color: var(--accent-fg) !important; }
+.vb-colors { display: flex; gap: 2px; padding: 2px 4px; }
+.vb-color { width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center; cursor: default; }
+.vb-color:hover { background: var(--bg-hover); }
+.vb-color.is-selected { background: var(--bg-active); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.vb-color .dot { width: 10px; height: 10px; }
+.vb-side-bottom { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; }
+.vb-side-foot { flex: none; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; border-top: 1px solid var(--border); }
+.vb-side-foot .btn.ghost { color: var(--fg-1); }
+.nav-head .btn { margin-left: auto; }
+.vb-more { color: var(--fg-2); font-weight: 450; }
+
+/* ---------- Toolbar ---------- */
+.vb .toolbar { height: var(--toolbar-h); gap: 6px; padding: 0 10px 0 16px; }
+.vb .crumbs svg.lucide { color: var(--fg-2); width: 14px; height: 14px; }
+.vb .crumbs .sep { color: var(--fg-2); }
+.vb-status { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 8px; border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-1); cursor: default; white-space: nowrap; }
+.vb-status:hover { background: var(--bg-hover); color: var(--fg-0); }
+#app .status-dot.unsaved { background: var(--warn); }
+#app .status-dot.failed { background: var(--danger); }
+#app .status-dot.saving { background: var(--fg-2); animation: vb-pulse 1s ease-in-out infinite; }
+.vb-status.is-failed { color: var(--danger); }
+.vb-status.is-unsaved { color: var(--warn); }
+@keyframes vb-pulse { 50% { opacity: 0.3; } }
+.vb-spin { animation: vb-spin 0.9s linear infinite; }
+@keyframes vb-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Merge notice ---------- */
+.vb-merge { flex: none; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-1); font-size: var(--text-sm); color: var(--fg-1); animation: kf-fade var(--dur) var(--ease); }
+.vb-merge > svg.lucide { color: var(--accent-fg); width: 14px; height: 14px; }
+.vb-merge b { color: var(--fg-0); font-weight: 500; }
+.vb-merge .btn.sm { height: 24px; }
+
+/* ---------- Entry list ---------- */
+.vb-list { width: var(--list-w); flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-height: 0; }
+.vb-list-head { flex: none; display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px 0 16px; }
+.vb-list-title { font-size: var(--text-md); font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vb-list-title .count { color: var(--fg-2); font-weight: 450; font-variant-numeric: tabular-nums; }
+.vb-list-search { flex: none; padding: 0 12px 8px; }
+.vb-list-search .search kbd { margin-left: auto; }
+.vb-list-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+.vb-erow { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 10px; border-radius: var(--r-sm); cursor: default; position: relative; }
+.vb-erow:hover { background: var(--bg-hover); }
+.vb-erow.is-selected { background: var(--bg-active); }
+.vb-erow.is-ctx { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.vb-erow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vb-erow-title { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--fg-0); min-width: 0; }
+.vb-erow-sub { font-size: var(--text-sm); color: var(--fg-2); }
+.vb-erow-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.vb-erow-meta .hstack { gap: 6px; height: 12px; }
+.vb-erow-meta svg.lucide { width: 12px; height: 12px; }
+.vb-erow .dot { width: 7px; height: 7px; }
+.vb-hl { background: var(--accent-bg); color: var(--accent-fg); border-radius: 2px; }
+.vb-badge-exp { height: 18px; padding: 0 5px; }
+
+/* ---------- Empty ---------- */
+.vb-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-1); text-align: center; padding: 24px; }
+.vb-empty > svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
+.vb-empty p { margin: 0; }
+
+/* ---------- Detail (shared) ---------- */
+.vb-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.vb-detail-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.vb-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; line-height: 1.2; }
+.vb-title-input { all: unset; font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; width: 100%; border-radius: 4px; box-shadow: 0 0 0 1px var(--border-strong); padding: 2px 6px; margin: -3px -7px; }
+.vb-title-input:focus { box-shadow: var(--ring); }
+.vb-sect { margin-top: 24px; }
+.vb-sect-head { display: flex; align-items: center; gap: 8px; height: 24px; margin-bottom: 6px; font-size: var(--text-sm); font-weight: 500; color: var(--fg-1); }
+.vb-sect-head .count { color: var(--fg-2); font-weight: 450; }
+.vb-sect-head .btn { margin-left: auto; }
+.vb-fields { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-1); }
+.vb-f { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; column-gap: 12px; min-height: 40px; padding: 0 6px 0 14px; position: relative; }
+.vb-f + .vb-f { border-top: 1px solid var(--border); }
+.vb-f > .k { color: var(--fg-2); font-size: var(--text-sm); }
+.vb-f > .v { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.vb-f > .v .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; padding: 2px 6px; margin: 0 -6px; cursor: default; }
+.vb-f > .v .val[data-copy]:hover { background: var(--bg-hover); }
+.vb-f > .acts { display: flex; align-items: center; gap: 2px; }
+.vb-f .acts .kbds { opacity: 0; transition: opacity var(--dur-fast) var(--ease); margin-right: 4px; }
+.vb-f:hover .acts .kbds { opacity: 1; }
+.vb-f .btn.sm.icon { color: var(--fg-2); }
+.vb-f .btn.sm.icon:hover { color: var(--fg-0); }
+.vb-f .flash { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: var(--r-sm); background: var(--ok-bg); color: var(--ok); font-size: var(--text-sm); font-weight: 500; }
+.vb-f .flash svg.lucide { width: 13px; height: 13px; }
+.vb-f.is-copied .flash { display: inline-flex; animation: kf-pop var(--dur-fast) var(--ease); }
+.vb-f.is-copied .acts { visibility: hidden; }
+.vb-f .input { height: 28px; }
+.vb-pw { font-family: var(--font-mono); letter-spacing: 0.02em; }
+.vb-pw.masked { letter-spacing: 0.12em; color: var(--fg-1); }
+.vb-f .val.vb-pw { flex: none; max-width: 100%; }
+.vb-strength { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--fg-2); white-space: nowrap; }
+.vb-strength .strength { width: 40px; }
+.vb-totp { display: flex; align-items: center; gap: 10px; }
+.vb-totp .code { font-family: var(--font-mono); font-size: 15px; font-weight: 500; letter-spacing: 0.06em; color: var(--fg-0); }
+.vb-totp .left { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; width: 22px; }
+.vb-totp.is-low .code { color: var(--warn); }
+.vb-totp.is-low .ring { background: conic-gradient(var(--warn) calc(var(--p) * 360deg), var(--border-strong) 0); }
+.vb-link { color: var(--fg-0); display: inline-flex; align-items: center; gap: 6px; }
+.vb-link svg.lucide { width: 12px; height: 12px; color: var(--fg-2); }
+.vb-link:hover { color: var(--accent-fg); }
+.vb-notes { color: var(--fg-0); line-height: 1.6; white-space: pre-wrap; user-select: text; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.vb-notes.empty { color: var(--fg-2); }
+.vb-file { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px 0 12px; }
+.vb-file + .vb-file { border-top: 1px solid var(--border); }
+.vb-file-ico { width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+.vb-file-ico svg.lucide { width: 14px; height: 14px; }
+.vb-file .name { font-weight: 500; }
+.vb-file .size { font-size: var(--text-xs); color: var(--fg-2); }
+.vb-acc { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 6px 0 14px; }
+.vb-acc + .vb-acc { border-top: 1px solid var(--border); }
+.vb-acc .host { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-sm); }
+.vb-acc > svg.lucide { color: var(--fg-2); width: 14px; height: 14px; }
+.vb-prop { display: grid; grid-template-columns: 84px 1fr; align-items: center; min-height: 32px; column-gap: 8px; }
+.vb-prop > .k { font-size: var(--text-sm); color: var(--fg-2); }
+.vb-prop > .v { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: var(--text-sm); color: var(--fg-0); }
+.vb-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; margin-left: -8px; border-radius: var(--r-sm); cursor: default; color: var(--fg-0); font-size: var(--text-sm); white-space: nowrap; }
+.vb-chip:hover { background: var(--bg-hover); }
+.vb-chip svg.lucide { width: 14px; height: 14px; color: var(--fg-2); }
+.vb-chip .dot { width: 8px; height: 8px; }
+.vb .tag { height: 22px; font-size: var(--text-xs); padding: 0 8px; gap: 5px; color: var(--fg-1); }
+.vb .tag .dot { width: 6px; height: 6px; background: var(--fg-2); }
+.vb-sep { height: 1px; background: var(--border); margin: 8px 0; }
+
+/* ---------- Locked Vault card ---------- */
+.vb-locked { flex: 1; display: grid; place-items: center; background: var(--bg-0); }
+.vb-ucard { width: 360px; display: flex; flex-direction: column; gap: 16px; animation: kf-pop var(--dur) var(--ease); }
+.vb-ucard-head { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; margin-bottom: 4px; }
+.vb-ucard-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--bg-1); border: 1px solid var(--border-strong); color: var(--fg-1); }
+.vb-ucard-ico svg.lucide { width: 20px; height: 20px; }
+.vb-ucard h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+.vb-ucard .file { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-2); }
+.vb-keyfile { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; border-radius: var(--r-sm); border: 1px dashed var(--border-strong); color: var(--fg-2); font-size: var(--text-sm); }
+.vb-keyfile svg.lucide { width: 14px; height: 14px; }
+
+/* ---------- Popovers / menus ---------- */
+.vb-backdrop { position: absolute; inset: 0; z-index: 60; }
+.vb-pop { position: absolute; z-index: 61; }
+.vb-pop .menu-item .check-mark { margin-left: auto; color: var(--accent-fg); }
+.vb-pop .menu-item .check-mark svg.lucide { color: var(--accent-fg); width: 14px; height: 14px; }
+.vb-pop .menu-item .sub { margin-left: auto; color: var(--fg-2); font-size: var(--text-sm); }
+.vb-menu-colors { display: flex; align-items: center; gap: 2px; padding: 2px 4px 4px 30px; }
+.vb-menu-colors .vb-color { width: 24px; height: 24px; }
+.vb-status-pop { width: 340px; padding: 4px; }
+.search:focus-within kbd { display: none; }
+.vb-status-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 5px; }
+.vb-status-row .name { font-weight: 500; }
+.vb-status-row .file { font-size: var(--text-xs); color: var(--fg-2); font-family: var(--font-mono); }
+
+/* ---------- Variant A: three-pane + property rail ---------- */
+.A-dtop { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 10px 0 24px; flex: none; }
+.A-body { display: grid; grid-template-columns: minmax(0, 1fr) 216px; min-height: 100%; }
+.A-content { padding: 8px 28px 40px; min-width: 0; }
+.A-rail { border-left: 1px solid var(--border); padding: 16px 16px 24px 20px; }
+.A-rail .vb-sect-head { margin-top: 18px; }
+.A-rail .vb-sect-head:first-child { margin-top: 0; }
+.A-rail .vb-prop { grid-template-columns: 72px 1fr; }
+.A-rail .vb-strength .strength { width: 24px !important; }
+.A-hero { display: flex; align-items: center; gap: 14px; margin: 8px 0 20px; }
+.A-hero .sub { color: var(--fg-2); font-size: var(--text-sm); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+
+/* ---------- Variant B: table + peek ---------- */
+.B-search { width: 300px; }
+.B-table { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.B-grid { display: grid; grid-template-columns: 36px minmax(180px, 1.3fr) minmax(160px, 1.2fr) minmax(140px, 1fr) 150px 104px 16px; }
+.B-head { position: sticky; top: 0; z-index: 2; background: var(--bg-0); border-bottom: 1px solid var(--border); height: 32px; align-items: center; padding: 0 8px 0 12px; }
+.B-head > div { font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); display: flex; align-items: center; gap: 4px; padding-left: 8px; cursor: default; white-space: nowrap; }
+.B-head > div[data-sort]:hover { color: var(--fg-0); }
+.B-head > div.is-on { color: var(--fg-0); }
+.B-head svg.lucide { width: 12px; height: 12px; }
+.B-rows { padding: 4px 8px 80px; }
+.B-row { height: 36px; align-items: center; border-radius: var(--r-sm); padding: 0 0 0 4px; cursor: default; }
+.B-row:hover { background: var(--bg-hover); }
+.B-row.is-selected { background: var(--bg-active); }
+.B-row.is-ctx { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.B-row > div { min-width: 0; padding-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-1); }
+.B-row > .c-title { color: var(--fg-0); font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.B-row > .c-user, .B-row > .c-url { font-size: var(--text-sm); }
+.B-row > .c-url { color: var(--fg-2); }
+.B-row > .c-mod { font-size: var(--text-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.B-row .tags { display: flex; gap: 4px; }
+.B-row .tag { height: 20px; }
+.B-row .c-ico { display: grid; place-items: center; padding-left: 4px; }
+.B-table.is-peek { padding-right: 464px; }
+.B-table.is-peek .B-grid { grid-template-columns: 36px minmax(150px, 1.2fr) minmax(140px, 1fr) 104px 16px; }
+.B-table.is-peek .c-url, .B-table.is-peek .c-tags { display: none !important; }
+.B-group { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; margin-top: 8px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.B-peek { position: absolute; top: 8px; right: 8px; bottom: 8px; width: 448px; z-index: 30; display: flex; flex-direction: column; background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); animation: kf-slide var(--dur) var(--ease); overflow: hidden; }
+.B-peek-top { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); flex: none; }
+.B-peek-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 24px; }
+.B-peek .vb-fields { background: var(--bg-0); }
+:root[data-theme="light"] .B-peek .vb-fields { background: var(--bg-2); }
+.B-peek .vb-f { grid-template-columns: 84px 1fr auto; }
+.B-peek-foot { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg-inset); }
+.B-peek-foot .btn { flex: 1; justify-content: space-between; }
+.B-props { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+
+/* ---------- Variant C: grouped list + tabbed inspector ---------- */
+.C-switch { display: flex; align-items: center; gap: 10px; height: 44px; margin: 0 8px; padding: 0 8px; border-radius: var(--r-sm); cursor: default; }
+.C-switch:hover { background: var(--bg-hover); }
+.C-switch .vb-vault-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-bg); color: var(--accent-fg); flex: none; }
+.C-switch .vb-vault-ico svg.lucide { width: 13px; height: 13px; }
+.C-switch .name { font-weight: 600; }
+.C-switch .file { font-size: var(--text-xs); color: var(--fg-2); }
+.C-switch > svg.lucide { margin-left: auto; color: var(--fg-2); width: 14px; height: 14px; }
+.C-list { width: 360px; }
+.C-ghead { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; margin: 0 -8px; padding-left: 18px; background: var(--bg-0); font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); cursor: default; }
+.C-ghead:hover { color: var(--fg-1); }
+.C-ghead svg.lucide { width: 12px; height: 12px; }
+.C-ghead .count { font-variant-numeric: tabular-nums; }
+.C-ghead.is-collapsed .chev { transform: rotate(-90deg); }
+.C-row { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--r-sm); cursor: default; }
+.C-row:hover { background: var(--bg-hover); }
+.C-row.is-selected { background: var(--bg-active); }
+.C-row.is-ctx { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.C-row .t { font-weight: 500; flex: none; max-width: 150px; }
+.C-row .u { color: var(--fg-2); font-size: var(--text-sm); flex: 1; }
+.C-row .m { display: flex; align-items: center; gap: 6px; flex: none; color: var(--fg-2); }
+.C-row .m svg.lucide { width: 12px; height: 12px; }
+.C-row .dot { width: 7px; height: 7px; }
+.C-insp-top { flex: none; padding: 20px 28px 0; }
+.C-hero { display: flex; align-items: flex-start; gap: 14px; }
+.C-hero .sub { color: var(--fg-2); font-size: var(--text-sm); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.C-quick { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 18px; }
+.C-qt { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg-1); cursor: default; min-width: 0; transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease); }
+.C-qt:hover { border-color: var(--border-strong); background: var(--bg-2); }
+.C-qt .k { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--fg-2); }
+.C-qt .k .kbds { margin-left: auto; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.C-qt:hover .k .kbds { opacity: 1; }
+.C-qt .v { font-size: var(--text-md); color: var(--fg-0); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 20px; display: flex; align-items: center; gap: 8px; }
+.C-qt.is-copied { border-color: var(--ok); }
+.C-qt.is-copied .k::after { content: "Copied"; color: var(--ok); margin-left: auto; font-weight: 500; }
+.C-qt.is-copied .k .kbds { display: none; }
+.C-qt .eye { position: absolute; right: 6px; bottom: 6px; }
+.C-tabs { display: flex; gap: 2px; margin-top: 20px; border-bottom: 1px solid var(--border); }
+.C-tab { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; font-size: var(--text-md); font-weight: 500; color: var(--fg-2); cursor: default; }
+.C-tab:hover { color: var(--fg-0); }
+.C-tab.is-on { color: var(--fg-0); }
+.C-tab.is-on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--fg-0); }
+.C-tab .count { font-size: var(--text-xs); color: var(--fg-2); font-weight: 450; }
+.C-pane { padding: 20px 28px 40px; }
+.C-ver { display: grid; grid-template-columns: 20px 1fr auto; column-gap: 10px; padding: 8px 0; position: relative; }
+.C-ver .node { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--bg-0); margin: 5px auto 0; position: relative; z-index: 1; }
+.C-ver.is-current .node { border-color: var(--accent); background: var(--accent); }
+.C-ver:not(:last-child)::before { content: ""; position: absolute; left: 9.5px; top: 22px; bottom: -6px; width: 1px; background: var(--border-strong); }
+.C-ver .what { font-weight: 500; }
+.C-ver .when { font-size: var(--text-sm); color: var(--fg-2); }
+.C-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ======================================================================
+   Data + state (shared by every variant)
+   ====================================================================== */
+const D = KF.data;
+const TODAY = new Date("2026-10-09T12:00:00");
+const P = new URL(location.href).searchParams;
+const STATE = P.get("state") || "";
+D.vaults.forEach((v) => v.entries.forEach((e) => (e._v = v.id)));
+// A richer story for the hero Entries.
+Object.assign(KF.entry("e1"), {
+  created: "2021-04-18",
+  notes: "Recovery codes are in the attachment.\nSSH signing key lives in the Work Vault (bastion).",
+  fields: [{ name: "PAT (ci)", value: "ghp_4fT9aQ2mX8LkR1vZ7pN3", protected: true }, { name: "Org", value: "arthur-er", protected: false }],
+  attachments: [{ name: "github-recovery-codes.txt", size: "1.2 KB", kind: "text" }, { name: "signing-key.asc", size: "3.4 KB", kind: "key" }],
+  access: [{ site: "github.com", decision: "allow" }, { site: "gist.github.com", decision: "allow" }, { site: "github-sso.example.net", decision: "deny" }],
+});
+KF.entry("e13").access = [{ site: "figma.com", decision: "allow" }];
+KF.entry("w1").access = [{ site: "signin.aws.amazon.com", decision: "allow" }];
+KF.entry("e2").access = [{ site: "account.proton.me", decision: "allow" }];
+
+const st = {
+  scope: { k: "vault", v: "personal" },
+  sel: "e1",
+  q: "",
+  sort: "title",
+  reveal: {},
+  edit: false,
+  save: { personal: "saved", work: "saved" },
+  sync: { work: "synced" },
+  merge: true,
+  peek: true,
+  tab: "overview",
+  collapsed: {},
+  tagsOpen: false,
+  ctx: null,
+};
+if (STATE === "locked") st.scope = { k: "vault", v: "family" };
+if (STATE === "unsaved") st.save.personal = "unsaved";
+if (STATE === "saving") st.save.personal = "saving";
+if (STATE === "failed") st.save.personal = "failed";
+if (STATE === "nomatch") st.q = "zebra";
+if (STATE === "empty") { st.scope = { k: "trash", v: "work" }; }
+if (P.get("tab")) st.tab = P.get("tab");
+if (P.get("entry")) { st.sel = P.get("entry"); const e = KF.entry(st.sel); if (e) st.scope = { k: "vault", v: e._v }; }
+
+/* ---------- Helpers ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = KF.esc, I = KF.icon, K = KF.kbd;
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dt = (s) => new Date(s + "T00:00:00");
+const daysFrom = (s) => Math.round((dt(s) - TODAY) / 864e5);
+const fmtDate = (s) => { const d = dt(s); return d.getFullYear() === 2026 ? `${MON[d.getMonth()]} ${d.getDate()}` : `${MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`; };
+const fmtShort = (s) => { const n = -daysFrom(s); if (n <= 0) return "Today"; if (n === 1) return "Yesterday"; if (n < 7) return `${n}d ago`; return fmtDate(s); };
+const isExpired = (e) => e.expires && dt(e.expires) < TODAY;
+const expiresSoon = (e) => e.expires && !isExpired(e) && daysFrom(e.expires) <= 30;
+const vaultOf = (e) => KF.vault(e._v);
+const binOf = (v) => v.groups.find((g) => g.recycle);
+const groupOf = (e) => vaultOf(e).groups.find((g) => g.id === e.group);
+const descendants = (v, gid) => { const out = [gid]; v.groups.filter((g) => g.parent === gid).forEach((g) => out.push(...descendants(v, g.id))); return out; };
+const inBin = (e) => { const v = vaultOf(e); const b = binOf(v); return b && descendants(v, b.id).includes(e.group); };
+const openVaults = () => D.vaults.filter((v) => !v.locked);
+const live = () => openVaults().flatMap((v) => v.entries).filter((e) => !inBin(e));
+const totpCode = (e) => e.totp.code.replace(/\s/g, "");
+const fmtCode = (c) => c.slice(0, 3) + " " + c.slice(3);
+const strength = (pw) => {
+  if (!pw) return { score: 0, bits: 0, label: "" };
+  let cs = 0; if (/[a-z]/.test(pw)) cs += 26; if (/[A-Z]/.test(pw)) cs += 26; if (/\d/.test(pw)) cs += 10; if (/[^a-zA-Z0-9]/.test(pw)) cs += 32;
+  let bits = Math.round(pw.length * Math.log2(Math.max(cs, 2)));
+  if (/password|123/i.test(pw)) bits = Math.min(bits, 22);
+  const score = bits < 36 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4;
+  return { score, bits, label: ["", "Weak", "Fair", "Strong", "Very strong"][score] };
+};
+const locLabel = (e) => { const g = groupOf(e), v = vaultOf(e); return g.parent ? `${esc(v.name)} / ${esc(g.name)}` : esc(v.name); };
+const vaultIcon = (v) => (v.locked ? "lock" : v.storage === "dropbox" ? "cloud" : "hard-drive");
+const COLOR_NAME = { red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", blue: "Blue", purple: "Purple" };
+
+function scopeEntries(scope = st.scope) {
+  const s = scope;
+  if (s.k === "all") return live();
+  if (s.k === "tag") return live().filter((e) => e.tags.includes(s.t));
+  if (s.k === "color") return live().filter((e) => e.color === s.c);
+  const v = KF.vault(s.v);
+  if (!v || v.locked) return [];
+  if (s.k === "vault") return v.entries.filter((e) => !inBin(e));
+  if (s.k === "group") { const ids = descendants(v, s.g); return v.entries.filter((e) => ids.includes(e.group)); }
+  if (s.k === "trash") { const b = binOf(v); return b ? v.entries.filter((e) => descendants(v, b.id).includes(e.group)) : []; }
+  return [];
+}
+const SORTS = { title: "Title", username: "Username", url: "URL", created: "Created", modified: "Modified" };
+function listed() {
+  const q = st.q.trim().toLowerCase();
+  let es = scopeEntries();
+  if (q) es = es.filter((e) => [e.title, e.username, e.url, e.notes, ...e.tags].join(" ").toLowerCase().includes(q));
+  const key = { title: (e) => e.title.toLowerCase(), username: (e) => e.username.toLowerCase(), url: (e) => KF.host(e.url).toLowerCase(), created: (e) => e.created, modified: (e) => e.modified }[st.sort];
+  es = es.slice().sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  if (st.sort === "created" || st.sort === "modified") es.reverse();
+  return es;
+}
+function scopeTitle(s = st.scope) {
+  if (s.k === "all") return "All Items";
+  if (s.k === "tag") return s.t;
+  if (s.k === "color") return COLOR_NAME[s.c];
+  const v = KF.vault(s.v);
+  if (s.k === "vault") return v.name;
+  if (s.k === "group") return v.groups.find((g) => g.id === s.g).name;
+  if (s.k === "trash") return openVaults().filter(binOf).length > 1 ? `Trash of ${v.name}` : "Trash";
+}
+function scopeVault() { return st.scope.v ? KF.vault(st.scope.v) : null; }
+const sameScope = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const hl = (text) => {
+  const q = st.q.trim(); const t = esc(text);
+  if (!q) return t;
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return t;
+  return esc(text.slice(0, i)) + `<mark class="vb-hl">${esc(text.slice(i, i + q.length))}</mark>` + esc(text.slice(i + q.length));
+};
+
+/* ======================================================================
+   Shared pieces
+   ====================================================================== */
+function statusOf(vid) {
+  const v = KF.vault(vid);
+  const s = st.save[vid];
+  if (s === "saving") return { dot: "saving", text: "Saving…", cls: "" };
+  if (s === "failed") return { dot: "failed", text: "Save failed", cls: "is-failed" };
+  if (s === "unsaved") return { dot: "unsaved", text: "Unsaved changes", cls: "is-unsaved" };
+  if (v.storage === "dropbox") {
+    const y = st.sync[vid];
+    return { synced: { dot: "", text: "Synced", cls: "" }, syncing: { dot: "saving", text: "Syncing…", cls: "" }, offline: { dot: "unsaved", text: "Offline", cls: "" }, error: { dot: "failed", text: "Sync error", cls: "is-failed" } }[y];
+  }
+  return { dot: "", text: "All changes saved", cls: "" };
+}
+function statusButton() {
+  const v = scopeVault();
+  let s;
+  if (!v || v.locked) {
+    const bad = openVaults().map((x) => statusOf(x.id)).find((x) => x.dot);
+    s = bad || { dot: "", text: "All changes saved", cls: "" };
+  } else s = statusOf(v.id);
+  const icon = s.dot === "failed" ? I("triangle-alert", "ico-sm") : `<span class="status-dot ${s.dot}"></span>`;
+  return `<span class="vb-status ${s.cls}" data-act="status" title="Save status · Ctrl S saves every Vault">${icon}${esc(s.text)}</span>`;
+}
+function mergeBanner() {
+  if (!st.merge) return "";
+  return `<div class="vb-merge">${I("git-merge")}<span class="truncate"><b>Merged changes made elsewhere into Work</b><span class="subtle"> · </span>2 Entries added, 1 Entry updated</span>
+    <span class="spacer"></span><span class="subtle" style="font-size:var(--text-xs)">Just now</span>
+    <button class="btn ghost sm" data-act="merge-show">Show Work</button>
+    <button class="btn ghost sm icon" data-act="merge-dismiss" title="Dismiss">${I("x")}</button></div>`;
+}
+function crumbs() {
+  const s = st.scope;
+  if (s.k === "all") return `<div class="crumbs">${I("layout-grid")}<b>All Items</b></div>`;
+  if (s.k === "tag") return `<div class="crumbs">${I("hash")}<span>Tags</span><span class="sep">/</span><b>${esc(s.t)}</b></div>`;
+  if (s.k === "color") return `<div class="crumbs"><span class="dot" style="background:${KF.colorVar(s.c)}"></span><span>Colours</span><span class="sep">/</span><b>${COLOR_NAME[s.c]}</b></div>`;
+  const v = KF.vault(s.v);
+  const parts = [`<span>${esc(v.name)}</span>`];
+  if (s.k === "group") KF.groupPath(v, s.g).slice(1).forEach((g) => parts.push(`<span>${esc(g.name)}</span>`));
+  if (s.k === "trash") parts.push(`<span>Recycle Bin</span>`);
+  parts[parts.length - 1] = parts[parts.length - 1].replace("<span>", "<b>").replace("</span>", "</b>");
+  return `<div class="crumbs">${I(vaultIcon(v))}${parts.join('<span class="sep">/</span>')}</div>`;
+}
+function emptyList() {
+  if (st.q.trim()) return `<div class="vb-empty">${I("search-x")}<p>No Entries match the search</p><button class="btn secondary sm" data-act="clear-search">Clear search ${K("Esc")}</button></div>`;
+  if (st.scope.k === "trash") return `<div class="vb-empty">${I("trash-2")}<p>No Entries</p><span class="subtle" style="font-size:var(--text-sm)">Deleted Entries wait here until you empty the Recycle Bin.</span></div>`;
+  return `<div class="vb-empty">${I("key-round")}<p>No Entries</p><button class="btn secondary sm" data-act="new-entry">${I("plus")} New Entry ${K("Ctrl", "N")}</button></div>`;
+}
+function rowMeta(e) {
+  const marks = [];
+  if (e.attachments.length) marks.push(I("paperclip"));
+  if (e.totp) marks.push(I("timer"));
+  if (e.color) marks.push(`<span class="dot" style="background:${KF.colorVar(e.color)}"></span>`);
+  return marks.join("");
+}
+function expiredBadge(e) {
+  if (isExpired(e)) return `<span class="badge danger vb-badge-exp">Expired</span>`;
+  return "";
+}
+
+/* -------- Sidebar (A and B) -------- */
+function navItem({ icon, label, count, scope, depth = 0, extra = "", cls = "" }) {
+  const sel = sameScope(scope, st.scope) ? "is-selected" : "";
+  return `<div class="nav-item ${sel} ${cls}" data-scope='${JSON.stringify(scope)}' style="padding-left:${8 + depth * 16}px">${icon}<span class="truncate">${label}</span>${extra}${count != null ? `<span class="count">${count}</span>` : ""}</div>`;
+}
+function groupTree(v, parent, depth) {
+  return v.groups.filter((g) => g.parent === parent && !g.recycle).map((g) => {
+    const n = scopeEntries({ k: "group", v: v.id, g: g.id }).length;
+    const mark = g.browserGroup ? `<span class="vb-bmark" title="Browser group · logins from the Companion extension are saved here">${I("mouse-pointer-click")}</span>` : "";
+    return navItem({ icon: I(g.icon), label: esc(g.name), count: n || "", scope: { k: "group", v: v.id, g: g.id }, depth, extra: mark }) + groupTree(v, g.id, depth + 1);
+  }).join("");
+}
+function vaultSection(v) {
+  if (v.locked) {
+    return `<div class="nav-section">${navItem({ icon: `<span class="vb-vault-ico">${I("lock")}</span>`, label: esc(v.name), scope: { k: "vault", v: v.id }, cls: "vb-nav-vault vb-nav-locked", extra: `<span class="vb-sync">Locked</span>` })}</div>`;
+  }
+  const root = v.groups.find((g) => !g.parent);
+  const collapsed = st.collapsed[v.id];
+  const s = statusOf(v.id);
+  const sync = v.storage === "dropbox" || s.dot ? `<span class="vb-sync">${s.dot ? `<span class="status-dot ${s.dot}"></span>` : `<span class="status-dot"></span>`}${esc(s.text === "All changes saved" ? "" : s.text.replace("Unsaved changes", "Unsaved"))}</span>` : "";
+  const head = navItem({ icon: `<span class="vb-chev" data-act="collapse" data-v="${v.id}">${I("chevron-down")}</span><span class="vb-vault-ico">${I(vaultIcon(v))}</span>`, label: esc(v.name), scope: { k: "vault", v: v.id }, cls: `vb-nav-vault ${collapsed ? "is-collapsed" : ""}`, extra: sync, count: sync ? null : scopeEntries({ k: "vault", v: v.id }).length });
+  return `<div class="nav-section">${head}${collapsed ? "" : `<div class="vb-tree">${groupTree(v, root.id, 1)}</div>`}</div>`;
+}
+function tagSection() {
+  const counts = D.tags.map((t) => [t, live().filter((e) => e.tags.includes(t)).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]);
+  const shown = st.tagsOpen ? counts : counts.slice(0, 4);
+  return `<div class="nav-section"><div class="nav-head">Tags</div>
+    ${shown.map(([t, n]) => navItem({ icon: I("hash"), label: esc(t), count: n, scope: { k: "tag", t } })).join("")}
+    ${counts.length > 4 ? `<div class="nav-item vb-more" data-act="tags-toggle">${I(st.tagsOpen ? "chevron-up" : "ellipsis")}<span>${st.tagsOpen ? "Show fewer" : `${counts.length - 4} more`}</span></div>` : ""}</div>`;
+}
+function colorSection() {
+  return `<div class="nav-section"><div class="nav-head" style="height:30px;padding-right:0">Colours<div class="vb-colors" style="margin-left:auto;padding:0">${D.colors.map((c) => `<span class="vb-color ${sameScope(st.scope, { k: "color", c }) ? "is-selected" : ""}" data-scope='${JSON.stringify({ k: "color", c })}' title="${COLOR_NAME[c]}"><span class="dot" style="background:${KF.colorVar(c)}"></span></span>`).join("")}</div></div></div>`;
+}
+function trashSection() {
+  const bins = openVaults().filter(binOf);
+  return `<div class="vb-side-bottom">${bins.map((v) => navItem({ icon: I("trash-2"), label: bins.length > 1 ? `Trash of ${esc(v.name)}` : "Trash", count: scopeEntries({ k: "trash", v: v.id }).length || "", scope: { k: "trash", v: v.id } })).join("")}</div>`;
+}
+function sideFoot() {
+  return `<div class="vb-side-foot">
+    <button class="btn ghost sm" data-act="open-new">${I("plus")} Open / New</button><span class="spacer"></span>
+    <button class="btn ghost sm icon" title="Commands · Ctrl K" data-act="palette">${I("circle-help")}</button>
+    <button class="btn ghost sm icon" title="Settings · Ctrl ," data-act="settings">${I("settings")}</button>
+    <button class="btn ghost sm icon" title="Lock all Vaults · Ctrl L" data-act="lock-all">${I("lock")}</button></div>`;
+}
+function sidebarFull() {
+  return `<aside class="vb-side">
+    <div class="vb-side-top"><span class="vb-brand"><span class="vb-brand-mark">${I("key-round")}</span>keefast</span><span class="spacer"></span>
+      <button class="btn ghost sm icon" title="Search Entries · Ctrl F" data-act="focus-search">${I("search")}</button>
+      <button class="btn ghost sm icon" title="New Entry · Ctrl N" data-act="new-entry">${I("square-pen")}</button></div>
+    <div class="vb-side-scroll">
+      <div class="nav-section">${navItem({ icon: I("layout-grid"), label: "All Items", count: live().length, scope: { k: "all" } })}</div>
+      ${D.vaults.map(vaultSection).join("")}
+      ${tagSection()}
+      ${colorSection()}
+    </div>
+    ${trashSection()}
+    ${sideFoot()}
+  </aside>`;
+}
+
+/* -------- Detail field rows -------- */
+function fRow(e, { k, key, html, copy, kbd, actions = "", edit }) {
+  const editing = st.edit && edit;
+  const v = editing ? edit : html;
+  return `<div class="vb-f" data-row="${key}"><span class="k">${k}</span><span class="v">${v}</span>
+    <span class="acts">${editing ? "" : `${kbd ? K(...kbd) : ""}${actions}${copy ? `<button class="btn ghost sm icon" data-copy="${copy}" title="Copy">${I("copy")}</button>` : ""}`}</span>
+    <span class="flash">${I("check")}Copied</span></div>`;
+}
+function input(field, value, extra = "") {
+  return `<label class="input ${extra}"><input data-edit="${field}" value="${esc(value)}"></label>`;
+}
+function pwHtml(e) {
+  if (!e.password) return `<span class="subtle">None</span>`;
+  const shown = st.reveal.pw;
+  const s = strength(e.password);
+  return `<span class="val vb-pw ${shown ? "" : "masked"}" data-copy="password">${shown ? esc(e.password) : KF.mask(12)}</span>
+`;
+}
+function totpHtml(e) {
+  const t = e.totp;
+  const low = t.left <= 5 ? "is-low" : "";
+  return `<span class="vb-totp ${low}" data-totp="${e.id}"><span class="ring" style="--p:${t.left / t.period}"></span><span class="code val" data-copy="totp">${fmtCode(totpCode(e))}</span><span class="left">${t.left}s</span></span>`;
+}
+function coreFields(e) {
+  const rows = [];
+  rows.push(fRow(e, { k: "Username", key: "user", html: e.username ? `<span class="val" data-copy="username">${esc(e.username)}</span>` : `<span class="subtle">None</span>`, copy: e.username && "username", kbd: ["Ctrl", "B"], edit: input("username", e.username) }));
+  rows.push(fRow(e, { k: "Password", key: "pw", html: pwHtml(e), copy: e.password && "password", kbd: ["Ctrl", "C"],
+    actions: e.password ? `<button class="btn ghost sm icon" data-act="reveal" data-f="pw" title="${st.reveal.pw ? "Hide" : "Show"}">${I(st.reveal.pw ? "eye-off" : "eye")}</button>` : "",
+    edit: `<label class="input mono"><input data-edit="password" value="${esc(e.password)}"></label><button class="btn ghost sm" data-act="toast" data-msg="Password generator opens here">${I("wand-sparkles")} Generate</button>` }));
+  if (e.totp) rows.push(fRow(e, { k: "TOTP", key: "totp", html: totpHtml(e), copy: "totp", kbd: ["Ctrl", "T"] }));
+  rows.push(fRow(e, { k: "URL", key: "url", html: e.url ? `<a class="vb-link truncate" data-act="open-url">${esc(KF.host(e.url))}${I("arrow-up-right")}</a>` : `<span class="subtle">None</span>`, copy: e.url && "url", edit: input("url", e.url) }));
+  return `<div class="vb-fields">${rows.join("")}</div>`;
+}
+function notesSect(e) {
+  if (st.edit) return `<div class="vb-sect"><div class="vb-sect-head">Notes</div><textarea class="input" data-edit="notes" rows="3">${esc(e.notes)}</textarea></div>`;
+  if (!e.notes) return "";
+  return `<div class="vb-sect"><div class="vb-sect-head">Notes</div><div class="vb-notes">${esc(e.notes)}</div></div>`;
+}
+function fieldsSect(e, { always = false } = {}) {
+  if (!e.fields.length && !always) return "";
+  const rows = e.fields.map((f, i) => fRow(e, {
+    k: esc(f.name), key: "cf" + i,
+    html: f.protected && !st.reveal["cf" + i] ? `<span class="val vb-pw masked" data-copy="field:${i}">${KF.mask(10)}</span>` : `<span class="val ${f.protected ? "vb-pw" : ""}" data-copy="field:${i}">${esc(f.value)}</span>`,
+    copy: `field:${i}`,
+    actions: f.protected ? `<button class="btn ghost sm icon" data-act="reveal" data-f="cf${i}" title="Show">${I(st.reveal["cf" + i] ? "eye-off" : "eye")}</button>` : "",
+  })).join("");
+  return `<div class="vb-sect"><div class="vb-sect-head">Custom fields <span class="count">${e.fields.length}</span><button class="btn ghost sm" data-act="toast" data-msg="New custom field added">${I("plus")} Field</button></div>
+    ${e.fields.length ? `<div class="vb-fields">${rows}</div>` : `<div class="vb-notes empty">No custom fields.</div>`}</div>`;
+}
+function filesSect(e, { always = false } = {}) {
+  if (!e.attachments.length && !always) return "";
+  const rows = e.attachments.map((a) => `<div class="vb-file"><span class="vb-file-ico">${I(a.name.endsWith(".txt") ? "file-text" : "file-key")}</span>
+      <div class="vstack" style="gap:0;min-width:0;flex:1"><span class="name truncate">${esc(a.name)}</span><span class="size">${esc(a.size)}</span></div>
+      <button class="btn ghost sm" data-act="toast" data-msg="Preview of ${esc(a.name)}">Preview</button>
+      <button class="btn ghost sm" data-act="toast" data-msg="Saved ${esc(a.name)} to ~/Downloads.">Save…</button></div>`).join("");
+  return `<div class="vb-sect"><div class="vb-sect-head">Attachments <span class="count">${e.attachments.length}</span><button class="btn ghost sm" data-act="toast" data-msg="Attach files">${I("plus")} File</button></div>
+    ${e.attachments.length ? `<div class="vb-fields">${rows}</div>` : `<div class="vb-notes empty">No attachments.</div>`}</div>`;
+}
+function accessSect(e, { always = false } = {}) {
+  if (!e.access.length && !always) return "";
+  const rows = e.access.map((a, i) => `<div class="vb-acc">${I("globe")}<span class="host truncate">${esc(a.site)}</span>
+      <span class="badge ${a.decision === "allow" ? "ok" : "danger"}">${a.decision === "allow" ? "Allowed" : "Denied"}</span>
+      <button class="btn ghost sm" data-act="forget" data-i="${i}">Forget</button></div>`).join("");
+  return `<div class="vb-sect"><div class="vb-sect-head">Browser access <span class="count">${e.access.length}</span>${e.access.length ? `<button class="btn ghost sm" data-act="forget-all">Forget all</button>` : ""}</div>
+    ${e.access.length ? `<div class="vb-fields">${rows}</div>` : `<div class="vb-notes empty">No site has asked for this Entry yet. Access decisions you remember show here.</div>`}</div>`;
+}
+function expiryHtml(e) {
+  if (!e.expires) return `<span class="subtle">Never</span>`;
+  if (isExpired(e)) return `<span class="badge danger">Expired</span><span class="subtle">${fmtDate(e.expires)}</span>`;
+  if (expiresSoon(e)) return `<span class="badge warn">In ${daysFrom(e.expires)} days</span><span class="subtle">${fmtDate(e.expires)}</span>`;
+  return fmtDate(e.expires);
+}
+function props(e) {
+  const g = groupOf(e), v = vaultOf(e);
+  return {
+    group: `<span class="vb-chip" data-act="move" title="Move…">${I(g.parent ? g.icon : vaultIcon(v))}${esc(g.parent ? g.name : v.name)}</span>`,
+    tags: (e.tags.length ? e.tags.map((t) => `<span class="tag"><span class="dot"></span>${esc(t)}</span>`).join("") : "") + `<button class="btn ghost sm icon" data-act="toast" data-msg="Type a tag and press Enter" title="Add tag" style="width:22px;height:22px">${I("plus")}</button>`,
+    color: `<span class="vb-chip" data-act="color">${e.color ? `<span class="dot" style="background:${KF.colorVar(e.color)}"></span>${COLOR_NAME[e.color]}` : `<span class="dot" style="background:transparent;box-shadow:inset 0 0 0 1px var(--fg-2)"></span><span class="subtle">None</span>`}</span>`,
+    expires: expiryHtml(e),
+    created: fmtDate(e.created),
+    modified: fmtDate(e.modified),
+    strength: (() => { if (!e.password) return `<span class="subtle">No password</span>`; const s = strength(e.password); return `<span class="vb-strength" style="font-size:var(--text-sm);color:var(--fg-0)" title="${s.bits} bits"><span class="strength" data-score="${s.score}" style="width:36px"><i></i><i></i><i></i><i></i></span>${s.label}</span>`; })(),
+    history: e.history ? `<span class="vb-chip" data-act="history">${I("history")}${e.history} versions</span>` : `<span class="subtle">No earlier versions</span>`,
+  };
+}
+function propRows(e, keys) {
+  const p = props(e);
+  const label = { strength: "Strength", group: "Group", tags: "Tags", color: "Colour", expires: "Expires", created: "Created", modified: "Modified", history: "History" };
+  return keys.map((k) => `<div class="vb-prop"><span class="k">${label[k]}</span><span class="v">${p[k]}</span></div>`).join("");
+}
+function entryActions({ compact = false } = {}) {
+  if (st.edit) return `<button class="btn ghost sm" data-act="edit-cancel">Cancel</button><button class="btn primary sm" data-act="edit-done">Done ${K("Ctrl", "Enter")}</button>`;
+  return `<button class="btn secondary sm" data-act="edit">${I("pencil")} Edit ${K("E")}</button>
+    ${compact ? "" : `<button class="btn ghost sm" data-act="totp-setup">${I("timer")} TOTP…</button><button class="btn ghost sm" data-act="history">${I("history")} History</button><button class="btn ghost sm" data-act="move">${I("folder-input")} Move…</button>`}
+    <button class="btn ghost sm icon" data-act="more" title="More">${I("ellipsis")}</button>`;
+}
+function noSelection() {
+  return `<div class="vb-empty">${I("mouse-pointer-2")}<p>Select an Entry</p><span class="subtle" style="font-size:var(--text-sm)">${K("↑")} ${K("↓")} to move · ${K("Ctrl", "N")} for a new Entry</span></div>`;
+}
+
+/* -------- Locked Vault -------- */
+function lockedCard(v) {
+  return `<div class="vb-locked"><form class="vb-ucard" data-act="unlock-form" onsubmit="return false">
+    <div class="vb-ucard-head"><span class="vb-ucard-ico">${I("lock")}</span>
+      <div><h2>${esc(v.name)}</h2><div class="subtle" style="margin-top:2px">This Vault is locked.</div></div>
+      <span class="file">${esc(v.file)}</span></div>
+    <div class="field"><label>Master password</label><label class="input lg ${st.unlockErr ? "invalid" : ""}">${I("key-round")}<input type="password" id="vb-mp" placeholder="Type your master password" autocomplete="off"></label>
+      ${st.unlockErr ? `<span class="error-msg">${I("circle-alert", "ico-sm")}Wrong master password or key file.</span>` : ""}</div>
+    <div class="field"><label>Key file</label><div class="vb-keyfile">${I("file-key")}<span>None (optional)</span><span class="spacer"></span><button class="btn ghost sm" type="button" data-act="toast" data-msg="Choose key file">Choose key file…</button></div></div>
+    <button class="btn primary lg" data-act="unlock" ${st.unlocking ? "disabled" : ""}>${st.unlocking ? `${I("loader-circle", "vb-spin")} Unlocking…` : `Unlock ${K("Enter")}`}</button>
+    ${st.unlocking ? `<span class="hint" style="text-align:center">Deriving the key. This can take a few seconds.</span>` : `<span class="hint" style="text-align:center">${K("Ctrl", "L")} locks every Vault again</span>`}
+  </form></div>`;
+}
+
+/* ======================================================================
+   Popovers, menus, dialogs
+   ====================================================================== */
+function closePop() { $$(".vb-backdrop, .vb-pop").forEach((n) => n.remove()); $$(".is-ctx").forEach((n) => n.classList.remove("is-ctx")); }
+function pop(html, { anchor, x, y, align = "start", cls = "menu", width } = {}) {
+  closePop();
+  const app = $("#app");
+  const bd = document.createElement("div"); bd.className = "vb-backdrop";
+  bd.addEventListener("mousedown", closePop);
+  bd.addEventListener("contextmenu", (ev) => { ev.preventDefault(); closePop(); });
+  const p = document.createElement("div"); p.className = `${cls} vb-pop`; p.innerHTML = html;
+  if (width) p.style.width = width + "px";
+  app.append(bd, p);
+  const pr = p.getBoundingClientRect();
+  let left, top;
+  if (anchor) { const r = anchor.getBoundingClientRect(); left = align === "end" ? r.right - pr.width : r.left; top = r.bottom + 4; p.style.transformOrigin = align === "end" ? "top right" : "top left"; }
+  else { left = x; top = y; }
+  left = Math.max(8, Math.min(left, innerWidth - pr.width - 8));
+  if (top + pr.height > innerHeight - 8) { top = Math.max(8, (anchor ? anchor.getBoundingClientRect().top - pr.height - 4 : y - pr.height)); p.style.transformOrigin = "bottom left"; }
+  p.style.left = left + "px"; p.style.top = top + "px";
+  return p;
+}
+const mi = (icon, label, { kbd, act, danger, attrs = "", check } = {}) =>
+  `<div class="menu-item ${danger ? "danger" : ""}" ${act ? `data-act="${act}"` : ""} ${attrs}>${I(icon)}<span>${label}</span>${kbd ? K(...kbd) : ""}${check ? `<span class="check-mark">${I("check")}</span>` : ""}</div>`;
+function entryMenuHtml(e) {
+  return `${mi("user", "Copy username", { kbd: ["Ctrl", "B"], attrs: 'data-copy="username"' })}
+    ${mi("key-round", "Copy password", { kbd: ["Ctrl", "C"], attrs: 'data-copy="password"' })}
+    ${e.totp ? mi("timer", "Copy TOTP code", { kbd: ["Ctrl", "T"], attrs: 'data-copy="totp"' }) : ""}
+    ${e.url ? mi("arrow-up-right", "Open URL", { act: "open-url" }) : ""}
+    <div class="menu-sep"></div>
+    ${mi("pencil", "Edit", { kbd: ["E"], act: "edit" })}
+    ${mi("timer-reset", e.totp ? "TOTP…" : "Set up TOTP…", { act: "totp-setup" })}
+    ${mi("history", "History", { act: "history" })}
+    ${mi("folder-input", "Move…", { act: "move" })}
+    <div class="menu-label">Colour</div>
+    <div class="vb-menu-colors">${[null, ...D.colors].map((c) => `<span class="vb-color ${e.color === c ? "is-selected" : ""}" data-act="set-color" data-c="${c || ""}" title="${c ? COLOR_NAME[c] : "None"}"><span class="dot" style="background:${c ? KF.colorVar(c) : "transparent"};${c ? "" : "box-shadow:inset 0 0 0 1px var(--fg-2)"}"></span></span>`).join("")}</div>
+    <div class="menu-sep"></div>
+    ${mi("trash-2", inBin(e) ? "Delete for good…" : "Delete", { kbd: ["Del"], act: "delete", danger: true })}`;
+}
+function openCtx(e, x, y, rowEl) {
+  st.sel = e.id; st.reveal = {};
+  V.paint();
+  const p = pop(entryMenuHtml(e), { x, y, width: 236 });
+  const row = $(`[data-e="${e.id}"]`); if (row) row.classList.add("is-ctx");
+  return p;
+}
+function confirmDelete(e) {
+  closePop();
+  const s = document.createElement("div"); s.className = "scrim"; s.innerHTML = `<div class="dialog" style="width:400px">
+    <div class="dialog-head"><h3 class="dialog-title">Delete this Entry for good?</h3><p class="dialog-desc">“${esc(e.title)}” is removed from ${esc(vaultOf(e).name)}. This cannot be undone.</p></div>
+    <div class="dialog-body" style="padding-top:8px"></div>
+    <div class="dialog-foot"><button class="btn ghost" data-x>Cancel ${K("Esc")}</button><button class="btn danger" data-ok>Delete ${K("Enter")}</button></div></div>`;
+  $("#app").append(s);
+  s.addEventListener("mousedown", (ev) => { if (ev.target === s) s.remove(); });
+  $("[data-x]", s).onclick = () => s.remove();
+  $("[data-ok]", s).onclick = () => { const v = vaultOf(e); v.entries.splice(v.entries.indexOf(e), 1); s.remove(); markUnsaved(v.id); selectFirst(); V.paint(); KF.toast("Entry deleted", { icon: "trash-2" }); };
+}
+function markUnsaved(vid) { st.save[vid] = "unsaved"; }
+function selectFirst() { const l = listed(); st.sel = l[0] ? l[0].id : null; st.reveal = {}; }
+function current() { const e = st.sel && KF.entry(st.sel); return e && listed().includes(e) ? e : null; }
+
+/* ======================================================================
+   Actions (delegated)
+   ====================================================================== */
+function doCopy(what, el) {
+  const e = current(); if (!e) return;
+  let label = "", value = "";
+  if (what === "username") { label = "Username"; value = e.username; }
+  else if (what === "password") { label = "Password"; value = e.password; }
+  else if (what === "totp") { label = "TOTP code"; value = e.totp && e.totp.code; }
+  else if (what === "url") { label = "URL"; value = e.url; }
+  else if (what.startsWith("field:")) { const f = e.fields[+what.slice(6)]; label = f.name; value = f.value; }
+  closePop();
+  if (!value) { KF.toast("That field is empty, so nothing was copied.", { icon: "info" }); return; }
+  const host = el && (el.closest(".vb-f") || el.closest(".C-qt"));
+  KF.copy(label, host || $(`[data-row="${{ username: "user", password: "pw", totp: "totp", url: "url" }[what] || ""}"]`));
+}
+function setScope(scope) {
+  st.scope = scope; st.edit = false; st.unlockErr = false;
+  selectFirst();
+  if (V.onScope) V.onScope();
+  V.paint();
+}
+function onAction(act, el, ev) {
+  const e = current();
+  switch (act) {
+    case "collapse": ev.stopPropagation(); st.collapsed[el.dataset.v] = !st.collapsed[el.dataset.v]; V.paint(); return true;
+    case "tags-toggle": st.tagsOpen = !st.tagsOpen; V.paint(); return true;
+    case "merge-dismiss": st.merge = false; V.paint(); return true;
+    case "merge-show": st.merge = false; setScope({ k: "vault", v: "work" }); st.sort = "modified"; selectFirst(); V.paint(); return true;
+    case "clear-search": st.q = ""; V.paint(); const si = $("[data-search]"); si && si.focus(); return true;
+    case "focus-search": { const s = $("[data-search]"); s && s.focus(); return true; }
+    case "reveal": st.reveal[el.dataset.f] = !st.reveal[el.dataset.f]; V.paintDetail(); return true;
+    case "open-url": closePop(); KF.toast(`Opened ${esc(KF.host(e.url))} in the browser`, { icon: "arrow-up-right" }); return true;
+    case "toast": KF.toast(esc(el.dataset.msg), { icon: "info" }); return true;
+    case "edit": closePop(); if (!e) return true; st.edit = true; V.paintDetail(); setTimeout(() => { const i = $("[data-edit-title]"); i && i.focus(); }, 0); return true;
+    case "edit-cancel": st.edit = false; V.paintDetail(); return true;
+    case "edit-done": finishEdit(); return true;
+    case "history": closePop(); if (V.showHistory) V.showHistory(); else KF.toast(`History of ${esc(e.title)} opens in a side sheet`, { icon: "history" }); return true;
+    case "totp-setup": closePop(); KF.toast("Set up TOTP opens here", { icon: "timer" }); return true;
+    case "more": pop(entryMenuHtml(e), { anchor: el, align: "end", width: 236 }); return true;
+    case "move": {
+      const v = vaultOf(e);
+      const html = `<div class="menu-label">Move to:</div>` + v.groups.filter((g) => !g.recycle).map((g) => {
+        const depth = KF.groupPath(v, g.id).length - 1;
+        return `<div class="menu-item" data-act="move-to" data-g="${g.id}" style="padding-left:${8 + depth * 14}px">${I(g.parent ? g.icon : vaultIcon(v))}<span>${esc(g.name)}</span>${g.id === e.group ? `<span class="check-mark">${I("check")}</span>` : ""}</div>`;
+      }).join("");
+      pop(html, el.closest(".vb-pop") ? { x: innerWidth / 2 - 110, y: 200, width: 220 } : { anchor: el, width: 220 });
+      return true;
+    }
+    case "move-to": e.group = el.dataset.g; closePop(); markUnsaved(e._v); V.paint(); KF.toast(`Moved to ${esc(groupOf(e).name)}`, { icon: "folder-input" }); return true;
+    case "color": pop(`<div class="menu-label">Colour</div>` + [null, ...D.colors].map((c) => `<div class="menu-item" data-act="set-color" data-c="${c || ""}"><span class="dot" style="background:${c ? KF.colorVar(c) : "transparent"};${c ? "" : "box-shadow:inset 0 0 0 1px var(--fg-2)"};margin:0 4px"></span><span>${c ? COLOR_NAME[c] : "None"}</span>${e.color === c ? `<span class="check-mark">${I("check")}</span>` : ""}</div>`).join(""), { anchor: el, width: 180 }); return true;
+    case "set-color": e.color = el.dataset.c || null; closePop(); markUnsaved(e._v); V.paint(); return true;
+    case "delete": {
+      closePop();
+      if (inBin(e)) { confirmDelete(e); return true; }
+      const v = vaultOf(e); const b = binOf(v); const prev = e.group;
+      e.group = b.id; markUnsaved(v.id); selectFirst(); V.paint();
+      const t = KF.toast(`Moved “${esc(e.title)}” to the Recycle Bin <button class="btn ghost sm" style="margin-left:4px" data-undo>Undo</button>`, { icon: "trash-2" });
+      $("[data-undo]", t).onclick = () => { e.group = prev; st.sel = e.id; V.paint(); t.remove(); };
+      return true;
+    }
+    case "forget": e.access.splice(+el.dataset.i, 1); markUnsaved(e._v); V.paint(); return true;
+    case "forget-all": e.access = []; markUnsaved(e._v); V.paint(); return true;
+    case "new-entry": newEntry(); return true;
+    case "add-menu": pop(mi("key-round", "Entry", { kbd: ["Ctrl", "N"], act: "new-entry" }) + mi("folder-plus", "Group", { act: "new-group" }), { anchor: el, align: "end", width: 180 }); return true;
+    case "new-group": closePop(); { const v = scopeVault() && !scopeVault().locked ? scopeVault() : KF.vault("personal"); const g = { id: "g" + Date.now(), name: "New Group", parent: st.scope.k === "group" ? st.scope.g : v.groups.find((x) => !x.parent).id, icon: "folder" }; v.groups.splice(v.groups.length - 1, 0, g); markUnsaved(v.id); setScope({ k: "group", v: v.id, g: g.id }); KF.toast("Group created · rename it from the sidebar", { icon: "folder-plus" }); } return true;
+    case "sort": pop(`<div class="menu-label">Sort Entries by</div>` + Object.entries(SORTS).map(([k, l]) => mi({ title: "type", username: "user", url: "link", created: "calendar-plus", modified: "calendar-clock" }[k], l, { act: "set-sort", attrs: `data-s="${k}"`, check: st.sort === k })).join(""), { anchor: el, align: "end", width: 200 }); return true;
+    case "set-sort": st.sort = el.dataset.s; closePop(); V.paint(); return true;
+    case "status": statusPopover(el); return true;
+    case "save-all": closePop(); saveAll(); return true;
+    case "retry": closePop(); saveAll(); return true;
+    case "sync-now": closePop(); st.sync.work = "syncing"; V.paint(); setTimeout(() => { st.sync.work = "synced"; V.paint(); }, 1400); return true;
+    case "unlock": { const mp = $("#vb-mp"); st.unlocking = true; V.paint(); setTimeout(() => { st.unlocking = false; st.unlockErr = true; V.paint(); const i = $("#vb-mp"); i && i.focus(); }, 1100); return true; }
+    case "lock-all": KF.toast("Every Vault locked", { icon: "lock" }); return true;
+    case "open-new": KF.toast("Open a Vault opens here", { icon: "folder-open" }); return true;
+    case "settings": KF.toast("General Settings open here", { icon: "settings" }); return true;
+    case "palette": KF.toast(`Command palette ${K("Ctrl", "K")}`, { icon: "command" }); return true;
+  }
+  return false;
+}
+function statusPopover(anchor) {
+  const rows = D.vaults.map((v) => {
+    if (v.locked) return `<div class="vb-status-row"><span class="vb-vault-ico" style="width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:var(--bg-active);color:var(--fg-2)">${I("lock", "ico-sm")}</span><div class="vstack" style="gap:0;flex:1;min-width:0"><span class="name" style="color:var(--fg-1)">${esc(v.name)}</span><span class="file truncate">${esc(v.file)}</span></div><span class="subtle" style="font-size:var(--text-sm)">Locked</span></div>`;
+    const s = statusOf(v.id);
+    const trail = st.save[v.id] === "failed" ? `<button class="btn secondary sm" data-act="retry">Retry</button>` : v.storage === "dropbox" ? `<button class="btn ghost sm" data-act="sync-now">${I("refresh-cw")} Sync</button>` : "";
+    return `<div class="vb-status-row"><span style="width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:var(--bg-active);color:var(--fg-1)">${I(vaultIcon(v), "ico-sm")}</span>
+      <div class="vstack" style="gap:0;flex:1;min-width:0"><span class="name">${esc(v.name)}</span><span class="file truncate">${esc(v.file)}</span></div>
+      <span class="vb-status ${s.cls}" style="padding:0">${s.dot === "failed" ? I("triangle-alert", "ico-sm") : `<span class="status-dot ${s.dot}"></span>`}${esc(s.text.replace("All changes saved", "Saved").replace("Unsaved changes", "Unsaved"))}</span>${trail}</div>`;
+  }).join("");
+  const failed = Object.values(st.save).includes("failed");
+  pop(`<div class="menu-label">Vaults</div>${rows}${failed ? `<div class="vb-status-row" style="color:var(--danger);font-size:var(--text-sm);padding-top:0">${I("circle-alert", "ico-sm")} The Vault file could not be written. Check the disk and try again.</div>` : ""}<div class="menu-sep"></div>${mi("save", "Save all Vaults", { kbd: ["Ctrl", "S"], act: "save-all" })}`, { anchor, align: "end", cls: "menu vb-status-pop" });
+}
+function saveAll() {
+  const dirty = Object.keys(st.save).filter((k) => st.save[k] !== "saved");
+  if (!dirty.length) { KF.toast("All changes saved", { icon: "check" }); return; }
+  dirty.forEach((k) => (st.save[k] = "saving")); V.paint();
+  setTimeout(() => { dirty.forEach((k) => (st.save[k] = "saved")); V.paint(); }, 900);
+}
+function finishEdit() {
+  const e = current(); if (!e) return;
+  $$("[data-edit]").forEach((i) => { e[i.dataset.edit] = i.value; });
+  const t = $("[data-edit-title]"); if (t) e.title = t.value || "(untitled)";
+  e.modified = "2026-10-09"; st.edit = false; markUnsaved(e._v); V.paint();
+}
+function newEntry() {
+  closePop();
+  let v = scopeVault(); if (!v || v.locked) v = KF.vault("personal");
+  const group = st.scope.k === "group" ? st.scope.g : v.groups.find((g) => !g.parent).id;
+  const e = { id: "n" + Date.now(), title: "", brand: "", username: "", password: "", url: "", notes: "", tags: [], color: null, totp: null, attachments: [], fields: [], expires: null, history: 0, group, created: "2026-10-09", modified: "2026-10-09", access: [], _v: v.id };
+  v.entries.push(e);
+  if (st.scope.k !== "vault" && st.scope.k !== "group") st.scope = { k: "vault", v: v.id };
+  st.q = ""; st.sel = e.id; st.edit = true; markUnsaved(v.id); V.paint();
+  setTimeout(() => { const i = $("[data-edit-title]"); i && i.focus(); }, 0);
+}
+
+/* Global event wiring (once) */
+let V = null; // active variant painter
+document.addEventListener("click", (ev) => {
+  const t = ev.target;
+  const copyEl = t.closest("[data-copy]");
+  if (copyEl && !st.edit) { doCopy(copyEl.dataset.copy, copyEl); return; }
+  const actEl = t.closest("[data-act]");
+  if (actEl && onAction(actEl.dataset.act, actEl, ev)) return;
+  const sc = t.closest("[data-scope]");
+  if (sc) { setScope(JSON.parse(sc.dataset.scope)); return; }
+  const row = t.closest("[data-e]");
+  if (row) { if (st.sel !== row.dataset.e) { st.sel = row.dataset.e; st.reveal = {}; st.edit = false; } if (V.onSelect) V.onSelect(); V.paint(); }
+});
+document.addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest("[data-e]");
+  if (!row) return;
+  ev.preventDefault();
+  openCtx(KF.entry(row.dataset.e), ev.clientX, ev.clientY, row);
+});
+document.addEventListener("input", (ev) => {
+  if (ev.target.matches("[data-search]")) { st.q = ev.target.value; if (!current()) selectFirst(); V.paintList(); V.paintDetail(); }
+});
+document.addEventListener("keydown", (ev) => {
+  const t = ev.target;
+  const inField = t.closest && t.closest("input, textarea");
+  if (ev.key === "Escape") {
+    if ($(".scrim")) { $(".scrim").remove(); return; }
+    if ($(".vb-pop")) { closePop(); return; }
+    if (st.edit) { st.edit = false; V.paintDetail(); return; }
+    if (t.matches && t.matches("[data-search]")) { if (st.q) { st.q = ""; t.value = ""; V.paintList(); V.paintDetail(); } else t.blur(); return; }
+    if (V.onEscape) V.onEscape();
+    return;
+  }
+  if (t.id === "vb-mp" && ev.key === "Enter") { onAction("unlock", t, ev); return; }
+  if (ev.ctrlKey && ev.key === "Enter" && st.edit) { ev.preventDefault(); finishEdit(); return; }
+  if (ev.ctrlKey && ev.key.toLowerCase() === "s") { ev.preventDefault(); saveAll(); return; }
+  if (ev.ctrlKey && ev.key.toLowerCase() === "f") { ev.preventDefault(); onAction("focus-search"); return; }
+  if (ev.ctrlKey && ev.key.toLowerCase() === "n") { ev.preventDefault(); newEntry(); return; }
+  if (inField) { if (t.matches("[data-search]") && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) { ev.preventDefault(); move(ev.key === "ArrowDown" ? 1 : -1); } return; }
+  if (ev.ctrlKey && ["b", "c", "t"].includes(ev.key.toLowerCase())) { ev.preventDefault(); ev.stopPropagation(); doCopy({ b: "username", c: "password", t: "totp" }[ev.key.toLowerCase()]); return; }
+  if (ev.key === "/") { ev.preventDefault(); onAction("focus-search"); return; }
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); move(ev.key === "ArrowDown" ? 1 : -1); return; }
+  if ((ev.key === "e" || ev.key === "Enter") && current() && !ev.ctrlKey) { if (V.onEnter && ev.key === "Enter") V.onEnter(); else onAction("edit"); return; }
+  if (ev.key === " " && V.onSpace) { ev.preventDefault(); V.onSpace(); }
+}, true);
+function move(d) {
+  const l = V.order ? V.order() : listed();
+  if (!l.length) return;
+  const i = l.findIndex((e) => e.id === st.sel);
+  const n = l[Math.max(0, Math.min(l.length - 1, i + d))];
+  st.sel = n.id; st.reveal = {}; st.edit = false;
+  V.paint();
+  const r = $(`[data-e="${n.id}"]`); r && r.scrollIntoView({ block: "nearest" });
+}
+
+/* Live TOTP ticker */
+setInterval(() => {
+  D.vaults.forEach((v) => v.entries.forEach((e) => {
+    if (!e.totp) return;
+    e.totp.left -= 1;
+    if (e.totp.left <= 0) { e.totp.left = e.totp.period; e.totp.code = String(Math.floor(Math.random() * 1e6)).padStart(6, "0"); }
+  }));
+  $$("[data-totp]").forEach((el) => {
+    const e = KF.entry(el.dataset.totp); if (!e) return;
+    el.classList.toggle("is-low", e.totp.left <= 5);
+    $(".ring", el).style.setProperty("--p", e.totp.left / e.totp.period);
+    $(".code", el).textContent = fmtCode(totpCode(e));
+    const l = $(".left", el); if (l) l.textContent = e.totp.left + "s";
+  });
+}, 1000);
+
+function titleEl(e) {
+  if (st.edit) return `<input class="vb-title-input" data-edit-title value="${esc(e.title)}" placeholder="(untitled)">`;
+  return `<h1 class="vb-title truncate">${esc(e.title || "(untitled)")}</h1>`;
+}
+function searchBox(ph) {
+  return `<div class="search">${I("search", "ico-sm")}<input data-search placeholder="${ph}" value="${esc(st.q)}">${st.q ? "" : K("/")}</div>`;
+}
+function autoState() {
+  if (STATE === "menu") {
+    setTimeout(() => {
+      const row = $(`[data-e="${st.sel}"]`); if (!row) return;
+      const r = row.getBoundingClientRect();
+      openCtx(current(), r.left + Math.min(150, r.width * 0.45), r.top + r.height / 2 + 4, row);
+    }, 60);
+  }
+}
+
+/* ======================================================================
+   Variant A — refined three-pane with a property rail
+   ====================================================================== */
+const A = {
+  name: "Three-pane · property rail",
+  render(root) {
+    V = A; A.root = root;
+    root.innerHTML = `<div class="vb"><div data-r="side" style="display:contents"></div>
+      <div class="vb-main"><div data-r="top"></div><div class="vb-panes" data-r="panes"></div></div></div>`;
+    A.paint(); autoState();
+  },
+  paint() {
+    $("[data-r=side]").innerHTML = sidebarFull();
+    $("[data-r=top]").innerHTML = `<div class="toolbar">${crumbs()}<span class="spacer"></span>${statusButton()}<span class="vdivider" style="height:16px;align-self:center;margin:0 4px"></span>
+      <button class="btn ghost sm" data-act="palette" title="Command palette">${I("command")} ${K("Ctrl", "K")}</button></div>${mergeBanner()}`;
+    const v = scopeVault();
+    if (v && v.locked) { $("[data-r=panes]").innerHTML = lockedCard(v); return; }
+    if (!$(".vb-list", A.root)) {
+      $("[data-r=panes]").innerHTML = `<section class="vb-list"><div data-r="lhead"></div><div class="vb-list-search">${searchBox("Search")}</div><div class="vb-list-body" data-r="list"></div></section><section class="vb-detail" data-r="detail"></section>`;
+    }
+    const s = $("[data-search]"); if (s && s.value !== st.q) s.value = st.q;
+    $("[data-r=lhead]").innerHTML = `<div class="vb-list-head"><span class="vb-list-title"><span class="truncate">${esc(scopeTitle())}</span><span class="count">${listed().length}</span></span><span class="spacer"></span>
+      <button class="btn ghost sm" data-act="sort" title="Sort">${I("arrow-up-down")} ${SORTS[st.sort]}</button>
+      <button class="btn ghost sm icon" data-act="add-menu" title="New Entry or Group">${I("plus")}</button></div>`;
+    A.paintList(); A.paintDetail();
+  },
+  paintList() {
+    const el = $("[data-r=list]"); if (!el) return;
+    const l = listed();
+    const showVault = st.scope.k === "all" || st.scope.k === "tag" || st.scope.k === "color";
+    el.innerHTML = l.length ? l.map((e) => `<div class="vb-erow ${e.id === st.sel ? "is-selected" : ""}" data-e="${e.id}">${KF.avatar(e, 28)}
+        <div class="vb-erow-main"><div class="vb-erow-title"><span class="truncate">${hl(e.title || "(untitled)")}</span>${expiredBadge(e)}</div>
+        <div class="vb-erow-sub truncate">${hl(e.username || "No username")}${showVault ? ` · ${esc(vaultOf(e).name)}` : ""}</div></div>
+        <div class="vb-erow-meta"><span>${fmtShort(st.sort === "created" ? e.created : e.modified)}</span><span class="hstack">${rowMeta(e)}</span></div></div>`).join("") : emptyList();
+    const cnt = $(".vb-list-title .count"); if (cnt) cnt.textContent = l.length;
+  },
+  paintDetail() {
+    const el = $("[data-r=detail]"); if (!el) return;
+    const e = current();
+    if (!e) { el.innerHTML = noSelection(); return; }
+    const g = groupOf(e), v = vaultOf(e);
+    el.innerHTML = `<div class="A-dtop">
+        <span class="subtle" style="font-size:var(--text-sm);display:flex;align-items:center;gap:6px">${KF.avatar(e, 16)}${locLabel(e)}</span><span class="spacer"></span>
+        ${entryActions()}</div>
+      <div class="vb-detail-scroll"><div class="A-body">
+        <div class="A-content">
+          <div class="A-hero">${KF.avatar(e, 44)}<div style="min-width:0;flex:1">${titleEl(e)}<div class="sub">${e.url ? esc(KF.host(e.url)) : "No URL"}${isExpired(e) ? ` · <span class="danger-text">Expired ${fmtDate(e.expires)}</span>` : ""}</div></div></div>
+          ${coreFields(e)}
+          ${notesSect(e)}
+          ${fieldsSect(e)}
+          ${filesSect(e)}
+          ${accessSect(e)}
+        </div>
+        <aside class="A-rail">
+          <div class="vb-sect-head">Properties</div>
+          ${propRows(e, ["group", "color", "expires", "strength"])}
+          <div class="vb-sect-head">Tags</div>
+          <div class="vb-prop" style="grid-template-columns:1fr"><span class="v">${props(e).tags}</span></div>
+          <div class="vb-sect-head">Activity</div>
+          ${propRows(e, ["modified", "created", "history"])}
+          <div class="vb-sep" style="margin:18px 0 12px"></div>
+          <div class="vstack" style="gap:6px;font-size:var(--text-xs);color:var(--fg-2)">
+            <span class="hstack" style="justify-content:space-between">Copy username ${K("Ctrl", "B")}</span>
+            <span class="hstack" style="justify-content:space-between">Copy password ${K("Ctrl", "C")}</span>
+            ${e.totp ? `<span class="hstack" style="justify-content:space-between">Copy TOTP code ${K("Ctrl", "T")}</span>` : ""}
+          </div>
+        </aside>
+      </div></div>`;
+  },
+};
+
+/* ======================================================================
+   Variant B — dense table with a floating peek panel
+   ====================================================================== */
+const B = {
+  name: "Table · peek panel",
+  render(root) {
+    V = B; B.root = root;
+    st.peek = STATE !== "nopeek";
+    root.innerHTML = `<div class="vb"><div data-r="side" style="display:contents"></div><div class="vb-main"><div data-r="top"></div><div class="vb-panes" data-r="panes"></div></div></div>`;
+    B.paint(); autoState();
+  },
+  onSpace() { st.peek = !st.peek; B.paint(); },
+  onEnter() { st.peek = true; B.paint(); },
+  onEscape() { if (st.peek) { st.peek = false; B.paint(); } },
+  onSelect() { st.peek = true; },
+  paint() {
+    $("[data-r=side]").innerHTML = sidebarFull();
+    const v = scopeVault();
+    const locked = v && v.locked;
+    if (!$(".B-search", B.root) || locked || !$(".B-table", B.root)) {
+      $("[data-r=top]").innerHTML = `<div class="toolbar">${crumbs()}<span class="spacer"></span>
+        <span data-r="status"></span>
+        ${locked ? "" : `<div class="B-search">${searchBox(`Search ${esc(scopeTitle())}`)}</div>
+        <button class="btn ghost sm icon" data-act="sort" title="Sort">${I("arrow-up-down")}</button>
+        <button class="btn primary sm" data-act="new-entry">${I("plus")} New Entry ${K("Ctrl", "N")}</button>
+        <button class="btn ghost sm icon" data-act="add-menu" title="More">${I("chevron-down")}</button>`}</div><div data-r="merge"></div>`;
+    }
+    $("[data-r=status]").innerHTML = statusButton();
+    $("[data-r=merge]").innerHTML = mergeBanner();
+    if (locked) { $("[data-r=panes]").innerHTML = lockedCard(v); return; }
+    if (!$(".B-table", B.root)) $("[data-r=panes]").innerHTML = `<div class="B-table" data-r="list"></div><div data-r="detail"></div>`;
+    const s = $("[data-search]"); if (s) s.placeholder = `Search ${scopeTitle()}`;
+    B.paintList(); B.paintDetail();
+  },
+  paintList() {
+    const el = $("[data-r=list]"); if (!el) return;
+    const l = listed();
+    const showVault = st.scope.k === "all" || st.scope.k === "tag" || st.scope.k === "color";
+    const col = (k, label, cls = "") => `<div data-act="set-sort" data-s="${k}" class="${cls} ${st.sort === k ? "is-on" : ""}">${label}${st.sort === k ? I(k === "created" || k === "modified" ? "arrow-down" : "arrow-up") : ""}</div>`;
+    el.classList.toggle("is-peek", !!(st.peek && current()));
+    const head = `<div class="B-grid B-head"><div></div>${col("title", "Title")}${col("username", "Username")}${col("url", "URL", "c-url")}<div class="c-tags">Tags</div>${col("modified", st.sort === "created" ? "Created" : "Modified")}<div></div></div>`;
+    if (!l.length) { el.innerHTML = head + `<div style="height:calc(100% - 32px)">${emptyList()}</div>`; return; }
+    el.innerHTML = head + `<div class="B-rows">${l.map((e) => `<div class="B-grid B-row ${e.id === st.sel && st.peek ? "is-selected" : e.id === st.sel ? "is-selected" : ""}" data-e="${e.id}">
+        <div class="c-ico">${KF.avatar(e, 22)}</div>
+        <div class="c-title"><span class="truncate">${hl(e.title || "(untitled)")}</span>${expiredBadge(e)}${e.totp ? `<span class="subtle" style="display:inline-grid" title="TOTP">${I("timer", "ico-sm")}</span>` : ""}${e.attachments.length ? `<span class="subtle" style="display:inline-grid" title="Attachments">${I("paperclip", "ico-sm")}</span>` : ""}</div>
+        <div class="c-user">${hl(e.username) || `<span class="subtle">—</span>`}</div>
+        <div class="c-url">${hl(KF.host(e.url)) || "—"}${showVault ? ` · ${esc(vaultOf(e).name)}` : ""}</div>
+        <div class="tags c-tags">${e.tags.slice(0, 2).map((t) => `<span class="tag"><span class="dot"></span>${esc(t)}</span>`).join("")}${e.tags.length > 2 ? `<span class="subtle" style="font-size:var(--text-xs);align-self:center">+${e.tags.length - 2}</span>` : ""}</div>
+        <div class="c-mod">${fmtShort(st.sort === "created" ? e.created : e.modified)}</div>
+        <div style="padding:0;display:grid;place-items:center">${e.color ? `<span class="dot" style="width:7px;height:7px;background:${KF.colorVar(e.color)}"></span>` : ""}</div></div>`).join("")}</div>`;
+  },
+  paintDetail() {
+    const el = $("[data-r=detail]"); if (!el) return;
+    const e = current();
+    if (!e || !st.peek) { el.innerHTML = ""; return; }
+    const v = vaultOf(e), g = groupOf(e);
+    const l = listed(); const i = l.indexOf(e);
+    el.innerHTML = `<aside class="B-peek">
+      <div class="B-peek-top">
+        <button class="btn ghost sm icon" data-act="peek-prev" title="Previous Entry · ↑">${I("chevron-up")}</button>
+        <button class="btn ghost sm icon" data-act="peek-next" title="Next Entry · ↓">${I("chevron-down")}</button>
+        <span class="subtle" style="font-size:var(--text-xs);margin-left:4px;font-variant-numeric:tabular-nums">${i + 1} of ${l.length}</span>
+        <span class="spacer"></span>${entryActions({ compact: true })}
+        <button class="btn ghost sm icon" data-act="peek-close" title="Close · Esc">${I("x")}</button></div>
+      <div class="B-peek-scroll">
+        <div class="hstack" style="gap:12px;margin-bottom:16px">${KF.avatar(e, 40)}<div style="min-width:0;flex:1">${titleEl(e)}
+          <div class="subtle" style="font-size:var(--text-sm);margin-top:3px;display:flex;gap:6px;align-items:center">${locLabel(e)}${e.color ? `<span class="dot" style="width:7px;height:7px;background:${KF.colorVar(e.color)}"></span>` : ""}</div></div></div>
+        ${coreFields(e)}
+        <div class="B-props" style="margin-top:14px">${propRows(e, ["expires", "strength"])}</div>
+        <div class="vb-prop"><span class="k">Tags</span><span class="v">${props(e).tags}</span></div>
+        ${notesSect(e)}${fieldsSect(e)}${filesSect(e)}${accessSect(e)}
+        <div class="hstack" style="margin-top:20px;gap:4px;flex-wrap:wrap">
+          <button class="btn ghost sm" data-act="totp-setup">${I("timer")} TOTP…</button>
+          <button class="btn ghost sm" data-act="history">${I("history")} History${e.history ? ` <span class="subtle">${e.history}</span>` : ""}</button>
+          <button class="btn ghost sm" data-act="move">${I("folder-input")} Move…</button>
+          <span class="spacer"></span><button class="btn danger-ghost sm" data-act="delete">${I("trash-2")} Delete</button></div>
+      </div>
+      <div class="B-peek-foot">
+        <button class="btn secondary sm" data-copy="username">Username ${K("Ctrl", "B")}</button>
+        <button class="btn secondary sm" data-copy="password">Password ${K("Ctrl", "C")}</button>
+        ${e.totp ? `<button class="btn secondary sm" data-copy="totp">TOTP code ${K("Ctrl", "T")}</button>` : ""}
+      </div></aside>`;
+  },
+};
+document.addEventListener("click", (ev) => {
+  if (V !== B) return;
+  const a = ev.target.closest("[data-act]"); if (!a) return;
+  if (a.dataset.act === "peek-close") { st.peek = false; B.paint(); }
+  if (a.dataset.act === "peek-prev") move(-1);
+  if (a.dataset.act === "peek-next") move(1);
+});
+
+/* ======================================================================
+   Variant C — Vault switcher, grouped list, tabbed inspector
+   ====================================================================== */
+const C = {
+  name: "Grouped list · tabbed inspector",
+  render(root) {
+    V = C; C.root = root;
+    if (st.scope.k === "all") st.scope = { k: "vault", v: "personal" };
+    root.innerHTML = `<div class="vb"><div data-r="side" style="display:contents"></div><div class="vb-main"><div data-r="top"></div><div class="vb-panes" data-r="panes"></div></div></div>`;
+    C.paint(); autoState();
+    if (STATE === "switcher") setTimeout(() => onAction("switcher", $(".C-switch")), 60);
+  },
+  curVault() { return st.scope.v ? KF.vault(st.scope.v) : KF.vault("personal"); },
+  onSelect() { if (!["overview", "fields", "files", "history", "access"].includes(st.tab)) st.tab = "overview"; },
+  order() {
+    const out = []; C.groups().forEach(([, es, key]) => { if (!st.collapsed[key]) out.push(...es); }); return out;
+  },
+  groups() {
+    const l = listed();
+    if (st.scope.k === "trash" || st.q.trim() && false) return [["", l, "flat"]];
+    const map = new Map();
+    l.forEach((e) => { const g = groupOf(e); const k = e._v + ":" + g.id; if (!map.has(k)) map.set(k, [g.parent ? g.name : (st.scope.k === "vault" ? g.name : vaultOf(e).name), [], k, g]); map.get(k)[1].push(e); });
+    return Array.from(map.values()).sort((a, b) => (a[3].parent ? 1 : 0) - (b[3].parent ? 1 : 0) || a[0].localeCompare(b[0]));
+  },
+  sidebar() {
+    const v = C.curVault();
+    const s = v.locked ? { dot: "", text: "Locked" } : statusOf(v.id);
+    const tagCounts = D.tags.map((t) => [t, (v.locked ? [] : v.entries.filter((e) => !inBin(e))).filter((e) => e.tags.includes(t)).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]);
+    const shown = st.tagsOpen ? tagCounts : tagCounts.slice(0, 6);
+    const root = v.groups.find((g) => !g.parent);
+    const bin = binOf(v);
+    return `<aside class="vb-side">
+      <div style="padding:4px 0 0"><div class="C-switch" data-act="switcher"><span class="vb-vault-ico">${I(vaultIcon(v))}</span>
+        <div class="vstack" style="gap:0;min-width:0"><span class="name truncate">${esc(v.name)}</span><span class="file truncate">${v.locked ? "Locked" : v.storage === "dropbox" ? `Dropbox · ${esc(s.text)}` : esc(s.text === "All changes saved" ? "Local · Saved" : "Local · " + s.text)}</span></div>${I("chevrons-up-down")}</div></div>
+      <div class="vb-side-scroll" style="padding-top:6px">
+        ${v.locked ? `<div class="nav-section"><div class="nav-item is-selected">${I("lock")}<span>Locked</span></div></div>` : `
+        <div class="nav-section">
+          ${navItem({ icon: I("layout-list"), label: "All Entries", count: scopeEntries({ k: "vault", v: v.id }).length, scope: { k: "vault", v: v.id } })}
+          ${navItem({ icon: I("timer"), label: "With TOTP", count: v.entries.filter((e) => e.totp && !inBin(e)).length, scope: { k: "vault", v: v.id, f: "totp" } })}
+        </div>
+        <div class="nav-section"><div class="nav-head">Groups<button class="btn ghost sm icon" style="width:20px;height:20px" data-act="new-group" title="New Group">${I("plus")}</button></div><div class="vb-tree">${groupTree(v, root.id, 0)}</div></div>
+        <div class="nav-section"><div class="nav-head">Tags</div>${shown.map(([t, n]) => navItem({ icon: I("hash"), label: esc(t), count: n, scope: { k: "tag", t } })).join("")}
+          ${tagCounts.length > 6 ? `<div class="nav-item vb-more" data-act="tags-toggle">${I(st.tagsOpen ? "chevron-up" : "ellipsis")}<span>${st.tagsOpen ? "Show fewer" : `${tagCounts.length - 6} more`}</span></div>` : ""}</div>
+        ${colorSection()}`}
+        <div class="nav-section"><div class="nav-head">Other Vaults</div>${D.vaults.filter((x) => x.id !== v.id).map((x) => { const xs = x.locked ? null : statusOf(x.id); return navItem({ icon: `<span class="vb-vault-ico">${I(vaultIcon(x))}</span>`, label: esc(x.name), scope: { k: "vault", v: x.id }, cls: `vb-nav-vault ${x.locked ? "vb-nav-locked" : ""}`, extra: `<span class="vb-sync">${x.locked ? "Locked" : `<span class="status-dot ${xs.dot}"></span>${esc(xs.text.replace("All changes saved", "Saved"))}`}</span>` }); }).join("")}</div>
+      </div>
+      ${bin ? `<div class="vb-side-bottom">${navItem({ icon: I("trash-2"), label: "Recycle Bin", count: scopeEntries({ k: "trash", v: v.id }).length || "", scope: { k: "trash", v: v.id } })}</div>` : ""}
+      ${sideFoot()}</aside>`;
+  },
+  paint() {
+    $("[data-r=side]").innerHTML = C.sidebar();
+    $("[data-r=top]").innerHTML = `<div class="toolbar">${crumbs()}<span class="spacer"></span>${statusButton()}<span class="vdivider" style="height:16px;align-self:center;margin:0 4px"></span><button class="btn ghost sm" data-act="palette">${I("command")} ${K("Ctrl", "K")}</button></div>${mergeBanner()}`;
+    const v = scopeVault();
+    if (v && v.locked) { $("[data-r=panes]").innerHTML = lockedCard(v); return; }
+    if (!$(".C-list", C.root)) $("[data-r=panes]").innerHTML = `<section class="vb-list C-list"><div class="vb-list-head" style="padding-left:12px">${searchBox("Search Entries")}<button class="btn ghost sm icon" data-act="sort" title="Sort">${I("arrow-up-down")}</button><button class="btn ghost sm icon" data-act="add-menu" title="New Entry or Group">${I("plus")}</button></div><div class="vb-list-body" data-r="list"></div></section><section class="vb-detail" data-r="detail"></section>`;
+    const s = $("[data-search]"); if (s && s.value !== st.q) s.value = st.q;
+    C.paintList(); C.paintDetail();
+  },
+  paintList() {
+    const el = $("[data-r=list]"); if (!el) return;
+    const gs = C.groups();
+    if (!gs.length || !gs[0][1].length) { el.innerHTML = emptyList(); return; }
+    el.innerHTML = gs.map(([name, es, key]) => `${key === "flat" ? "" : `<div class="C-ghead ${st.collapsed[key] ? "is-collapsed" : ""}" data-act="gcollapse" data-k="${key}">${I("chevron-down", "chev")}<span>${esc(name)}</span><span class="count">${es.length}</span></div>`}
+      ${st.collapsed[key] ? "" : es.map((e) => `<div class="C-row ${e.id === st.sel ? "is-selected" : ""}" data-e="${e.id}">${KF.avatar(e, 20)}<span class="t truncate">${hl(e.title || "(untitled)")}</span><span class="u truncate">${hl(e.username)}</span>
+        <span class="m">${expiredBadge(e)}${rowMeta(e)}</span></div>`).join("")}`).join("");
+  },
+  paintDetail() {
+    const el = $("[data-r=detail]"); if (!el) return;
+    const e = current();
+    if (!e) { el.innerHTML = noSelection(); return; }
+    const v = vaultOf(e), g = groupOf(e);
+    const tabs = [["overview", "Overview"], ["fields", "Fields", e.fields.length], ["files", "Files", e.attachments.length], ["history", "History", e.history], ["access", "Access", e.access.length]];
+    const pw = e.password ? (st.reveal.pw ? `<span class="mono">${esc(e.password)}</span>` : `<span class="vb-pw masked">${KF.mask(12)}</span>`) : `<span class="subtle">None</span>`;
+    el.innerHTML = `<div class="vb-detail-scroll">
+      <div class="C-insp-top">
+        <div class="C-hero">${KF.avatar(e, 48)}<div style="min-width:0;flex:1;padding-top:2px">${titleEl(e)}
+          <div class="sub">${e.url ? `<a class="vb-link" data-act="open-url" style="color:var(--fg-1)">${esc(KF.host(e.url))}${I("arrow-up-right")}</a><span>·</span>` : ""}<span>${locLabel(e)}</span>${isExpired(e) ? `<span class="badge danger" style="margin-left:2px">Expired</span>` : ""}</div></div>
+          <div class="hstack" style="gap:4px">${entryActions({ compact: true })}</div></div>
+        ${st.edit ? "" : `<div class="C-quick">
+          <div class="C-qt" data-copy="username"><span class="k">${I("user", "ico-sm")} Username ${K("Ctrl", "B")}</span><span class="v">${esc(e.username) || `<span class="subtle">None</span>`}</span></div>
+          <div class="C-qt" data-copy="password"><span class="k">${I("key-round", "ico-sm")} Password ${K("Ctrl", "C")}</span><span class="v">${pw}</span>
+            ${e.password ? `<button class="btn ghost sm icon eye" data-act="reveal" data-f="pw" title="${st.reveal.pw ? "Hide" : "Show"}">${I(st.reveal.pw ? "eye-off" : "eye")}</button>` : ""}</div>
+          ${e.totp ? `<div class="C-qt" data-copy="totp"><span class="k">${I("timer", "ico-sm")} TOTP ${K("Ctrl", "T")}</span><span class="v">${totpHtml(e)}</span></div>`
+            : `<div class="C-qt" data-act="totp-setup" style="border-style:dashed;background:transparent"><span class="k">${I("timer", "ico-sm")} TOTP</span><span class="v subtle" style="color:var(--fg-2)">${I("plus", "ico-sm")} Set up TOTP…</span></div>`}
+        </div>`}
+        <div class="C-tabs">${tabs.map(([k, l, n]) => `<span class="C-tab ${st.tab === k ? "is-on" : ""}" data-act="tab" data-t="${k}">${l}${n ? `<span class="count">${n}</span>` : ""}</span>`).join("")}</div>
+      </div>
+      <div class="C-pane">${C.tabBody(e)}</div></div>`;
+  },
+  tabBody(e) {
+    if (st.edit) return coreFields(e) + notesSect(e);
+    switch (st.tab) {
+      case "fields": return `<div style="margin-top:-24px">${fieldsSect(e, { always: true })}</div>`;
+      case "files": return `<div style="margin-top:-24px">${filesSect(e, { always: true })}</div>`;
+      case "access": return `<div style="margin-top:-24px">${accessSect(e, { always: true })}</div><p class="hint" style="margin-top:12px">An Access decision overrides the Vault's Default access policy for that site.</p>`;
+      case "history": {
+        if (!e.history) return `<div class="vb-empty" style="height:200px">${I("history")}<p>This Entry has no earlier versions yet.</p><span class="subtle" style="font-size:var(--text-sm)">Each edit keeps the previous version here.</span></div>`;
+        const changes = ["Password changed", "TOTP set up", "Tags changed", "URL changed", "Username changed", "Notes changed", "Attachment added"];
+        const vers = [`<div class="C-ver is-current"><span class="node"></span><div><div class="what">Current version</div><div class="when">${fmtDate(e.modified)}</div></div><span></span></div>`];
+        for (let i = 0; i < e.history; i++) {
+          const d = new Date(dt(e.modified) - (i + 1) * 47 * 864e5); const s = d.toISOString().slice(0, 10);
+          vers.push(`<div class="C-ver"><span class="node"></span><div><div class="what">${changes[i % changes.length]}</div><div class="when">Version of ${fmtDate(s)}</div></div><button class="btn ghost sm" data-act="toast" data-msg="Restored the version of ${fmtDate(s)}. The current one is kept in History.">Restore</button></div>`);
+        }
+        return vers.join("");
+      }
+      default: {
+        return `<div class="vb-fields">${fRow(e, { k: "URL", key: "url", html: e.url ? `<a class="vb-link truncate" data-act="open-url">${esc(e.url)}${I("arrow-up-right")}</a>` : `<span class="subtle">None</span>`, copy: e.url && "url" })}
+            ${e.password ? fRow(e, { k: "Strength", key: "str", html: (() => { const s = strength(e.password); return `<span class="vb-strength" style="font-size:var(--text-sm);color:var(--fg-1)"><span class="strength" data-score="${s.score}" style="width:64px"><i></i><i></i><i></i><i></i></span>${s.label} <span class="subtle">· ${s.bits} bits</span></span>`; })() }) : ""}
+          </div>
+          ${notesSect(e) || `<div class="vb-sect"><div class="vb-sect-head">Notes</div><div class="vb-notes empty">No notes.</div></div>`}
+          <div class="vb-sect"><div class="vb-sect-head">Details</div>
+            <div class="vb-fields" style="padding:4px 14px">${propRows(e, ["group", "tags", "color", "expires", "modified", "created"])}</div></div>`;
+      }
+    }
+  },
+};
+document.addEventListener("click", (ev) => {
+  if (V !== C) return;
+  const a = ev.target.closest("[data-act]"); if (!a) return;
+  if (a.dataset.act === "tab") { st.tab = a.dataset.t; C.paintDetail(); }
+  if (a.dataset.act === "gcollapse") { st.collapsed[a.dataset.k] = !st.collapsed[a.dataset.k]; C.paintList(); }
+  if (a.dataset.act === "switcher") {
+    const cur = C.curVault();
+    pop(`<div class="menu-label">Open Vaults</div>` + D.vaults.map((v) => {
+      const s = v.locked ? { text: "Locked" } : statusOf(v.id);
+      return `<div class="menu-item" data-scope='${JSON.stringify({ k: "vault", v: v.id })}'>${I(vaultIcon(v))}<span style="${v.locked ? "color:var(--fg-1)" : ""}">${esc(v.name)}</span><span class="sub">${esc(s.text.replace("All changes saved", "Saved"))}</span>${v.id === cur.id ? `<span class="check-mark" style="margin-left:8px">${I("check")}</span>` : ""}</div>`;
+    }).join("") + `<div class="menu-sep"></div>${mi("layout-grid", "All Items across Vaults", { attrs: `data-scope='{"k":"all"}'` })}${mi("folder-open", "Open Vault file…", { kbd: ["Ctrl", "O"], act: "open-new" })}${mi("plus", "New Vault…", { act: "open-new" })}<div class="menu-sep"></div>${mi("settings-2", "Vault Settings", { act: "settings" })}${mi("lock", "Lock all Vaults", { kbd: ["Ctrl", "L"], act: "lock-all" })}`,
+      { anchor: a, width: 240 });
+  }
+});
+// C's "With TOTP" smart filter and switcher scope clicks close the popover.
+const _scopeEntries = scopeEntries;
+scopeEntries = function (scope = st.scope) { const r = _scopeEntries(scope); return scope.f === "totp" ? r.filter((e) => e.totp) : r; };
+document.addEventListener("click", (ev) => { if (ev.target.closest(".vb-pop [data-scope]")) closePop(); }, true);
+
+KF.variants({ A, B, C });
+</script>
+</body>
+</html>

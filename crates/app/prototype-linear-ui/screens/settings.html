@@ -1,0 +1,635 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Settings — keefast prototype</title>
+<link rel="stylesheet" href="../kit/tokens.css"><link rel="stylesheet" href="../kit/components.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script><script src="../kit/kit.js"></script>
+<style>
+/* ---------- Shared settings atoms ---------- */
+.set-section { scroll-margin-top: 24px; }
+.set-section + .set-section { margin-top: 36px; }
+.set-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; }
+.set-head h2 { margin: 0; font-size: var(--text-md); font-weight: 600; letter-spacing: -0.005em; }
+.set-head p { margin: 0; font-size: var(--text-sm); color: var(--fg-2); }
+.set-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); }
+:root:not([data-theme="light"]) .set-card { background: rgb(255 255 255 / 0.018); }
+.set-row { display: flex; align-items: center; gap: 24px; min-height: 60px; padding: 12px 16px; }
+.set-row + .set-row, .set-card > * + * { border-top: 1px solid var(--border); }
+.set-row .txt { flex: 1; min-width: 0; }
+.set-row .lbl { font-size: var(--text-md); font-weight: 500; color: var(--fg-0); }
+.set-row .desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; text-wrap: pretty; }
+.set-row .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+.set-block { padding: 16px; }
+.set-note { display: flex; gap: 10px; padding: 12px 16px; font-size: var(--text-sm); color: var(--fg-1); line-height: 1.5; text-wrap: pretty; }
+.set-note svg.lucide { width: 14px; height: 14px; margin-top: 2px; color: var(--fg-2); }
+.set-note.danger { color: var(--danger); background: var(--danger-bg); }
+.set-note.danger svg.lucide { color: var(--danger); }
+.set-note.warn { color: var(--warn); background: var(--warn-bg); }
+.set-note.warn svg.lucide { color: var(--warn); }
+.set-card > .set-note:last-child { border-radius: 0 0 var(--r-md) var(--r-md); }
+.banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--danger-bg); color: var(--danger); font-size: var(--text-sm); margin-bottom: 24px; }
+.banner svg.lucide { width: 15px; height: 15px; }
+.banner .btn { margin-left: auto; color: var(--danger); }
+mark { background: var(--accent-bg); color: var(--accent-fg); border-radius: 3px; box-shadow: 0 0 0 2px var(--accent-bg); }
+
+/* Dropdown trigger (custom select) */
+.dd { display: inline-flex; align-items: center; gap: 8px; height: 30px; min-width: 112px; padding: 0 8px 0 10px; border-radius: var(--r-sm); background: var(--bg-1); border: 1px solid var(--border-strong); font-size: var(--text-md); font-weight: 500; color: var(--fg-0); cursor: default; }
+.dd:hover { background: var(--bg-2); }
+.dd.is-open { border-color: var(--accent); box-shadow: var(--ring); }
+.dd span { flex: 1; text-align: left; font-variant-numeric: tabular-nums; }
+.dd svg.lucide { width: 14px; height: 14px; color: var(--fg-2); }
+.dd-menu { position: absolute; z-index: 80; min-width: 160px; }
+.dd-menu .menu-item { font-variant-numeric: tabular-nums; }
+.dd-menu .menu-item .chk { margin-left: auto; color: var(--accent-fg); }
+.dd-menu .menu-item .chk svg.lucide { color: var(--accent-fg); width: 14px; height: 14px; }
+
+/* Theme tiles */
+.themes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.theme-tile { all: unset; display: flex; flex-direction: column; gap: 8px; cursor: default; }
+.theme-tile .pv { position: relative; height: 88px; border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 1px var(--border-strong); transition: box-shadow var(--dur-fast) var(--ease); }
+.theme-tile:hover .pv { box-shadow: 0 0 0 1px var(--fg-2); }
+.theme-tile.is-on .pv { box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px var(--accent-bg); }
+.theme-tile:focus-visible .pv { box-shadow: var(--ring); }
+.theme-tile .cap { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); font-weight: 500; color: var(--fg-1); }
+.theme-tile.is-on .cap { color: var(--fg-0); }
+.theme-tile .cap .subtle { font-weight: 400; margin-left: auto; }
+/* Preview palettes: fixed dark/light copies of tokens.css so each tile shows its own theme. */
+.pv-dark  { --p-side: #0a0b0c; --p-bg: #0d0e10; --p-line: rgb(255 255 255 / 0.07); --p-fg: rgb(255 255 255 / 0.55); --p-fg2: rgb(255 255 255 / 0.18); --p-sel: rgb(255 255 255 / 0.07); --p-acc: #a970ff; }
+.pv-light { --p-side: #f5f5f6; --p-bg: #fcfcfc; --p-line: rgb(0 0 0 / 0.08); --p-fg: rgb(0 0 0 / 0.55); --p-fg2: rgb(0 0 0 / 0.14); --p-sel: rgb(0 0 0 / 0.06); --p-acc: #8a46e6; }
+.mini { position: absolute; inset: 0; display: grid; grid-template-columns: 30% 1fr; background: var(--p-bg); }
+.mini .ms { background: var(--p-side); border-right: 1px solid var(--p-line); padding: 10px 8px; display: flex; flex-direction: column; gap: 5px; }
+.mini .mm { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.mini i { display: block; height: 4px; border-radius: 2px; background: var(--p-fg2); }
+.mini .ms i.sel { background: var(--p-fg); }
+.mini .mm .r { display: flex; align-items: center; gap: 6px; height: 12px; padding: 0 4px; border-radius: 3px; }
+.mini .mm .r.sel { background: var(--p-sel); }
+.mini .mm .r b { width: 8px; height: 8px; border-radius: 2px; background: var(--p-fg2); flex: none; }
+.mini .mm .r.sel b { background: var(--p-acc); }
+.mini .mm .r i { flex: 1; }
+.mini.split { clip-path: polygon(62% 0, 100% 0, 100% 100%, 38% 100%); }
+
+/* Generator */
+.gen-preview { display: flex; align-items: center; gap: 10px; padding: 18px 16px 12px; }
+.gen-preview .pw { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 16px; letter-spacing: 0.03em; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.gen-preview .pw .d { color: var(--info); } .gen-preview .pw .s { color: var(--accent-fg); }
+.gen-meter { display: flex; align-items: center; gap: 10px; padding: 0 16px 14px; font-size: var(--text-xs); color: var(--fg-2); }
+.gen-meter .strength { width: 120px; }
+.gen-grid { display: grid; grid-template-columns: 112px 1fr; align-items: center; row-gap: 14px; column-gap: 16px; padding: 16px; }
+.gen-grid > .k { font-size: var(--text-sm); color: var(--fg-1); font-weight: 500; }
+.slider { display: flex; align-items: center; gap: 12px; }
+.slider .num { width: 52px; height: 28px; text-align: center; font-variant-numeric: tabular-nums; padding: 0 6px; }
+.slider .num input { text-align: center; }
+input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; height: 18px; background: transparent; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--accent) 0 var(--fill, 50%), var(--border-strong) var(--fill, 50%)); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.2), 0 1px 3px rgb(0 0 0 / 0.35); }
+input[type=range]:focus-visible { outline: none; }
+input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: var(--ring); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { all: unset; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--border-strong); font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); cursor: default; }
+.chip:hover { color: var(--fg-0); background: var(--bg-hover); }
+.chip.is-on { color: var(--accent-fg); background: var(--accent-bg); border-color: transparent; box-shadow: inset 0 0 0 1px rgb(169 112 255 / 0.35); }
+.chip svg.lucide { width: 12px; height: 12px; }
+.check-line { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--fg-1); cursor: default; }
+.check-line .mono { color: var(--fg-2); }
+
+/* Browser status */
+.bstatus { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: var(--text-sm); color: var(--fg-1); }
+.bstatus .status-dot { width: 7px; height: 7px; box-shadow: 0 0 0 3px var(--ok-bg); }
+.bstatus.danger { color: var(--danger); background: var(--danger-bg); }
+.bstatus.warn { color: var(--warn); background: var(--warn-bg); }
+.bstatus.danger svg.lucide, .bstatus.warn svg.lucide { width: 14px; height: 14px; }
+.bstatus .btn { margin-left: auto; }
+.bstatus.danger .btn { color: var(--danger); } .bstatus.danger .btn:hover { background: var(--danger-bg); }
+.set-card > .bstatus:last-child { border-radius: 0 0 var(--r-md) var(--r-md); }
+.browser-chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px 0 4px; border-radius: 99px; background: var(--bg-active); color: var(--fg-0); font-size: var(--text-sm); font-weight: 500; }
+.browser-chip .bi { width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; font-size: 8px; font-weight: 700; color: #fff; }
+.pair-row { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; font-size: var(--text-sm); }
+.pair-row + .pair-row { border-top: 1px solid var(--border); }
+.pair-row .muted { margin-left: auto; }
+.spin { animation: kf-spin 0.8s linear infinite; }
+@keyframes kf-spin { to { transform: rotate(360deg); } }
+
+/* Shortcuts */
+.keys { display: grid; grid-template-columns: 1fr 1fr; }
+.keys .kcol { padding: 6px 0; }
+.keys .kcol + .kcol { border-left: 1px solid var(--border); }
+.keys .kgroup { padding: 8px 16px 4px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+.keys .krow { display: flex; align-items: center; height: 32px; padding: 0 16px; font-size: var(--text-md); color: var(--fg-1); }
+.keys .krow:hover { color: var(--fg-0); background: var(--bg-hover); }
+.keys .krow .kk { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.set-card > .gen-meter { border-top: 0; }
+.keys .krow .or { margin: 0 2px; font-size: var(--text-xs); color: var(--fg-2); }
+.keys.one { grid-template-columns: 1fr; }
+
+/* ---------- Variant A: full-window settings ---------- */
+.va { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
+.va-nav { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 8px 8px; overflow-y: auto; }
+.va-back { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-bottom: 10px; border-radius: var(--r-sm); color: var(--fg-1); font-weight: 500; cursor: default; }
+.va-back:hover { background: var(--bg-hover); color: var(--fg-0); }
+.va-back kbd { margin-left: auto; }
+.va-nav .nav-head { margin-top: 6px; }
+.va-nav .nav-item .lock { margin-left: auto; color: var(--fg-2); }
+.va-nav .nav-item .lock svg.lucide { width: 13px; height: 13px; }
+.va-nav .foot { margin-top: auto; padding: 10px 8px 4px; font-size: var(--text-xs); color: var(--fg-2); display: flex; align-items: center; gap: 6px; }
+.va-main { overflow-y: auto; }
+.va-page { max-width: 680px; margin: 0 auto; padding: 56px 40px 96px; }
+.va-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+.va-sub { color: var(--fg-1); margin: 6px 0 28px; font-size: var(--text-md); }
+.va-page .rule { height: 1px; background: var(--border); margin: 0 0 28px; }
+
+/* ---------- Variant B: settings modal ---------- */
+.vb-app { display: grid; grid-template-columns: var(--sidebar-w) var(--list-w) 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
+.vb-side { background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; }
+.vb-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.vb-list .rows { padding: 4px 6px; overflow: hidden; }
+.vb-list .row { height: 44px; }
+.vb-list .row .t { font-weight: 500; } .vb-list .row .u { font-size: var(--text-sm); color: var(--fg-2); }
+.vb-detail { padding: 0; display: flex; flex-direction: column; }
+.vb-dialog { width: 780px; min-height: 480px; max-height: min(600px, calc(100% - 64px)); display: flex; flex-direction: column; }
+.vb-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 0 20px; }
+.vb-head h1 { margin: 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+.vb-head .scope { font-size: var(--text-sm); color: var(--fg-2); }
+.vb-tabs { display: flex; gap: 2px; padding: 0 14px; margin-top: 10px; border-bottom: 1px solid var(--border); }
+.vb-tab { all: unset; position: relative; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 8px; font-size: var(--text-md); font-weight: 500; color: var(--fg-2); cursor: default; }
+.vb-tab svg.lucide { width: 14px; height: 14px; }
+.vb-tab:hover { color: var(--fg-0); }
+.vb-tab.is-on { color: var(--fg-0); }
+.vb-tab.is-on::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--fg-0); }
+.vb-tab .bdg { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+.vb-body { flex: 1; overflow-y: auto; padding: 20px 20px 24px; }
+.vb-body .set-section + .set-section { margin-top: 24px; }
+.vb-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px 10px 20px; border-top: 1px solid var(--border); background: var(--bg-inset); font-size: var(--text-sm); color: var(--fg-2); }
+.vb-foot .ok { display: inline-flex; align-items: center; gap: 6px; }
+.vb-foot .ok svg.lucide { width: 13px; height: 13px; color: var(--ok); }
+
+/* ---------- Variant C: long page with index + search ---------- */
+.vc { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
+.vc-side { background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; }
+.vc-main { display: flex; flex-direction: column; min-width: 0; }
+.vc-main .toolbar .search { width: 280px; margin-left: auto; }
+.vc-scroll { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+.vc-wrap { display: grid; grid-template-columns: minmax(0, 640px) 180px; gap: 48px; justify-content: center; padding: 36px 40px 120px; }
+.vc-index { position: sticky; top: 36px; align-self: start; display: flex; flex-direction: column; gap: 1px; padding-left: 0; }
+.vc-index .ih { font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); padding: 0 10px 6px; }
+.vc-index a { position: relative; display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-2); }
+.vc-index a::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: transparent; }
+.vc-index a:hover { color: var(--fg-0); }
+.vc-index a.is-on { color: var(--fg-0); }
+.vc-index a.is-on::before { background: var(--accent); }
+.vc-index a .n { margin-left: auto; font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.vc-index a.dim { opacity: 0.4; }
+.vc-index .itip { margin-top: 14px; padding: 10px; border-top: 1px solid var(--border); font-size: var(--text-xs); color: var(--fg-2); line-height: 1.6; }
+.vc-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+.vc-sub { color: var(--fg-1); margin: 6px 0 32px; }
+.vc-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 72px 0; color: var(--fg-1); text-align: center; }
+.vc-empty[hidden] { display: none; }
+.vc-empty svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
+.set-section.is-hidden, .set-row.is-hidden, .set-card > .is-hidden, .krow.is-hidden, .kcol.is-hidden { display: none; }
+.keys:has(.kcol.is-hidden) { grid-template-columns: 1fr; }
+.keys .kcol.is-hidden + .kcol { border-left: 0; }
+.set-row.flash { animation: kf-flash 1.2s var(--ease); }
+@keyframes kf-flash { 0%, 40% { background: var(--accent-bg); } 100% { background: transparent; } }
+</style></head>
+<body><div id="app"></div><script>
+/* ================= State (module-level so re-renders keep it) ================= */
+const P = new URL(location.href).searchParams;
+const PSTATE = P.get("state") || "";
+const S = {
+  theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  idle: 15 * 60, osLock: true, clip: 30, autosave: true,
+  gen: { mode: "chars", length: 20, lower: true, upper: true, digits: true, symbols: true, lookalikes: true, words: 6, sep: "-" },
+  browser: true, bstatus: PSTATE === "browser-error" ? "failed" : "ok", favicons: false,
+  configError: PSTATE === "config-error",
+  section: P.get("page") || "general", // A
+  tab: P.get("tab") || "general",           // B
+  modalOpen: true,                           // B
+  query: PSTATE === "search" ? "lock" : "",  // C
+};
+const IDLE = [60, 300, 900, 1800, 3600, 14400, null];
+const CLIP = [10, 20, 30, 60, 120, 300, null];
+const dur = (s) => s == null ? "Never" : s >= 3600 && s % 3600 === 0 ? `${s / 3600} h` : s >= 60 && s % 60 === 0 ? `${s / 60} min` : `${s} s`;
+const BROWSERS = [{ n: "Chrome", c: "#4285f4" }, { n: "Brave", c: "#fb542b" }];
+
+/* Theme: resolve "system" via the OS and drive KF.setTheme */
+const mq = matchMedia("(prefers-color-scheme: light)");
+function applyTheme() {
+  const resolved = S.theme === "system" ? (mq.matches ? "light" : "dark") : S.theme;
+  KF.setTheme(resolved);
+  const b = document.querySelector(".proto-bar [data-theme]");
+  if (b) b.innerHTML = KF.icon(resolved === "light" ? "moon" : "sun", "ico-sm");
+}
+function syncThemeFromDoc() { // the switcher's T key changes the theme behind our back
+  const doc = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  if (S.theme !== "system" && S.theme !== doc) S.theme = doc;
+}
+
+/* ================= Generator maths ================= */
+const SYM = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", LOOK = "0O1Il|8B6G";
+const WORDS = "lantern orbit maple copper ridge velvet harbor quartz meadow ember falcon tundra cobalt willow saffron pebble canyon thistle aurora juniper".split(" ");
+function pool(g) {
+  let p = (g.lower ? "abcdefghijklmnopqrstuvwxyz" : "") + (g.upper ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "") + (g.digits ? "0123456789" : "") + (g.symbols ? SYM : "");
+  if (g.lookalikes) p = [...p].filter((c) => !LOOK.includes(c)).join("");
+  return p;
+}
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+function generate() {
+  const g = S.gen;
+  if (g.mode === "phrase") return Array.from({ length: g.words }, () => WORDS[Math.floor(rnd() * WORDS.length)]).join(g.sep);
+  const p = pool(g); if (!p) return "";
+  return Array.from({ length: g.length }, () => p[Math.floor(rnd() * p.length)]).join("");
+}
+function entropy() {
+  const g = S.gen;
+  return Math.round(g.mode === "phrase" ? g.words * Math.log2(7776) : g.length * Math.log2(Math.max(pool(g).length, 1)));
+}
+const score = (b) => b < 40 ? 1 : b < 64 ? 2 : b < 100 ? 3 : 4;
+const scoreWord = ["", "Weak", "Fair", "Strong", "Excellent"];
+let SAMPLE = generate();
+function pwHtml(pw) {
+  if (S.gen.mode === "phrase") return KF.esc(pw);
+  return [...pw].map((c) => /[0-9]/.test(c) ? `<span class="d">${c}</span>` : SYM.includes(c) ? `<span class="s">${KF.esc(c)}</span>` : KF.esc(c)).join("");
+}
+
+/* ================= Control builders ================= */
+const sw = (key, on) => `<button class="switch ${on ? "is-on" : ""}" data-toggle="${key}" role="switch" aria-checked="${on}"></button>`;
+const dd = (key, value) => `<button class="dd" data-dd="${key}"><span>${dur(value)}</span>${KF.icon("chevrons-up-down")}</button>`;
+
+function themeTiles() {
+  const mini = (cls, extra = "") => `<div class="mini ${cls} ${extra}"><div class="ms"><i class="sel" style="width:70%"></i><i style="width:55%"></i><i style="width:80%"></i><i style="width:45%"></i></div><div class="mm"><div class="r"><b></b><i></i></div><div class="r sel"><b></b><i></i></div><div class="r"><b></b><i style="flex:.6"></i></div><div class="r"><b></b><i style="flex:.8"></i></div></div></div>`;
+  const t = [
+    { k: "system", name: "System", pv: mini("pv-dark") + mini("pv-light", "split"), hint: mq.matches ? "Light now" : "Dark now" },
+    { k: "dark", name: "Dark", pv: mini("pv-dark") },
+    { k: "light", name: "Light", pv: mini("pv-light") },
+  ];
+  return `<div class="themes">${t.map((x) => `<button class="theme-tile ${S.theme === x.k ? "is-on" : ""}" data-theme-pick="${x.k}"><div class="pv">${x.pv}</div><div class="cap"><span class="radio ${S.theme === x.k ? "is-on" : ""}"></span>${x.name}${x.hint ? `<span class="subtle">${x.hint}</span>` : ""}</div></button>`).join("")}</div>`;
+}
+
+function generatorBlock() {
+  const g = S.gen, bits = entropy(), noClasses = g.mode === "chars" && !pool(g);
+  const chip = (k, label) => `<button class="chip ${g[k] ? "is-on" : ""}" data-gen-toggle="${k}">${g[k] ? KF.icon("check") : ""}${label}</button>`;
+  const fill = (v, min, max) => `--fill:${((v - min) / (max - min)) * 100}%`;
+  return `
+  <div class="gen-preview">
+    <div class="pw" data-gen-pw>${noClasses ? `<span class="subtle" style="font-family:var(--font-ui)">Nothing to generate</span>` : pwHtml(SAMPLE)}</div>
+    <button class="btn sm ghost icon" data-action="regen" title="Regenerate">${KF.icon("refresh-cw")}</button>
+    <button class="btn sm ghost icon" data-action="copy-sample" title="Copy">${KF.icon("copy")}</button>
+  </div>
+  <div class="gen-meter" data-gen-meter>${noClasses ? `<span class="error-msg">${KF.icon("circle-alert", "ico-sm")} Choose at least one kind of character.</span>` : `<div class="strength" data-score="${score(bits)}"><i></i><i></i><i></i><i></i></div><span>${scoreWord[score(bits)]} · ${bits} bits</span>`}</div>
+  <div class="gen-grid" style="border-top:1px solid var(--border)">
+    <span class="k">Type</span>
+    <div><div class="seg"><button class="${g.mode === "chars" ? "is-on" : ""}" data-gen-mode="chars">Characters</button><button class="${g.mode === "phrase" ? "is-on" : ""}" data-gen-mode="phrase">Passphrase</button></div></div>
+    ${g.mode === "chars" ? `
+    <span class="k">Length</span>
+    <div class="slider"><input type="range" min="4" max="64" value="${Math.min(g.length, 64)}" data-gen-range="length" style="${fill(Math.min(g.length, 64), 4, 64)}"><div class="input num mono"><input value="${g.length}" data-gen-num="length" inputmode="numeric"></div></div>
+    <span class="k">Characters</span>
+    <div class="chips">${chip("lower", "a–z")}${chip("upper", "A–Z")}${chip("digits", "0–9")}${chip("symbols", "!@#$")}</div>
+    <span></span>
+    <label class="check-line" data-gen-toggle="lookalikes"><span class="check ${g.lookalikes ? "is-on" : ""}"></span>Exclude look-alikes <span class="mono">(${LOOK})</span></label>` : `
+    <span class="k">Words</span>
+    <div class="slider"><input type="range" min="3" max="12" value="${Math.min(g.words, 12)}" data-gen-range="words" style="${fill(Math.min(g.words, 12), 3, 12)}"><div class="input num mono"><input value="${g.words}" data-gen-num="words" inputmode="numeric"></div></div>
+    <span class="k">Separator</span>
+    <div class="hstack"><div class="input mono" style="width:64px"><input value="${KF.esc(g.sep)}" data-gen-sep maxlength="3" style="text-align:center"></div><span class="hint">Between words, e.g. <span class="mono">-</span> <span class="mono">.</span> or a space</span></div>`}
+  </div>`;
+}
+
+function browserStatus() {
+  if (!S.browser) return "";
+  const st = S.bstatus;
+  if (st === "checking") return `<div class="bstatus">${KF.icon("loader-circle", "spin ico-sm")} Setting up browsers…</div>`;
+  if (st === "failed") return `<div class="bstatus danger">${KF.icon("circle-alert")} Browser integration could not be set up.<button class="btn sm ghost" data-action="retry-browser">${KF.icon("rotate-cw")} Try again</button></div>`;
+  if (st === "served") return `<div class="bstatus danger">${KF.icon("circle-alert")} Another keefast is already serving the browser.</div>`;
+  if (st === "none") return `<div class="bstatus warn">${KF.icon("triangle-alert")} No supported browser found (Chrome, Chromium, Brave, Edge, Vivaldi).<button class="btn sm ghost" data-action="retry-browser">Check again</button></div>`;
+  return `<div class="bstatus"><span class="status-dot"></span>Set up for ${BROWSERS.map((b) => `<span class="browser-chip"><span class="bi" style="background:${b.c}">${b.n[0]}</span>${b.n}</span>`).join("")}<button class="btn sm ghost" data-action="cycle-browser" title="Prototype: cycle status">${KF.icon("rotate-cw")} Re-check</button></div>`;
+}
+
+const KEYS = [
+  ["General", [["Command palette", ["Ctrl", "K"]], ["Search", ["Ctrl", "F"], ["/"]], ["Open Vault", ["Ctrl", "O"]], ["New Vault", ["Ctrl", "Shift", "N"]], ["Save all Vaults", ["Ctrl", "S"]], ["Lock all Vaults", ["Ctrl", "L"]], ["Settings", ["Ctrl", ","]], ["Close or go back", ["Esc"]]]],
+  ["Entries", [["Next / previous Entry", ["↑"], ["↓"]], ["First / last Entry", ["Home"], ["End"]], ["Open Entry", ["Enter"]], ["Edit Entry", ["E"]], ["New Entry", ["Ctrl", "N"]], ["Copy username", ["Ctrl", "B"]], ["Copy password", ["Ctrl", "C"]], ["Copy TOTP code", ["Ctrl", "T"]], ["Entry history", ["Ctrl", "H"]]]],
+];
+function keysBlock(cols = 2, filter = "") {
+  const krow = ([name, a, b]) => {
+    const isPair = b && (name.includes(" / "));
+    return `<div class="krow" data-search="${KF.esc(name)}"><span>${hl(name, filter)}</span><span class="kk">${KF.kbd(...a)}${b ? (isPair ? "" : `<span class="or">or</span>`) + KF.kbd(...b) : ""}</span></div>`;
+  };
+  const groups = KEYS.map(([g, rows]) => `<div class="kcol"><div class="kgroup">${g}</div>${rows.map(krow).join("")}</div>`);
+  return `<div class="keys ${cols === 1 ? "one" : ""}">${groups.join("")}</div>`;
+}
+
+/* Highlight for search (C) */
+function hl(text, q) {
+  if (!q) return KF.esc(text);
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return KF.esc(text);
+  return KF.esc(text.slice(0, i)) + `<mark>${KF.esc(text.slice(i, i + q.length))}</mark>` + KF.esc(text.slice(i + q.length));
+}
+function row(id, label, desc, ctl, q = "", kw = "") {
+  return `<div class="set-row" data-row="${id}" data-search="${KF.esc(label + " " + desc + " " + kw)}"><div class="txt"><div class="lbl">${hl(label, q)}</div>${desc ? `<div class="desc">${hl(desc, q)}</div>` : ""}</div><div class="ctl">${ctl}</div></div>`;
+}
+
+/* ================= Sections (content shared by every variant) ================= */
+const SECTIONS = [
+  { id: "appearance", name: "Appearance", icon: "palette", desc: "", body: (q) =>
+    `<div class="set-card"><div class="set-block" data-search="Theme System Dark Light appearance colour mode"><div class="hstack" style="margin-bottom:12px"><span class="lbl" style="font-weight:500">${hl("Theme", q)}</span><span class="spacer"></span><span class="hint">${hl("System follows your desktop's light or dark mode", q)}</span></div>${themeTiles()}</div></div>` },
+  { id: "locking", name: "Locking", icon: "lock", desc: "When unlocked Vaults lock themselves.", body: (q) =>
+    `<div class="set-card">${row("idle", "Lock when idle", "Lock every Vault after this long without input", dd("idle", S.idle), q, "timeout auto-lock inactivity")}${row("oslock", "Lock with the screen", "Lock every Vault when the screen locks or the computer sleeps", sw("osLock", S.osLock), q, "sleep suspend")}</div>` },
+  { id: "clipboard", name: "Clipboard", icon: "clipboard", desc: "", body: (q) =>
+    `<div class="set-card">${row("clip", "Clear clipboard", "Clear copied usernames and passwords after this long", dd("clip", S.clip), q, "copy paste")}</div>` },
+  { id: "saving", name: "Saving", icon: "save", desc: "", body: (q) =>
+    `<div class="set-card">${row("autosave", "Autosave", "Save Vaults automatically after every change", sw("autosave", S.autosave), q, "save write disk")}${S.configError ? `<div class="set-note danger">${KF.icon("circle-alert")}<span>keefast's settings file could not be read or saved, so recent Vault files may be forgotten.</span></div>` : ""}</div>` },
+  { id: "generator", name: "Password generator", icon: "wand-sparkles", desc: "keefast and the Companion extension generate passwords with these settings.", body: () =>
+    `<div class="set-card" data-search="Password generator length characters passphrase words separator symbols look-alikes defaults">${generatorBlock()}</div>` },
+  { id: "browser", name: "Browser", icon: "app-window", desc: "Fill Entries in your browser with the Companion extension.", body: (q) =>
+    `<div class="set-card">${row("browser", "Browser integration", "Let browser extensions ask keefast for Entries to fill (KeePassXC-Browser protocol)", sw("browser", S.browser), q, "extension chrome brave edge vivaldi chromium companion keepassxc")}${browserStatus()}</div>
+     ${S.browser ? `<div class="set-card" style="margin-top:12px" data-search="Pairing paired browsers Vault"><div class="set-row" style="min-height:48px"><div class="txt"><div class="lbl">${hl("Pairings", q)}</div><div class="desc">Each Vault keeps its own Pairings and Default access policy.</div></div></div>${KF.data.vaults.filter((v) => !v.locked).map((v, i) => `<div class="pair-row">${KF.icon(v.storage === "dropbox" ? "cloud" : "lock-open", "ico-sm")}<span style="font-weight:500">${v.name}</span><span class="muted">${i ? "No Pairings" : `${KF.data.pairings.length} paired browsers`}</span><button class="btn sm ghost" data-action="vault-settings" data-vault="${v.name}">Manage ${KF.icon("arrow-up-right")}</button></div>`).join("")}</div>` : ""}` },
+  { id: "network", name: "Network", icon: "earth", desc: "", body: (q) =>
+    `<div class="set-card">${row("favicons", "Website icons", "Download website icons for Entries", sw("favicons", S.favicons), q, "favicon network privacy ip")}<div class="set-note" data-search="privacy ip address">${KF.icon("shield")}<span>keefast then asks each Entry's website for its icon, so those websites see your IP address. Nothing goes through anyone else, and the icons are kept in memory only, never on disk.</span></div></div>` },
+  { id: "shortcuts", name: "Keyboard shortcuts", icon: "keyboard", desc: "Read-only for now.", body: (q, cols) =>
+    `<div class="set-card">${keysBlock(cols, q)}</div>` },
+];
+const sec = (id) => SECTIONS.find((s) => s.id === id);
+const secHtml = (s, q = "", cols = 2, withHead = true) =>
+  `<section class="set-section" id="sec-${s.id}" data-sec="${s.id}">${withHead ? `<div class="set-head"><h2>${hl(s.name, q)}</h2>${s.desc ? `<p>${s.desc}</p>` : ""}</div>` : ""}${s.body(q, cols)}</section>`;
+
+/* ================= Generic interaction wiring ================= */
+let ROOT, RERENDER;
+function rerender() {
+  const keep = KF.$$("[data-keep-scroll]", ROOT).map((el) => [el.dataset.keepScroll, el.scrollTop]);
+  const focus = document.activeElement && document.activeElement.matches("[data-focus-key]") ? document.activeElement.dataset.focusKey : null;
+  RERENDER();
+  keep.forEach(([k, t]) => { const el = KF.$(`[data-keep-scroll="${k}"]`, ROOT); if (el) { el.style.scrollBehavior = "auto"; el.scrollTop = t; el.style.scrollBehavior = ""; } });
+  if (focus) { const el = KF.$(`[data-focus-key="${focus}"]`, ROOT); if (el) { el.focus(); el.setSelectionRange?.(el.value.length, el.value.length); } }
+}
+function closeMenus() { KF.$$(".dd-menu", ROOT).forEach((m) => m.remove()); KF.$$(".dd.is-open", ROOT).forEach((b) => b.classList.remove("is-open")); }
+function openDropdown(btn) {
+  const key = btn.dataset.dd, opts = key === "idle" ? IDLE : CLIP, cur = S[key];
+  if (btn.classList.contains("is-open")) return closeMenus();
+  closeMenus();
+  btn.classList.add("is-open");
+  const app = document.getElementById("app").getBoundingClientRect(), r = btn.getBoundingClientRect();
+  const m = document.createElement("div");
+  m.className = "menu dd-menu";
+  m.style.transformOrigin = "top right";
+  m.innerHTML = `<div class="menu-label">${key === "idle" ? "Lock after" : "Clear after"}</div>` + opts.map((o, i) => `${o == null ? `<div class="menu-sep"></div>` : ""}<div class="menu-item ${o === cur ? "is-active" : ""}" data-dd-pick="${key}" data-v="${o}">${dur(o)}${o === cur ? `<span class="chk">${KF.icon("check")}</span>` : ""}</div>`).join("");
+  ROOT.appendChild(m);
+  const mh = m.offsetHeight;
+  const below = r.bottom + 6 + mh < app.bottom - 8;
+  m.style.top = (below ? r.bottom + 6 : r.top - 6 - mh) - app.top + "px";
+  m.style.left = Math.max(8, r.right - Math.max(160, r.width) - app.left) + "px";
+  m.style.minWidth = Math.max(160, r.width) + "px";
+}
+function updateGenLive() { // targeted update (keeps slider drag & input focus alive)
+  const card = KF.$("[data-gen-pw]", ROOT)?.closest(".set-card");
+  if (!card) return;
+  const g = S.gen, bits = entropy();
+  KF.$("[data-gen-pw]", card).innerHTML = pwHtml(SAMPLE);
+  KF.$("[data-gen-meter]", card).innerHTML = `<div class="strength" data-score="${score(bits)}"><i></i><i></i><i></i><i></i></div><span>${scoreWord[score(bits)]} · ${bits} bits</span>`;
+  KF.$$("[data-gen-range]", card).forEach((r) => { const k = r.dataset.genRange; r.value = Math.min(g[k], +r.max); r.style.setProperty("--fill", ((r.value - r.min) / (r.max - r.min)) * 100 + "%"); });
+  KF.$$("[data-gen-num]", card).forEach((n) => { if (document.activeElement !== n) n.value = g[n.dataset.genNum]; });
+}
+let EXTRA = {};
+function wire(root, extra = {}) {
+  EXTRA = extra;
+  if (root._wired) return;
+  root._wired = true;
+  root.addEventListener("click", (e) => {
+    const extra = EXTRA;
+    const t = e.target;
+    const ddb = t.closest("[data-dd]"); if (ddb) { e.stopPropagation(); return openDropdown(ddb); }
+    const pick = t.closest("[data-dd-pick]");
+    if (pick) { const k = pick.dataset.ddPick; S[k] = pick.dataset.v === "null" ? null : +pick.dataset.v; closeMenus(); rerender(); KF.toast(k === "idle" ? `Vaults lock after ${dur(S[k]).replace("Never", "never")} idle` : `Clipboard clears after ${dur(S[k])}`.replace("after Never", "never"), { icon: "check" }); return; }
+    if (!t.closest(".dd-menu")) closeMenus();
+    const tg = t.closest("[data-toggle]");
+    if (tg) { const k = tg.dataset.toggle; S[k] = !S[k]; if (k === "browser" && S[k]) { S.bstatus = "checking"; setTimeout(() => { S.bstatus = PSTATE === "browser-error" ? "failed" : "ok"; rerender(); }, 900); } rerender(); return; }
+    const th = t.closest("[data-theme-pick]");
+    if (th) { S.theme = th.dataset.themePick; applyTheme(); rerender(); return; }
+    const gm = t.closest("[data-gen-mode]"); if (gm) { S.gen.mode = gm.dataset.genMode; SAMPLE = generate(); rerender(); return; }
+    const gt = t.closest("[data-gen-toggle]"); if (gt) { e.preventDefault(); S.gen[gt.dataset.genToggle] = !S.gen[gt.dataset.genToggle]; SAMPLE = generate(); rerender(); return; }
+    const a = t.closest("[data-action]");
+    if (a) {
+      const act = a.dataset.action;
+      if (act === "regen") { SAMPLE = generate(); updateGenLive(); }
+      else if (act === "copy-sample") KF.copy("Password", a);
+      else if (act === "retry-browser") { S.bstatus = "checking"; rerender(); setTimeout(() => { S.bstatus = "ok"; rerender(); }, 900); }
+      else if (act === "cycle-browser") { const order = ["ok", "none", "failed", "served"]; S.bstatus = order[(order.indexOf(S.bstatus) + 1) % order.length]; rerender(); }
+      else if (act === "vault-settings") KF.toast(`${KF.esc(a.dataset.vault)} settings open in the Vault's own page`, { icon: "info" });
+      else if (act === "dismiss-config") { S.configError = false; rerender(); }
+      else extra[act]?.(a, e);
+    }
+  });
+  root.addEventListener("input", (e) => {
+    const t = e.target, g = S.gen, extra = EXTRA;
+    if (t.dataset.genRange) { g[t.dataset.genRange] = +t.value; SAMPLE = generate(); updateGenLive(); }
+    else if (t.dataset.genNum) { const k = t.dataset.genNum, v = parseInt(t.value, 10); const [min, max] = k === "length" ? [4, 256] : [1, 40]; t.closest(".input").classList.toggle("invalid", !(v >= min && v <= max)); if (v >= min && v <= max) { g[k] = v; SAMPLE = generate(); updateGenLive(); } }
+    else if ("genSep" in t.dataset) { g.sep = t.value; SAMPLE = generate(); updateGenLive(); }
+    else extra.onInput?.(e);
+  });
+}
+mq.addEventListener("change", () => { if (S.theme === "system") { applyTheme(); RERENDER && rerender(); } });
+
+/* ================= Variant A: full-window settings ================= */
+const PAGES_A = [
+  { id: "general", name: "General", icon: "settings-2", desc: "How keefast looks and behaves on this machine.", secs: ["appearance", "saving", "network"] },
+  { id: "security", name: "Security", icon: "shield", desc: "Locking and clipboard rules for every Vault.", secs: ["locking", "clipboard"] },
+  { id: "generator", name: "Password generator", icon: "wand-sparkles", desc: "keefast and the Companion extension generate passwords with these settings.", secs: ["generator"] },
+  { id: "browser", name: "Browser", icon: "app-window", desc: "Fill Entries in your browser with the Companion extension.", secs: ["browser"] },
+  { id: "shortcuts", name: "Keyboard shortcuts", icon: "keyboard", desc: "Every shortcut keefast understands. Read-only for now.", secs: ["shortcuts"] },
+];
+function renderA(root) {
+  syncThemeFromDoc(); root._keys = null;
+  ROOT = root;
+  if (!PAGES_A.some((p) => p.id === S.section)) S.section = "general";
+  const vaults = KF.data.vaults;
+  const errDot = `<span class="count"><span class="dot" style="background:var(--danger);width:6px;height:6px"></span></span>`;
+  const hasErr = (p) => (p.id === "browser" && S.browser && ["failed", "served"].includes(S.bstatus)) || (p.id === "general" && S.configError);
+  RERENDER = () => {
+    const pg = PAGES_A.find((p) => p.id === S.section);
+    const i = PAGES_A.indexOf(pg), prev = PAGES_A[i - 1], next = PAGES_A[i + 1];
+    root.innerHTML = `<div class="va">
+      <nav class="va-nav">
+        <div class="va-back" data-action="back">${KF.icon("arrow-left")} Back to app ${KF.kbd("Esc")}</div>
+        <div class="nav-head">App settings</div>
+        ${PAGES_A.map((p) => `<div class="nav-item ${p.id === S.section ? "is-selected" : ""}" data-action="goto" data-sec="${p.id}">${KF.icon(p.icon)}${p.name}${hasErr(p) ? errDot : ""}</div>`).join("")}
+        <div class="nav-head" style="margin-top:14px">Vault settings</div>
+        ${vaults.map((v) => `<div class="nav-item" data-action="vault-settings" data-vault="${v.name}">${KF.icon(v.locked ? "lock" : "lock-open")}${v.name}${v.locked ? `<span class="count">Locked</span>` : ""}</div>`).join("")}
+        <div class="foot">${KF.icon("hard-drive", "ico-sm")} Kept on this machine</div>
+      </nav>
+      <main class="va-main" data-keep-scroll="a">
+        <div class="va-page">
+          ${S.configError && pg.id === "general" ? `<div class="banner">${KF.icon("circle-alert")} keefast's settings file could not be read or saved, so recent Vault files may be forgotten.<button class="btn sm ghost" data-action="dismiss-config">Dismiss</button></div>` : ""}
+          <h1 class="va-title">${pg.name}</h1>
+          <p class="va-sub">${pg.desc}</p>
+          <div class="rule"></div>
+          ${pg.secs.map((id) => secHtml(sec(id), "", 2, pg.secs.length > 1)).join("")}
+          <div class="hstack" style="margin-top:32px">${prev ? `<button class="btn sm ghost" data-action="goto" data-sec="${prev.id}">${KF.icon("arrow-left")} ${prev.name}</button>` : ""}<span class="spacer"></span>${next ? `<button class="btn sm ghost" data-action="goto" data-sec="${next.id}">${next.name} ${KF.icon("arrow-right")}</button>` : ""}</div>
+        </div>
+      </main>
+    </div>`;
+  };
+  RERENDER();
+  wire(root, {
+    goto: (a) => { S.section = a.dataset.sec; RERENDER(); KF.$(".va-main", root).scrollTop = 0; },
+    back: () => KF.toast(`Back to app <span class="subtle">· settings are saved as you change them</span>`, { icon: "arrow-left" }),
+  });
+}
+
+/* ================= Variant B: centred modal with tabs ================= */
+const TABS = [
+  { id: "general", name: "General", icon: "settings-2", secs: ["appearance", "saving", "network"] },
+  { id: "security", name: "Security", icon: "shield", secs: ["locking", "clipboard"] },
+  { id: "generator", name: "Generator", icon: "wand-sparkles", secs: ["generator"] },
+  { id: "browser", name: "Browser", icon: "app-window", secs: ["browser"] },
+  { id: "shortcuts", name: "Shortcuts", icon: "keyboard", secs: ["shortcuts"] },
+];
+function fakeApp() {
+  const v = KF.vault(), list = v.entries.filter((e) => e.group !== "bin").slice(0, 12);
+  return `<div class="vb-app">
+    <aside class="vb-side">
+      <div class="hstack" style="height:32px;padding:0 8px;margin-bottom:6px"><span class="avatar" style="width:18px;height:18px;border-radius:5px;background:var(--accent);font-size:10px">k</span><b style="font-weight:600">keefast</b><span class="spacer"></span>${KF.icon("search", "ico-sm subtle")}</div>
+      <div class="nav-section" style="padding:0">
+        <div class="nav-head">Vaults</div>
+        ${KF.data.vaults.map((x, i) => `<div class="nav-item ${i === 0 ? "is-selected" : ""}">${KF.icon(x.locked ? "lock" : x.storage === "dropbox" ? "cloud" : "lock-open")}${x.name}<span class="count">${x.locked ? "" : x.entries.length}</span></div>`).join("")}
+        <div class="nav-head" style="margin-top:10px">Groups</div>
+        ${v.groups.slice(1).map((g) => `<div class="nav-item">${KF.icon(g.icon)}${g.name}<span class="count">${v.entries.filter((e) => e.group === g.id).length}</span></div>`).join("")}
+      </div>
+      <div style="margin-top:auto"><div class="nav-item ${S.modalOpen ? "is-selected" : ""}" data-action="open-modal">${KF.icon("settings")}Settings<span class="count">${KF.kbd("Ctrl", ",")}</span></div></div>
+    </aside>
+    <section class="vb-list">
+      <div class="toolbar"><div class="search" style="flex:1">${KF.icon("search", "ico-sm")}<input placeholder="Search Personal"></div></div>
+      <div class="rows">${list.map((e, i) => `<div class="row ${i === 0 ? "is-selected" : ""}">${KF.avatar(e, 26)}<div style="min-width:0"><div class="t truncate">${e.title}</div><div class="u truncate">${e.username}</div></div></div>`).join("")}</div>
+    </section>
+    <section class="vb-detail">
+      <div class="toolbar"><span class="crumbs">Personal</span><span class="spacer"></span><span class="hstack subtle" style="font-size:12px"><span class="status-dot"></span>Saved</span></div>
+      <div style="padding:28px 32px"><div class="hstack" style="gap:12px">${KF.avatar(list[0], 40)}<div><div style="font-size:20px;font-weight:600;letter-spacing:-.015em">GitHub</div><div class="muted">github.com</div></div></div>
+      <div style="margin-top:24px">${[["Username", "arthur-er"], ["Password", KF.mask(16)], ["One-time code", "482 913"], ["Website", "https://github.com"]].map(([k, val]) => `<div class="kv"><span class="k">${k}</span><span class="v ${k !== "Username" && k !== "Website" ? "mono" : ""}">${val}</span></div>`).join("")}</div></div>
+    </section>
+  </div>`;
+}
+function renderB(root) {
+  syncThemeFromDoc();
+  ROOT = root;
+  RERENDER = () => {
+    const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
+    const err = (t) => (t.id === "browser" && S.browser && ["failed", "served"].includes(S.bstatus)) || (t.id === "general" && S.configError);
+    root.innerHTML = fakeApp() + (S.modalOpen ? `
+      <div class="scrim" data-action="close-modal-scrim">
+        <div class="dialog vb-dialog" role="dialog" aria-label="Settings">
+          <div class="vb-head"><h1>Settings</h1><span class="scope">· this machine, every Vault</span><span class="spacer"></span><button class="btn sm ghost icon" data-action="close-modal" title="Close (Esc)">${KF.icon("x")}</button></div>
+          <div class="vb-tabs">${TABS.map((t) => `<button class="vb-tab ${t.id === tab.id ? "is-on" : ""}" data-action="tab" data-tab="${t.id}">${KF.icon(t.icon)}${t.name}${err(t) ? `<span class="bdg"></span>` : ""}</button>`).join("")}</div>
+          <div class="vb-body" data-keep-scroll="b">${tab.secs.map((id) => secHtml(sec(id), "", 2, tab.secs.length > 1 || !!sec(id).desc)).join("")}</div>
+          <div class="vb-foot"><span class="ok">${KF.icon("check")} Changes apply immediately</span><span class="spacer"></span>${KF.kbd("Ctrl", "Tab")}<span>next tab</span><span style="width:8px"></span>${KF.kbd("Esc")}<span>close</span></div>
+        </div>
+      </div>` : "");
+  };
+  RERENDER();
+  wire(root, {
+    tab: (a) => { S.tab = a.dataset.tab; RERENDER(); },
+    "close-modal": () => { S.modalOpen = false; RERENDER(); },
+    "close-modal-scrim": (a, e) => { if (e.target === a) { S.modalOpen = false; RERENDER(); } },
+    "open-modal": () => { S.modalOpen = true; RERENDER(); },
+  });
+  root.tabIndex = -1;
+  root._keys = (e) => {
+    if (e.key === "Escape" && S.modalOpen) { if (KF.$(".dd-menu", root)) closeMenus(); else { S.modalOpen = false; RERENDER(); } }
+    if (e.key === "Tab" && e.ctrlKey && S.modalOpen) { e.preventDefault(); const i = TABS.findIndex((t) => t.id === S.tab); S.tab = TABS[(i + (e.shiftKey ? -1 : 1) + TABS.length) % TABS.length].id; RERENDER(); }
+    if (e.key === "," && e.ctrlKey) { e.preventDefault(); S.modalOpen = true; RERENDER(); }
+  };
+}
+
+/* ================= Variant C: long page, sticky index, search ================= */
+function renderC(root) {
+  syncThemeFromDoc();
+  ROOT = root;
+  const v = KF.vault();
+  root.innerHTML = `<div class="vc">
+    <aside class="vc-side">
+      <div class="hstack" style="height:32px;padding:0 8px;margin-bottom:6px"><span class="avatar" style="width:18px;height:18px;border-radius:5px;background:var(--accent);font-size:10px">k</span><b style="font-weight:600">keefast</b></div>
+      <div class="nav-head">Vaults</div>
+      ${KF.data.vaults.map((x) => `<div class="nav-item">${KF.icon(x.locked ? "lock" : x.storage === "dropbox" ? "cloud" : "lock-open")}${x.name}<span class="count">${x.locked ? "" : x.entries.length}</span></div>`).join("")}
+      <div class="nav-head" style="margin-top:10px">Groups</div>
+      ${v.groups.slice(1).map((g) => `<div class="nav-item">${KF.icon(g.icon)}${g.name}<span class="count">${v.entries.filter((e) => e.group === g.id).length}</span></div>`).join("")}
+      <div style="margin-top:auto">
+        <div class="nav-item">${KF.icon("lock")}Lock all<span class="count">${KF.kbd("Ctrl", "L")}</span></div>
+        <div class="nav-item is-selected">${KF.icon("settings")}Settings<span class="count">${KF.kbd("Ctrl", ",")}</span></div>
+      </div>
+    </aside>
+    <main class="vc-main">
+      <div class="toolbar"><span class="crumbs">Settings ${KF.icon("chevron-right", "ico-sm subtle")}<b>General</b></span>
+        <div class="search">${KF.icon("search", "ico-sm")}<input placeholder="Search settings" data-c-search data-focus-key="cs" value="${KF.esc(S.query)}">${S.query ? `<button class="btn sm ghost icon" data-action="clear-q" style="width:20px;height:20px">${KF.icon("x", "ico-sm")}</button>` : KF.kbd("/")}</div>
+      </div>
+      <div class="vc-scroll" data-keep-scroll="c"><div class="vc-wrap">
+        <div data-c-content></div>
+        <nav class="vc-index" data-c-index></nav>
+      </div></div>
+    </main>
+  </div>`;
+  RERENDER = () => { // only the content + index; keeps the search input alive
+    const q = S.query.trim();
+    const content = KF.$("[data-c-content]", root), index = KF.$("[data-c-index]", root);
+    content.innerHTML = `${S.configError ? `<div class="banner">${KF.icon("circle-alert")} keefast's settings file could not be read or saved, so recent Vault files may be forgotten.<button class="btn sm ghost" data-action="dismiss-config">Dismiss</button></div>` : ""}
+      <h1 class="vc-title">General Settings</h1><p class="vc-sub">Kept on this machine and shared by every Vault. Each Vault's own settings live with the Vault.</p>
+      ${SECTIONS.map((s) => secHtml(s, q, 2)).join("")}
+      <div class="vc-empty" data-c-empty hidden>${KF.icon("search-x")}<div>No settings match “<b data-c-q></b>”</div><button class="btn sm secondary" data-action="clear-q">Clear search</button></div>`;
+    const counts = {};
+    if (q) {
+      const ql = q.toLowerCase();
+      KF.$$(".set-section", content).forEach((secEl) => {
+        const s = sec(secEl.dataset.sec);
+        const titleHit = (s.name + " " + s.desc).toLowerCase().includes(ql);
+        let n = 0;
+        KF.$$("[data-search]", secEl).forEach((el) => {
+          if (el.closest(".keys") && !el.classList.contains("krow")) return;
+          const hit = el.dataset.search.toLowerCase().includes(ql);
+          if (hit) n++;
+          if (!titleHit && (el.classList.contains("set-row") || el.classList.contains("krow") || el.classList.contains("set-note"))) el.classList.toggle("is-hidden", !hit);
+        });
+        KF.$$(".kcol", secEl).forEach((c) => { if (!titleHit) c.classList.toggle("is-hidden", !KF.$$(".krow:not(.is-hidden)", c).length); });
+        counts[s.id] = n + (titleHit ? 1 : 0);
+        secEl.classList.toggle("is-hidden", !counts[s.id]);
+      });
+      const none = !Object.values(counts).some(Boolean);
+      KF.$("[data-c-empty]", content).hidden = !none;
+      KF.$("[data-c-q]", content).textContent = q;
+    }
+    index.innerHTML = `<div class="ih">On this page</div>${SECTIONS.map((s) => `<a href="#sec-${s.id}" data-action="jump" data-sec="${s.id}" class="${q && !counts[s.id] ? "dim" : ""}">${s.name}${q && counts[s.id] ? `<span class="n">${counts[s.id]}</span>` : ""}</a>`).join("")}
+      <div class="itip">Press ${KF.kbd("/")} to search settings.<br>Changes apply immediately.</div>`;
+    spy();
+  };
+  const scroller = KF.$(".vc-scroll", root);
+  function spy() {
+    const secs = KF.$$(".set-section:not(.is-hidden)", root);
+    const top = scroller.getBoundingClientRect().top + 80;
+    let cur = secs[0]?.dataset.sec;
+    secs.forEach((s) => { if (s.getBoundingClientRect().top <= top) cur = s.dataset.sec; });
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) cur = secs[secs.length - 1]?.dataset.sec;
+    KF.$$(".vc-index a", root).forEach((a) => a.classList.toggle("is-on", a.dataset.sec === cur));
+  }
+  scroller.addEventListener("scroll", spy, { passive: true });
+  RERENDER();
+  wire(root, {
+    jump: (a, e) => { e.preventDefault(); const el = KF.$(`#sec-${a.dataset.sec}`, root); scroller.scrollTo({ top: el.offsetTop - 28 }); },
+    "clear-q": () => { S.query = ""; const i = KF.$("[data-c-search]", root); i.value = ""; i.focus(); renderC_searchUi(); RERENDER(); },
+    onInput: (e) => { if ("cSearch" in e.target.dataset) { S.query = e.target.value; renderC_searchUi(); RERENDER(); scroller.scrollTop = 0; } },
+  });
+  function renderC_searchUi() {
+    const box = KF.$(".vc-main .search", root), btn = box.querySelector("[data-action=clear-q], .kbds");
+    btn.outerHTML = S.query ? `<button class="btn sm ghost icon" data-action="clear-q" style="width:20px;height:20px">${KF.icon("x", "ico-sm")}</button>` : KF.kbd("/");
+  }
+  root._keys = (e) => {
+    if (e.key === "/" && !e.target.closest("input")) { e.preventDefault(); KF.$("[data-c-search]", root).focus(); }
+    if (e.key === "Escape" && e.target.matches("[data-c-search]")) { S.query = ""; e.target.value = ""; e.target.blur(); renderC_searchUi(); RERENDER(); }
+  };
+  if (S.query) setTimeout(() => KF.$("[data-c-search]", root)?.focus(), 0);
+}
+
+/* Global keys: Esc closes menus, plus per-variant handlers */
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ROOT && KF.$(".dd-menu", ROOT)) { closeMenus(); return; }
+  ROOT?._keys?.(e);
+  if (e.key === "Escape" && ROOT && KF.$(".va", ROOT)) KF.toast("Back to app", { icon: "arrow-left" });
+});
+
+KF.variants({
+  A: { name: "Full-window, settings nav", render: renderA },
+  B: { name: "Centred modal with tabs", render: renderB },
+  C: { name: "One page, index + search", render: renderC },
+});
+</script></body></html>
