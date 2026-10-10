@@ -60,6 +60,9 @@
               gdk-pixbuf
               atk
               dbus
+              # Builds Plugins' WebAssembly components (plugins/card/build.sh): lld links them.
+              wasm-tools
+              lld
             ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";

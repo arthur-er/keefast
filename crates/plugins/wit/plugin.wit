@@ -1,0 +1,63 @@
+// The host API a Plugin is written against (ADR 0009): API version 1.
+//
+// A Plugin is a WebAssembly component of the `plugin` world below. It imports nothing, so it has
+// no filesystem, network or clock; a later API version adds imports for the Plugin capabilities
+// that grant them. Its hooks are pure: each gets the values of a facet's Owned fields on one
+// Entry, and gives back values for the host to write or text for the host to show. A Plugin
+// never sees the Workspace.
+package keefast:plugin@1.0.0;
+
+/// What the hooks take and give.
+interface types {
+    /// One of a facet's Owned fields on one Entry, by its key in the manifest.
+    record field {
+        key: string,
+        /// Its value; `none` when the Entry hasn't the field, or when it is protected and the
+        /// Plugin hasn't the Plugin capability to read protected values.
+        value: option<string>,
+    }
+
+    /// Text the host shows for one Owned field in place of its value, so a protected value can
+    /// say something without being revealed.
+    record field-text {
+        key: string,
+        text: string,
+    }
+
+    /// What `derive` makes of a facet's Owned fields on one Entry.
+    record derived {
+        /// A short label for the facet on this Entry, such as "Visa •••• 1111". Shown without a
+        /// reveal, so it must never be a whole protected value (ADR 0009).
+        label: option<string>,
+        /// Text shown in place of fields' values, by key. Fields not listed show as they are.
+        fields: list<field-text>,
+    }
+
+    enum severity {
+        /// Probably a mistake; the value can still be kept.
+        warning,
+        /// The value can't be kept as it is.
+        error,
+    }
+
+    /// What is wrong with a value.
+    record problem {
+        severity: severity,
+        /// Shown to the user as is: one sentence saying what to do.
+        message: string,
+    }
+}
+
+world plugin {
+    use types.{field, derived, problem};
+
+    /// A value as the user typed it, formatted as the field keeps it (digits in groups, a slash
+    /// in a date). Unknown keys come back unchanged.
+    export format: func(facet: string, key: string, value: string) -> string;
+
+    /// What is wrong with a value, if anything.
+    export validate: func(facet: string, key: string, value: string) -> option<problem>;
+
+    /// The facet's label and its fields' texts on one Entry, from its Owned fields' values.
+    export derive: func(facet: string, fields: list<field>) -> derived;
+}

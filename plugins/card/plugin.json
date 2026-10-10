@@ -1,0 +1,24 @@
+{
+  "id": "keefast.card",
+  "name": "Card",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "capabilities": ["readProtected", "copy"],
+  "contributions": {
+    "facets": [
+      {
+        "id": "card",
+        "title": "Card",
+        "icon": "credit-card",
+        "detect": { "fields": ["Card number"] },
+        "fields": [
+          { "key": "number", "name": "Card number", "label": "Number", "kind": "digits", "protected": true },
+          { "key": "holder", "name": "Cardholder", "label": "Cardholder", "kind": "text", "protected": false },
+          { "key": "expiry", "name": "Expiry", "label": "Expiry", "kind": "monthYear", "protected": false },
+          { "key": "cvv", "name": "CVV", "label": "CVV", "kind": "digits", "protected": true },
+          { "key": "pin", "name": "PIN", "label": "PIN", "kind": "digits", "protected": true }
+        ]
+      }
+    ]
+  }
+}
