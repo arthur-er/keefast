@@ -8,8 +8,8 @@ The screens are being rebuilt after the Linear-style prototypes (one variant per
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
 and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
 Password generator A, TOTP B, Entry history B, command palette A, General Settings C, Vault settings
-C with the card that changes a Vault's master key and encryption, and Browser requests & confirms A
-(`screens/dialogs/`).
+C with the card that changes a Vault's master key and encryption, Browser requests & confirms A
+(`screens/dialogs/`), and Plugins' facets as sections of the detail (the Card, card prototype A).
 
 ## Commands
 
@@ -40,6 +40,12 @@ fake Vaults (`KF.data` from the prototype's `kit/kit.js`: Personal, Work in Drop
 locked). It is type-checked against the generated bindings, so a new Rust command doesn't compile
 here until the mock answers it (`src/api/mock/mock.test.ts` also checks the names at run time).
 Production builds don't include it.
+
+The mock runs Plugins (ADR 0009) as the app does, from the same WASM components:
+`bundled-plugins.ts`, a Vite plugin, transpiles each one compiled into keefast (`plugins/<name>/`)
+with jco when the mock imports `virtual:keefast/bundled-plugins`, and `src/api/mock/plugins.ts`
+finds facets and asks for labels as `crates/plugins` does. The fake Vaults have Cards: Nubank
+Ultravioleta in Personal, Company Visa (expiring soon) in Work.
 
 - Any master password unlocks except `wrong`, which fails as a wrong master key does.
 - File dialogs answer with made-up paths; copying uses the browser's clipboard and "clears" it
@@ -138,6 +144,8 @@ src/
     settings/          General Settings C and Vault settings C: one page, "On this page" index, `/` search
     dialogs/           browser requests & confirms A: Pairing, Access, captured login, lock with
                        unsaved changes (one at a time, over everything), and deleting for good
+    plugins/           Plugins' facets on an Entry (`FacetSection`, drawn from the manifest and the
+                       Plugin's labels), and what the kit knows of Owned fields' kinds
 ```
 
 ### Where later screens plug in
