@@ -1281,7 +1281,12 @@ export function createMockBackend(): Backend & {
   if (typeof window !== "undefined") {
     (window as unknown as { __keefastMock: typeof backend }).__keefastMock = backend;
     const scenes = new URLSearchParams(window.location.search).get("mock");
-    for (const scene of scenes?.split(",").filter(Boolean) ?? []) simulate(scene as MockScene);
+    for (const scene of scenes?.split(",").filter(Boolean) ?? []) {
+      // A scene that only sends an event waits for the UI to listen; the others set the state
+      // the UI first reads.
+      if (scene === "merge" || scene === "saveFailed") setTimeout(() => simulate(scene), 1000);
+      else simulate(scene as MockScene);
+    }
   }
   return backend;
 }
