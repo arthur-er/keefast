@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, ExternalLink, FolderPlus, KeyRound, Paperclip, Plus, Search,
-  SearchX, Timer, Trash2, User,
+  SearchX, SquarePen, Timer, Trash2, User,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
@@ -19,6 +19,7 @@ import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
+import { startNewEntry } from "@/screens/entry-editor/session";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
@@ -80,7 +81,8 @@ export function EntryList() {
   }, [selected]);
 
   const select = (entry: EntrySummary) => {
-    actions.showEntry();
+    // Entry editor A stays until it has asked about unsaved changes.
+    if (state.detail !== "edit") actions.showEntry();
     if (view) showView({ scope: view.scope, entry: { vault: entry.vault, entry: entry.id } });
   };
   const move = (how: Move) => {
@@ -329,7 +331,7 @@ function AddMenu() {
   };
   return (
     <Menu>
-      <Tooltip content="New Group">
+      <Tooltip content="New">
         <MenuTrigger asChild>
           <button type="button" className="btn ghost sm icon" aria-label="New">
             <Plus />
@@ -337,6 +339,9 @@ function AddMenu() {
         </MenuTrigger>
       </Tooltip>
       <MenuContent align="end">
+        <MenuItem icon={<SquarePen />} shortcut="Ctrl N" onSelect={() => void startNewEntry(view, actions)}>
+          New Entry
+        </MenuItem>
         <MenuItem icon={<FolderPlus />} onSelect={() => void newGroup()}>
           New Group
         </MenuItem>
