@@ -614,9 +614,8 @@ impl Render for KeefastWindow {
             // As in KeeWeb, the footer with the Vaults stays under the settings.
             (Some(settings), Some(browser), _) => {
                 let theme = Theme::for_window(window, cx);
-                let footer = browser.update(cx, |browser, cx| {
-                    browser.render_footer(theme, cx).into_any_element()
-                });
+                let footer =
+                    browser.update(cx, |browser, cx| browser.render_sidebar_footer(theme, cx));
                 div()
                     .size_full()
                     .flex()

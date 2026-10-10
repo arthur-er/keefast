@@ -1,6 +1,6 @@
 use gpui::{
-    App, FontWeight, IntoElement, KeybindingKeystroke, ParentElement, RenderOnce, SharedString,
-    Styled, Window, div, px,
+    Action, App, FontWeight, IntoElement, KeybindingKeystroke, ParentElement, RenderOnce,
+    SharedString, Styled, Window, div, px,
 };
 
 use crate::strings;
@@ -21,6 +21,17 @@ impl Kbd {
             keys: keys.into_iter().map(Into::into).collect(),
             on_accent: false,
         }
+    }
+
+    /// Caps for the keys bound to `action`, if any are: the binding made last, which takes
+    /// precedence.
+    pub fn for_action(action: &dyn Action, cx: &App) -> Option<Self> {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        let binding = keymap.bindings_for_action(action).last()?;
+        Some(Self::new(
+            key_names(binding.keystrokes()).into_iter().flatten(),
+        ))
     }
 
     pub fn on_accent(mut self) -> Self {

@@ -40,9 +40,7 @@ pub const CONFIG_ERROR: &str =
     "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
 
 pub const LOCK: &str = "Lock";
-pub const LOCKING_MARKER: &str = " (locking…)";
 pub const LOCKING_NOTE: &str = "This Vault is about to lock. Save or discard its changes to continue; nothing in it is shown until then.";
-pub const VAULT_LOCKED: &str = "This Vault is locked.";
 pub const UNLOCK_VAULT: &str = "Unlock…";
 pub const LOCK_UNSAVED: &str = "“{vault}” has unsaved changes. Save them before locking?";
 pub const LOCK_UNSAVED_DETAIL: &str = "Discarding loses them.";
@@ -130,9 +128,46 @@ pub const SIDEBAR_TAGS: &str = "Tags";
 pub const MENU_NEW_ENTRY: &str = "Entry";
 pub const MENU_NEW_GROUP: &str = "Group";
 /// Before the choice in force in a menu.
-pub const SIDEBAR_ALL_ITEMS: &str = "All Items";
-pub const SIDEBAR_TRASH: &str = "Trash";
-pub const SIDEBAR_TRASH_OF: &str = "Trash of {vault}";
+pub const SIDEBAR_ALL_ENTRIES: &str = "All Entries";
+pub const SIDEBAR_GROUPS: &str = "Groups";
+pub const SIDEBAR_OTHER_VAULTS: &str = "Other Vaults";
+pub const SIDEBAR_MORE_TAGS: &str = "{n} more";
+pub const SIDEBAR_FEWER_TAGS: &str = "Fewer";
+pub const ALL_VAULTS: &str = "All Vaults";
+/// A locked Vault in the Vault switcher's menu.
+pub const VAULT_LOCKED_NAME: &str = "{vault} (locked)";
+pub const MENU_VAULT_SETTINGS: &str = "Vault settings…";
+pub const LOCATION_LOCAL: &str = "Local";
+pub const LOCATION_DROPBOX: &str = "Dropbox";
+pub const VAULT_SAVED: &str = "Saved";
+pub const VAULT_UNSAVED: &str = "Unsaved";
+pub const STATUS_LOCKED: &str = "Locked";
+pub const VAULT_IS_LOCKED: &str = "{vault} is locked";
+pub const VAULT_LOCKED_NOTE: &str = "Unlock it to see its Entries.";
+pub const TOOLTIP_NEW_GROUP: &str = "New Group";
+pub const TOOLTIP_ADD: &str = "New Entry or Group";
+pub const TOOLTIP_SORT: &str = "Sort Entries";
+pub const TOOLTIP_MORE: &str = "More";
+pub const TOOLTIP_OPEN_URL: &str = "Open in the browser";
+pub const TAB_OVERVIEW: &str = "Overview";
+pub const TAB_FIELDS: &str = "Fields";
+pub const TAB_FILES: &str = "Files";
+pub const TAB_HISTORY: &str = "History";
+pub const TAB_ACCESS: &str = "Access";
+pub const DETAILS: &str = "Details";
+pub const DETAIL_GROUP: &str = "Group";
+pub const DETAIL_MODIFIED: &str = "Modified";
+pub const DETAIL_CREATED: &str = "Created";
+/// In place of a value an Entry hasn't got.
+pub const NONE_SET: &str = "None";
+pub const NOTES_EMPTY: &str = "No notes";
+pub const COLOR_RED: &str = "Red";
+pub const COLOR_ORANGE: &str = "Orange";
+pub const COLOR_YELLOW: &str = "Yellow";
+pub const COLOR_GREEN: &str = "Green";
+pub const COLOR_BLUE: &str = "Blue";
+pub const COLOR_PURPLE: &str = "Purple";
+pub const SIDEBAR_TRASH: &str = "Recycle Bin";
 /// The footer's command to open or create another Vault.
 pub const FOOTER_OPEN: &str = "Open / New";
 pub const SIDEBAR_COLORS: &str = "Colours";
@@ -149,7 +184,6 @@ pub const MOVE_TO: &str = "Move to:";
 
 pub const SAVE: &str = "Save";
 pub const VAULT_FILE: &str = "Vault file";
-pub const UNSAVED_MARKER: &str = " •";
 pub const STATUS_SAVED: &str = "All changes saved";
 pub const STATUS_UNSAVED: &str = "Unsaved changes";
 pub const STATUS_SAVING: &str = "Saving…";
@@ -309,7 +343,6 @@ pub const GENERATOR_ERROR_WORDS: &str = "The number of words must be between {mi
 
 pub const DETAIL_TOTP: &str = "TOTP";
 pub const TOTP_BUTTON: &str = "TOTP…";
-pub const TOTP_COPY_HINT: &str = "Click or press Ctrl+T to copy";
 pub const TOTP_COPIED: &str = "Copied";
 pub const TOTP_SECONDS_LEFT: &str = "{seconds} s";
 pub const TOTP_UNREADABLE: &str = "This Entry's TOTP settings can't be read: {reason}";

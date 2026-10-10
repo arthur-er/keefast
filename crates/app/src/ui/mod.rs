@@ -2,25 +2,31 @@
 //! controls, badges, menus, dialogs and toasts, each reading the theme's tokens. Views build
 //! from these instead of styling `div`s.
 
+mod avatar;
 mod badge;
 mod button;
+mod card;
 mod controls;
 mod dialog;
 mod kbd;
 mod menu;
 mod nav;
+mod ring;
 mod toast;
 mod typography;
 
+pub use avatar::{monogram, picture_tile};
 pub use badge::{Badge, Tone, dot, tag};
 pub use button::{Button, IconButton};
+pub use card::{card, kv_row, tab};
 pub use controls::{
     Checkbox, Segmented, check_mark, radio_mark, segment, segment_track, switch_mark,
 };
 pub use dialog::Dialog;
 pub use kbd::{Kbd, key_names};
 pub use menu::{MenuItem, menu};
-pub use nav::{empty_state, nav_row, section_heading};
+pub use nav::{empty_state, nav_count, nav_row, section_heading};
+pub use ring::countdown_ring;
 pub use toast::Toast;
 pub use typography::Typography;
 

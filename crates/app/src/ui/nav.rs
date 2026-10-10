@@ -30,6 +30,16 @@ pub fn nav_row(id: impl Into<ElementId>, selected: bool, theme: Theme) -> Statef
         })
 }
 
+/// The count at the end of a sidebar row.
+pub fn nav_count(count: usize, theme: Theme) -> Div {
+    div()
+        .ml_auto()
+        .flex_none()
+        .text_size(px(11.))
+        .text_color(theme.fg_2)
+        .child(SharedString::from(count.to_string()))
+}
+
 /// A heading over a section of the sidebar or of a list.
 pub fn section_heading(label: impl Into<SharedString>, theme: Theme) -> Div {
     div()

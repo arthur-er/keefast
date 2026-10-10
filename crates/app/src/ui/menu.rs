@@ -28,6 +28,7 @@ pub struct MenuItem {
     id: ElementId,
     label: SharedString,
     checked: Option<bool>,
+    danger: bool,
     on_click: Option<OnClick>,
 }
 
@@ -37,6 +38,7 @@ impl MenuItem {
             id: id.into(),
             label: label.into(),
             checked: None,
+            danger: false,
             on_click: None,
         }
     }
@@ -44,6 +46,12 @@ impl MenuItem {
     /// Keeps room for a tick in front, drawn when `checked`.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+
+    /// Drawn in the danger colour, as deleting is.
+    pub fn danger(mut self) -> Self {
+        self.danger = true;
         self
     }
 
@@ -68,7 +76,11 @@ impl RenderOnce for MenuItem {
             .px(px(8.))
             .rounded(px(5.))
             .cursor_pointer()
-            .text_color(theme.fg_0)
+            .text_color(if self.danger {
+                theme.danger
+            } else {
+                theme.fg_0
+            })
             .hover(|style| style.bg(theme.bg_active))
             .when_some(self.checked, |this, checked| {
                 this.child(div().size(px(15.)).flex_none().when(checked, |this| {

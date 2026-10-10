@@ -111,6 +111,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("home", SelectFirstEntry, list),
         KeyBinding::new("end", SelectLastEntry, list),
         KeyBinding::new("enter", OpenEntry, list_without_fields),
+        // Bound last, E is the key the Edit button shows.
+        KeyBinding::new("e", OpenEntry, list_without_fields),
         KeyBinding::new("secondary-b", CopyUsername, list),
         KeyBinding::new("secondary-c", CopyPassword, list_without_fields),
         KeyBinding::new("secondary-t", CopyTotp, list),
@@ -132,6 +134,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", SelectPreviousCommand, Some(COMMAND_PALETTE_CONTEXT)),
         KeyBinding::new("secondary-l", LockAll, anywhere),
         KeyBinding::new("secondary-f", FocusSearch, anywhere),
+        KeyBinding::new("/", FocusSearch, list),
         KeyBinding::new("down", SelectNextEntry, search),
         KeyBinding::new("up", SelectPreviousEntry, search),
     ]);

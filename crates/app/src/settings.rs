@@ -371,7 +371,10 @@ impl SettingsView {
             ThemeSetting::System => div()
                 .size_full()
                 .relative()
-                .child(window(Theme::of(ThemeSetting::Dark, WindowAppearance::Dark)))
+                .child(window(Theme::of(
+                    ThemeSetting::Dark,
+                    WindowAppearance::Dark,
+                )))
                 .child(
                     div()
                         .absolute()

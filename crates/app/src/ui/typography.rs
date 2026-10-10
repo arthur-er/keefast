@@ -16,6 +16,11 @@ pub trait Typography: Styled + Sized {
             .line_height(relative(1.35))
     }
 
+    /// A section's title: 13px semibold.
+    fn text_heading(self) -> Self {
+        self.text_size(px(13.)).font_weight(FontWeight::SEMIBOLD)
+    }
+
     /// Body text and rows: 13px.
     fn text_body(self) -> Self {
         self.text_size(px(13.)).font_weight(FontWeight::NORMAL)
