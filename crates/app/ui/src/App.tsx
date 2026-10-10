@@ -1,6 +1,6 @@
 // The app's root: theme, backend events, the app-wide commands, and which screen shows: Open a
 // Vault B when no Vault is unlocked (or the user asked for it), else the shell (Vault browser C).
-// The browsers' requests and a lock waiting on unsaved changes show over either.
+// The browsers' requests and a lock waiting on unsaved changes show over either (dialogs A).
 
 import { useEffect } from "react";
 import { FolderOpen, Lock, Plus, Save, Settings } from "lucide-react";
@@ -12,7 +12,7 @@ import { useActivityReporting } from "@/lib/activity";
 import { SHORTCUTS, useShortcut } from "@/lib/shortcuts";
 import { useApplyTheme } from "@/lib/theme";
 import { OpenVault } from "@/screens/open-vault/OpenVault";
-import { PendingRequests } from "@/screens/PendingRequests";
+import { RequestDialogs } from "@/screens/dialogs/RequestDialogs";
 import { useAppCommand } from "@/shell/commands";
 import { hasPendingRequest } from "@/shell/hooks";
 import { Overlays } from "@/shell/Overlays";
@@ -84,8 +84,9 @@ function Root() {
       ) : (
         <Shell />
       )}
-      {!openVaultShown && <Overlays />}
-      <PendingRequests snapshot={snapshot} />
+      {/* A request is answered first: the other overlays wait under it (the palette closes). */}
+      {!openVaultShown && !hasPendingRequest(snapshot) && <Overlays />}
+      <RequestDialogs snapshot={snapshot} />
       <Toaster />
     </>
   );

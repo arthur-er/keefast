@@ -7,9 +7,9 @@ over a mock backend with fake Vaults.
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
 and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
-Password generator A, TOTP B, Entry history B, command palette A, General Settings C and Vault
-settings C with the card that changes a Vault's master key and encryption. The browsers' requests and the lock prompt
-(`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
+Password generator A, TOTP B, Entry history B, command palette A, General Settings C, Vault settings
+C with the card that changes a Vault's master key and encryption, and Browser requests & confirms A
+(`screens/dialogs/`).
 
 ## Commands
 
@@ -136,7 +136,8 @@ src/
     entry-history/     Entry history B (versions and their comparison) and the detail's History tab
     command-palette/   command palette A: the registered commands, Entry search, an Entry's actions
     settings/          General Settings C and Vault settings C: one page, "On this page" index, `/` search
-    PendingRequests.tsx  browser requests and the lock prompt (plain until dialogs A)
+    dialogs/           browser requests & confirms A: Pairing, Access, captured login, lock with
+                       unsaved changes (one at a time, over everything), and deleting for good
 ```
 
 ### Where later screens plug in
