@@ -7,8 +7,8 @@ over a mock backend with fake Vaults.
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
 and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
-Password generator A, TOTP B, Entry history B, command palette A, and the card that changes a
-Vault's master key and encryption (for Vault settings C). The browsers' requests and the lock prompt
+Password generator A, TOTP B, Entry history B, command palette A, General Settings C and Vault
+settings C with the card that changes a Vault's master key and encryption. The browsers' requests and the lock prompt
 (`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
 
 ## Commands
@@ -59,6 +59,8 @@ Production builds don't include it.
   __keefastMock.simulate("closed")      // Family locked, Personal and Work recent: Open a Vault B's story
   __keefastMock.simulate("dropbox-disconnected") // no Dropbox account: Open from Dropbox asks to connect
   __keefastMock.simulate("sync-offline") // Dropbox Vaults offline (or "sync-error")
+  __keefastMock.simulate("browserError") // browser integration failed to set up (also "browserNone", "browserServed")
+  __keefastMock.simulate("configError") // the app config could not be saved
   __keefastMock.reset()
   ```
 
@@ -133,6 +135,7 @@ src/
     totp/              TOTP B: the live code as a field, and its setup expanding inline
     entry-history/     Entry history B (versions and their comparison) and the detail's History tab
     command-palette/   command palette A: the registered commands, Entry search, an Entry's actions
+    settings/          General Settings C and Vault settings C: one page, "On this page" index, `/` search
     PendingRequests.tsx  browser requests and the lock prompt (plain until dialogs A)
 ```
 

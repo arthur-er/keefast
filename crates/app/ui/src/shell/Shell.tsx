@@ -2,15 +2,14 @@
 // which shows the Entry list and detail, a locked Vault's card, or a page (settings).
 
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Settings } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api";
 import type { AppSettings, PaneWidthsView } from "@/bindings";
 import { keys, useSettings, useWorkspace } from "@/api/queries";
-import { Button } from "@/kit";
 import { cn } from "@/lib/utils";
 import { EntryHistoryPage } from "@/screens/entry-history/EntryHistory";
+import { SettingsPage } from "@/screens/settings/SettingsPage";
 import { DetailArea } from "@/screens/vault-browser/DetailArea";
 import { EntryList } from "@/screens/vault-browser/EntryList";
 import { LockedVault } from "@/screens/vault-browser/LockedVault";
@@ -34,14 +33,18 @@ export function Shell() {
       <Sidebar />
       <Edge pane="sidebar" widths={widths} left={0} />
       <div className="vb-main">
-        {state.page.kind === "browser" && state.detail === "history" ? (
+        {state.page.kind !== "browser" ? (
+          <SettingsPage page={state.page} />
+        ) : state.detail === "history" ? (
           // Entry history B takes the Entry list's place too: versions beside the comparison.
           <EntryHistoryPage />
         ) : (
           <>
             <Toolbar />
             <MergeNotice />
-            <div className="vb-panes">{state.page.kind === "browser" ? <Browser widths={widths} /> : <PagePlaceholder />}</div>
+            <div className="vb-panes">
+              <Browser widths={widths} />
+            </div>
           </>
         )}
       </div>
@@ -63,22 +66,6 @@ function Browser({ widths }: { widths: PaneWidths }) {
       <Edge pane="entryList" widths={widths} left={widths.current.entryList} />
       <DetailArea />
     </>
-  );
-}
-
-/** Settings and Vault settings arrive with Tauri UI 6/7; until then their page says so. */
-function PagePlaceholder() {
-  const { state, actions } = useShell();
-  const title = state.page.kind === "settings" ? "Settings" : "Vault Settings";
-  return (
-    <div className="vb-empty flex-1">
-      <Settings />
-      <p>{title}</p>
-      <span className="subtle text-sm">This page arrives with the settings screens.</span>
-      <Button size="sm" onClick={actions.showBrowser} shortcut="Esc">
-        <ArrowLeft /> Back to the Entries
-      </Button>
-    </div>
   );
 }
 

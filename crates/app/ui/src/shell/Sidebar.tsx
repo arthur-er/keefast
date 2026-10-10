@@ -69,8 +69,9 @@ function NavItem({
 }) {
   const view = useView();
   const showScope = useShowScope();
-  const { actions } = useShell();
-  const selected = view ? sameScope(view.scope, scope) : false;
+  const { state, actions } = useShell();
+  // A settings page shows nothing of the scope, so no row is the one shown.
+  const selected = view && state.page.kind === "browser" ? sameScope(view.scope, scope) : false;
   return (
     <button
       type="button"
