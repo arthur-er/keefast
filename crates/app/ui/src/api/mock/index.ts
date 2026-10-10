@@ -6,7 +6,7 @@
 //
 // Driving it from the console or agent-browser, for states a screen must show:
 //   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
-//     | "unlocked-none" | "closed")
+//     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error")
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
@@ -120,6 +120,29 @@ function locationView(location: Location): LocationView {
   };
 }
 
+/** The prototype's Dropbox: folders, and files with when they changed and their size. */
+const today = (time: string) => `${new Date().toISOString().slice(0, 11)}${time}Z`;
+const yesterday = (time: string) => `${new Date(Date.now() - 86_400_000).toISOString().slice(0, 11)}${time}Z`;
+const DROPBOX_TREE: Record<string, [name: string, modified?: string, size?: number][]> = {
+  "": [["Apps"], ["Documents"], ["Photos"], ["Shared"], ["Old-2019.kdbx", "2019-03-12T10:20:00Z", 65_536]],
+  "/apps": [["keefast"], ["Obsidian"]],
+  "/apps/keefast": [
+    ["Archive"], ["Backups"], ["Shared with Ana"],
+    ["Family.kdbx", yesterday("21:40:00"), 98_304],
+    ["Old-laptop.kdbx", "2025-02-14T08:00:00Z", 58_368],
+    ["Travel.kdbx", "2026-08-03T08:00:00Z", 24_576],
+    ["Work.kdbx", today("09:12:00"), 217_088],
+  ],
+  "/apps/keefast/archive": [["Personal-2023.kdbx", "2023-12-31T18:00:00Z", 72_704]],
+  "/apps/keefast/backups": [["Work-2026-09.kdbx", "2026-09-30T18:00:00Z", 212_992], ["Work-2026-08.kdbx", "2026-08-31T18:00:00Z", 205_824]],
+  "/apps/keefast/shared with ana": [],
+  "/apps/obsidian": [],
+  "/documents": [["Taxes"], ["Household.kdbx", "2026-06-02T08:00:00Z", 38_912], ["Taxes 2025.pdf", "2026-04-10T08:00:00Z", 412_000]],
+  "/documents/taxes": [],
+  "/photos": [],
+  "/shared": [["Team.kdbx", today("08:03:00"), 143_360]],
+};
+
 const DEFAULT_ENCRYPTION: EncryptionSettings = {
   cipher: "aes256",
   kdf: { kind: "argon2id", memoryKib: 65536, iterations: 5, parallelism: 4 },
@@ -177,6 +200,10 @@ interface MockState {
   pendingLogin: { id: number; site: string; username: string; password: string } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
+  /** Connecting Dropbox "in the browser": stops it as cancelled. */
+  dropboxConnecting: (() => void) | null;
+  /** Vaults' encryption, once changed from the default. */
+  encryption: Map<number, EncryptionSettings>;
   nextId: number;
 }
 
@@ -203,6 +230,8 @@ function initialState(): MockState {
     pendingLogin: null,
     clipboardClearsAt: null,
     dropboxAccount: { name: "Arthur Rezende", email: "arthur-er@protonmail.com" },
+    dropboxConnecting: null,
+    encryption: new Map(),
     nextId: 100,
   };
 }
@@ -216,7 +245,10 @@ export type MockScene =
   | "merge"
   | "saveFailed"
   | "unlocked-none"
-  | "closed";
+  | "closed"
+  | "dropbox-disconnected"
+  | "sync-offline"
+  | "sync-error";
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
@@ -634,7 +666,10 @@ export function createMockBackend(): Backend & {
     chooseVaultFile: command(() => "~/Vaults/Picked.kdbx"),
     chooseKeyFile: command(() => "~/Vaults/Personal.keyx"),
     chooseNewVaultFile: command(() => "~/Vaults/New Vault.kdbx"),
-    createKeyFile: command(() => "~/Vaults/New Vault.keyx"),
+    createKeyFile: command((near: string | null) => {
+      const folder = near?.includes("/") ? near.slice(0, near.lastIndexOf("/")) : "~/Vaults";
+      return `${folder}/Vault.keyx`;
+    }),
     unlockVault: command(async (location: Location, key) => {
       await new Promise((resolve) => setTimeout(resolve, 600));
       if (key.password === "wrong") throw new MockError("wrongKey", "Wrong master password or Key file.");
@@ -676,8 +711,12 @@ export function createMockBackend(): Backend & {
     createVault: command(async (input) => {
       if (!input.path.trim()) throw new MockError("invalid", "Choose where to save the Vault file.");
       if (!input.key.password && !input.key.keyFile) throw new MockError("invalid", "Set a master password, a Key file, or both.");
-      if (state.vaults.some((v) => v.location.path === input.path)) {
+      if (state.vaults.some((v) => !v.locked && v.location.path === input.path)) {
         throw new MockError("alreadyOpen", "A Vault from this Vault file is open. Choose another file, or lock and reopen that Vault.");
+      }
+      // The Vault files the mock knows exist, locked or recent.
+      if ([...state.vaults.map((v) => v.location), ...state.recents].some((l) => l.provider === "local" && l.path === input.path)) {
+        throw new MockError("conflict", "A file is already there. keefast never replaces a file with a new Vault.");
       }
       await new Promise((resolve) => setTimeout(resolve, 600));
       const id = Math.max(-1, ...state.vaults.map((v) => v.id)) + 1;
@@ -1076,7 +1115,7 @@ export function createMockBackend(): Backend & {
         location: locationView(v.location),
         saveStatus: v.saving ? "saving" : v.saveFailed ? "failed" : v.unsaved ? "unsaved" : "saved",
         syncStatus: v.sync,
-        encryption: structuredClone(DEFAULT_ENCRYPTION),
+        encryption: structuredClone(state.encryption.get(v.id) ?? DEFAULT_ENCRYPTION),
         defaultAccessPolicy: v.policy,
         pairings: [...v.pairings],
         browserGroup: v.browserGroup,
@@ -1091,6 +1130,7 @@ export function createMockBackend(): Backend & {
       const kdf = input.encryption.kdf;
       if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs at least 1 iteration.");
       if (kdf.kind === "aesKdf" && kdf.rounds < 1) throw new MockError("invalid", "AES-KDF needs at least 1 round.");
+      state.encryption.set(v.id, structuredClone(input.encryption));
       v.unsaved = true;
       save(v);
       changed();
@@ -1109,35 +1149,44 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
-    dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: false })),
+    dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // "Allowed in the browser" after a few seconds, unless stopped first.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 4000);
+        state.dropboxConnecting = () => {
+          clearTimeout(timer);
+          reject(new MockError("cancelled", "Connecting Dropbox was stopped."));
+        };
+      }).finally(() => (state.dropboxConnecting = null));
       state.dropboxAccount = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
       return state.dropboxAccount;
     }),
     dropboxReopenConnectPage: command(() => null),
-    dropboxCancelConnect: command(() => null),
+    dropboxCancelConnect: command(() => {
+      state.dropboxConnecting?.();
+      return null;
+    }),
     dropboxDisconnect: command(() => {
       state.dropboxAccount = null;
       return null;
     }),
-    dropboxListFolder: command((path: string) => {
+    dropboxListFolder: command(async (path: string) => {
       if (!state.dropboxAccount) throw new MockError("dropbox", "Dropbox no longer lets keefast in. Connect your account again.");
-      const tree: Record<string, [string, boolean][]> = {
-        "": [["Apps", true], ["Documents", true], ["Photos", true], ["Personal-backup.kdbx", false]],
-        "/Apps": [["keefast", true]],
-        "/Apps/keefast": [["Work.kdbx", false], ["Shared.kdbx", false], ["readme.txt", false]],
-        "/Documents": [["Taxes 2025.pdf", false], ["Old.kdbx", false]],
-        "/Photos": [],
-      };
-      const items = tree[path];
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const items = DROPBOX_TREE[path.toLowerCase()];
       if (!items) throw new MockError("dropbox", "That is no longer in Dropbox.");
-      return items.map(([name, isFolder]) => ({
-        name,
-        path: `${path}/${name}`,
-        isFolder,
-        location: { provider: "dropbox" as const, path: `${path}/${name}` },
-      }));
+      return items.map(([name, modified, size]) => {
+        const isFolder = modified === undefined;
+        return {
+          name,
+          path: `${path}/${name}`,
+          isFolder,
+          size: isFolder ? null : size!,
+          modified: isFolder ? null : Date.parse(modified) / 1000,
+          location: { provider: "dropbox" as const, path: `${path}/${name}` },
+        };
+      });
     }),
     approvePairing: command((id, name) => {
       const pending = state.pendingPairing;
@@ -1294,6 +1343,13 @@ export function createMockBackend(): Backend & {
       case "unlocked-none":
         for (const v of state.vaults) v.locked = true;
         state.view = { scope: { kind: "allVaults" }, entry: null };
+        break;
+      case "dropbox-disconnected":
+        state.dropboxAccount = null;
+        break;
+      case "sync-offline":
+      case "sync-error":
+        for (const v of state.vaults) if (v.sync) v.sync = scene === "sync-offline" ? "offline" : "error";
         break;
       case "closed": {
         // The prototype's Open a Vault story: Family locked, the others recent Vault files.

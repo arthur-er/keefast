@@ -459,6 +459,10 @@ export type DropboxEntry = {
 	/**  The full path, as Dropbox displays it: `/Vaults/Personal.kdbx`. */
 	path: string,
 	isFolder: boolean,
+	/**  A file's size in bytes, up to 4 GiB; `None` for a folder. */
+	size: number | null,
+	/**  When a file last changed in Dropbox, in seconds since 1970 UTC; `None` for a folder. */
+	modified: number | null,
 	/**  Where the file is, to open it with `unlock_vault`. */
 	location: Location,
 };

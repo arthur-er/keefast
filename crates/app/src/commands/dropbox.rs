@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use keefast_core::Timestamp;
 use keefast_workspace::{ConnectCanceller, Dropbox, DropboxAccount, DropboxItem};
 use serde::Serialize;
 use specta::Type;
@@ -11,7 +12,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use super::{Core, blocking};
-use crate::dto::{Location, Provider};
+use crate::dto::{Location, Provider, seconds as seconds_since_1970};
 use crate::error::{ApiError, ApiResult, ErrorKind};
 
 /// The connection the user is giving in their browser, while they are.
@@ -53,6 +54,10 @@ pub struct DropboxEntry {
     /// The full path, as Dropbox displays it: `/Vaults/Personal.kdbx`.
     pub path: String,
     pub is_folder: bool,
+    /// A file's size in bytes, up to 4 GiB; `None` for a folder.
+    pub size: Option<u32>,
+    /// When a file last changed in Dropbox, in seconds since 1970 UTC; `None` for a folder.
+    pub modified: Option<f64>,
     /// Where the file is, to open it with `unlock_vault`.
     pub location: Location,
 }
@@ -67,8 +72,31 @@ impl From<DropboxItem> for DropboxEntry {
             name: item.name,
             path: item.path,
             is_folder: item.is_folder,
+            size: item
+                .size
+                .map(|size| u32::try_from(size).unwrap_or(u32::MAX)),
+            modified: item.modified.as_deref().and_then(unix_seconds),
         }
     }
+}
+
+/// Seconds since 1970 for a UTC time as Dropbox writes it: `2026-10-07T23:15:22Z`.
+fn unix_seconds(text: &str) -> Option<f64> {
+    let (date, time) = text.strip_suffix('Z')?.split_once('T')?;
+    let day = Timestamp::parse_date(date)?;
+    let mut parts = time.splitn(3, ':').map(|part| part.parse::<u8>().ok());
+    let (Some(Some(hour)), Some(Some(minute)), Some(Some(second))) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let seconds = i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second);
+    Some(seconds_since_1970(Timestamp::from_unix_seconds(
+        day.unix_seconds() + seconds,
+    )))
 }
 
 fn dropbox(core: &Core<'_>) -> ApiResult<Arc<Dropbox>> {
@@ -183,4 +211,53 @@ pub async fn dropbox_list_folder(core: Core<'_>, path: String) -> ApiResult<Vec<
     let dropbox = dropbox(&core)?;
     let items = blocking(move || dropbox.list_folder(&path)).await??;
     Ok(items.into_iter().map(Into::into).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropbox_times_become_seconds_since_1970() {
+        assert_eq!(unix_seconds("1970-01-01T00:00:00Z"), Some(0.0));
+        assert_eq!(unix_seconds("2026-10-07T23:15:22Z"), Some(1_791_414_922.0));
+    }
+
+    #[test]
+    fn times_dropbox_would_not_write_are_left_out() {
+        for text in [
+            "",
+            "2026-10-07",
+            "2026-10-07T23:15:22",
+            "2026-02-30T00:00:00Z",
+            "2026-10-07T24:00:00Z",
+            "2026-10-07T23:15Z",
+            "2026-10-07Tab:cd:efZ",
+        ] {
+            assert_eq!(unix_seconds(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_file_has_its_size_and_time_and_a_folder_neither() {
+        let file = DropboxEntry::from(DropboxItem {
+            name: "Work.kdbx".into(),
+            path: "/Apps/keefast/Work.kdbx".into(),
+            is_folder: false,
+            size: Some(217_088),
+            modified: Some("1970-01-02T00:00:00Z".into()),
+        });
+        assert_eq!(file.size, Some(217_088));
+        assert_eq!(file.modified, Some(86_400.0));
+        assert_eq!(file.location.path, "/Apps/keefast/Work.kdbx");
+
+        let folder = DropboxEntry::from(DropboxItem {
+            name: "Apps".into(),
+            path: "/Apps".into(),
+            is_folder: true,
+            size: None,
+            modified: None,
+        });
+        assert_eq!((folder.size, folder.modified), (None, None));
+    }
 }

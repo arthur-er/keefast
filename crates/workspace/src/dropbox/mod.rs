@@ -94,6 +94,11 @@ pub struct DropboxItem {
     /// The full path, as Dropbox displays it: `/Vaults/Personal.kdbx`.
     pub path: String,
     pub is_folder: bool,
+    /// A file's size in bytes; `None` for a folder.
+    pub size: Option<u64>,
+    /// When a file last changed in Dropbox, as Dropbox writes it (`2026-10-07T23:15:22Z`, UTC);
+    /// `None` for a folder.
+    pub modified: Option<String>,
 }
 
 impl DropboxItem {
@@ -285,6 +290,8 @@ impl Dropbox {
                     name: name.to_owned(),
                     path: path.to_owned(),
                     is_folder,
+                    size: entry["size"].as_u64(),
+                    modified: entry["server_modified"].as_str().map(str::to_owned),
                 });
             }
             if page["has_more"] != Value::Bool(true) {
