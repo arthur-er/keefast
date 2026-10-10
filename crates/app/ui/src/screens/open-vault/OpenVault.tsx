@@ -1,20 +1,24 @@
 // Open a Vault B: the Vault files on a rail (locked Vaults, recent Vault files), and the chosen
-// one's unlock pane. Its New Vault state is a plain form until New Vault arrives (Tauri UI 5/7).
+// one's unlock pane, or its New Vault state (`NewVault.tsx`). A Vault file in Dropbox is chosen
+// in Open from Dropbox A, a dialog over it.
 
 import { useEffect, useState } from "react";
 import {
   CircleAlert, Cloud, Eye, EyeOff, FileKey2, FileSearch, FolderOpen, HardDrive, KeyRound, LoaderCircle, Lock, Plus,
   Settings, ShieldCheck, X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
 import { ApiError, api, errorMessage } from "@/api";
 import type { Location, LocationView, WorkspaceSnapshot } from "@/bindings";
-import { useLaunch } from "@/api/queries";
-import { Badge, Button, Field, Input, Kbd, PasswordInput, Tooltip } from "@/kit";
+import { keys, useLaunch } from "@/api/queries";
+import { Badge, Button, Kbd, Tooltip } from "@/kit";
 import { useShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
+import { DropboxDialog } from "@/screens/dropbox/DropboxDialog";
 import type { OpenVaultMode } from "@/shell/state";
 
+import { NewVault } from "./NewVault";
 import "./open-vault.css";
 
 interface Choice extends LocationView {
@@ -27,6 +31,11 @@ const sameLocation = (a: Location | null, b: Location | null) => !!a && !!b && a
 export function locationOfPath(path: string): LocationView {
   const file = path.split(/[\\/]/).pop() ?? path;
   return { provider: "local", path, name: file.replace(/\.kdbx$/i, ""), description: path };
+}
+
+/** A Vault file in Dropbox, named as the Vault would be. */
+export function dropboxLocation(path: string): LocationView {
+  return { ...locationOfPath(path), provider: "dropbox", path, description: `Dropbox: ${path}` };
 }
 
 export function OpenVault({
@@ -51,6 +60,8 @@ export function OpenVault({
   const recents: Choice[] = snapshot.recentVaults.map((recent) => ({ ...recent, locked: false }));
   const [chosen, setChosen] = useState<LocationView | null>(null);
   const [launchKeyFile, setLaunchKeyFile] = useState<string | null>(null);
+  const [dropboxOpen, setDropboxOpen] = useState(false);
+  const dropbox = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data;
 
   // Starts on the Vault file the command line named, else the locked Vault to unlock, else the
   // most recent Vault file.
@@ -75,9 +86,11 @@ export function OpenVault({
     setChosen(known ?? locationOfPath(path));
     onModeChange("unlock");
   };
-  useShortcut("Ctrl O", () => void chooseFile());
-  useShortcut("Ctrl N", () => onModeChange("new"));
-  useShortcut("Escape", () => (mode === "new" ? onModeChange("unlock") : onClose?.()), { enabled: mode === "new" || !!onClose });
+  useShortcut("Ctrl O", () => void chooseFile(), { enabled: !dropboxOpen });
+  useShortcut("Ctrl N", () => onModeChange("new"), { enabled: !dropboxOpen });
+  useShortcut("Escape", () => (mode === "new" ? onModeChange("unlock") : onClose?.()), {
+    enabled: !dropboxOpen && (mode === "new" || !!onClose),
+  });
 
   const item = (choice: Choice) => (
     <div
@@ -151,6 +164,11 @@ export function OpenVault({
           <button type="button" className="nav-item w-full text-left" onClick={() => void chooseFile()}>
             <FolderOpen /> Choose Vault file… <Kbd combo="Ctrl O" />
           </button>
+          {dropbox?.available && (
+            <button type="button" className="nav-item w-full text-left" onClick={() => setDropboxOpen(true)}>
+              <Cloud /> From Dropbox…
+            </button>
+          )}
           <button
             type="button"
             className={cn("nav-item w-full text-left", mode === "new" && "is-selected")}
@@ -183,7 +201,7 @@ export function OpenVault({
           </div>
         </div>
         {mode === "new" ? (
-          <NewVault onDone={onDone} onCancel={() => onModeChange("unlock")} />
+          <NewVault active={!dropboxOpen} onDone={onDone} onCancel={() => onModeChange("unlock")} />
         ) : chosen ? (
           <UnlockPane
             key={`${chosen.provider}:${chosen.path}`}
@@ -207,6 +225,17 @@ export function OpenVault({
           </div>
         )}
       </main>
+      {dropboxOpen && (
+        <DropboxDialog
+          onClose={() => setDropboxOpen(false)}
+          onPick={(location) => {
+            setDropboxOpen(false);
+            const known = [...locked, ...recents].find((choice) => sameLocation(choice, location));
+            setChosen(known ?? dropboxLocation(location.path));
+            onModeChange("unlock");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -376,87 +405,6 @@ function UnlockPane({
               <ShieldCheck className="ico-sm" /> Decrypted only in memory
             </span>
           </div>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-/** A plain New Vault form: path, name and master password. New Vault (Tauri UI 5/7) gives it
- * the prototype's design, a Key file and the encryption settings. */
-function NewVault({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const create = async () => {
-    if (!path.trim()) return setError("Choose where to save the Vault file.");
-    if (!password) return setError("Set a master password.");
-    if (password !== confirm) return setError("The two master passwords are different.");
-    setBusy(true);
-    setError(null);
-    try {
-      const encryption = await api.defaultEncryption();
-      await api.createVault({ path: path.trim(), name, key: { password, keyFile: null }, encryption });
-      onDone();
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="b-stage" style={{ placeItems: "start center" }}>
-      <form
-        className="b-nv"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void create();
-        }}
-      >
-        <h2>Create a Vault</h2>
-        <p className="lede">A new Vault file, encrypted with a master key only you hold.</p>
-        <div className="b-nv-form">
-          <Field label="Vault file" htmlFor="new-path">
-            <div className="hstack">
-              <Input id="new-path" mono value={path} placeholder="e.g. ~/Vaults/Personal.kdbx" autoFocus onChange={(event) => setPath(event.target.value)} />
-              <Button
-                onClick={async () => {
-                  const picked = await api.chooseNewVaultFile(path || null).catch(() => null);
-                  if (picked) setPath(picked);
-                }}
-              >
-                Browse…
-              </Button>
-            </div>
-          </Field>
-          <Field label="Name" htmlFor="new-name">
-            <Input id="new-name" value={name} placeholder="The Vault file's name if empty" onChange={(event) => setName(event.target.value)} />
-          </Field>
-          <Field label="Master password" htmlFor="new-password">
-            <PasswordInput id="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </Field>
-          <Field label="Repeat the master password" htmlFor="new-confirm" error={error}>
-            <PasswordInput id="new-confirm" value={confirm} placeholder="Type it again" onChange={(event) => setConfirm(event.target.value)} />
-          </Field>
-        </div>
-        <div className="b-nv-foot">
-          <Button variant="ghost" onClick={onCancel} disabled={busy} shortcut="Esc">
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? (
-              <>
-                <LoaderCircle className="spin" /> Creating…
-              </>
-            ) : (
-              "Create"
-            )}
-          </Button>
         </div>
       </form>
     </div>

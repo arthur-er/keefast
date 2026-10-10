@@ -71,9 +71,41 @@
   .b-actions .hint-r { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: inline-flex; gap: 6px; align-items: center; }
   .b-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; color: var(--fg-1); }
   .b-empty .vtile { margin-bottom: 4px; }
-  .b-nv { width: 480px; align-self: start; }
+  /* New Vault: a settings-style two-column form (the prototype's "New Vault (shared parts)" and
+   * "B · New Vault"). */
+  .b-nv { width: 640px; align-self: start; padding-bottom: 8px; }
   .b-nv h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
   .b-nv .lede { color: var(--fg-1); margin-top: 4px; }
-  .b-nv-form { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .b-nv-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 14px 0 0; margin-top: 6px; border-top: 1px solid var(--border); }
+  .b-nv-sec { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); }
+  .b-nv-sec:first-of-type { margin-top: 20px; }
+  .b-nv-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .b-nv-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 14px 0 0; border-top: 1px solid var(--border); }
+  .b-nv-foot .left { margin-right: auto; }
+  .b-shell .nv-section-title { font-size: var(--text-md); font-weight: 600; }
+  .b-shell .nv-section-desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+  .b-shell .nv-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .b-shell .nv-grid3 > * { min-width: 0; }
+  .b-shell .nv-num .input { font-variant-numeric: tabular-nums; }
+  .b-shell .nv-num .unit { color: var(--fg-2); font-size: var(--text-sm); }
+  .b-shell .pw .input { padding-right: 4px; }
+  .b-shell .pw .eye { width: 28px; height: 28px; }
+  .b-shell .enc-box { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--bg-1); }
+  .b-shell .enc-head { all: unset; display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; }
+  .b-shell .enc-head:hover { background: var(--bg-hover); }
+  .b-shell .enc-head:focus-visible { box-shadow: var(--ring); }
+  .b-shell .enc-head .chev { color: var(--fg-2); transition: transform var(--dur) var(--ease); }
+  .b-shell .enc-head.open .chev { transform: rotate(90deg); }
+  .b-shell .enc-sum { display: flex; gap: 6px; align-items: center; color: var(--fg-0); font-size: var(--text-md); }
+  .b-shell .enc-sum .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-2); opacity: 0.6; }
+  .b-shell .enc-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 14px; animation: kf-fade var(--dur) var(--ease); }
+  .b-shell .seg.full { display: flex; }
+  .b-shell .seg.full > button { flex: 1; justify-content: center; }
+  .b-shell .match { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }
+  .b-shell .match.ok { color: var(--ok); }
+  .b-shell .match svg.lucide { width: 13px; height: 13px; }
+  .b-shell .keyfile-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; border-radius: var(--r-xs); background: var(--bg-active); color: var(--fg-0); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; max-width: 220px; }
+  .b-shell .keyfile-chip svg.lucide { width: 13px; height: 13px; color: var(--fg-1); flex: none; }
+  .b-shell .keyfile-chip .x { all: unset; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: var(--fg-2); }
+  .b-shell .keyfile-chip .x:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .b-shell .keyfile-chip .x:focus-visible { box-shadow: var(--ring); }
 }
