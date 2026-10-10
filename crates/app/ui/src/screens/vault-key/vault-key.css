@@ -1,0 +1,44 @@
+/* Changing a Vault's master key and encryption, as Vault settings C draws it: the Security
+ * card's row, and the inline card it opens (the prototype's screens/vault-settings.html,
+ * "Settings atoms" and "Inline change-key card"). Scoped under .vk, so Vault settings' own copy of
+ * the settings atoms can differ without a clash. */
+
+@layer components {
+  .vk.set-card, .vk .set-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); }
+  :root:not([data-theme="light"]) .vk.set-card, :root:not([data-theme="light"]) .vk .set-card { background: rgb(255 255 255 / 0.018); }
+  .vk .set-row { display: flex; align-items: center; gap: 24px; min-height: 60px; padding: 12px 16px; }
+  .vk .set-row .txt { flex: 1; min-width: 0; }
+  .vk .set-row .lbl { font-size: var(--text-md); font-weight: 500; color: var(--fg-0); }
+  .vk .set-row .desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; text-wrap: pretty; }
+  .vk .set-row .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+  .vk .set-note { display: flex; gap: 10px; padding: 12px 16px; font-size: var(--text-sm); color: var(--fg-1); line-height: 1.5; text-wrap: pretty; }
+  .vk .set-note svg.lucide { width: 14px; height: 14px; margin-top: 2px; color: var(--fg-2); flex: none; }
+  .vk .set-note.warn { color: var(--warn); background: var(--warn-bg); }
+  .vk .set-note.warn svg.lucide { color: var(--warn); }
+
+  .vk .kc { animation: kf-rise var(--dur) var(--ease); }
+  .vk .kc > * + *:not([data-part]), .vk .kc [data-part] > * { border-top: 1px solid var(--border); }
+  .vk .kc .kc-head { background: var(--bg-inset); border-radius: var(--r-md) var(--r-md) 0 0; min-height: 56px; }
+  .vk .kc .kc-head .tile { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 7px; background: var(--accent-bg); color: var(--accent-fg); }
+  .vk .kc .kc-head .tile svg.lucide { width: 12px; height: 12px; }
+  .vk .kc .kc-head .txt { margin-left: -12px; }
+  .vk .kc .kc-sub { display: flex; align-items: center; height: 36px; padding: 12px 16px 0; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+  .vk .kc .kc-sub + .set-row, .vk .kc .kc-sub + [data-part] > :first-child { border-top: 0; }
+  .vk .kc .kin { width: 280px; }
+  .vk .kc .set-row.tight { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
+  .vk .kc .knum { width: 132px; }
+  .vk .kc .error-msg svg.lucide { width: 13px; height: 13px; }
+  .vk .kc .seg > button { padding: 0 10px; }
+  .vk .kc .seg > button:focus-visible { box-shadow: var(--ring); }
+  .vk .kc .kfile-name { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); letter-spacing: 0; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+  .vk .kc .kfile-name.none { font-family: var(--font-ui); color: var(--fg-2); }
+  .vk .kc .kfile-name svg.lucide { flex: none; }
+  .vk .kc .kc-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: var(--bg-inset); border-radius: 0 0 var(--r-md) var(--r-md); }
+  .vk .kc .kc-foot .hint { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .vk .kdim { opacity: 0.45; pointer-events: none; }
+  .vk .input .eye { all: unset; display: grid; place-items: center; width: 22px; height: 22px; margin-right: -4px; border-radius: 4px; color: var(--fg-2); }
+  .vk .input .eye:hover { color: var(--fg-0); background: var(--bg-hover); }
+  .vk .input .eye:focus-visible { box-shadow: var(--ring); }
+  .vk .input .unit { color: var(--fg-2); font-size: var(--text-sm); font-family: var(--font-ui); letter-spacing: 0; }
+  .vk .key-sum { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+}

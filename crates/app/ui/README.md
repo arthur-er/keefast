@@ -6,8 +6,9 @@ over a mock backend with fake Vaults.
 
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
-and Vault browser C, Open a Vault B, Entry editor A, Password generator A, TOTP B, Entry history B and
-command palette A. The browsers' requests and the lock prompt
+and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
+Password generator A, TOTP B, Entry history B, command palette A, and the card that changes a
+Vault's master key and encryption (for Vault settings C). The browsers' requests and the lock prompt
 (`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
 
 ## Commands
@@ -42,7 +43,9 @@ Production builds don't include it.
 
 - Any master password unlocks except `wrong`, which fails as a wrong master key does.
 - File dialogs answer with made-up paths; copying uses the browser's clipboard and "clears" it
-  after the configured wait; Dropbox shows a small fake folder tree.
+  after the configured wait; Dropbox shows the prototype's folder tree, and connecting it
+  "succeeds in the browser" after 4 s unless stopped. A new Vault can't go where a Vault file the
+  mock knows is (`~/Vaults/Family.kdbx`).
 - States a screen must show, from the console, agent-browser's `eval`, or the URL:
 
   ```js
@@ -54,6 +57,8 @@ Production builds don't include it.
   __keefastMock.simulate("saveFailed")  // a failed save
   __keefastMock.simulate("unlocked-none") // every Vault locked: Open a Vault
   __keefastMock.simulate("closed")      // Family locked, Personal and Work recent: Open a Vault B's story
+  __keefastMock.simulate("dropbox-disconnected") // no Dropbox account: Open from Dropbox asks to connect
+  __keefastMock.simulate("sync-offline") // Dropbox Vaults offline (or "sync-error")
   __keefastMock.reset()
   ```
 
@@ -120,7 +125,9 @@ src/
     commands.ts        the command registry: what keys do and what the command palette lists
   screens/
     vault-browser/     the Entry list and the tabbed Entry detail, and a locked Vault's card
-    open-vault/        Open a Vault B
+    open-vault/        Open a Vault B, and its New Vault state
+    dropbox/           Open from Dropbox A (a dialog over Open a Vault), and the Sync status popover's detail
+    vault-key/         the master key and encryption forms' logic, and changing a Vault's master key
     entry-editor/      Entry editor A: an Entry (or a new one) edited in place in the detail area
     password-generator/  Password generator A, the popover on the password field
     totp/              TOTP B: the live code as a field, and its setup expanding inline

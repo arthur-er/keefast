@@ -14,6 +14,7 @@ import { EntryHistoryPage } from "@/screens/entry-history/EntryHistory";
 import { DetailArea } from "@/screens/vault-browser/DetailArea";
 import { EntryList } from "@/screens/vault-browser/EntryList";
 import { LockedVault } from "@/screens/vault-browser/LockedVault";
+import { VaultKeyCommand } from "@/screens/vault-key/ChangeVaultKey";
 
 import { scopeVault } from "./hooks";
 import { Sidebar } from "./Sidebar";
@@ -44,6 +45,8 @@ export function Shell() {
           </>
         )}
       </div>
+      {/* Until Vault settings C (Tauri UI 6/7) embeds the change-key card. */}
+      <VaultKeyCommand />
     </div>
   );
 }
