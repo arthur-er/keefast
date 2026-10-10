@@ -354,6 +354,8 @@ export function createMockBackend(): Backend & {
       protected: f.protected,
       value: f.protected ? null : f.value,
       isEmpty: f.value === "",
+      // The mock keeps TOTP apart from the fields (`MockEntry.totp`), so none holds it.
+      totpStorage: false,
     }));
   }
 

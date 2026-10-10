@@ -100,6 +100,9 @@ pub struct CustomFieldView {
     pub value: Option<String>,
     /// Whether the value is empty, which a hidden value doesn't otherwise show.
     pub is_empty: bool,
+    /// Whether it is one of the fields TOTP settings are kept in (`otp`, `TOTP Seed`,
+    /// `TimeOtp-*`…), which the UI shows as the Entry's TOTP rather than as a field.
+    pub totp_storage: bool,
 }
 
 /// How an attachment can be shown.
@@ -354,13 +357,18 @@ pub(crate) fn custom_field_views(entry: &Entry) -> Vec<CustomFieldView> {
     entry
         .custom_fields()
         .iter()
-        .map(|field| CustomFieldView {
-            name: field.name.clone(),
-            protected: field.protected,
-            value: (!field.protected).then(|| field.value.expose_secret().to_owned()),
-            is_empty: field.value.expose_secret().is_empty(),
-        })
+        .map(custom_field_view)
         .collect()
+}
+
+fn custom_field_view(field: &CustomField) -> CustomFieldView {
+    CustomFieldView {
+        name: field.name.clone(),
+        protected: field.protected,
+        value: (!field.protected).then(|| field.value.expose_secret().to_owned()),
+        is_empty: field.value.expose_secret().is_empty(),
+        totp_storage: keefast_core::is_totp_field(&field.name),
+    }
 }
 
 /// An Entry of an unlocked Vault that isn't waiting to lock.
@@ -603,7 +611,34 @@ fn web_address(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::web_address;
+    use keefast_core::CustomField;
+    use secrecy::SecretString;
+
+    use super::{custom_field_view, web_address};
+
+    #[test]
+    fn fields_keeping_totp_settings_are_marked() {
+        let field = |name: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from("JBSWY3DPEHPK3PXP"),
+            protected,
+        };
+        for name in [
+            "otp",
+            "TOTP Seed",
+            "TOTP Settings",
+            "TimeOtp-Secret-Base32",
+            "TimeOtp-Period",
+        ] {
+            assert!(custom_field_view(&field(name, true)).totp_storage, "{name}");
+        }
+        for name in ["PAT (ci)", "OTP", "TimeOtp", "Recovery codes"] {
+            assert!(
+                !custom_field_view(&field(name, false)).totp_storage,
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn web_addresses_open_as_they_are() {

@@ -30,9 +30,9 @@ const entry = (overrides: Partial<EntryDetail> = {}): EntryDetail => ({
   notes: "",
   additionalUrls: [],
   customFields: [
-    { name: "PAT", protected: true, value: null, isEmpty: false },
-    { name: "otp", protected: true, value: null, isEmpty: false },
-    { name: "Account", protected: false, value: "42", isEmpty: false },
+    { name: "PAT", protected: true, value: null, isEmpty: false, totpStorage: false },
+    { name: "otp", protected: true, value: null, isEmpty: false, totpStorage: true },
+    { name: "Account", protected: false, value: "42", isEmpty: false, totpStorage: false },
   ],
   attachments: [],
   totp: { status: "ready", digits: 6, period: 30, algorithm: "sha1", steam: false },
@@ -108,7 +108,7 @@ describe("toInput", () => {
     const draft = draftOf(before);
     // TOTP was set up again meanwhile: its field moved to the end.
     const now = entry({
-      customFields: [before.customFields[0]!, before.customFields[2]!, { name: "otp", protected: true, value: null, isEmpty: false }],
+      customFields: [before.customFields[0]!, before.customFields[2]!, { name: "otp", protected: true, value: null, isEmpty: false, totpStorage: true }],
     });
     const input = toInput({ ...draft, title: "GitHub (work)" }, now);
     expect(input.password).toBeNull();

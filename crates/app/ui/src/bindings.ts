@@ -430,6 +430,11 @@ export type CustomFieldView = {
 	value: string | null,
 	/**  Whether the value is empty, which a hidden value doesn't otherwise show. */
 	isEmpty: boolean,
+	/**
+	 *  Whether it is one of the fields TOTP settings are kept in (`otp`, `TOTP Seed`,
+	 *  `TimeOtp-*`…), which the UI shows as the Entry's TOTP rather than as a field.
+	 */
+	totpStorage: boolean,
 };
 
 export type CustomIconView = {

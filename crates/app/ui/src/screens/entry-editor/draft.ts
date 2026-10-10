@@ -7,21 +7,6 @@
 
 import type { Color, CustomFieldInput, EntryDetail, EntryInput, IconChoice } from "@/bindings";
 
-/** The fields TOTP settings are kept in (`TOTP_FIELDS` in crates/core/src/totp.rs). The editor
- * shows them as the TOTP row rather than as custom fields, and saves them as they are. */
-export const TOTP_FIELDS: readonly string[] = [
-  "otp",
-  "TOTP Seed",
-  "TOTP Settings",
-  "TimeOtp-Secret-Base32",
-  "TimeOtp-Secret",
-  "TimeOtp-Secret-Hex",
-  "TimeOtp-Secret-Base64",
-  "TimeOtp-Length",
-  "TimeOtp-Period",
-  "TimeOtp-Algorithm",
-];
-
 /** The standard fields every Entry has, which no custom field may be named. */
 export const STANDARD_FIELDS: readonly string[] = ["Title", "UserName", "Password", "URL", "Notes"];
 
@@ -59,7 +44,9 @@ export interface Draft {
 let nextKey = 1;
 export const rowKey = () => nextKey++;
 
-/** The draft of an Entry as it is saved. TOTP's own fields are left out while it has TOTP. */
+/** The draft of an Entry as it is saved. The fields TOTP settings are kept in (`totpStorage`)
+ * are left out while it has TOTP: the editor shows them as the TOTP row, and saves them as they
+ * are. */
 export function draftOf(entry: EntryDetail): Draft {
   const hideTotp = entry.totp !== null;
   return {
@@ -70,7 +57,7 @@ export function draftOf(entry: EntryDetail): Draft {
     url: entry.url,
     notes: entry.notes,
     fields: entry.customFields
-      .filter((field) => !(hideTotp && TOTP_FIELDS.includes(field.name)))
+      .filter((field) => !(hideTotp && field.totpStorage))
       .map((field) => ({
         key: rowKey(),
         name: field.name,
@@ -213,7 +200,7 @@ export function hiddenFields(entry: EntryDetail | null, draft: Draft): { name: s
   if (!entry) return [];
   const shown = new Set(draft.fields.flatMap((row) => (row.original === null ? [] : [row.original])));
   return entry.customFields.flatMap((field, index) =>
-    TOTP_FIELDS.includes(field.name) && !shown.has(field.name) ? [{ name: field.name, index, protected: field.protected }] : [],
+    field.totpStorage && !shown.has(field.name) ? [{ name: field.name, index, protected: field.protected }] : [],
   );
 }
 
