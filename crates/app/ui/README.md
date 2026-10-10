@@ -6,7 +6,8 @@ over a mock backend with fake Vaults.
 
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
-and Vault browser C, Open a Vault B, Entry editor A, Password generator A and TOTP B. The browsers' requests and the lock prompt
+and Vault browser C, Open a Vault B, Entry editor A, Password generator A, TOTP B, Entry history B and
+command palette A. The browsers' requests and the lock prompt
 (`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
 
 ## Commands
@@ -123,18 +124,23 @@ src/
     entry-editor/      Entry editor A: an Entry (or a new one) edited in place in the detail area
     password-generator/  Password generator A, the popover on the password field
     totp/              TOTP B: the live code as a field, and its setup expanding inline
+    entry-history/     Entry history B (versions and their comparison) and the detail's History tab
+    command-palette/   command palette A: the registered commands, Entry search, an Entry's actions
     PendingRequests.tsx  browser requests and the lock prompt (plain until dialogs A)
 ```
 
 ### Where later screens plug in
 
 `shell/state.tsx` says it in full. In short: the selected Entry's pane switches on
-`ShellState.detail` (`view`, `edit` for Entry editor A, `history` for Entry history B) in
-`screens/vault-browser/DetailArea.tsx`; settings pages replace the list and detail through
+`ShellState.detail` (`view`, `edit` for Entry editor A) in
+`screens/vault-browser/DetailArea.tsx`, except `history`: Entry history B's split takes the Entry
+list's place too (`shell/Shell.tsx`); settings pages replace the list and detail through
 `ShellState.page` (`shell/Shell.tsx`); overlays (the command palette, confirmations) are kinds of
 `ShellState.overlay`, drawn in `shell/Overlays.tsx`. A screen's keys are commands: register them
-with `useAppCommand` (shortcut from `SHORTCUTS`, a title and section for the palette), and the
-palette lists them with `useAppCommands`.
+with `useAppCommand` (shortcut from `SHORTCUTS`, a title in sentence case and a section for the
+palette), and command palette A lists them with `useAppCommands` while they are registered,
+grouped by section (`Entry` first; a new section shows by name before `App`). Nothing in
+`screens/command-palette/` needs to change for a screen's commands to show there.
 
 ### Tokens and kit
 
