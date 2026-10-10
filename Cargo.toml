@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/workspace", "crates/app", "crates/native-host"]
+members = ["crates/core", "crates/workspace", "crates/plugins", "crates/app", "crates/native-host"]
+# Plugins are built to WebAssembly on their own (plugins/card/build.sh).
+exclude = ["plugins"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +14,7 @@ repository = "https://github.com/arthur-er/keefast"
 keefast-core = { path = "crates/core" }
 keefast-workspace = { path = "crates/workspace" }
 keefast-native-host = { path = "crates/native-host" }
+keefast-plugins = { path = "crates/plugins" }
 aes = "0.9"
 base64 = "0.23"
 cbc = "0.2"
@@ -46,6 +49,10 @@ twofish = "0.8"
 ureq = "3"
 url = "2"
 uuid = "1"
+# Runs Plugins (ADR 0009): components only, compiled by Cranelift; no WASI, so no filesystem,
+# network or clock.
+wasmtime = { version = "49", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wat = "1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -76,3 +83,10 @@ sha2 = { opt-level = 3 }
 chacha20 = { opt-level = 3 }
 salsa20 = { opt-level = 3 }
 twofish = { opt-level = 3 }
+# So is compiling a Plugin's component (Cranelift): seconds unoptimised, milliseconds optimised.
+cranelift-codegen = { opt-level = 3 }
+cranelift-frontend = { opt-level = 3 }
+regalloc2 = { opt-level = 3 }
+wasmparser = { opt-level = 3 }
+wasmtime-environ = { opt-level = 3 }
+wasmtime-internal-cranelift = { opt-level = 3 }

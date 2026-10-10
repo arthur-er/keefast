@@ -40,6 +40,8 @@ rustPlatform.buildRustPackage {
           (lib.fileset.maybeMissing ../crates/app/gen)
         ]
       ))
+      # Plugins compiled into keefast: their manifests and built components.
+      (lib.fileset.difference ../plugins (lib.fileset.maybeMissing ../plugins/card/target))
       ../assets
       ../packaging
     ];
@@ -59,7 +61,7 @@ rustPlatform.buildRustPackage {
       ];
     };
     fetcherVersion = 4;
-    hash = "sha256-r7A+7MxTSOvgUKxf6+VigHNLORFKIZSBL8Bz8MBvm3U=";
+    hash = "sha256-Ddn10uTFop2s6ajjFkZEB8as1pEHc53Xa130Cq3XjgY=";
   };
   pnpmRoot = "crates/app/ui";
 
