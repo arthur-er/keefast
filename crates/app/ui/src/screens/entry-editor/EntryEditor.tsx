@@ -231,6 +231,8 @@ function EditorForm({
         if (stagedTotp) {
           await api.setTotp(target!.vault, id, stagedTotp).catch((error) => toast(errorMessage(error), { icon: "error" }));
         }
+        // The list has it before it's selected: a list without it would select its first Entry.
+        await client.refetchQueries({ queryKey: ["entries"], type: "active" });
         toast(<>{draft.title || "(untitled)"} created</>, { icon: "check" });
         onDone({ vault: target!.vault, entry: id });
       }
