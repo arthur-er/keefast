@@ -19,11 +19,12 @@ const DOWNLOADS_AT_ONCE: usize = 4;
 
 /// Starts everything that runs in the background.
 pub fn start(core: &Arc<AppCore>) {
+    // First, so no favicon download the Workspace begins goes unqueued.
+    download_favicons(core);
     watch_vault_files(core);
     sync_online_vaults(core);
     lock_when_idle(core);
     lock_with_the_os(core);
-    download_favicons(core);
 }
 
 /// Watches the open Vaults' Vault files, and Merges in changes made elsewhere once each has
