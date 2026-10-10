@@ -243,6 +243,8 @@ export function fakeVaults(): MockVault[] {
         entry({ id: "e11", title: "X / Twitter", brand: "twitter", username: "@arthur_er", password: "Tw33t!ng#2026", url: "https://x.com", group: "social", tags: ["social"], modified: "2026-04-10" }),
         entry({ id: "e12", title: "Apple ID", brand: "apple", username: "arthur.rezende@icloud.com", password: "Appl3!D#seed", url: "https://appleid.apple.com", tags: ["2fa"], color: "orange", totp: "GEZDGNBVGY3TQOJQ", modified: "2026-06-03" }),
         entry({ id: "e13", title: "Figma", brand: "figma", username: "arthur@rezende.dev", password: "F1gm@Frames!", url: "https://figma.com", group: "browser", tags: ["design"], modified: "2026-10-02" }),
+        // Cards, as the Card Plugin keeps them: plain custom fields (ADR 0009).
+        entry({ id: "e15", title: "Nubank Ultravioleta", brand: "bank", url: "https://nubank.com.br", group: "finance", tags: ["bank", "card"], color: "violet", notes: "Lost card: 0800 591 2117", fields: [{ name: "Card number", value: "5162 9200 1234 5676", protected: true }, { name: "Cardholder", value: "ARTHUR REZENDE", protected: false }, { name: "Expiry", value: "08/31", protected: false }, { name: "CVV", value: "481", protected: true }, { name: "PIN", value: "8271", protected: true }], modified: "2026-10-09" }),
         entry({ id: "e14", title: "Old Yahoo", username: "arthur_r_1999", password: "password123", url: "https://yahoo.com", group: "bin", modified: "2023-01-01" }),
       ],
     },
@@ -276,6 +278,7 @@ export function fakeVaults(): MockVault[] {
         entry({ id: "w6", title: "Slack", brand: "slack", username: "arthur@rezende.dev", password: "Sl@ck!Chan#9", url: "https://rezende.slack.com", group: "saas", tags: ["work"], modified: "2026-07-07" }),
         entry({ id: "w7", title: "Vercel", brand: "vercel", username: "arthur-er", password: "V3rc3l!Edge", url: "https://vercel.com", group: "saas", tags: ["work", "2fa"], totp: "ONSWG4TFOQYTEMZU", modified: "2026-09-20" }),
         entry({ id: "w8", title: "Hetzner", brand: "hetzner", username: "K0123456789", password: "Htz!B0x#2025", url: "https://console.hetzner.cloud", group: "infra", tags: ["prod"], expires: "2026-10-20", modified: "2026-04-22" }),
+        entry({ id: "w9", title: "Company Visa", brand: "bank", group: "saas", tags: ["card", "work"], notes: "For SaaS subscriptions only.", fields: [{ name: "Card number", value: "4111 1111 1111 1111", protected: true }, { name: "Cardholder", value: "ARTHUR REZENDE", protected: false }, { name: "Expiry", value: "11/26", protected: false }, { name: "CVV", value: "737", protected: true }], modified: "2026-09-30" }),
       ],
     },
     {

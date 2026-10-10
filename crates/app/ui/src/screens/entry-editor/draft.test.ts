@@ -34,6 +34,7 @@ const entry = (overrides: Partial<EntryDetail> = {}): EntryDetail => ({
     { name: "otp", protected: true, value: null, isEmpty: false, totpStorage: true },
     { name: "Account", protected: false, value: "42", isEmpty: false, totpStorage: false },
   ],
+  facets: [],
   attachments: [],
   totp: { status: "ready", digits: 6, period: 30, algorithm: "sha1", steam: false },
   historyCount: 0,

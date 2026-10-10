@@ -2,7 +2,9 @@
 //!
 //! Passwords and protected custom fields never leave in an Entry's DTO: the UI asks for one with
 //! `reveal_password` or `reveal_custom_field` when the user shows it, and edits send only what
-//! the user changed, so an untouched secret never crosses the boundary.
+//! the user changed, so an untouched secret never crosses the boundary. Plugins' facets come with
+//! the labels their Plugins derived, which are the one thing shown about a protected value
+//! without a reveal (ADR 0009).
 
 use std::collections::HashMap;
 
@@ -10,6 +12,7 @@ use keefast_core::{
     self as core, AccessDecision, AttachmentPreview, CustomField, Entry, EntryFields, EntrySearch,
     EntrySort, Group, Site, Timestamp, Totp, parse_tags,
 };
+use keefast_plugins::{Capability, EntryField, FieldKind, FoundFacet, PluginHost};
 use keefast_workspace::{self as ws, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -152,6 +155,70 @@ pub struct RememberedAccessView {
     pub allowed: bool,
 }
 
+/// What an Owned field holds, which says how the UI shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum OwnedFieldKind {
+    Text,
+    /// Digits, shown in a monospace font.
+    Digits,
+    /// A month as `MM/YY`, such as a card's expiry; the UI says when it has passed or is near.
+    MonthYear,
+}
+
+impl From<FieldKind> for OwnedFieldKind {
+    fn from(kind: FieldKind) -> Self {
+        match kind {
+            FieldKind::Text => Self::Text,
+            FieldKind::Digits => Self::Digits,
+            FieldKind::MonthYear => Self::MonthYear,
+        }
+    }
+}
+
+/// One of a facet's Owned fields on an Entry. A protected value is left out, as a custom field's
+/// is: reveal and copy it by `index`, as any custom field.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedFieldView {
+    /// How its Plugin names it.
+    pub key: String,
+    /// The custom field's name, such as `Card number`.
+    pub name: String,
+    /// What the section calls it, such as "Number".
+    pub label: String,
+    pub kind: OwnedFieldKind,
+    /// Its index in the Entry's custom fields; `None` when the Entry hasn't got it.
+    pub index: Option<u32>,
+    /// Whether the Entry keeps it protected (or, when missing, whether its Plugin would).
+    pub protected: bool,
+    /// `None` when protected or missing.
+    pub value: Option<String>,
+    pub is_empty: bool,
+    /// What its Plugin derived to show in place of the value, without a reveal, such as
+    /// "Visa •••• 1111".
+    pub text: Option<String>,
+}
+
+/// A facet a Plugin found on an Entry, such as its Card: a section of the detail.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FacetView {
+    /// The Plugin's id, such as `keefast.card`.
+    pub plugin: String,
+    /// The facet's id within the Plugin, such as `card`.
+    pub facet: String,
+    /// The section's title, such as "Card".
+    pub title: String,
+    /// One of the kit's icons, by name (`credit-card`).
+    pub icon: Option<String>,
+    /// The label its Plugin derived, such as "Visa •••• 1111".
+    pub label: Option<String>,
+    /// Whether the Plugin has the Plugin capability to have its fields copied.
+    pub can_copy: bool,
+    pub fields: Vec<OwnedFieldView>,
+}
+
 /// Everything about an Entry the detail shows, except its secrets.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +231,8 @@ pub struct EntryDetail {
     /// Other URLs the Entry is for, as KeePassXC keeps them (`KP2A_URL…` fields).
     pub additional_urls: Vec<String>,
     pub custom_fields: Vec<CustomFieldView>,
+    /// The facets Plugins found on it, in the order the Plugins were loaded.
+    pub facets: Vec<FacetView>,
     pub attachments: Vec<AttachmentView>,
     pub totp: Option<TotpView>,
     /// How many earlier versions the Entry's history keeps.
@@ -371,6 +440,56 @@ fn custom_field_view(field: &CustomField) -> CustomFieldView {
     }
 }
 
+/// The facets Plugins find on an Entry. Their hooks run under fuel and memory limits, so this is
+/// quick even with the Workspace held.
+pub(crate) fn facet_views(plugins: &PluginHost, custom_fields: &[CustomField]) -> Vec<FacetView> {
+    let fields: Vec<_> = custom_fields
+        .iter()
+        .map(|field| EntryField {
+            name: &field.name,
+            value: field.value.expose_secret(),
+            protected: field.protected,
+        })
+        .collect();
+    plugins
+        .facets(&fields)
+        .into_iter()
+        .map(|found| facet_view(found, custom_fields))
+        .collect()
+}
+
+fn facet_view(found: FoundFacet, custom_fields: &[CustomField]) -> FacetView {
+    FacetView {
+        plugin: found.plugin.id.clone(),
+        facet: found.facet.id.clone(),
+        title: found.facet.title.clone(),
+        icon: found.facet.icon.clone(),
+        label: found.label,
+        can_copy: found.plugin.has(Capability::Copy),
+        fields: found
+            .fields
+            .into_iter()
+            .map(|field| {
+                let kept = field.index.and_then(|index| custom_fields.get(index));
+                let protected = kept.map_or(field.owned.protected, |kept| kept.protected);
+                OwnedFieldView {
+                    key: field.owned.key.clone(),
+                    name: field.owned.name.clone(),
+                    label: field.owned.label.clone(),
+                    kind: field.owned.kind.into(),
+                    index: field.index.map(|index| index as u32),
+                    protected,
+                    value: kept
+                        .filter(|_| !protected)
+                        .map(|kept| kept.value.expose_secret().to_owned()),
+                    is_empty: kept.is_none_or(|kept| kept.value.expose_secret().is_empty()),
+                    text: field.text,
+                }
+            })
+            .collect(),
+    }
+}
+
 /// An Entry of an unlocked Vault that isn't waiting to lock.
 pub(crate) fn find<'a>(
     workspace: &'a Workspace,
@@ -414,6 +533,7 @@ pub async fn list_entries(core: Core<'_>, query: EntryQuery) -> ApiResult<Vec<En
 #[tauri::command]
 #[specta::specta]
 pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiResult<EntryDetail> {
+    let plugins = core.plugins();
     core.read(|workspace| {
         let (open, found) = find(workspace, vault, &entry)?;
         let places = Places::of(open.vault());
@@ -423,6 +543,7 @@ pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiRes
             notes: found.notes().to_owned(),
             additional_urls: found.additional_urls().to_vec(),
             custom_fields: custom_field_views(found),
+            facets: facet_views(plugins, found.custom_fields()),
             attachments: found
                 .attachments()
                 .iter()
@@ -614,7 +735,9 @@ mod tests {
     use keefast_core::CustomField;
     use secrecy::SecretString;
 
-    use super::{custom_field_view, web_address};
+    use keefast_plugins::PluginHost;
+
+    use super::{OwnedFieldKind, custom_field_view, facet_views, web_address};
 
     #[test]
     fn fields_keeping_totp_settings_are_marked() {
@@ -638,6 +761,45 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_card_comes_with_its_label_and_without_its_protected_values() {
+        let field = |name: &str, value: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        };
+        let fields = [
+            field("Note", "hi", false),
+            field("Card number", "4111 1111 1111 1111", true),
+            field("Cardholder", "ARTHUR REZENDE", false),
+            field("Expiry", "08/31", false),
+            field("CVV", "", true),
+        ];
+        let facets = facet_views(&PluginHost::bundled(), &fields);
+        assert_eq!(facets.len(), 1);
+        let card = &facets[0];
+        assert_eq!(
+            (card.plugin.as_str(), card.facet.as_str()),
+            ("keefast.card", "card")
+        );
+        assert_eq!(card.label.as_deref(), Some("Visa •••• 1111"));
+        assert!(card.can_copy);
+
+        let [number, holder, expiry, cvv, pin] = &card.fields[..] else {
+            panic!("the Card has five fields");
+        };
+        assert_eq!(number.index, Some(1));
+        assert_eq!(number.value, None, "protected");
+        assert_eq!(number.text.as_deref(), Some("Visa •••• 1111"));
+        assert_eq!(holder.value.as_deref(), Some("ARTHUR REZENDE"));
+        assert_eq!(expiry.kind, OwnedFieldKind::MonthYear);
+        assert!(cvv.protected && cvv.is_empty && cvv.value.is_none());
+        assert_eq!((pin.index, pin.protected, pin.is_empty), (None, true, true));
+        // Nothing in the DTO is a protected value.
+        let json = serde_json::to_string(&facets).unwrap();
+        assert!(!json.contains("4111 1111 1111 1111"));
     }
 
     #[test]

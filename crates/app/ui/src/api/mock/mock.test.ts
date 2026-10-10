@@ -86,4 +86,26 @@ describe("mock backend", () => {
     const access = (await api.getWorkspace()).pendingAccess!;
     expect(access.entries.map((entry) => entry.title)).toContain("GitHub");
   });
+
+  it("runs the Card Plugin's component for an Entry's Card, protected values left out", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [found] = await api.listEntries({ scope: { kind: "allVaults" }, search: "Ultravioleta", sort: "title" });
+    const entry = await api.getEntry(found!.vault, found!.id);
+    expect(entry.facets).toHaveLength(1);
+    const card = entry.facets[0]!;
+    expect(card).toMatchObject({ plugin: "keefast.card", facet: "card", title: "Card", label: "Mastercard •••• 5676", canCopy: true });
+    expect(card.fields.map((field) => [field.key, field.value, field.text])).toEqual([
+      ["number", null, "Mastercard •••• 5676"],
+      ["holder", "ARTHUR REZENDE", null],
+      ["expiry", "08/31", null],
+      ["cvv", null, null],
+      ["pin", null, null],
+    ]);
+    expect(JSON.stringify(entry.facets)).not.toMatch(/5162|481|8271/);
+    const cvv = card.fields[3]!;
+    expect(await api.revealCustomField(entry.vault, entry.id, cvv.index!)).toBe("481");
+
+    const github = (await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" }))[0]!;
+    expect((await api.getEntry(github.vault, github.id)).facets).toEqual([]);
+  });
 });

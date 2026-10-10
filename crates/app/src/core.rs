@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
+use keefast_plugins::PluginHost;
 use keefast_workspace::{
     Clipboard, EditVaultError, Outgoing, PendingFavicon, PendingSave, VaultId, Workspace,
 };
@@ -51,6 +52,8 @@ pub struct AppCore {
     /// Counts copies, so only the latest copy's clipboard timer keeps running.
     copies: AtomicU64,
     launch: Launch,
+    /// The Plugins keefast runs: for now, the ones compiled in.
+    plugins: PluginHost,
 }
 
 /// The browser requests waiting for the user, by number: the one put to the user now of each
@@ -116,11 +119,16 @@ impl AppCore {
             shown_requests: Mutex::new(Requests::default()),
             copies: AtomicU64::new(0),
             launch,
+            plugins: PluginHost::bundled(),
         })
     }
 
     pub fn launch(&self) -> &Launch {
         &self.launch
+    }
+
+    pub fn plugins(&self) -> &PluginHost {
+        &self.plugins
     }
 
     /// The revision the UI was last told about.

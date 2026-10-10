@@ -49,6 +49,7 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { facetsOf } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -898,7 +899,7 @@ export function createMockBackend(): Backend & {
         })
         .map(({ v, e }) => summary(v, e));
     }),
-    getEntry: command((id, entryId): EntryDetail => {
+    getEntry: command(async (id, entryId): Promise<EntryDetail> => {
       const [v, e] = entryOf(id, entryId);
       return {
         ...summary(v, e),
@@ -906,6 +907,7 @@ export function createMockBackend(): Backend & {
         notes: e.notes,
         additionalUrls: [],
         customFields: fieldViews(e.fields),
+        facets: await facetsOf(e.fields),
         attachments: e.attachments.map((a, index) => ({
           index,
           name: a.name,

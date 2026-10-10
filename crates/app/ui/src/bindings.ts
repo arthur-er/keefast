@@ -489,6 +489,8 @@ export type EntryDetail = {
 	/**  Other URLs the Entry is for, as KeePassXC keeps them (`KP2A_URL…` fields). */
 	additionalUrls: string[],
 	customFields: CustomFieldView[],
+	/**  The facets Plugins found on it, in the order the Plugins were loaded. */
+	facets: FacetView[],
 	attachments: AttachmentView[],
 	totp: TotpView | null,
 	/**  How many earlier versions the Entry's history keeps. */
@@ -626,6 +628,23 @@ export type ErrorKind =
 "unavailable" | 
 /**  The user stopped it. */
 "cancelled";
+
+/**  A facet a Plugin found on an Entry, such as its Card: a section of the detail. */
+export type FacetView = {
+	/**  The Plugin's id, such as `keefast.card`. */
+	plugin: string,
+	/**  The facet's id within the Plugin, such as `card`. */
+	facet: string,
+	/**  The section's title, such as "Card". */
+	title: string,
+	/**  One of the kit's icons, by name (`credit-card`). */
+	icon: string | null,
+	/**  The label its Plugin derived, such as "Visa •••• 1111". */
+	label: string | null,
+	/**  Whether the Plugin has the Plugin capability to have its fields copied. */
+	canCopy: boolean,
+	fields: OwnedFieldView[],
+};
 
 /**  What the generator's controls may be set to. */
 export type GeneratorLimits = {
@@ -767,6 +786,39 @@ export type NewVaultInput = {
 	name: string,
 	key: KeyInput,
 	encryption: EncryptionSettings,
+};
+
+/**  What an Owned field holds, which says how the UI shows it. */
+export type OwnedFieldKind = "text" | 
+/**  Digits, shown in a monospace font. */
+"digits" | 
+/**  A month as `MM/YY`, such as a card's expiry; the UI says when it has passed or is near. */
+"monthYear";
+
+/**
+ *  One of a facet's Owned fields on an Entry. A protected value is left out, as a custom field's
+ *  is: reveal and copy it by `index`, as any custom field.
+ */
+export type OwnedFieldView = {
+	/**  How its Plugin names it. */
+	key: string,
+	/**  The custom field's name, such as `Card number`. */
+	name: string,
+	/**  What the section calls it, such as "Number". */
+	label: string,
+	kind: OwnedFieldKind,
+	/**  Its index in the Entry's custom fields; `None` when the Entry hasn't got it. */
+	index: number | null,
+	/**  Whether the Entry keeps it protected (or, when missing, whether its Plugin would). */
+	protected: boolean,
+	/**  `None` when protected or missing. */
+	value: string | null,
+	isEmpty: boolean,
+	/**
+	 *  What its Plugin derived to show in place of the value, without a reveal, such as
+	 *  "Visa •••• 1111".
+	 */
+	text: string | null,
 };
 
 /**  How wide the Vault browser's sidebar and Entry list are, in logical pixels. */
