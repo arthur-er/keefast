@@ -4,7 +4,7 @@
 //! The `keepass` crate serves as an independent KDBX reader, so these tests don't only check that
 //! keefast agrees with itself.
 
-use keefast_core::{CompositeKey, OpenError, Vault};
+use keefast_core::{CompositeKey, CustomField, EntryFields, OpenError, Timestamp, Vault};
 use keepass::config::{DatabaseVersion, KdfConfig, OuterCipherConfig};
 use keepass::{Database, DatabaseKey};
 
@@ -268,6 +268,50 @@ fn kdbx3_attachments_move_into_the_kdbx4_attachment_pool() {
     assert!(protected.is_protected());
     // Shared by two Entries, stored once.
     assert_eq!(resaved.iter_all_attachments().count(), 2);
+}
+
+/// A Card, as the Card Plugin keeps it (ADR 0009): plain custom fields, readable by any KeePass
+/// app, that survive saves unchanged like any others.
+#[test]
+fn a_card_in_custom_fields_survives_saves_and_reads_in_an_independent_reader() {
+    let card = [
+        ("Card number", "4111 1111 1111 1111", true),
+        ("Cardholder", "ARTHUR REZENDE", false),
+        ("Expiry", "08/31", false),
+        ("CVV", "123", true),
+        ("PIN", "8271", true),
+    ];
+    let mut vault = open(fixture("keepassxc-kdbx4"));
+    let fields = EntryFields {
+        title: "Company Visa".into(),
+        custom_fields: card
+            .iter()
+            .map(|(name, value, protected)| CustomField {
+                name: (*name).into(),
+                value: (*value).into(),
+                protected: *protected,
+            })
+            .collect(),
+        ..EntryFields::default()
+    };
+    let now = Timestamp::from_unix_seconds(1_800_000_000);
+    vault.create_entry(vault.root().id(), &fields, now).unwrap();
+
+    let saved = vault.save().unwrap();
+    let reopened = open(&saved);
+    assert!(reopened == vault, "the Card changed in a save");
+    let again = open(&reopened.save().unwrap());
+    assert!(again == reopened, "the Card changed in a second save");
+
+    let database = independent(&saved);
+    let entry = database
+        .iter_all_entries()
+        .find(|entry| entry.get_title() == Some("Company Visa"))
+        .expect("an independent reader finds the Card's Entry");
+    for (name, value, protected) in card {
+        assert_eq!(entry.get(name), Some(value), "{name}");
+        assert_eq!(entry.fields[name].is_protected(), protected, "{name}");
+    }
 }
 
 #[test]
