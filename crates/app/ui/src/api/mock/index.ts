@@ -211,7 +211,7 @@ interface MockState {
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
   pendingAccess: { id: number; site: string; entries: [number, string][] } | null;
-  pendingLogin: { id: number; site: string; username: string; password: string } | null;
+  pendingLogin: { id: number; site: string; username: string; password: string; entries: [number, string][] } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
   /** Connecting Dropbox "in the browser": stops it as cancelled. */
@@ -515,8 +515,41 @@ export function createMockBackend(): Backend & {
     }
   }
 
-  function loginOptions(): LoginOption[] {
-    const options: LoginOption[] = [{ target: null, label: "Save as a new Entry in", detail: null, depth: 0 }];
+  /** The Entries of the readable Vaults for `site`, with `username` if given, as the backend
+   * finds the Entries a request is about. */
+  function entriesFor(site: string, username?: string): [number, string][] {
+    return readable().flatMap((v) =>
+      v.entries
+        .filter((e) => !inBin(v, e.group) && siteOf(e.url) === site && (username === undefined || e.username === username))
+        .map((e): [number, string] => [v.id, e.id]),
+    );
+  }
+
+  function siteOf(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return "";
+    }
+  }
+
+  function loginOptions(login: NonNullable<MockState["pendingLogin"]>): LoginOption[] {
+    const options: LoginOption[] = [];
+    const updates = login.entries.flatMap(([vaultId, entryId]) => {
+      const v = readable().find((x) => x.id === vaultId);
+      const e = v?.entries.find((x) => x.id === entryId);
+      return v && e ? [{ v, e }] : [];
+    });
+    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, depth: 0 });
+    for (const { v, e } of updates) {
+      options.push({
+        target: { kind: "update", vault: v.id, entry: e.id },
+        label: `${e.title || "(untitled)"} · ${e.username}`,
+        detail: v.name,
+        depth: 1,
+      });
+    }
+    options.push({ target: null, label: "Save as a new Entry in", detail: null, depth: 0 });
     for (const v of readable()) {
       const root = v.groups.find((g) => g.parent === null)!;
       options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, depth: 1 });
@@ -600,8 +633,11 @@ export function createMockBackend(): Backend & {
         id: login.id,
         site: login.site,
         username: login.username,
-        options: loginOptions(),
-        suggested: { kind: "newEntry", vault: readable()[0]?.id ?? 0, group: readable()[0]?.browserGroup ?? null },
+        options: loginOptions(login),
+        // As the backend: update the Entry it matched, else a new Entry in the Browser group.
+        suggested: login.entries[0]
+          ? { kind: "update", vault: login.entries[0][0], entry: login.entries[0][1] }
+          : { kind: "newEntry", vault: readable()[0]?.id ?? 0, group: readable()[0]?.browserGroup ?? null },
       },
       clipboardClearsIn: state.clipboardClearsAt === null ? null : Math.max(0, state.clipboardClearsAt - Date.now() / 1000),
       dropboxAvailable: true,
@@ -1332,13 +1368,19 @@ export function createMockBackend(): Backend & {
         emit("browserRequest", { kind: "pairing" });
         break;
       case "access": {
-        const github = state.vaults[0]!.entries.find((e) => e.id === "e1")!;
-        state.pendingAccess = { id: state.nextId++, site: "github.com", entries: [[0, github.id]] };
+        state.pendingAccess = { id: state.nextId++, site: "github.com", entries: entriesFor("github.com") };
         emit("browserRequest", { kind: "access" });
         break;
       }
       case "login":
-        state.pendingLogin = { id: state.nextId++, site: "news.ycombinator.com", username: "arthur-er", password: "hn-Pass!2026" };
+        // The prototype's story: a new password for Linear, which Work has an Entry for.
+        state.pendingLogin = {
+          id: state.nextId++,
+          site: "linear.app",
+          username: "arthur@rezende.dev",
+          password: "L1near!Issues-2026",
+          entries: entriesFor("linear.app", "arthur@rezende.dev"),
+        };
         emit("browserRequest", { kind: "login" });
         break;
       case "lockUnsaved":

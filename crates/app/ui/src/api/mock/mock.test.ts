@@ -66,4 +66,24 @@ describe("mock backend", () => {
     expect((await api.getSettings()).configError).toContain("Permission denied");
     expect((await api.getWorkspace()).configError).toContain("Permission denied");
   });
+
+  it("offers to update the Entry a captured login matches, as the backend does", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    mock.simulate("login");
+    const login = (await api.getWorkspace()).pendingLogin!;
+    expect(login.suggested).toMatchObject({ kind: "update", entry: "w5" });
+    expect(login.options[0]!.label).toBe("Update an existing Entry");
+    expect(login.options.some((option) => option.target?.kind === "newEntry")).toBe(true);
+    await api.saveLogin(login.id, login.suggested);
+    expect((await api.getWorkspace()).pendingLogin).toBeNull();
+  });
+
+  it("asks for the Entries of the site", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    mock.simulate("access");
+    const access = (await api.getWorkspace()).pendingAccess!;
+    expect(access.entries.map((entry) => entry.title)).toContain("GitHub");
+  });
 });
