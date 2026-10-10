@@ -3,8 +3,8 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, History, KeyRound, Timer,
-  Trash2, User,
+  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, History, KeyRound, Pencil, Plus,
+  Settings2, Timer, Trash2, User,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
@@ -17,6 +17,7 @@ import {
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
 import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
+import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
 import { COLOR_NAMES } from "@/shell/Sidebar";
@@ -37,6 +38,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [password, setPassword] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [totpSetup, setTotpSetup] = useState(false);
   const flash = useRef<ReturnType<typeof setTimeout>>(undefined);
   const totp = useTotpCode(entry.vault, entry.id, entry.totp?.status === "ready");
 
@@ -88,6 +90,19 @@ export function EntryDetail({ entry }: { entry: Entry }) {
     { id: "copyTotp", title: "Copy TOTP code", section: "Entry", icon: Timer, shortcut: SHORTCUTS.copyTotp, enabled: hasTotp, run: () => void copy({ kind: "totp" }, "TOTP code", "totp") },
     keysActive,
   );
+  useAppCommand(
+    {
+      id: "editEntry",
+      title: "Edit Entry",
+      section: "Entry",
+      icon: Pencil,
+      shortcut: SHORTCUTS.edit,
+      // Enter on a button presses it rather than editing.
+      when: (event) => !(event.target instanceof Element && event.target.closest("button, a, [role=button], [role=tab], [role=menuitem]")),
+      run: actions.editEntry,
+    },
+    keysActive,
+  );
   useAppCommand({ id: "openUrl", title: "Open URL", section: "Entry", icon: Globe, enabled: !!entry.url, run: () => openUrl(entry.vault, entry.id) }, keysActive);
 
   const location = entry.groupPath.length > 1 ? `${entry.vaultName} / ${entry.groupPath[entry.groupPath.length - 1]}` : entry.vaultName;
@@ -114,6 +129,9 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 {entry.expired && <Badge tone="danger" className="ml-0.5">Expired</Badge>}
               </div>
             </div>
+            <Button variant="secondary" size="sm" shortcut="E" onClick={actions.editEntry}>
+              <Pencil /> Edit
+            </Button>
             <EntryMenu entry={entry} onDelete={() => void deleteEntry(entry.vault, entry.id, actions)} />
           </div>
           <div className="C-quick">
@@ -161,18 +179,66 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 shortcut="Ctrl T"
                 copied={copied === "totp"}
                 onCopy={() => void copy({ kind: "totp" }, "TOTP code", "totp")}
+                open={totpSetup}
+                extra={
+                  <button
+                    type="button"
+                    className={cn("btn ghost sm icon eye tt-tile-btn", totpSetup && "is-on")}
+                    aria-label="TOTP settings"
+                    aria-expanded={totpSetup}
+                    title="TOTP…"
+                    onClick={() => setTotpSetup(!totpSetup)}
+                  >
+                    <Settings2 />
+                  </button>
+                }
               >
                 {totp.data ? <TotpCode code={totp.data.code} remaining={totp.data.remaining} period={totp.data.period} /> : <span className="subtle">…</span>}
               </QuickTile>
             ) : (
-              <div className="C-qt is-setup" title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}>
+              <button
+                type="button"
+                className={cn("C-qt is-setup is-action", totpSetup && "is-open")}
+                aria-expanded={totpSetup}
+                title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}
+                onClick={() => setTotpSetup(!totpSetup)}
+              >
                 <span className="k">
                   <Timer className="ico-sm" /> TOTP
                 </span>
-                <span className="v subtle">{entry.totp?.status === "unreadable" ? "Can't be read" : "Not set up"}</span>
-              </div>
+                <span className="v subtle">
+                  {entry.totp?.status === "unreadable" ? (
+                    "Can't be read · Set up again"
+                  ) : (
+                    <>
+                      <Plus className="ico-sm" /> Set up TOTP
+                    </>
+                  )}
+                </span>
+              </button>
             )}
           </div>
+          {totpSetup && (
+            <TotpSetupPanel
+              title={entry.totp ? "TOTP settings" : "Set up TOTP"}
+              load={entry.totp?.status === "ready" ? () => api.revealTotpSetup(entry.vault, entry.id) : undefined}
+              onSave={async (setup) => {
+                await api.setTotp(entry.vault, entry.id, setup);
+                setTotpSetup(false);
+                toast(entry.totp ? "TOTP settings saved" : `TOTP set up for ${entry.title}`, { icon: "check" });
+              }}
+              onRemove={
+                entry.totp
+                  ? async () => {
+                      await api.removeTotp(entry.vault, entry.id);
+                      setTotpSetup(false);
+                      toast(<>TOTP removed<span className="subtle"> · the earlier version keeps it in History</span></>, { icon: Timer });
+                    }
+                  : undefined
+              }
+              onClose={() => setTotpSetup(false)}
+            />
+          )}
           <TabsList className="C-tabs mt-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
@@ -234,6 +300,7 @@ function QuickTile({
   copied,
   onCopy,
   extra,
+  open,
   children,
 }: {
   label: string;
@@ -242,6 +309,8 @@ function QuickTile({
   copied: boolean;
   onCopy?: () => void;
   extra?: ReactNode;
+  /** Its setup is expanded under the tiles. */
+  open?: boolean;
   children: ReactNode;
 }) {
   // A div with a button role: the eye inside is a button of its own.
@@ -251,7 +320,7 @@ function QuickTile({
       tabIndex={onCopy ? 0 : -1}
       aria-label={`Copy ${label.toLowerCase()}`}
       aria-disabled={!onCopy}
-      className={cn("C-qt", copied && "is-copied")}
+      className={cn("C-qt", copied && "is-copied", open && "is-open")}
       onClick={(event) => {
         if ((event.target as Element).closest(".eye")) return;
         onCopy?.();
