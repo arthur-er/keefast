@@ -2172,4 +2172,20 @@ mod tests {
         cx.simulate_keystrokes("home");
         assert_eq!(selected_title(&browser, cx), after[2]);
     }
+
+    #[gpui::test]
+    fn ctrl_h_shows_the_selected_entrys_history(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (browser, _, _, cx) = open_entry(cx, dir.path());
+        cx.update(|window, cx| {
+            actions::bind_keys(cx);
+            let focus = browser.read(cx).focus.clone();
+            window.focus(&focus, cx)
+        });
+        cx.simulate_keystrokes("ctrl-h");
+        assert!(browser.read_with(cx, |browser, _| matches!(
+            browser.detail,
+            Detail::History { .. }
+        )));
+    }
 }
