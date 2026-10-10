@@ -382,7 +382,7 @@ function EntryContext({ title }: { title: string }) {
 }
 
 /** Commands the palette puts first in their section, as the prototype lists them, and last. */
-const FIRST = ["cmd:copyPassword", "cmd:copyUsername", "cmd:copyTotp", "own:fields", "cmd:editEntry", "cmd:edit", "cmd:showHistory"];
+const FIRST = ["cmd:copyPassword", "cmd:copyUsername", "cmd:copyTotp", "own:fields", "cmd:editEntry", "cmd:showHistory"];
 const LAST = ["cmd:deleteEntry"];
 
 /** A section's actions: the known ones in the prototype's order, the others as registered. */

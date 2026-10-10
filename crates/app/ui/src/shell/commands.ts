@@ -25,7 +25,7 @@ export interface AppCommand {
   inFields?: boolean;
   /** Whether it can run now: a disabled command keeps its place in the palette, greyed. */
   enabled?: boolean;
-  /** Left out of the palette: keys only, such as moving through the list. */
+  /** Left out of the palette: keys only. */
   hidden?: boolean;
   /** Checked when a key would run it: no leaves the key alone (see `useShortcut`). */
   when?: (event: KeyboardEvent) => boolean;

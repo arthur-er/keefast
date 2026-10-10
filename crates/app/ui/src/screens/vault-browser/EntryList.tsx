@@ -3,8 +3,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, ExternalLink, FolderPlus, KeyRound, Paperclip, Plus, Search,
-  SearchX, SquarePen, Timer, Trash2, User,
+  ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpDown, ArrowUpToLine, ChevronDown, Copy, ExternalLink, FolderPlus,
+  KeyRound, Paperclip, Plus, Search, SearchX, SquarePen, Timer, Trash2, User,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
@@ -91,10 +91,10 @@ export function EntryList() {
   };
 
   useAppCommand({ id: "search", title: "Search Entries", section: "Go to", icon: Search, shortcut: SHORTCUTS.search, run: () => searchField.current?.focus() }, keysActive);
-  useAppCommand({ id: "nextEntry", title: "Next Entry", section: "Go to", hidden: true, shortcut: SHORTCUTS.nextEntry, run: () => move("next") }, keysActive);
-  useAppCommand({ id: "previousEntry", title: "Previous Entry", section: "Go to", hidden: true, shortcut: SHORTCUTS.previousEntry, run: () => move("previous") }, keysActive);
-  useAppCommand({ id: "firstEntry", title: "First Entry", section: "Go to", hidden: true, shortcut: SHORTCUTS.firstEntry, run: () => move("first") }, keysActive);
-  useAppCommand({ id: "lastEntry", title: "Last Entry", section: "Go to", hidden: true, shortcut: SHORTCUTS.lastEntry, run: () => move("last") }, keysActive);
+  useAppCommand({ id: "nextEntry", title: "Next Entry", section: "Navigation", icon: ArrowDown, shortcut: SHORTCUTS.nextEntry, run: () => move("next") }, keysActive);
+  useAppCommand({ id: "previousEntry", title: "Previous Entry", section: "Navigation", icon: ArrowUp, shortcut: SHORTCUTS.previousEntry, run: () => move("previous") }, keysActive);
+  useAppCommand({ id: "firstEntry", title: "First Entry", section: "Navigation", icon: ArrowUpToLine, shortcut: SHORTCUTS.firstEntry, run: () => move("first") }, keysActive);
+  useAppCommand({ id: "lastEntry", title: "Last Entry", section: "Navigation", icon: ArrowDownToLine, shortcut: SHORTCUTS.lastEntry, run: () => move("last") }, keysActive);
   useAppCommand(
     {
       id: "deleteEntry",
