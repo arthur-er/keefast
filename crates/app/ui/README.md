@@ -9,7 +9,9 @@ PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built 
 and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
 Password generator A, TOTP B, Entry history B, command palette A, General Settings C, Vault settings
 C with the card that changes a Vault's master key and encryption, Browser requests & confirms A
-(`screens/dialogs/`), and Plugins' facets as sections of the detail (the Card, card prototype A).
+(`screens/dialogs/`), Plugins' facets as sections of the detail (the Card, card prototype A), and
+Settings → Plugins with installing a Plugin from a file (no prototype: Settings C's rows and
+Dialogs A's parts).
 
 ## Commands
 
@@ -45,7 +47,12 @@ The mock runs Plugins (ADR 0009) as the app does, from the same WASM components:
 `bundled-plugins.ts`, a Vite plugin, transpiles each one compiled into keefast (`plugins/<name>/`)
 with jco when the mock imports `virtual:keefast/bundled-plugins`, and `src/api/mock/plugins.ts`
 finds facets and asks for labels as `crates/plugins` does. The fake Vaults have Cards: Nubank
-Ultravioleta in Personal, Company Visa (expiring soon) in Work.
+Ultravioleta in Personal, Company Visa (expiring soon) in Work. Disabling the Card in Settings →
+Plugins hides their Card sections, and their fields show under Custom fields.
+
+Installing Plugins is faked in `src/api/mock/plugin-store.ts`: the file dialog "picks" a made-up
+package, chosen by a scene below (`plugin-new` unless another is set), and installed Plugins have
+no component, so they find no facets.
 
 - Any master password unlocks except `wrong`, which fails as a wrong master key does.
 - File dialogs answer with made-up paths; copying uses the browser's clipboard and "clears" it
@@ -67,6 +74,14 @@ Ultravioleta in Personal, Company Visa (expiring soon) in Work.
   __keefastMock.simulate("sync-offline") // Dropbox Vaults offline (or "sync-error")
   __keefastMock.simulate("browserError") // browser integration failed to set up (also "browserNone", "browserServed")
   __keefastMock.simulate("configError") // the app config could not be saved
+  // Plugins: what "Install a Plugin…" (Settings → Plugins, or the palette) picks next
+  __keefastMock.simulate("plugin-new")   // IBAN 1.0.0 by Acme Ltd, an unverified publisher (the default)
+  __keefastMock.simulate("plugin-update") // IBAN installed; 2.0.0 asks for more
+  __keefastMock.simulate("plugin-clash") // a Plugin owning "Card number": refused
+  __keefastMock.simulate("plugin-key-changed") // IBAN installed; a package signed by another key: refused
+  __keefastMock.simulate("plugin-malformed") // a package changed after signing: refused
+  __keefastMock.simulate("plugin-cancel") // the file dialog is cancelled
+  __keefastMock.simulate("plugins-installed") // IBAN, Passport (disabled) and a Plugin failing its checks
   __keefastMock.reset()
   ```
 
@@ -141,11 +156,13 @@ src/
     totp/              TOTP B: the live code as a field, and its setup expanding inline
     entry-history/     Entry history B (versions and their comparison) and the detail's History tab
     command-palette/   command palette A: the registered commands, Entry search, an Entry's actions
-    settings/          General Settings C and Vault settings C: one page, "On this page" index, `/` search
+    settings/          General Settings C, Vault settings C and Settings → Plugins: one page, "On this
+                       page" index, `/` search
     dialogs/           browser requests & confirms A: Pairing, Access, captured login, lock with
                        unsaved changes (one at a time, over everything), and deleting for good
     plugins/           Plugins' facets on an Entry (`FacetSection`, drawn from the manifest and the
-                       Plugin's labels), and what the kit knows of Owned fields' kinds
+                       Plugin's labels), what the kit knows of Owned fields' kinds, installing a
+                       Plugin (`InstallDialog`) and Plugin capabilities in plain words
 ```
 
 ### Where later screens plug in
@@ -154,7 +171,7 @@ src/
 `ShellState.detail` (`view`, `edit` for Entry editor A) in
 `screens/vault-browser/DetailArea.tsx`, except `history`: Entry history B's split takes the Entry
 list's place too (`shell/Shell.tsx`); settings pages replace the list and detail through
-`ShellState.page` (`shell/Shell.tsx`); overlays (the command palette, confirmations) are kinds of
+`ShellState.page` (`shell/Shell.tsx`; Settings → Plugins is `{ kind: "plugins" }`); overlays (the command palette, confirmations) are kinds of
 `ShellState.overlay`, drawn in `shell/Overlays.tsx`. A screen's keys are commands: register them
 with `useAppCommand` (shortcut from `SHORTCUTS`, a title in sentence case and a section for the
 palette), and command palette A lists them with `useAppCommands` while they are registered,

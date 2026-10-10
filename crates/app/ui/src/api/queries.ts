@@ -35,6 +35,7 @@ export const keys = {
   groupForNewItems: (scope: Scope) => ["groupForNewItems", scope] as const,
   generatorLimits: ["generatorLimits"] as const,
   dropbox: ["dropbox"] as const,
+  plugins: ["plugins"] as const,
 };
 
 /** Refetches every query whenever the backend's Workspace changes. Mount once, at the root. */
@@ -63,6 +64,10 @@ export function useLaunch() {
 
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: api.getSettings });
+}
+
+export function usePlugins() {
+  return useQuery({ queryKey: keys.plugins, queryFn: api.listPlugins });
 }
 
 export function useEntries(query: EntryQuery) {

@@ -8,8 +8,9 @@
 //   history B: 4/7). `editEntry()`, `showHistory()` and `showEntry()` switch it; the pane
 //   (`screens/vault-browser/DetailArea.tsx`) renders the screen for the mode.
 // - **Pages.** `page` is what fills the main area right of the sidebar: the Vault browser's list
-//   and detail, or General / Vault settings C (6/7), which replace them and keep the sidebar.
-//   `openSettings(section)` and `openVaultSettings(vault)` go there; `showBrowser()` comes back.
+//   and detail, or General / Vault settings C (6/7) and Settings → Plugins, which replace them
+//   and keep the sidebar. `openSettings(section)`, `openVaultSettings(vault)` and `openPlugins()`
+//   go there; `showBrowser()` comes back.
 // - **Overlays.** `overlay` floats over the shell, one at a time: the command palette A (4/7),
 //   confirmations (`delete` for deleting for good), an attachment's preview. Add a kind to
 //   `Overlay` and render it in `shell/Overlays.tsx`. Browser requests and the lock prompt are
@@ -20,12 +21,13 @@
 
 import { createContext, type ReactNode, useContext, useMemo, useReducer } from "react";
 
-import type { EntryId, GroupId, MergeNotice, SortOrder, VaultId } from "@/bindings";
+import type { EntryId, GroupId, MergeNotice, PluginOffer, SortOrder, VaultId } from "@/bindings";
 
 export type Page =
   | { kind: "browser" }
   | { kind: "settings"; section?: string }
-  | { kind: "vaultSettings"; vault: VaultId; section?: string };
+  | { kind: "vaultSettings"; vault: VaultId; section?: string }
+  | { kind: "plugins"; section?: string };
 
 export type DetailMode = "view" | "edit" | "history";
 
@@ -54,7 +56,13 @@ export interface DeleteOverlay {
   item: { kind: "entry"; entry: EntryId } | { kind: "group"; group: GroupId };
 }
 
-export type Overlay = { kind: "palette" } | ConfirmOverlay | AttachmentOverlay | DeleteOverlay;
+/** Installing a Plugin: what its package asks for, to agree to before anything is installed, or
+ * why keefast refuses it (`screens/plugins/InstallDialog.tsx`). */
+export type PluginOverlay =
+  | { kind: "installPlugin"; offer: PluginOffer }
+  | { kind: "pluginRefused"; message: string; detail: string | null };
+
+export type Overlay = { kind: "palette" } | ConfirmOverlay | AttachmentOverlay | DeleteOverlay | PluginOverlay;
 
 export type OpenVaultMode = "unlock" | "new";
 
@@ -128,6 +136,7 @@ export interface ShellActions {
   showBrowser(): void;
   openSettings(section?: string): void;
   openVaultSettings(vault: VaultId, section?: string): void;
+  openPlugins(section?: string): void;
   /** Back to the selected Entry's detail from editing or its history. */
   showEntry(): void;
   editEntry(): void;
@@ -156,6 +165,7 @@ export function ShellProvider({ children, initialState }: { children: ReactNode;
       showBrowser: () => dispatch({ type: "page", page: { kind: "browser" } }),
       openSettings: (section) => dispatch({ type: "page", page: { kind: "settings", section } }),
       openVaultSettings: (vault, section) => dispatch({ type: "page", page: { kind: "vaultSettings", vault, section } }),
+      openPlugins: (section) => dispatch({ type: "page", page: { kind: "plugins", section } }),
       showEntry: () => dispatch({ type: "detail", mode: "view" }),
       editEntry: () => dispatch({ type: "detail", mode: "edit" }),
       showHistory: () => dispatch({ type: "detail", mode: "history" }),

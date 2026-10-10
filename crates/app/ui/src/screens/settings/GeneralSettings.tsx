@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
 import type { AppSettings, Theme, VaultSummary } from "@/bindings";
-import { keys, useSettings, useVaultSettings, useWorkspace } from "@/api/queries";
+import { keys, usePlugins, useSettings, useVaultSettings, useWorkspace } from "@/api/queries";
 import { Button, Kbd, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Switch, toast } from "@/kit";
 import { SHORTCUTS } from "@/lib/shortcuts";
 import { useOsDark } from "@/lib/theme";
@@ -155,6 +155,12 @@ export function GeneralSettings({ section }: { section?: string }) {
       });
     }
     list.push(
+      {
+        id: "plugins",
+        name: "Plugins",
+        desc: "Teach keefast kinds of data kept on Entries, such as payment cards.",
+        cards: [[{ id: "plugins", search: "Plugins install enable disable remove card kfplugin", render: () => <PluginsLink onManage={() => actions.openPlugins()} /> }]],
+      },
       {
         id: "network",
         name: "Network",
@@ -401,6 +407,22 @@ function VaultPairings({ vault, onManage }: { vault: VaultSummary; onManage: () 
         Manage <ArrowUpRight />
       </Button>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Plugins
+
+function PluginsLink({ onManage }: { onManage: () => void }) {
+  const plugins = usePlugins().data?.plugins;
+  const names = plugins?.filter((plugin) => plugin.enabled).map((plugin) => plugin.name) ?? [];
+  const desc = !plugins ? "" : names.length === 0 ? "None enabled" : `Enabled: ${names.join(", ")}`;
+  return (
+    <SettingRow label="Plugins" desc={desc}>
+      <Button size="sm" onClick={onManage}>
+        Manage <ArrowUpRight />
+      </Button>
+    </SettingRow>
   );
 }
 
