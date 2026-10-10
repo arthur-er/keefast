@@ -9,7 +9,8 @@
 //     | "unlocked-none" | "closed")
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
-// start with every Vault locked. The unlock password is anything but "wrong".
+// start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
+// password is anything but "wrong".
 
 import type {
   ApiError,
@@ -60,13 +61,22 @@ class MockError extends Error {
 
 const notFound = () => new MockError("notFound", "That Entry or Group no longer exists.");
 
+/**
+ * How long a command takes, in ms: a little, as IPC has, so loading states show. `?latency=300`
+ * makes each command take up to that long, in any order, to shake out races with the backend.
+ */
+const latency = (() => {
+  const asked = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("latency");
+  const most = asked ? Number(asked) : NaN;
+  return Number.isFinite(most) && most > 0 ? () => Math.random() * most : () => 8;
+})();
+
 /** A command that answers like the generated ones: never throws, resolves to a Result. */
 function command<Args extends unknown[], T>(
   run: (...args: Args) => T | Promise<T>,
 ): (...args: Args) => Promise<Result<T>> {
   return async (...args) => {
-    // A little latency, as IPC has, so loading states show.
-    await new Promise((resolve) => setTimeout(resolve, 8));
+    await new Promise((resolve) => setTimeout(resolve, latency()));
     try {
       return { status: "ok", data: await run(...args) };
     } catch (error) {
@@ -605,7 +615,7 @@ export function createMockBackend(): Backend & {
     setView: command((view: View) => {
       state.view = view;
       changed();
-      return null;
+      return state.revision;
     }),
     noteActivity: command(() => null),
     groupForNewItems: command((scope: Scope) => {

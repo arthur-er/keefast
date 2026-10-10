@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::Core;
+use crate::core::AppCore;
 use crate::dto::{EntryId, GroupId, Location, LocationView, Scope, VaultId, View, title_of};
 use crate::error::ApiResult;
 
@@ -463,14 +464,24 @@ pub async fn get_launch(core: Core<'_>) -> ApiResult<LaunchInfo> {
 
 /// Tells the Workspace where the user is, to return them there when a Vault they were in is
 /// unlocked again. Browsers pair with the Vault shown.
+///
+/// Answers with a revision that snapshots show the view from: a snapshot with an older revision
+/// may have been read before the view changed, so the UI keeps showing the view it asked for
+/// until one this new arrives.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_view(core: Core<'_>, view: View) -> ApiResult<()> {
-    core.update(|workspace| {
+pub async fn set_view(core: Core<'_>, view: View) -> ApiResult<u32> {
+    show_view(&core, view)
+}
+
+fn show_view(core: &AppCore, view: View) -> ApiResult<u32> {
+    core.update(|workspace| -> ApiResult<()> {
         let view = view.to_workspace(workspace)?;
         workspace.show(view);
         Ok(())
-    })
+    })?;
+    // The change's revision, or a later one: either way the snapshot has the view in it.
+    Ok(core.revision())
 }
 
 /// Tells the Workspace the user gave keefast input, which postpones the idle lock. The UI calls
@@ -498,4 +509,28 @@ pub async fn group_for_new_items(core: Core<'_>, scope: Scope) -> ApiResult<Opti
                 group: group.into(),
             }))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{show_view, snapshot};
+    use crate::core::tests::core;
+    use crate::dto::{Color, Scope, View};
+
+    #[test]
+    fn snapshots_show_the_view_from_the_revision_set_view_answers() {
+        let (core, _) = core();
+        core.update(|workspace| workspace.note_activity());
+        let view = View {
+            scope: Scope::Color { color: Color::Red },
+            entry: None,
+        };
+
+        let revision = show_view(&core, view.clone()).unwrap();
+
+        assert_eq!(revision, 2);
+        let shown = core.read(|workspace| snapshot(workspace, core.revision()));
+        assert!(shown.revision >= revision);
+        assert_eq!(shown.view, view);
+    }
 }

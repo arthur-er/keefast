@@ -81,18 +81,11 @@ export function EntryEditorHost() {
     });
   }, [request]);
 
-  // The list's selection moved away: show the Entry selected, unless the user keeps editing. A
-  // selection that comes straight back (the view catching up with the backend) is no move.
-  const current = useRef(selected);
-  current.current = selected;
+  // The list's selection moved away: show the Entry selected, unless the user keeps editing.
   useEffect(() => {
     if (sameKey(selected, anchor.current)) return;
-    const timer = setTimeout(() => {
-      if (sameKey(current.current, anchor.current)) return;
-      anchor.current = current.current;
-      leave(() => actions.showEntry());
-    }, 150);
-    return () => clearTimeout(timer);
+    anchor.current = selected;
+    leave(() => actions.showEntry());
   }, [selected?.vault, selected?.entry]);
 
   useEffect(() => {

@@ -15,8 +15,12 @@ export const commands = {
 	/**
 	 *  Tells the Workspace where the user is, to return them there when a Vault they were in is
 	 *  unlocked again. Browsers pair with the Vault shown.
+	 * 
+	 *  Answers with a revision that snapshots show the view from: a snapshot with an older revision
+	 *  may have been read before the view changed, so the UI keeps showing the view it asked for
+	 *  until one this new arrives.
 	 */
-	setView: (view: View) => typedError<null, ApiError>(__TAURI_INVOKE("set_view", { view })),
+	setView: (view: View) => typedError<number, ApiError>(__TAURI_INVOKE("set_view", { view })),
 	/**
 	 *  Tells the Workspace the user gave keefast input, which postpones the idle lock. The UI calls
 	 *  it on keys, clicks and scrolling, at most every few seconds.

@@ -57,6 +57,8 @@ Production builds don't include it.
   ```
 
   or `http://localhost:1421/?mock=access,merge`. Themes: `__keefastMock.commands.setTheme("dark")`.
+- `?latency=400` makes every command take up to 400 ms, answering out of order, as a busy
+  backend can: the way to see races between what the UI shows and what the backend says.
 
 When a screen needs something the mock does crudely, improve the mock in the same PR.
 
