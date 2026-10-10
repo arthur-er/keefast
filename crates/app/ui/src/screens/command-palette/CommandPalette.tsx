@@ -122,7 +122,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     if (entry.hasTotp) {
       list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: "Ctrl T", enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
     }
-    detail?.customFields.forEach((field, index) =>
+    customFieldsOf(detail).forEach(({ field, index }) =>
       list.push({ kind: "action", value: `act:${id}:field:${index}`, section, title: `Copy ${field.name}`, icon: TextCursorInput, enabled: !field.isEmpty, trail: <span className="ctx">Custom field</span>, run: () => void copyField(entry.vault, entry.id, { kind: "customField", index }, field.name) }),
     );
     if (entry.url) {
@@ -144,7 +144,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   // The palette's own commands: pages for the sort order and the custom fields, and syncing.
   const builtIns = (searching: boolean): Action[] => {
     const list: Action[] = [];
-    if (selected && selected.customFields.length > 0) {
+    if (selected && customFieldsOf(selected).length > 0) {
       list.push({ kind: "action", value: "own:fields", section: "Entry", title: "Copy custom field…", icon: TextCursorInput, enabled: true, page: true, run: () => openPage({ kind: "fields", entry: selected }) });
     }
     if (snapshot?.vaults.some((vault) => vault.syncStatus !== null)) {
@@ -379,6 +379,12 @@ function fromCommand(command: AppCommand, entryTitle: string | undefined): Actio
  * heading says it). */
 function EntryContext({ title }: { title: string }) {
   return <span className="ctx">{title}</span>;
+}
+
+/** The fields to copy, by their index in the Entry: those TOTP settings are kept in are the TOTP
+ * code's while the Entry has TOTP. */
+function customFieldsOf(entry: EntryDetail | undefined) {
+  return (entry?.customFields ?? []).flatMap((field, index) => (entry?.totp && field.totpStorage ? [] : [{ field, index }]));
 }
 
 /** Commands the palette puts first in their section, as the prototype lists them, and last. */
