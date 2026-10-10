@@ -1,0 +1,49 @@
+{
+  "name": "keefast-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "keefast desktop app's web UI, in the Tauri webview",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "vite --mode mock",
+    "build": "tsc --noEmit && vite build",
+    "build:mock": "vite build --mode mock --outDir dist-mock",
+    "preview:mock": "vite preview --mode mock --outDir dist-mock",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bindings": "cd ../../.. && KEEFAST_UPDATE_BINDINGS=1 cargo test -p keefast --bin keefast bindings_are_up_to_date",
+    "bindings:check": "cd ../../.. && cargo test -p keefast --bin keefast bindings_are_up_to_date",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@tanstack/react-query": "^5.104.1",
+    "@tauri-apps/api": "~2.12.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^1.54.0",
+    "radix-ui": "^1.7.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "~2.12.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "jsdom": "^30.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}

@@ -272,16 +272,22 @@ fn the_whole_dropbox_can_be_browsed_folders_first() {
                 name: "Work".into(),
                 path: "/Vaults/Work".into(),
                 is_folder: true,
+                size: None,
+                modified: None,
             },
             DropboxItem {
                 name: "notes.txt".into(),
                 path: "/Vaults/notes.txt".into(),
                 is_folder: false,
+                size: Some(5),
+                modified: Some("2026-10-07T23:15:22Z".into()),
             },
             DropboxItem {
                 name: "Personal.kdbx".into(),
                 path: "/Vaults/Personal.kdbx".into(),
                 is_folder: false,
+                size: Some(KEEPASSXC_KDBX4.len() as u64),
+                modified: Some("2026-10-07T23:15:22Z".into()),
             },
         ]
     );

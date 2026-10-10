@@ -1,0 +1,111 @@
+/* Open a Vault B: a rail of Vault files and a focused unlock pane, from the prototype
+ * (screens/unlock.html, "Shared (unlock screen)" and "Variant B"). Scoped under .b-shell: some
+ * of the prototype's names (.path, .notice, .progress) are generic. */
+
+@layer components {
+  .b-shell { display: grid; grid-template-columns: 284px 1fr; height: 100%; background: var(--bg-0); }
+  .b-shell h1, .b-shell h2, .b-shell p { margin: 0; }
+
+  .b-shell .brand { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: var(--bg-1); border: 1px solid var(--border-strong); color: var(--accent-fg); }
+  .b-shell .brand svg.lucide { width: 13px; height: 13px; }
+
+  .b-shell .vtile { position: relative; display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 7px; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--fg-1); font-weight: 600; font-size: 13px; letter-spacing: -0.02em; }
+  .b-shell .vtile svg.lucide { width: 14px; height: 14px; }
+  .b-shell .vtile.xl { width: 52px; height: 52px; border-radius: 13px; font-size: 22px; }
+  .b-shell .vtile.xl > svg.lucide { width: 22px; height: 22px; }
+  .b-shell .vtile .pip { position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-0); color: var(--fg-1); border: 1px solid var(--border-strong); }
+  .b-shell .vtile .pip svg.lucide { width: 9px; height: 9px; stroke-width: 2.25; }
+  .b-shell .vtile.xl .pip { width: 18px; height: 18px; }
+  .b-shell .vtile.xl .pip svg.lucide { width: 11px; height: 11px; }
+
+  .b-shell .path { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0; color: var(--fg-2); }
+
+  .b-shell .progress { position: relative; height: 2px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .b-shell .progress > i { position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--accent); animation: ov-indet 1.1s var(--ease) infinite; }
+  @keyframes ov-indet { from { left: -38%; } to { left: 100%; } }
+  .b-shell .spin { animation: ov-spin 0.9s linear infinite; }
+  @keyframes ov-spin { to { transform: rotate(360deg); } }
+  .b-shell .shake { animation: ov-shake 320ms var(--ease); }
+  @keyframes ov-shake { 0%, 100% { transform: none; } 20% { transform: translateX(-5px); } 45% { transform: translateX(4px); } 70% { transform: translateX(-2px); } }
+
+  .b-shell .notice { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: var(--r-sm); font-size: var(--text-sm); line-height: 1.45; }
+  .b-shell .notice svg.lucide { width: 14px; height: 14px; margin-top: 1px; flex: none; }
+  .b-shell .notice.danger { background: var(--danger-bg); color: var(--danger); }
+  .b-shell .notice .detail { display: block; color: var(--fg-2); margin-top: 2px; font-family: var(--font-mono); font-size: 11px; }
+
+  .b-shell .forget { opacity: 0; width: 22px; height: 22px; color: var(--fg-2); }
+  .b-shell .forget svg.lucide { width: 13px; height: 13px; }
+  .b-item:hover .forget, .b-item.is-active .forget, .b-shell .forget:focus-visible { opacity: 1; }
+  .b-shell .forget:hover { color: var(--fg-0); background: var(--bg-active); }
+
+  .b-shell .pw .input input { font-family: var(--font-mono); letter-spacing: 0.08em; }
+  .b-shell .pw .input input::placeholder { font-family: var(--font-ui); letter-spacing: 0; }
+  .b-shell .pw .input input.revealed { letter-spacing: 0.02em; }
+
+  .b-rail { background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  .b-rail-top { height: var(--toolbar-h); display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; font-weight: 600; letter-spacing: -0.01em; }
+  .b-rail-scroll { flex: 1; overflow: auto; padding: 4px 8px; }
+  .b-sec + .b-sec { margin-top: 10px; }
+  .b-item { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 6px 0 8px; border-radius: var(--r-sm); cursor: default; }
+  .b-item:hover { background: var(--bg-hover); }
+  .b-item.is-active { background: var(--bg-active); }
+  .b-item:focus-visible { outline: none; box-shadow: var(--ring); }
+  .b-item .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .b-item .nm { font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .b-item .badge { height: 18px; }
+  .b-rail-foot { border-top: 1px solid var(--border); padding: 6px 8px 8px; flex: none; }
+  .b-rail-foot .nav-item kbd, .b-rail-foot .nav-item .kbds { margin-left: auto; }
+  .b-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .b-main .toolbar { justify-content: space-between; }
+  .b-stage { flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; }
+  .b-pane { width: 420px; }
+  .b-id { display: flex; flex-direction: column; align-items: flex-start; }
+  .b-id h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin-top: 16px; }
+  .b-id .path { font-size: 12px; margin-top: 4px; }
+  .b-id .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .b-form { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .b-keyfile { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; border-radius: var(--r-sm); border: 1px dashed var(--border-strong); color: var(--fg-2); min-width: 0; }
+  .b-keyfile.has { border-style: solid; background: var(--bg-1); color: var(--fg-0); }
+  .b-keyfile .nm { font-family: var(--font-mono); font-size: 12px; }
+  .b-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .b-actions .hint-r { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: inline-flex; gap: 6px; align-items: center; }
+  .b-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; color: var(--fg-1); }
+  .b-empty .vtile { margin-bottom: 4px; }
+  /* New Vault: a settings-style two-column form (the prototype's "New Vault (shared parts)" and
+   * "B · New Vault"). */
+  .b-nv { width: 640px; align-self: start; padding-bottom: 8px; }
+  .b-nv h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
+  .b-nv .lede { color: var(--fg-1); margin-top: 4px; }
+  .b-nv-sec { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); }
+  .b-nv-sec:first-of-type { margin-top: 20px; }
+  .b-nv-ctl { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .b-nv-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 14px 0 0; border-top: 1px solid var(--border); }
+  .b-nv-foot .left { margin-right: auto; }
+  .b-shell .nv-section-title { font-size: var(--text-md); font-weight: 600; }
+  .b-shell .nv-section-desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+  .b-shell .nv-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .b-shell .nv-grid3 > * { min-width: 0; }
+  .b-shell .nv-num .input { font-variant-numeric: tabular-nums; }
+  .b-shell .nv-num .unit { color: var(--fg-2); font-size: var(--text-sm); }
+  .b-shell .pw .input { padding-right: 4px; }
+  .b-shell .pw .eye { width: 28px; height: 28px; }
+  .b-shell .enc-box { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--bg-1); }
+  .b-shell .enc-head { all: unset; display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; }
+  .b-shell .enc-head:hover { background: var(--bg-hover); }
+  .b-shell .enc-head:focus-visible { box-shadow: var(--ring); }
+  .b-shell .enc-head .chev { color: var(--fg-2); transition: transform var(--dur) var(--ease); }
+  .b-shell .enc-head.open .chev { transform: rotate(90deg); }
+  .b-shell .enc-sum { display: flex; gap: 6px; align-items: center; color: var(--fg-0); font-size: var(--text-md); }
+  .b-shell .enc-sum .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-2); opacity: 0.6; }
+  .b-shell .enc-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 14px; animation: kf-fade var(--dur) var(--ease); }
+  .b-shell .seg.full { display: flex; }
+  .b-shell .seg.full > button { flex: 1; justify-content: center; }
+  .b-shell .match { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }
+  .b-shell .match.ok { color: var(--ok); }
+  .b-shell .match svg.lucide { width: 13px; height: 13px; }
+  .b-shell .keyfile-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; border-radius: var(--r-xs); background: var(--bg-active); color: var(--fg-0); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; max-width: 220px; }
+  .b-shell .keyfile-chip svg.lucide { width: 13px; height: 13px; color: var(--fg-1); flex: none; }
+  .b-shell .keyfile-chip .x { all: unset; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: var(--fg-2); }
+  .b-shell .keyfile-chip .x:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .b-shell .keyfile-chip .x:focus-visible { box-shadow: var(--ring); }
+}

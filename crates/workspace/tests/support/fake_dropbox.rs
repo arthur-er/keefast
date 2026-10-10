@@ -383,6 +383,7 @@ fn list_folder(state: &FakeState, path: &str, offset: usize) -> Reply {
             json!({
                 ".tag": "file", "name": name_of(&file.path), "path_display": file.path,
                 "path_lower": key, "rev": file.rev, "size": file.bytes.len(), "id": "id:file",
+                "server_modified": "2026-10-07T23:15:22Z",
             })
         }))
         .collect();

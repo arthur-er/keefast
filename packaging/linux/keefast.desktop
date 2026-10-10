@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=keefast
+Name=KeeFast
 GenericName=Password Manager
 Comment=Fast, native password manager for KeePass Vault files
 Exec=keefast %f

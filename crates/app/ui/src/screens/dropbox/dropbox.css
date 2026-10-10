@@ -1,0 +1,95 @@
+/* Open from Dropbox A: the file browser dialog, from the prototype (screens/dropbox.html,
+ * "Dropbox mark + sync status" and "Variant A: dialog"). Scoped under .dbx-dialog. */
+
+@layer components {
+  .dbx-mark { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px; background: #0061fe; color: #fff; }
+  .dbx-mark svg { width: 12px; height: 12px; }
+  .dbx-mark.md { width: 32px; height: 32px; border-radius: 8px; }
+  .dbx-mark.md svg { width: 17px; height: 17px; }
+  .dbx-mark.lg { width: 44px; height: 44px; border-radius: 11px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .dbx-mark.lg svg { width: 24px; height: 24px; }
+
+  .dbx-dialog { width: 720px; height: 540px; max-width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--bg-popover); border-radius: var(--r-lg); box-shadow: var(--shadow-dialog); overflow: hidden; animation: kf-pop var(--dur) var(--ease); }
+  .dbx-dialog h3 { margin: 4px 0 0; font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
+  .dbx-head { display: flex; align-items: center; gap: 12px; padding: 16px 16px 14px 20px; flex: none; }
+  .dbx-head .t { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+  .dbx-head .d { font-size: var(--text-sm); color: var(--fg-2); margin: 1px 0 0; }
+
+  .dbx-acct { font: inherit; background: transparent; cursor: default; display: inline-flex; align-items: center; gap: 8px; height: 30px; max-width: 340px; padding: 0 6px 0 4px; border-radius: 99px; border: 1px solid var(--border); font-size: var(--text-sm); color: var(--fg-1); }
+  .dbx-acct:hover, .dbx-acct[data-state="open"] { background: var(--bg-hover); }
+  .dbx-acct:focus-visible { outline: none; box-shadow: var(--ring); }
+  .dbx-acct .av { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-0); font-size: 11px; font-weight: 600; }
+
+  .dbx-bar { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; flex: none; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-inset); }
+  .dbx-crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; font-size: var(--text-md); }
+  .dbx-crumbs button { all: unset; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; border-radius: 5px; color: var(--fg-1); white-space: nowrap; }
+  .dbx-crumbs button:hover { background: var(--bg-hover); color: var(--fg-0); }
+  .dbx-crumbs button:focus-visible { box-shadow: var(--ring); }
+  .dbx-crumbs button.cur { color: var(--fg-0); font-weight: 500; }
+  .dbx-crumbs .sep { color: var(--fg-2); display: inline-flex; }
+  .dbx-crumbs .sep svg.lucide { width: 13px; height: 13px; }
+
+  .dbx-files { flex: 1; overflow: auto; padding: 4px 8px 8px; position: relative; display: flex; flex-direction: column; }
+  .dbx-files.bordered { border-top: 1px solid var(--border); }
+  .dbx-fhead { display: grid; grid-template-columns: 1fr 140px 72px; align-items: center; height: 30px; margin: 0 8px; padding: 0 10px; flex: none; font-size: var(--text-xs); color: var(--fg-2); font-weight: 500; }
+  .dbx-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 1fr 140px 72px; align-items: center; flex: none; height: 36px; padding: 0 10px; border-radius: var(--r-sm); cursor: default; }
+  .dbx-row:hover { background: var(--bg-hover); }
+  .dbx-row.is-selected { background: var(--bg-active); }
+  .dbx-row:focus-visible { box-shadow: var(--ring); }
+  .dbx-row.other { color: var(--fg-2); }
+  .dbx-row .n { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .dbx-row .m, .dbx-row .s { color: var(--fg-2); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+  .dbx-row .s { text-align: right; }
+  .dbx-row .chev { margin-left: auto; color: var(--fg-2); opacity: 0; display: inline-flex; }
+  .dbx-row:hover .chev, .dbx-row.is-selected .chev { opacity: 1; }
+  .dbx-row .ext { color: var(--fg-2); }
+  .dbx-row .ficon { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex: none; color: var(--fg-1); }
+  .dbx-row .ficon svg.lucide { width: 16px; height: 16px; }
+  .dbx-row .ficon.vault { background: var(--accent-bg); color: var(--accent-fg); }
+  .dbx-row .ficon.vault svg.lucide { width: 13px; height: 13px; }
+  .dbx-row.other .ficon { color: var(--fg-2); }
+
+  .dbx-dialog .skel { display: inline-block; height: 10px; border-radius: 4px; background: var(--bg-active); animation: dbx-shimmer 1.2s ease-in-out infinite; }
+  @keyframes dbx-shimmer { 50% { opacity: 0.45; } }
+  .dbx-loading { display: flex; align-items: center; justify-content: center; gap: 8px; height: 60px; margin-top: auto; color: var(--fg-2); font-size: 12px; }
+  .dbx-spin { animation: dbx-spin 900ms linear infinite; }
+  @keyframes dbx-spin { to { transform: rotate(360deg); } }
+
+  .dbx-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 32px; }
+  .dbx-center .ico { color: var(--fg-2); }
+  .dbx-center .ico svg.lucide { width: 22px; height: 22px; }
+  .dbx-center .msg { color: var(--fg-1); max-width: 380px; text-wrap: pretty; }
+  .dbx-privacy { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; text-align: left; }
+  .dbx-privacy div { display: flex; align-items: center; gap: 10px; font-size: var(--text-sm); color: var(--fg-1); }
+  .dbx-privacy svg.lucide { width: 14px; height: 14px; color: var(--ok); }
+  .dbx-handoff { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .dbx-handoff .dots { display: flex; gap: 4px; }
+  .dbx-handoff .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-2); animation: dbx-shimmer 1.2s ease-in-out infinite; }
+  .dbx-handoff .dots i:nth-child(2) { animation-delay: 0.2s; }
+  .dbx-handoff .dots i:nth-child(3) { animation-delay: 0.4s; }
+  .dbx-handoff .app-tile { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--accent-fg); }
+  .dbx-handoff .app-tile svg.lucide { width: 22px; height: 22px; }
+  .dbx-handoff .pulse { position: relative; display: inline-flex; }
+  .dbx-handoff .pulse::after { content: ""; position: absolute; inset: -6px; border-radius: 16px; border: 1px solid var(--accent); opacity: 0; animation: dbx-ping 1.6s var(--ease) infinite; }
+  @keyframes dbx-ping { 0% { opacity: 0.6; transform: scale(0.9); } 100% { opacity: 0; transform: scale(1.25); } }
+  @media (prefers-reduced-motion: reduce) {
+    .dbx-handoff .pulse::after, .dbx-handoff .dots i, .dbx-dialog .skel { animation: none; }
+  }
+
+  .dbx-foot { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px 0 20px; flex: none; border-top: 1px solid var(--border); background: var(--bg-inset); }
+  .dbx-foot .sel { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--text-sm); color: var(--fg-2); }
+  .dbx-foot .sel .mono { color: var(--fg-1); font-size: var(--text-sm); letter-spacing: 0; }
+
+  /* The Sync status in full, atop the toolbar's status popover. */
+  .dbx-sync { padding: 8px 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .dbx-sync .ttl { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); font-weight: 600; color: var(--fg-0); }
+  .dbx-sync .ttl svg.lucide { width: 14px; height: 14px; }
+  .dbx-sync .ttl.syncing { color: var(--fg-1); }
+  .dbx-sync .ttl.offline { color: var(--fg-2); }
+  .dbx-sync .ttl.error { color: var(--danger); }
+  .dbx-sync p { margin: 6px 0 0; color: var(--fg-1); font-size: var(--text-sm); line-height: 1.5; }
+  .dbx-sync .loc { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: grid; grid-template-columns: 84px minmax(0, 1fr); row-gap: 6px; font-size: var(--text-sm); }
+  .dbx-sync .loc .k { color: var(--fg-2); }
+  .dbx-sync .loc .v { color: var(--fg-0); }
+  .dbx-sync .loc .mono { font-size: 12px; letter-spacing: 0; }
+}

@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - packaging/windows/**
+      - crates/app/tauri.conf.json
       - scripts/package-windows.ps1
       - scripts/smoke-windows.ps1
       - .github/workflows/package-windows.yml
@@ -32,16 +33,25 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # GPUI compiles its HLSL shaders with fxc.exe from the Windows SDK.
-      - name: Locate fxc.exe
-        run: |
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
-          "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: crates/app/ui/package.json
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: crates/app/ui/pnpm-lock.yaml
+
+      - name: Build the web UI
+        working-directory: crates/app/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # The web UI is served from inside keefast.exe.
       - name: Build
-        run: cargo build --release --locked -p keefast -p keefast-native-host
+        run: cargo build --release --locked -p keefast -p keefast-native-host --features keefast/custom-protocol
 
       - name: Install WiX
         run: dotnet tool install --global wix --version $env:WIX_VERSION

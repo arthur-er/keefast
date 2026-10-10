@@ -122,6 +122,18 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CustomIconId(pub(crate) Uuid);
 
+impl CustomIconId {
+    /// The UUID in lowercase hex without dashes, as [`crate::EntryId::to_hex`] writes Entries'.
+    pub fn to_hex(self) -> String {
+        self.0.simple().to_string()
+    }
+
+    /// The custom icon named by its UUID in hex, as [`Self::to_hex`] writes it.
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        Uuid::try_parse(hex.trim()).ok().map(Self)
+    }
+}
+
 /// An Entry's icon: one of KeePass's standard icons, or a custom icon stored in the Vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntryIcon {

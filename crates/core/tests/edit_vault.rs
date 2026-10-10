@@ -77,6 +77,18 @@ fn group_names(group: &Group) -> Vec<&str> {
 }
 
 #[test]
+fn a_group_is_found_again_by_its_id_in_hex() {
+    let vault = open(KEEPASSXC_KDBX4);
+    let work = group_named(&vault, "Work").id();
+
+    let hex = work.to_hex();
+
+    assert_eq!(hex.len(), 32);
+    assert_eq!(keefast_core::GroupId::from_hex(&hex), Some(work));
+    assert_eq!(keefast_core::GroupId::from_hex(""), None);
+}
+
+#[test]
 fn a_created_entry_survives_a_save_with_every_field() {
     let mut vault = open(KEEPASSXC_KDBX4);
     let work = group_named(&vault, "Work").id();

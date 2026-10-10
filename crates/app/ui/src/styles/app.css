@@ -1,0 +1,82 @@
+/* The web UI's styles: Tailwind 4, the prototype's tokens and component kit, and the bundled fonts.
+ *
+ * Order matters. Tailwind's preflight sits in its `base` layer; the kit's classes go into the
+ * `components` layer, so a Tailwind utility on the same element (`btn h-10`) wins over the kit,
+ * as it does in shadcn. The tokens are unlayered custom properties: they win over Tailwind's own
+ * theme defaults of the same name (`--font-mono`, `--text-xs`…), so Tailwind's `font-mono` and
+ * `text-sm` follow the design. */
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "./tokens.css";
+@import "./components.css" layer(components);
+
+/* `dark:` follows the theme the app applies (src/lib/theme.ts), not the OS directly. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* The tokens as Tailwind theme values, so prototype markup can be written either way:
+ * `bg-bg-1 text-fg-1 border-border rounded-sm shadow-pop` is `.card`-like. */
+@theme inline {
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-0: var(--bg-0);
+  --color-bg-1: var(--bg-1);
+  --color-bg-2: var(--bg-2);
+  --color-bg-popover: var(--bg-popover);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active: var(--bg-active);
+  --color-bg-inset: var(--bg-inset);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg-0: var(--fg-0);
+  --color-fg-1: var(--fg-1);
+  --color-fg-2: var(--fg-2);
+  --color-fg-on-accent: var(--fg-on-accent);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-c-red: var(--c-red);
+  --color-c-orange: var(--c-orange);
+  --color-c-yellow: var(--c-yellow);
+  --color-c-green: var(--c-green);
+  --color-c-blue: var(--c-blue);
+  --color-c-purple: var(--c-purple);
+  --color-scrim: var(--scrim);
+
+  --font-sans: var(--font-ui);
+
+  --text-md: 13px;
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+
+  --shadow-pop: var(--shadow-pop);
+  --shadow-dialog: var(--shadow-dialog);
+
+  --ease-kf: var(--ease);
+  --animate-kf-pop: kf-pop var(--dur) var(--ease);
+  --animate-kf-fade: kf-fade var(--dur) var(--ease);
+  --animate-kf-rise: kf-rise var(--dur) var(--ease);
+  --animate-kf-slide: kf-slide var(--dur) var(--ease);
+}
+
+/* Tauri's window is the page: no rubber-banding, no text selection outside fields. */
+html {
+  overscroll-behavior: none;
+}
+input,
+textarea,
+[contenteditable],
+.selectable {
+  user-select: text;
+}

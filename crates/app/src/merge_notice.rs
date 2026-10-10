@@ -2,20 +2,45 @@
 
 use keefast_core::MergeSummary;
 
-use crate::strings;
-
 /// One line saying which Vault changes were Merged into and what they changed, such as
 /// "Merged changes made elsewhere into personal: 1 Entry updated, 2 Entries added".
 pub fn describe(vault: &str, summary: &MergeSummary) -> String {
     let counts = [
-        (summary.entries_added, strings::MERGE_ENTRIES_ADDED),
-        (summary.entries_updated, strings::MERGE_ENTRIES_UPDATED),
-        (summary.entries_moved, strings::MERGE_ENTRIES_MOVED),
-        (summary.entries_deleted, strings::MERGE_ENTRIES_DELETED),
-        (summary.groups_added, strings::MERGE_GROUPS_ADDED),
-        (summary.groups_updated, strings::MERGE_GROUPS_UPDATED),
-        (summary.groups_moved, strings::MERGE_GROUPS_MOVED),
-        (summary.groups_deleted, strings::MERGE_GROUPS_DELETED),
+        (
+            summary.entries_added,
+            ["{n} Entry added", "{n} Entries added"],
+        ),
+        (
+            summary.entries_updated,
+            ["{n} Entry updated", "{n} Entries updated"],
+        ),
+        (
+            summary.entries_moved,
+            ["{n} Entry moved", "{n} Entries moved"],
+        ),
+        (
+            summary.entries_deleted,
+            ["{n} Entry deleted", "{n} Entries deleted"],
+        ),
+        (
+            summary.groups_added,
+            ["{n} Group added", "{n} Groups added"],
+        ),
+        (
+            summary.groups_updated,
+            [
+                "{n} Group renamed or changed",
+                "{n} Groups renamed or changed",
+            ],
+        ),
+        (
+            summary.groups_moved,
+            ["{n} Group moved", "{n} Groups moved"],
+        ),
+        (
+            summary.groups_deleted,
+            ["{n} Group deleted", "{n} Groups deleted"],
+        ),
     ];
     let mut changes: Vec<String> = counts
         .into_iter()
@@ -26,11 +51,10 @@ pub fn describe(vault: &str, summary: &MergeSummary) -> String {
         })
         .collect();
     if changes.is_empty() {
-        changes.push(strings::MERGE_OTHER_CHANGES.to_owned());
+        changes.push("history and settings updated".to_owned());
     }
     format!(
-        "{}: {}",
-        strings::MERGE_NOTICE.replace("{vault}", vault),
+        "Merged changes made elsewhere into {vault}: {}",
         changes.join(", ")
     )
 }

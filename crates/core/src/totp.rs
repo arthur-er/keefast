@@ -432,6 +432,12 @@ pub(crate) const TOTP_FIELDS: [&str; 10] = [
     KEEPASS2_ALGORITHM,
 ];
 
+/// Whether TOTP settings are kept in a custom field of this name, in one of the formats KeePass
+/// clients use (`otp`, `TOTP Seed`, `TimeOtp-*`…). Apps show such fields as the Entry's TOTP.
+pub fn is_totp_field(name: &str) -> bool {
+    TOTP_FIELDS.contains(&name)
+}
+
 /// Looks up an Entry's field by name; `None` when the field is missing or blank.
 pub(crate) type FieldLookup<'a> = &'a dyn Fn(&str) -> Option<Zeroizing<String>>;
 

@@ -46,10 +46,25 @@ fn the_theme_is_kept_in_the_config_file() {
     assert_eq!(load("").theme, ThemeSetting::System);
     assert_eq!(load("theme = \"light\"\n").theme, ThemeSetting::Light);
     assert_eq!(load("theme = \"dark\"\n").theme, ThemeSetting::Dark);
-    assert_eq!(
-        load("theme = \"solarized-dark\"\n").theme,
-        ThemeSetting::SolarizedDark
-    );
+    // KeeWeb's themes, from earlier versions, are read as the nearest of dark and light.
+    for (theme, nearest) in [
+        ("solarized-dark", ThemeSetting::Dark),
+        ("dark-blue", ThemeSetting::Dark),
+        ("dark-brown", ThemeSetting::Dark),
+        ("terminal", ThemeSetting::Dark),
+        ("dark-contrast", ThemeSetting::Dark),
+        ("solarized-light", ThemeSetting::Light),
+        ("light-blue", ThemeSetting::Light),
+        ("light-brown", ThemeSetting::Light),
+        ("terminal-light", ThemeSetting::Light),
+        ("high-contrast", ThemeSetting::Light),
+    ] {
+        assert_eq!(
+            load(&format!("theme = \"{theme}\"\n")).theme,
+            nearest,
+            "{theme}"
+        );
+    }
     // A theme from a newer version doesn't fail the file.
     let config = load("theme = \"neon\"\nautosave = true\n");
     assert_eq!(config.theme, ThemeSetting::System);
@@ -58,7 +73,7 @@ fn the_theme_is_kept_in_the_config_file() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileConfigStore::new(dir.path().join("config.toml"));
     let config = AppConfig {
-        theme: ThemeSetting::HighContrast,
+        theme: ThemeSetting::Light,
         download_favicons: true,
         ..AppConfig::default()
     };

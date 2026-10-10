@@ -33,6 +33,18 @@ pub struct Vault {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GroupId(pub(crate) Uuid);
 
+impl GroupId {
+    /// The UUID in lowercase hex without dashes, as [`EntryId::to_hex`] writes Entries'.
+    pub fn to_hex(self) -> String {
+        self.0.simple().to_string()
+    }
+
+    /// The Group named by its UUID in hex, as [`Self::to_hex`] writes it.
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        Uuid::try_parse(hex.trim()).ok().map(Self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntryId(pub(crate) Uuid);
 

@@ -1,5 +1,5 @@
 {
-  description = "keefast: native KDBX password manager (GPUI)";
+  description = "keefast: KDBX password manager (Tauri)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -35,8 +35,6 @@
       devShells = forAllSystems (
         pkgs:
         let
-          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}.keefast) runtimeLibs;
-
           default = pkgs.mkShell {
             packages = with pkgs; [
               cargo
@@ -45,18 +43,31 @@
               rustfmt
               rust-analyzer
               pkg-config
-              cmake
-              perl
               openssl
-              zstd
-              alsa-lib
-              libxext
-              # The Companion extension (extension/).
+              # The desktop app (crates/app): Tauri on WebKitGTK, and its web UI (crates/app/ui),
+              # which the Companion extension (extension/) shares the Node toolchain with.
+              cargo-tauri
               nodejs
-            ] ++ runtimeLibs;
+              pnpm
+              webkitgtk_4_1
+              libsoup_3
+              gtk3
+              glib
+              glib-networking
+              librsvg
+              cairo
+              pango
+              gdk-pixbuf
+              atk
+              dbus
+            ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+            # WebKitGTK's TLS and the GSettings schemas GTK's file dialogs need.
+            GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";
+            shellHook = ''
+              export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+            '';
           };
         in
         {

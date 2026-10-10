@@ -8,8 +8,8 @@
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
-    Name="keefast"
-    Manufacturer="keefast"
+    Name="KeeFast"
+    Manufacturer="KeeFast"
     Version="$(var.Version)"
     UpgradeCode="96059a5e-f163-43fc-8426-01a7a3a94b36"
     Scope="perUser"
@@ -19,6 +19,24 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of keefast is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!--
+      keefast draws its window with the Microsoft Edge WebView2 Runtime (it is a Tauri app), which
+      Windows 11 and up-to-date Windows 10 have. It registers its version (`pv`) per machine, or
+      per user when a user installed it.
+    -->
+    <Property Id="WEBVIEW2_MACHINE">
+      <RegistrySearch Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" Bitness="always32" />
+    </Property>
+    <Property Id="WEBVIEW2_USER">
+      <RegistrySearch Root="HKCU" Key="Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+    </Property>
+    <Launch
+      Condition="Installed OR (WEBVIEW2_MACHINE AND WEBVIEW2_MACHINE &lt;&gt; &quot;0.0.0.0&quot;) OR (WEBVIEW2_USER AND WEBVIEW2_USER &lt;&gt; &quot;0.0.0.0&quot;)"
+      Message="keefast needs the Microsoft Edge WebView2 Runtime. Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703, then run this installer again." />
+
+    <!-- The app's icon (crates/app/icons, made from assets/icon.svg) in Installed apps and on the shortcut. -->
+    <Icon Id="keefast.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="keefast.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/arthur-er/keefast" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
@@ -44,7 +62,7 @@
 
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut">
-        <Shortcut Id="keefast" Name="keefast" Description="KeePass password manager" Target="[#keefast.exe]" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="keefast" Name="KeeFast" Icon="keefast.ico" Description="KeePass password manager" Target="[#keefast.exe]" WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKCU" Key="Software\keefast\Installer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>

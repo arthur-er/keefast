@@ -1,0 +1,120 @@
+/* keefast design tokens, copied from the Linear-style prototype (branch
+ * feat/linear-style-ui-prototypes, crates/app/prototype-linear-ui/kit/tokens.css; DESIGN.md there).
+ * Changed from the prototype: no remote font imports (the webview loads nothing remote; Inter and
+ * JetBrains Mono are bundled by app.css), and the bundled fonts' family names in the stacks.
+ * Dark is the default; `data-theme="light"` on <html> switches to light. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-sidebar: #0a0b0c;
+  --bg-0: #0d0e10;
+  --bg-1: #141518;
+  --bg-2: #1a1b1f;
+  --bg-popover: #17181c;
+  --bg-hover: rgb(255 255 255 / 0.04);
+  --bg-active: rgb(255 255 255 / 0.07);
+  --bg-inset: rgb(0 0 0 / 0.25);
+
+  /* Lines */
+  --border: rgb(255 255 255 / 0.07);
+  --border-strong: rgb(255 255 255 / 0.12);
+  --border-focus: var(--accent);
+
+  /* Text */
+  --fg-0: #ededef;
+  --fg-1: #a0a1a8;
+  --fg-2: #6b6d76;
+  --fg-on-accent: #ffffff;
+
+  /* Accent: violet-fuchsia, from the brand icon #c026d3 */
+  --accent: #a970ff;
+  --accent-hover: #b888ff;
+  --accent-bg: rgb(169 112 255 / 0.14);
+  --accent-fg: #c6a3ff;
+  --ring: 0 0 0 1px var(--accent), 0 0 0 4px rgb(169 112 255 / 0.22);
+
+  /* Status */
+  --danger: #f2555a;
+  --danger-bg: rgb(242 85 90 / 0.12);
+  --warn: #f0b429;
+  --warn-bg: rgb(240 180 41 / 0.12);
+  --ok: #3fbf7f;
+  --ok-bg: rgb(63 191 127 / 0.12);
+  --info: #5b9cf5;
+  --info-bg: rgb(91 156 245 / 0.12);
+
+  /* Entry colour labels */
+  --c-red: #eb5757;
+  --c-orange: #f2994a;
+  --c-yellow: #f2c94c;
+  --c-green: #4cb782;
+  --c-blue: #4ea7fc;
+  --c-purple: #a970ff;
+
+  /* Elevation */
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.08), 0 8px 24px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3);
+  --shadow-dialog: 0 0 0 1px rgb(255 255 255 / 0.09), 0 24px 64px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.35);
+  --scrim: rgb(0 0 0 / 0.55);
+
+  /* Type */
+  --font-ui: "Inter", "InterVariable", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  /* Space & shape */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px;
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px;
+  --row-h: 32px;
+  --sidebar-w: 232px;
+  --list-w: 340px;
+  --toolbar-h: 44px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-sidebar: #f5f5f6;
+  --bg-0: #fcfcfc;
+  --bg-1: #ffffff;
+  --bg-2: #f3f3f4;
+  --bg-popover: #ffffff;
+  --bg-hover: rgb(0 0 0 / 0.035);
+  --bg-active: rgb(0 0 0 / 0.06);
+  --bg-inset: rgb(0 0 0 / 0.03);
+  --border: rgb(0 0 0 / 0.07);
+  --border-strong: rgb(0 0 0 / 0.12);
+  --fg-0: #1b1b1f;
+  --fg-1: #5f6068;
+  --fg-2: #8e9099;
+  --accent: #8a46e6;
+  --accent-hover: #7a36d6;
+  --accent-bg: rgb(138 70 230 / 0.1);
+  --accent-fg: #7232cc;
+  --ring: 0 0 0 1px var(--accent), 0 0 0 4px rgb(138 70 230 / 0.18);
+  --danger: #d93a40;
+  --danger-bg: rgb(217 58 64 / 0.08);
+  --warn: #b7791f;
+  --warn-bg: rgb(240 180 41 / 0.14);
+  --ok: #23955e;
+  --ok-bg: rgb(35 149 94 / 0.1);
+  --info: #2f74d6;
+  --info-bg: rgb(47 116 214 / 0.08);
+  --shadow-pop: 0 0 0 1px rgb(0 0 0 / 0.07), 0 8px 24px rgb(0 0 0 / 0.1), 0 2px 6px rgb(0 0 0 / 0.06);
+  --shadow-dialog: 0 0 0 1px rgb(0 0 0 / 0.07), 0 24px 64px rgb(0 0 0 / 0.16), 0 4px 12px rgb(0 0 0 / 0.08);
+  --scrim: rgb(20 20 25 / 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; }
+}

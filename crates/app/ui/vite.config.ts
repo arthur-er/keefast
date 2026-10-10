@@ -1,0 +1,30 @@
+import { fileURLToPath, URL } from "node:url";
+
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
+
+// The web UI of keefast's Tauri app. `pnpm dev` serves it to the Tauri window (devUrl in
+// ../tauri.conf.json); `pnpm dev:mock` serves it to a normal browser over the mock backend.
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  // Tauri expects a fixed port, and shows Rust's errors rather than having them cleared.
+  clearScreen: false,
+  server: {
+    port: mode === "mock" ? 1421 : 1420,
+    strictPort: true,
+    host: mode === "mock" ? true : "localhost",
+    watch: { ignored: ["**/src-tauri/**"] },
+  },
+  envPrefix: ["VITE_", "TAURI_ENV_"],
+  build: {
+    // WebKitGTK and WebView2 are recent; no polyfills.
+    target: "es2022",
+    sourcemap: mode !== "production",
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.{ts,tsx}"],
+  },
+}));

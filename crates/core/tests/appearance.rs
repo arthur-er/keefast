@@ -96,6 +96,18 @@ fn tags_and_custom_icons_from_other_clients_are_read() {
 }
 
 #[test]
+fn a_custom_icon_is_found_again_by_its_id_in_hex() {
+    let vault = open(KEEPASSXC_KDBX4);
+    let icon = vault.custom_icons()[0].id();
+
+    let hex = icon.to_hex();
+
+    assert_eq!(hex.len(), 32);
+    assert_eq!(keefast_core::CustomIconId::from_hex(&hex), Some(icon));
+    assert_eq!(keefast_core::CustomIconId::from_hex("not hex"), None);
+}
+
+#[test]
 fn entries_without_marks_have_the_key_icon() {
     let vault = open(KEEWEB_KDBX4);
     let email = entry_titled(&vault, "Email");

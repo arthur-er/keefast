@@ -1,0 +1,50 @@
+/* Entry history B: the full-window split of versions and their comparison, from the prototype
+ * (screens/entry-history.html, "Diff values" and "Variant B"). */
+
+@layer components {
+  .eh { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .eh-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
+
+  /* Versions */
+  .eh-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg-0); }
+  .eh-list .scroll { flex: 1; overflow: auto; padding: 4px 8px 16px; }
+  .eh-group { padding: 12px 10px 4px; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+  .eh-ver { display: flex; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }
+  .eh-ver:hover { background: var(--bg-hover); }
+  .eh-ver.is-selected { background: var(--bg-active); }
+  .eh-ver:focus-visible { outline: none; box-shadow: var(--ring); }
+  .eh-ver .ic { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); border: 1px solid var(--border-strong); margin-top: 1px; }
+  .eh-ver .ic svg.lucide { width: 12px; height: 12px; }
+  .eh-ver.is-current .ic { color: var(--accent-fg); background: var(--accent-bg); border-color: transparent; }
+  .eh-ver .t { font-weight: 500; line-height: 1.35; }
+  .eh-ver .s { font-size: var(--text-sm); color: var(--fg-2); line-height: 1.4; margin-top: 1px; }
+
+  /* The comparison */
+  .eh-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .eh-top { display: flex; align-items: center; gap: 12px; padding: 20px 32px 16px; border-bottom: 1px solid var(--border); }
+  .eh-top h1 { margin: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
+  .eh-top .sub { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; }
+  .eh-bar { display: flex; align-items: center; gap: 12px; padding: 10px 32px; border-bottom: 1px solid var(--border); font-size: var(--text-sm); color: var(--fg-1); }
+  .eh-body { flex: 1; overflow: auto; padding: 12px 32px 96px; }
+  .eh-table { display: flex; flex-direction: column; max-width: 760px; }
+  .eh-row { display: grid; grid-template-columns: 132px 1fr; gap: 16px; align-items: baseline; padding: 9px 12px; margin: 0 -12px; border-radius: var(--r-sm); position: relative; }
+  .eh-row > .k { color: var(--fg-2); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .eh-row > .v { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; color: var(--fg-1); }
+  .eh-row.is-changed { background: var(--bg-hover); }
+  .eh-row.is-changed::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
+  .eh-row.is-changed > .k { color: var(--fg-0); font-weight: 500; }
+  .eh-row.is-changed > .v { color: var(--fg-0); }
+  .eh-row .stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .eh-row .notes { white-space: pre-wrap; }
+
+  /* Diff values */
+  .eh .del { color: var(--danger); background: var(--danger-bg); text-decoration: line-through; text-decoration-color: rgb(242 85 90 / 0.5); border-radius: 3px; padding: 1px 4px; }
+  .eh .ins { color: var(--ok); background: var(--ok-bg); border-radius: 3px; padding: 1px 4px; }
+  .eh .arrow { color: var(--fg-2); display: inline-flex; }
+  .eh .val-mono { font-family: var(--font-mono); letter-spacing: 0.02em; font-size: 12.5px; }
+
+  /* No earlier versions */
+  .eh-empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 40px; }
+  .eh-empty .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-1); border: 1px solid var(--border); color: var(--fg-2); margin: 0 auto 14px; }
+  .eh-empty p { margin: 0 auto 16px; max-width: 320px; color: var(--fg-1); }
+}
