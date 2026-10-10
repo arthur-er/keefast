@@ -1,12 +1,17 @@
-use gpui::{Context, Entity, EventEmitter, SharedString, Window, div, prelude::*};
+use gpui::{
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, KeyDownEvent,
+    SharedString, StyledText, Window, div, prelude::*, px,
+};
 use keefast_core::{CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe};
 use keefast_workspace::{GeneratorMode, GeneratorSettings, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 
+use crate::icons::IconName;
 use crate::strings;
 use crate::text_field::{TextField, TextFieldEvent};
+use crate::theme::MONO_FONT;
 use crate::theme::Theme;
-use crate::ui::{Button, Checkbox, Segmented, Typography};
+use crate::ui::{self, Button, Kbd, Segmented, Slider, Typography};
 
 pub enum PasswordGeneratorEvent {
     /// Use this password.
@@ -22,6 +27,7 @@ pub struct PasswordGenerator {
     separator: Entity<TextField>,
     generated: Result<SecretString, GeneratorError>,
     in_settings: bool,
+    focus: FocusHandle,
 }
 
 impl EventEmitter<PasswordGeneratorEvent> for PasswordGenerator {}
@@ -55,6 +61,7 @@ impl PasswordGenerator {
             separator,
             generated,
             in_settings: false,
+            focus: cx.focus_handle(),
         }
     }
 
@@ -94,8 +101,8 @@ impl PasswordGenerator {
     }
 }
 
-/// A `−  N  +` stepper for a number kept within `min..=max`.
-fn stepper(
+/// A setting kept within `min..=max`: a slider, and the number with `−` and `+` beside it.
+fn amount(
     id: &'static str,
     label: &'static str,
     value: u32,
@@ -110,42 +117,126 @@ fn stepper(
             this.change(cx, |settings| set(settings, next))
         })
     };
+    let generator = cx.entity().downgrade();
     div()
         .flex()
-        .items_center()
-        .gap_2()
-        .child(div().text_secondary().text_color(theme.fg_1).child(label))
-        .child(
-            Button::new(SharedString::from(format!("{id}-less")), "−")
-                .small()
-                .on_click(step(-1)),
-        )
+        .flex_col()
+        .gap(px(8.))
+        .child(ui::field_label(label, theme))
         .child(
             div()
-                .min_w_8()
                 .flex()
-                .justify_center()
-                .child(value.to_string()),
-        )
-        .child(
-            Button::new(SharedString::from(format!("{id}-more")), "+")
-                .small()
-                .on_click(step(1)),
+                .items_center()
+                .gap(px(10.))
+                .child(Slider::new(
+                    SharedString::from(format!("{id}-slider")),
+                    value,
+                    (min, max),
+                    move |value, _, cx| {
+                        generator
+                            .update(cx, |this, cx| {
+                                this.change(cx, |settings| set(settings, value))
+                            })
+                            .ok();
+                    },
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(theme.border_strong)
+                        .bg(theme.bg_1)
+                        .child(
+                            ui::IconButton::new(
+                                SharedString::from(format!("{id}-less")),
+                                IconName::Minus,
+                            )
+                            .small()
+                            .on_click(step(-1)),
+                        )
+                        .child(
+                            div()
+                                .min_w(px(28.))
+                                .flex()
+                                .justify_center()
+                                .font_family(MONO_FONT)
+                                .child(value.to_string()),
+                        )
+                        .child(
+                            ui::IconButton::new(
+                                SharedString::from(format!("{id}-more")),
+                                IconName::Plus,
+                            )
+                            .small()
+                            .on_click(step(1)),
+                        ),
+                ),
         )
 }
 
-fn checkbox(
+/// A kind of character to use or not, as a toggle.
+fn class_toggle(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: &'static str,
     on: bool,
+    theme: Theme,
     cx: &Context<PasswordGenerator>,
     toggle: fn(&mut CharacterRecipe),
 ) -> impl IntoElement {
-    Checkbox::new(id, on)
-        .label(label)
+    div()
+        .id(id)
+        .flex_1()
+        .h(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .border_1()
+        .cursor_pointer()
+        .font_family(MONO_FONT)
+        .text_size(px(12.))
+        .map(|this| {
+            if on {
+                this.bg(theme.accent_bg)
+                    .border_color(theme.accent)
+                    .text_color(theme.accent_fg)
+            } else {
+                this.bg(theme.bg_1)
+                    .border_color(theme.border_strong)
+                    .text_color(theme.fg_1)
+                    .hover(|style| style.text_color(theme.fg_0))
+            }
+        })
+        .child(label)
         .on_click(cx.listener(move |this, _, _, cx| {
             this.change(cx, |settings| toggle(&mut settings.characters))
         }))
+}
+
+/// The generated password, its digits and symbols tinted so each character reads.
+fn colored_password(password: &str, theme: Theme) -> StyledText {
+    let mut highlights = Vec::new();
+    for (at, ch) in password.char_indices() {
+        let color = if ch.is_ascii_digit() {
+            Some(theme.info)
+        } else if !ch.is_alphanumeric() {
+            Some(theme.accent_fg)
+        } else {
+            None
+        };
+        if let Some(color) = color {
+            highlights.push((
+                at..at + ch.len_utf8(),
+                HighlightStyle {
+                    color: Some(color.into()),
+                    ..HighlightStyle::default()
+                },
+            ));
+        }
+    }
+    StyledText::new(SharedString::from(password.to_owned())).with_highlights(highlights)
 }
 
 fn error_message(error: &GeneratorError) -> String {
@@ -160,6 +251,29 @@ fn error_message(error: &GeneratorError) -> String {
     }
 }
 
+impl PasswordGenerator {
+    /// R makes another password, Enter uses it and Escape closes the popover.
+    fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.modifiers.modified() {
+            return;
+        }
+        match keystroke.key.as_str() {
+            "r" => self.regenerate(cx),
+            "enter" => self.use_password(cx),
+            "escape" => cx.emit(PasswordGeneratorEvent::Cancel),
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+}
+
+impl Focusable for PasswordGenerator {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl Render for PasswordGenerator {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
@@ -169,19 +283,17 @@ impl Render for PasswordGenerator {
                 this.change(cx, |settings| settings.mode = mode)
             })
         };
-        let tabs = div().flex().child(
-            Segmented::new("generator-mode")
-                .option(
-                    strings::GENERATOR_CHARACTERS,
-                    settings.mode == GeneratorMode::Characters,
-                    mode_tab(GeneratorMode::Characters),
-                )
-                .option(
-                    strings::GENERATOR_PASSPHRASE,
-                    settings.mode == GeneratorMode::Passphrase,
-                    mode_tab(GeneratorMode::Passphrase),
-                ),
-        );
+        let tabs = Segmented::new("generator-mode")
+            .option(
+                strings::GENERATOR_CHARACTERS,
+                settings.mode == GeneratorMode::Characters,
+                mode_tab(GeneratorMode::Characters),
+            )
+            .option(
+                strings::GENERATOR_PASSPHRASE,
+                settings.mode == GeneratorMode::Passphrase,
+                mode_tab(GeneratorMode::Passphrase),
+            );
 
         let options = match settings.mode {
             GeneratorMode::Characters => {
@@ -189,8 +301,8 @@ impl Render for PasswordGenerator {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(stepper(
+                    .gap(px(14.))
+                    .child(amount(
                         "generator-length",
                         strings::GENERATOR_LENGTH,
                         recipe.length,
@@ -202,57 +314,71 @@ impl Render for PasswordGenerator {
                     .child(
                         div()
                             .flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .child(checkbox(
+                            .gap(px(6.))
+                            .child(class_toggle(
                                 "generator-lowercase",
                                 strings::GENERATOR_LOWERCASE,
                                 recipe.lowercase,
+                                theme,
                                 cx,
                                 |recipe| recipe.lowercase = !recipe.lowercase,
                             ))
-                            .child(checkbox(
+                            .child(class_toggle(
                                 "generator-uppercase",
                                 strings::GENERATOR_UPPERCASE,
                                 recipe.uppercase,
+                                theme,
                                 cx,
                                 |recipe| recipe.uppercase = !recipe.uppercase,
                             ))
-                            .child(checkbox(
+                            .child(class_toggle(
                                 "generator-digits",
                                 strings::GENERATOR_DIGITS,
                                 recipe.digits,
+                                theme,
                                 cx,
                                 |recipe| recipe.digits = !recipe.digits,
                             ))
-                            .child(checkbox(
+                            .child(class_toggle(
                                 "generator-symbols",
                                 strings::GENERATOR_SYMBOLS,
                                 recipe.symbols,
+                                theme,
                                 cx,
                                 |recipe| recipe.symbols = !recipe.symbols,
                             )),
                     )
-                    .child(checkbox(
-                        "generator-lookalikes",
-                        strings::GENERATOR_EXCLUDE_LOOKALIKES.replace(
-                            "{lookalikes}",
-                            &LOOKALIKES
-                                .chars()
-                                .map(String::from)
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        ),
-                        recipe.exclude_lookalikes,
-                        cx,
-                        |recipe| recipe.exclude_lookalikes = !recipe.exclude_lookalikes,
-                    ))
+                    .child(
+                        div()
+                            .id("generator-lookalikes")
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .cursor_pointer()
+                            .child(ui::switch_mark(recipe.exclude_lookalikes, theme))
+                            .child(
+                                strings::GENERATOR_EXCLUDE_LOOKALIKES.replace(
+                                    "{lookalikes}",
+                                    &LOOKALIKES
+                                        .chars()
+                                        .map(String::from)
+                                        .collect::<Vec<_>>()
+                                        .join(" "),
+                                ),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.change(cx, |settings| {
+                                    let recipe = &mut settings.characters;
+                                    recipe.exclude_lookalikes = !recipe.exclude_lookalikes;
+                                })
+                            })),
+                    )
             }
             GeneratorMode::Passphrase => div()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .child(stepper(
+                .gap(px(14.))
+                .child(amount(
                     "generator-words",
                     strings::GENERATOR_WORDS,
                     settings.passphrase.words,
@@ -264,67 +390,99 @@ impl Render for PasswordGenerator {
                 .child(
                     div()
                         .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_secondary()
-                                .text_color(theme.fg_1)
-                                .child(strings::GENERATOR_SEPARATOR),
-                        )
-                        .child(div().w_24().child(self.separator.clone())),
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(ui::field_label(strings::GENERATOR_SEPARATOR, theme))
+                        .child(div().w(px(120.)).child(self.separator.clone())),
                 ),
         };
 
-        let preview = match &self.generated {
-            Ok(password) => div()
-                .font_family("monospace")
-                .child(SharedString::from(password.expose_secret().to_owned())),
-            Err(error) => div().text_color(theme.danger).child(error_message(error)),
-        };
-
-        div()
-            .id("password-generator")
+        let preview = div()
             .flex()
-            .flex_col()
-            .gap_3()
-            .p_3()
-            .rounded_md()
+            .items_start()
+            .gap(px(8.))
+            .p(px(12.))
+            .rounded(px(8.))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.bg_1)
-            .child(tabs)
-            .child(options)
+            .bg(theme.bg_inset)
+            .child(match &self.generated {
+                Ok(password) => div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h(px(40.))
+                    .font_family(MONO_FONT)
+                    .text_size(px(15.))
+                    .line_height(px(22.))
+                    .child(colored_password(password.expose_secret(), theme)),
+                Err(error) => div()
+                    .flex_1()
+                    .min_h(px(40.))
+                    .text_color(theme.danger)
+                    .child(error_message(error)),
+            })
             .child(
-                div()
-                    .px_2()
-                    .py_1p5()
-                    .rounded_md()
-                    .bg(theme.bg_0)
-                    .overflow_hidden()
-                    .child(preview),
-            )
+                ui::IconButton::new("generator-again-icon", IconName::RefreshCw)
+                    .small()
+                    .tooltip(strings::GENERATOR_AGAIN)
+                    .on_click(cx.listener(|this, _, _, cx| this.regenerate(cx))),
+            );
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(14.))
+            .child(div().flex().child(tabs))
+            .child(preview)
+            .child(options);
+
+        if self.in_settings {
+            return ui::card(theme).id("password-generator").child(body);
+        }
+        ui::menu(theme)
+            .id("password-generator")
+            .key_context("PasswordGenerator")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key_down))
+            .w(px(400.))
+            .p_0()
+            .occlude()
+            .child(body)
             .child(
                 div()
                     .flex()
-                    .justify_end()
-                    .gap_2()
-                    .when(!self.in_settings, |this| {
-                        this.child(Button::new("generator-cancel", strings::CANCEL).on_click(
-                            cx.listener(|_, _, _, cx| cx.emit(PasswordGeneratorEvent::Cancel)),
-                        ))
-                    })
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(14.))
+                    .py(px(10.))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .bg(theme.bg_inset)
+                    .rounded_b(px(8.))
+                    .child(Kbd::new([strings::KEY_ESC]))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_secondary()
+                            .text_color(theme.fg_2)
+                            .child(strings::GENERATOR_CLOSE),
+                    )
                     .child(
                         Button::new("generator-again", strings::GENERATOR_AGAIN)
+                            .small()
+                            .ghost()
+                            .kbd(Some(Kbd::new(["R"])))
                             .on_click(cx.listener(|this, _, _, cx| this.regenerate(cx))),
                     )
-                    .when(!self.in_settings, |this| {
-                        this.child(
-                            Button::new("generator-use", strings::GENERATOR_USE)
-                                .when(self.generated.is_ok(), |this| this.primary())
-                                .on_click(cx.listener(|this, _, _, cx| this.use_password(cx))),
-                        )
-                    }),
+                    .child(
+                        Button::new("generator-use", strings::GENERATOR_USE)
+                            .small()
+                            .primary()
+                            .kbd(Some(Kbd::new([strings::KEY_ENTER])))
+                            .disabled(self.generated.is_err())
+                            .on_click(cx.listener(|this, _, _, cx| this.use_password(cx))),
+                    ),
             )
     }
 }

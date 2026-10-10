@@ -12,6 +12,7 @@ mod kbd;
 mod menu;
 mod nav;
 mod ring;
+mod slider;
 mod toast;
 mod typography;
 
@@ -27,6 +28,7 @@ pub use kbd::{Kbd, key_names};
 pub use menu::{MenuItem, menu};
 pub use nav::{empty_state, nav_count, nav_row, section_heading};
 pub use ring::countdown_ring;
+pub use slider::Slider;
 pub use toast::Toast;
 pub use typography::Typography;
 

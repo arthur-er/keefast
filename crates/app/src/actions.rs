@@ -46,6 +46,14 @@ actions!(
 );
 
 actions!(
+    entry_editor,
+    [
+        /// Saves the Entry being edited and closes the editor.
+        SaveEntry,
+    ]
+);
+
+actions!(
     entry_history,
     [
         SelectOlderVersion,
@@ -87,6 +95,8 @@ pub const SEARCH_CONTEXT: &str = "EntrySearch";
 pub const CUSTOM_FIELD_CONTEXT: &str = "CustomField";
 /// The key context of an Entry's history, shown in the detail pane.
 pub const HISTORY_CONTEXT: &str = "EntryHistory";
+/// The key context of the Entry editor, where Ctrl+S saves the Entry.
+pub const EDITOR_CONTEXT: &str = "EntryEditor";
 /// The key context of the command palette.
 pub const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
 /// The key context of the settings screen.
@@ -123,6 +133,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", SelectNewerVersion, Some(HISTORY_CONTEXT)),
         KeyBinding::new("escape", CloseHistory, Some(HISTORY_CONTEXT)),
         KeyBinding::new("secondary-s", SaveAll, anywhere),
+        KeyBinding::new("secondary-s", SaveEntry, Some(EDITOR_CONTEXT)),
         KeyBinding::new("secondary-o", OpenVault, anywhere),
         KeyBinding::new("secondary-shift-n", NewVault, anywhere),
         // Bound last, Ctrl+K is the one menus and hints show.

@@ -38,8 +38,7 @@ pub struct TextField {
     masked: bool,
     /// Drawn before the text, as a search field's magnifier.
     icon: Option<IconName>,
-    /// Drawn as a search box: sunk into the pane, with no edge until focused.
-    search: bool,
+    look: Look,
     /// Drawn in the mono face, as secrets and codes are.
     mono: bool,
     undo: Vec<Snapshot>,
@@ -50,6 +49,16 @@ pub struct TextField {
     layout: Option<(TextLayout, SharedString)>,
     /// Whether a drag with the mouse is selecting.
     selecting: bool,
+}
+
+/// How a text field is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    Field,
+    /// Sunk into the pane, with no edge until focused.
+    Search,
+    Compact,
+    Title,
 }
 
 /// The field as it was before a change, for undo and redo.
@@ -85,7 +94,7 @@ impl TextField {
             multiline: false,
             masked: false,
             icon: None,
-            search: false,
+            look: Look::Field,
             mono: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -102,7 +111,25 @@ impl TextField {
 
     /// Draws it as a search box.
     pub fn search(mut self) -> Self {
-        self.search = true;
+        self.look = Look::Search;
+        self
+    }
+
+    /// Draws it small, to sit in a row of chips.
+    pub fn compact(mut self) -> Self {
+        self.look = Look::Compact;
+        self
+    }
+
+    /// Draws it as a title: large, with no box until hovered or focused.
+    pub fn title(mut self) -> Self {
+        self.look = Look::Title;
+        self
+    }
+
+    /// Draws its text in the mono face, as secrets and codes are.
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
         self
     }
 
@@ -587,28 +614,45 @@ impl Render for TextField {
             .w_full()
             .flex()
             .gap(px(8.))
-            .px(px(10.))
+            .px(match self.look {
+                Look::Title => px(6.),
+                Look::Compact => px(8.),
+                _ => px(10.),
+            })
             .rounded(px(6.))
             .border_1()
-            .text_size(px(13.))
             .text_color(theme.fg_0)
+            .map(|this| match self.look {
+                Look::Title => this
+                    .text_size(px(20.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD),
+                Look::Compact => this.text_size(px(12.)),
+                _ => this.text_size(px(13.)),
+            })
             .map(|this| {
                 if self.multiline {
                     this.items_start().py(px(7.)).min_h(px(72.))
                 } else {
-                    this.items_center()
-                        .h(if self.search { px(30.) } else { px(32.) })
+                    this.items_center().h(match self.look {
+                        Look::Field => px(32.),
+                        Look::Search => px(30.),
+                        Look::Compact => px(26.),
+                        Look::Title => px(36.),
+                    })
                 }
             })
-            .map(|this| match (focused, self.search) {
+            .map(|this| match (focused, self.look) {
                 (true, _) => this
                     .bg(theme.bg_1)
                     .border_color(theme.accent)
                     .shadow(theme.focus_ring()),
-                (false, true) => this
+                (false, Look::Search) => this
                     .bg(theme.bg_hover)
                     .border_color(gpui::transparent_black()),
-                (false, false) => this.bg(theme.bg_1).border_color(theme.border_strong),
+                (false, Look::Title) => this
+                    .border_color(gpui::transparent_black())
+                    .hover(|style| style.border_color(theme.border_strong)),
+                (false, _) => this.bg(theme.bg_1).border_color(theme.border_strong),
             })
             .when(
                 (self.masked || self.mono) && !self.text.is_empty(),
@@ -623,6 +667,10 @@ impl Render for TextField {
                     .relative()
                     .flex_1()
                     .min_w_0()
+                    // One line stays one line, cut at the field's edge.
+                    .when(!self.multiline, |this| {
+                        this.overflow_hidden().whitespace_nowrap()
+                    })
                     .child(text)
                     .child(overlay),
             )

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Div, Image, ObjectFit, PathPromptOptions, SharedString, Task, div, img,
-    prelude::*, px,
+    AnyElement, App, Image, ObjectFit, PathPromptOptions, SharedString, Task, div, img, prelude::*,
+    px,
 };
 use keefast_core::{Attachment, AttachmentPreview, ImageFormat};
 use keefast_workspace::{read_attachment, write_attachment};
@@ -29,34 +29,6 @@ pub fn size_label(bytes: usize) -> String {
     } else {
         strings::SIZE_MB.replace("{n}", &format!("{:.1}", size / (KB * KB)))
     }
-}
-
-/// An attachment's row: its name, then its size and `links` to act on it.
-pub fn row(attachment: &Attachment, links: impl IntoElement, theme: Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(attachment.name.clone()),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_3()
-                .text_secondary()
-                .child(
-                    div()
-                        .text_color(theme.fg_1)
-                        .child(size_label(attachment.size())),
-                )
-                .child(links),
-        )
 }
 
 /// An attachment being previewed, made ready once rather than on every frame.

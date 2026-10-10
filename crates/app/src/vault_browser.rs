@@ -9,7 +9,8 @@ use gpui::{
     prelude::*, px,
 };
 use keefast_core::{
-    EditError, Entry, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId, TotpCode,
+    EditError, Entry, EntryColor, EntryFields, EntryId, EntrySearch, EntrySort, Group, GroupId,
+    TotpCode,
 };
 use keefast_workspace::{
     CopyError, CopyField, EditVaultError, EntryScope, ListedEntry, PaneWidths, VaultId, View,
@@ -228,6 +229,7 @@ enum Detail {
     },
 }
 
+#[derive(Clone, Copy)]
 enum EditTarget {
     Existing(VaultId, EntryId),
     New(VaultId, GroupId),
@@ -1606,6 +1608,7 @@ impl Render for VaultBrowser {
         self.ensure_custom_field_focus(cx);
         let palette_keys = Kbd::for_action(&ToggleCommandPalette, cx);
         let edit_keys = Kbd::for_action(&OpenEntry, cx);
+        let save_keys = Kbd::for_action(&crate::actions::SaveEntry, cx);
         // A locked Vault, or one about to lock, shows a card to unlock it instead of its Entries.
         let locked = {
             let workspace = self.workspace.read(cx);
@@ -1680,7 +1683,7 @@ impl Render for VaultBrowser {
                             .h_full()
                             .flex()
                             .flex_col()
-                            .child(self.render_toolbar(palette_keys, theme, cx))
+                            .child(self.render_toolbar(palette_keys, save_keys, theme, cx))
                             .children(self.render_merge_notice(theme, cx))
                             .child(match locked {
                                 Some(vault) => self.render_locked(vault, theme, cx),
@@ -1819,7 +1822,7 @@ pub fn flatten_groups<'a>(groups: &'a [Group], depth: usize, out: &mut Vec<(&'a 
 }
 
 /// A code split in two halves to read it more easily: `123 456`.
-fn grouped(code: &str) -> SharedString {
+pub fn grouped(code: &str) -> SharedString {
     if code.len() < 6 {
         return code.to_owned().into();
     }
@@ -1834,6 +1837,18 @@ fn sort_label(sort: EntrySort) -> &'static str {
         EntrySort::Url => strings::SORT_URL,
         EntrySort::Created => strings::SORT_CREATED,
         EntrySort::Modified => strings::SORT_MODIFIED,
+    }
+}
+
+/// A colour's name, as the Entry detail and the editor say it.
+pub fn color_name(color: EntryColor) -> &'static str {
+    match color {
+        EntryColor::Red => strings::COLOR_RED,
+        EntryColor::Orange => strings::COLOR_ORANGE,
+        EntryColor::Yellow => strings::COLOR_YELLOW,
+        EntryColor::Green => strings::COLOR_GREEN,
+        EntryColor::Blue => strings::COLOR_BLUE,
+        EntryColor::Violet => strings::COLOR_PURPLE,
     }
 }
 

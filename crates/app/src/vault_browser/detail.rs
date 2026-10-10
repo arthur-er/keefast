@@ -9,7 +9,8 @@ use keefast_core::{AccessDecision, AttachmentPreview, Entry, EntryId, TotpCode};
 use keefast_workspace::{EntryScope, VaultId};
 use secrecy::ExposeSecret;
 
-use super::entry_list::{color_name, entry_avatar, site_host};
+use super::color_name;
+use super::entry_list::{entry_avatar, site_host};
 use super::{
     Detail, DetailTab, EditTarget, FOLDER_ICON, InlineField, ListMenu, MenuItem, Subject,
     VaultBrowser, flatten_groups, title_of,
@@ -58,7 +59,10 @@ impl VaultBrowser {
         };
         match &self.detail {
             Detail::Editing { editor, .. } => form(pane, editor.clone().into_any_element()),
-            Detail::Totp { setup, .. } => form(pane, setup.clone().into_any_element()),
+            Detail::Totp { setup, .. } => {
+                let setup = setup.clone().into_any_element();
+                self.render_entry(pane, edit_keys, Some(setup), theme, cx)
+            }
             Detail::History { view, .. } => form(pane, view.clone().into_any_element()),
             Detail::VaultKey { form: key, .. } => form(pane, key.clone().into_any_element()),
             Detail::Group(vault, group) => {
@@ -69,14 +73,17 @@ impl VaultBrowser {
                 let picker = self.render_move_picker(*item, theme, cx);
                 form(pane, picker)
             }
-            Detail::Entry => self.render_entry(pane, edit_keys, theme, cx),
+            Detail::Entry => self.render_entry(pane, edit_keys, None, theme, cx),
         }
     }
 
+    /// The selected Entry, with its TOTP being set up under its secrets if `totp_setup` is
+    /// given.
     fn render_entry(
         &self,
         pane: Stateful<Div>,
         edit_keys: Option<Kbd>,
+        totp_setup: Option<AnyElement>,
         theme: Theme,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -118,6 +125,7 @@ impl VaultBrowser {
                 })
                 .child(header)
                 .child(secrets)
+                .children(totp_setup)
                 .child(
                     div()
                         .flex()
@@ -347,7 +355,7 @@ impl VaultBrowser {
             this.on_secret_click(event, vault, id, InlineField::Password, window, cx)
         }));
         let totp = workspace.totp_code(vault, id).map(|code| match code {
-            Ok(code) => self.render_totp_card(code, theme, cx),
+            Ok(code) => self.render_totp_card(vault, id, code, theme, cx),
             Err(error) => secret_card("totp-card", IconName::Timer, strings::DETAIL_TOTP, theme)
                 .child(div().text_secondary().text_color(theme.danger).child(
                     strings::TOTP_UNREADABLE.replace("{reason}", totp_setup::describe(error)),
@@ -410,7 +418,15 @@ impl VaultBrowser {
     }
 
     /// The current TOTP code with a ring counting down its time, copied when clicked.
-    fn render_totp_card(&self, code: TotpCode, theme: Theme, cx: &Context<Self>) -> AnyElement {
+    fn render_totp_card(
+        &self,
+        vault: VaultId,
+        id: EntryId,
+        code: TotpCode,
+        theme: Theme,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let setting_up = matches!(self.detail, Detail::Totp { .. });
         let copied =
             self.selected_entry(cx).is_some() && self.totp_copied == self.selected_entry(cx);
         let left = code.remaining() as f32 / code.period() as f32;
@@ -447,6 +463,24 @@ impl VaultBrowser {
                                     .into()
                             }),
                     ),
+            )
+            .child(
+                div().absolute().top(px(8.)).right(px(8.)).child(
+                    ui::IconButton::new("totp-settings", IconName::SlidersHorizontal)
+                        .small()
+                        .selected(setting_up)
+                        .tooltip(strings::TOTP_SETUP_TITLE)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            // Not the card's click, which copies.
+                            cx.stop_propagation();
+                            if matches!(this.detail, Detail::Totp { .. }) {
+                                this.detail = Detail::Entry;
+                                cx.notify();
+                            } else {
+                                this.open_totp_setup(vault, id, window, cx);
+                            }
+                        })),
+                ),
             )
             .on_click(cx.listener(|this, _, _, cx| this.copy_totp(cx)))
             .into_any_element()
@@ -1083,6 +1117,7 @@ fn secret_card(
 ) -> Stateful<Div> {
     div()
         .id(id)
+        .relative()
         .flex_1()
         .min_w_0()
         .flex()

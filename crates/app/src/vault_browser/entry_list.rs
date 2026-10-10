@@ -4,18 +4,19 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
-    uniform_list,
+    AnyElement, Context, Entity, IntoElement, ParentElement, SharedString, Styled, div, prelude::*,
+    px, uniform_list,
 };
-use keefast_core::{Entry, EntryColor, EntryIcon, EntryId, EntrySort, GroupId, Site};
+use keefast_core::{Entry, EntryIcon, EntryId, EntrySort, GroupId, Site};
 use keefast_workspace::{EntryScope, VaultId, Workspace};
 
 use super::sidebar::vault_status;
 use super::{
-    EditTarget, KEY_ICON, ListMenu, MenuItem, UnlockLockedVault, VaultBrowser, flatten_groups,
-    sort_label, title_of,
+    Detail, EditTarget, KEY_ICON, ListMenu, MenuItem, UnlockLockedVault, VaultBrowser,
+    flatten_groups, sort_label, title_of,
 };
 use crate::actions;
+use crate::entry_editor::EntryEditor;
 use crate::favicons;
 use crate::icons::{self, IconName};
 use crate::strings;
@@ -440,9 +441,13 @@ impl VaultBrowser {
     pub(super) fn render_toolbar(
         &self,
         palette_keys: Option<Kbd>,
+        save_keys: Option<Kbd>,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if let Detail::Editing { editor, target } = &self.detail {
+            return self.render_editing_toolbar(editor.clone(), *target, save_keys, theme, cx);
+        }
         let workspace = self.workspace.read(cx);
         let scope = workspace.view().scope;
         let vault_name = |vault: VaultId| {
@@ -495,7 +500,7 @@ impl VaultBrowser {
             ),
             EntryScope::Color(color) => (
                 ui::dot(theme.label(*color), 10.).into_any_element(),
-                vec![crumb(color_name(*color).into(), true).into_any_element()],
+                vec![crumb(super::color_name(*color).into(), true).into_any_element()],
             ),
         };
         let status = self
@@ -552,6 +557,67 @@ impl VaultBrowser {
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(crate::actions::ToggleCommandPalette), cx)
                     }),
+            )
+            .into_any_element()
+    }
+
+    /// The toolbar while an Entry is edited: what is edited, and the editor's Cancel and Done.
+    fn render_editing_toolbar(
+        &self,
+        editor: Entity<EntryEditor>,
+        target: EditTarget,
+        save_keys: Option<Kbd>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let workspace = self.workspace.read(cx);
+        let (EditTarget::Existing(vault, _) | EditTarget::New(vault, _)) = target;
+        let vault_name = workspace
+            .vault(vault)
+            .map(|open| open.display_name())
+            .unwrap_or_default();
+        let title: SharedString = match target {
+            EditTarget::Existing(vault, entry) => workspace
+                .entry(vault, entry)
+                .map(title_of)
+                .unwrap_or_default(),
+            EditTarget::New(..) => strings::NEW_ENTRY_TITLE.into(),
+        };
+        let cancel = editor.clone();
+        div()
+            .h(px(44.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(16.))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(icons::ui_icon(IconName::Vault, px(15.), theme.fg_1))
+            .child(div().text_color(theme.fg_1).child(vault_name))
+            .child(icons::ui_icon(IconName::ChevronRight, px(13.), theme.fg_2))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child(title),
+            )
+            .child(ui::Badge::new(strings::EDITING).tone(ui::Tone::Accent))
+            .child(div().flex_1())
+            .child(
+                Button::new("editor-cancel", strings::CANCEL)
+                    .small()
+                    .ghost()
+                    .kbd(Some(Kbd::new([strings::KEY_ESC])))
+                    .on_click(move |_, _, cx| cancel.update(cx, |editor, cx| editor.cancel(cx))),
+            )
+            .child(
+                Button::new("editor-save", strings::EDITOR_DONE)
+                    .small()
+                    .primary()
+                    .kbd(save_keys)
+                    .on_click(move |_, _, cx| editor.update(cx, |editor, cx| editor.save(cx))),
             )
             .into_any_element()
     }
@@ -675,16 +741,5 @@ pub(super) fn entry_avatar(
             };
             ui::monogram(&seed, size).into_any_element()
         }
-    }
-}
-
-pub(super) fn color_name(color: EntryColor) -> &'static str {
-    match color {
-        EntryColor::Red => strings::COLOR_RED,
-        EntryColor::Orange => strings::COLOR_ORANGE,
-        EntryColor::Yellow => strings::COLOR_YELLOW,
-        EntryColor::Green => strings::COLOR_GREEN,
-        EntryColor::Blue => strings::COLOR_BLUE,
-        EntryColor::Violet => strings::COLOR_PURPLE,
     }
 }

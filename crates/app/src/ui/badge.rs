@@ -10,6 +10,7 @@ use crate::theme::Theme;
 pub enum Tone {
     #[default]
     Neutral,
+    Accent,
     Danger,
 }
 
@@ -39,6 +40,7 @@ impl RenderOnce for Badge {
         let theme = Theme::for_window(window, cx);
         let (color, bg) = match self.tone {
             Tone::Neutral => (theme.fg_1, theme.bg_active),
+            Tone::Accent => (theme.accent_fg, theme.accent_bg),
             Tone::Danger => (theme.danger, theme.danger_bg),
         };
         div()
