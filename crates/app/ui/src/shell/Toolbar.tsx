@@ -9,6 +9,7 @@ import type { Scope } from "@/bindings";
 import { useGroups, useWorkspace } from "@/api/queries";
 import { Button, colorVar, Popover, PopoverContent, PopoverTrigger, toast } from "@/kit";
 import { cn } from "@/lib/utils";
+import { SyncDetail } from "@/screens/dropbox/SyncDetail";
 
 import { COLOR_NAMES, dotClass, groupPath } from "./Sidebar";
 import { useShell } from "./state";
@@ -92,7 +93,8 @@ function StatusButton() {
   const vaults = snapshot?.vaults ?? [];
   const scope: Scope | undefined = view?.scope;
   const shownId = scope && (scope.kind === "vault" || scope.kind === "group") ? scope.vault : null;
-  const status = toolbarStatus(vaults, vaults.find((vault) => vault.id === shownId));
+  const shown = vaults.find((vault) => vault.id === shownId);
+  const status = toolbarStatus(vaults, shown);
   const open = vaults.filter((vault) => vault.state !== "locked");
   const anyDropbox = open.some((vault) => vault.location.provider === "dropbox");
   return (
@@ -108,6 +110,7 @@ function StatusButton() {
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="vb-status-pop">
+        {shown?.state === "unlocked" && shown.syncStatus && <SyncDetail vault={shown} />}
         {open.map((vault) => {
           const Icon = vaultIcon(vault);
           const own = vaultStatus(vault);
