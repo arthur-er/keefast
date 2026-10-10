@@ -122,6 +122,12 @@ export const commands = {
 	 *  is given.
 	 */
 	forgetAccess: (vault: VaultId, entry: EntryId, host: string | null) => typedError<null, ApiError>(__TAURI_INVOKE("forget_access", { vault, entry, host })),
+	/**
+	 *  Opens the Entry's URL in the user's browser. Only web addresses open: an address without a
+	 *  scheme, such as `github.com`, opens as `https://`, and any other scheme (`ssh:`, `file:`…) is
+	 *  refused, so a Vault file can't make keefast run something.
+	 */
+	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
 	/**  The Entry's earlier versions, oldest first. Each edit keeps the version it replaces here. */
 	getEntryHistory: (vault: VaultId, entry: EntryId) => typedError<EntryVersion[], ApiError>(__TAURI_INVOKE("get_entry_history", { vault, entry })),
 	/**  The password of a version of the Entry, for the user to see. */
@@ -398,7 +404,7 @@ export type Copied = {
 };
 
 /**  The field of an Entry to copy. */
-export type CopyTarget = { kind: "username" } | { kind: "password" } | 
+export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "url" } | 
 /**  The Entry's TOTP code now. */
 { kind: "totp" } | 
 /**  A custom field, by its index in the Entry's custom fields. */
@@ -477,7 +483,6 @@ export type EntryDetail = {
 	rememberedAccess: RememberedAccessView[],
 	/**  The Groups from the top Group (the Vault) down to the Entry's. */
 	groupPath: string[],
-	inRecycleBin: boolean,
 	/**  Whether deleting it deletes it for good rather than moving it to the Recycle Bin. */
 	deletesForGood: boolean,
 } & EntrySummary;
@@ -549,6 +554,8 @@ export type EntrySummary = {
 	group: GroupId,
 	groupName: string,
 	vaultName: string,
+	/**  Whether it is in the Recycle Bin. */
+	inRecycleBin: boolean,
 };
 
 /**  A version of an Entry, without its password and protected custom fields. */

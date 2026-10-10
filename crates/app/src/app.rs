@@ -60,6 +60,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::entries::move_entry,
             commands::entries::delete_entry,
             commands::entries::forget_access,
+            commands::entries::open_entry_url,
             commands::history::get_entry_history,
             commands::history::reveal_version_password,
             commands::history::reveal_version_custom_field,

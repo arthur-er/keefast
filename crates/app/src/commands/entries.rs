@@ -14,12 +14,14 @@ use keefast_workspace::{self as ws, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use super::Core;
 use crate::dto::{
     Color, EntryId, GroupId, IconChoice, IconView, Scope, VaultId, icon_view, seconds, title_of,
 };
-use crate::error::{ApiError, ApiResult, describe_totp};
+use crate::error::{ApiError, ApiResult, ErrorKind, describe_totp};
 use crate::icon_protocol;
 
 /// The orders the Entry list sorts in. Text sorts A to Z ignoring case, dates newest first;
@@ -84,6 +86,8 @@ pub struct EntrySummary {
     pub group: GroupId,
     pub group_name: String,
     pub vault_name: String,
+    /// Whether it is in the Recycle Bin.
+    pub in_recycle_bin: bool,
 }
 
 /// A custom field. A protected value is left out until revealed.
@@ -164,7 +168,6 @@ pub struct EntryDetail {
     pub remembered_access: Vec<RememberedAccessView>,
     /// The Groups from the top Group (the Vault) down to the Entry's.
     pub group_path: Vec<String>,
-    pub in_recycle_bin: bool,
     /// Whether deleting it deletes it for good rather than moving it to the Recycle Bin.
     pub deletes_for_good: bool,
 }
@@ -328,6 +331,8 @@ pub(crate) fn summary(
             .map(|group| group.name().to_owned())
             .unwrap_or_default(),
         vault_name: open.display_name(),
+        in_recycle_bin: group
+            .is_some_and(|group| open.vault().is_group_in_recycle_bin(group.id()) == Ok(true)),
     }
 }
 
@@ -404,9 +409,6 @@ pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiRes
     core.read(|workspace| {
         let (open, found) = find(workspace, vault, &entry)?;
         let places = Places::of(open.vault());
-        let in_recycle_bin = places
-            .group(found.id())
-            .is_some_and(|group| open.vault().is_group_in_recycle_bin(group.id()) == Ok(true));
         Ok(EntryDetail {
             summary: summary(workspace, open, &places, found),
             raw_title: found.title().to_owned(),
@@ -439,7 +441,6 @@ pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiRes
                 })
                 .collect(),
             group_path: places.path(found.id()),
-            in_recycle_bin,
             deletes_for_good: open
                 .vault()
                 .deletes_entry_for_good(found.id())
@@ -556,4 +557,91 @@ pub async fn forget_access(
     let (vault, entry) = core
         .read(|workspace| Ok::<_, ApiError>((vault.resolve_open(workspace)?, entry.resolve()?)))?;
     core.edit(|workspace| workspace.forget_access(vault, entry, host.as_deref()))
+}
+
+/// Opens the Entry's URL in the user's browser. Only web addresses open: an address without a
+/// scheme, such as `github.com`, opens as `https://`, and any other scheme (`ssh:`, `file:`…) is
+/// refused, so a Vault file can't make keefast run something.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_entry_url(
+    app: AppHandle,
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+) -> ApiResult<()> {
+    let url = core.read(|workspace| {
+        let (_, found) = find(workspace, vault, &entry)?;
+        web_address(found.url()).ok_or_else(|| {
+            ApiError::invalid("keefast opens only web addresses, starting with http or https.")
+        })
+    })?;
+    app.opener().open_url(url, None::<&str>).map_err(|error| {
+        ApiError::new(ErrorKind::Unavailable, "The browser could not be opened.")
+            .with_detail(error.to_string())
+    })
+}
+
+/// The web address an Entry's URL is for, if it is one: an `http` or `https` URL as it is, and a
+/// bare host (perhaps with a port and path) over `https`.
+fn web_address(url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() || url.chars().any(char::is_whitespace) {
+        return None;
+    }
+    if let Some((scheme, rest)) = url.split_once("://") {
+        let web = scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https");
+        return (web && !rest.is_empty()).then(|| url.to_owned());
+    }
+    // `mailto:x`, `javascript:x`, `C:\x` have a scheme (or drive) without slashes; only a port
+    // may follow a bare host's colon.
+    let port_or_nothing = url
+        .split_once(':')
+        .is_none_or(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
+    port_or_nothing.then(|| format!("https://{url}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::web_address;
+
+    #[test]
+    fn web_addresses_open_as_they_are() {
+        assert_eq!(
+            web_address(" https://github.com/login "),
+            Some("https://github.com/login".to_owned())
+        );
+        assert_eq!(
+            web_address("HTTP://192.168.0.1"),
+            Some("HTTP://192.168.0.1".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_bare_host_opens_over_https() {
+        assert_eq!(
+            web_address("github.com"),
+            Some("https://github.com".to_owned())
+        );
+        assert_eq!(
+            web_address("example.com:8080/admin"),
+            Some("https://example.com:8080/admin".to_owned())
+        );
+    }
+
+    #[test]
+    fn other_schemes_and_anything_not_an_address_are_refused() {
+        for url in [
+            "",
+            "ssh://bastion.example",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:me@example.com",
+            "C:\\Windows",
+            "https://",
+            "two words",
+        ] {
+            assert_eq!(web_address(url), None, "{url}");
+        }
+    }
 }

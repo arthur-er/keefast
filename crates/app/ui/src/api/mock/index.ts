@@ -5,7 +5,8 @@
 // fails the way the real one does for the cases screens show (a wrong master key, a name taken).
 //
 // Driving it from the console or agent-browser, for states a screen must show:
-//   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed")
+//   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
+//     | "unlocked-none" | "closed")
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked. The unlock password is anything but "wrong".
@@ -183,7 +184,7 @@ function initialState(): MockState {
       browserIntegration: true,
       downloadFavicons: true,
       generator: structuredClone(DEFAULT_GENERATOR),
-      paneWidths: { sidebar: 232, entryList: 340 },
+      paneWidths: { sidebar: 232, entryList: 360 },
     },
     pendingLock: null,
     pendingPairing: null,
@@ -203,7 +204,8 @@ export type MockScene =
   | "lockUnsaved"
   | "merge"
   | "saveFailed"
-  | "unlocked-none";
+  | "unlocked-none"
+  | "closed";
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
@@ -342,6 +344,7 @@ export function createMockBackend(): Backend & {
       group: e.group,
       groupName: group(v, e.group).name,
       vaultName: v.name,
+      inRecycleBin: inBin(v, e.group),
     };
   }
 
@@ -630,7 +633,21 @@ export function createMockBackend(): Backend & {
         changed();
         return existing.id;
       }
-      const id = Math.max(...state.vaults.map((v) => v.id)) + 1;
+      // A fake Vault closed by the "closed" scene opens with its Entries again.
+      const reopened = fakeVaults().find((v) => v.location.path === location.path);
+      if (reopened && !state.vaults.some((v) => v.id === reopened.id)) {
+        state.vaults.push({ ...reopened, locked: false });
+        state.vaults.sort((x, y) => x.id - y.id);
+        state.recents = state.recents.filter((r) => r.path !== location.path);
+        state.view = { scope: { kind: "vault", vault: reopened.id }, entry: null };
+        changed();
+        return reopened.id;
+      }
+      if (location.path.includes("Old-2019")) {
+        // The prototype's missing Vault file.
+        throw new MockError("notFound", "The Vault file could not be found.");
+      }
+      const id = Math.max(-1, ...state.vaults.map((v) => v.id)) + 1;
       const name = locationView(location).name;
       state.vaults.push({
         id, name, location, locked: false,
@@ -650,7 +667,7 @@ export function createMockBackend(): Backend & {
         throw new MockError("alreadyOpen", "A Vault from this Vault file is open. Choose another file, or lock and reopen that Vault.");
       }
       await new Promise((resolve) => setTimeout(resolve, 600));
-      const id = Math.max(...state.vaults.map((v) => v.id)) + 1;
+      const id = Math.max(-1, ...state.vaults.map((v) => v.id)) + 1;
       const name = input.name.trim() || locationView({ provider: "local", path: input.path }).name;
       state.vaults.push({
         id, name, location: { provider: "local", path: input.path }, locked: false,
@@ -787,7 +804,6 @@ export function createMockBackend(): Backend & {
         historyCount: e.history.length,
         rememberedAccess: e.access,
         groupPath: groupPath(v, e.group),
-        inRecycleBin: inBin(v, e.group),
         deletesForGood: !v.recycleBin || inBin(v, e.group),
       };
     }),
@@ -831,6 +847,14 @@ export function createMockBackend(): Backend & {
       else v.entries = v.entries.filter((x) => x !== e);
       if (state.view.entry?.entry === entryId) state.view = { ...state.view, entry: null };
       edited(v);
+      return null;
+    }),
+    openEntryUrl: command((id, entryId) => {
+      const url = entryOf(id, entryId)[1].url.trim();
+      const web = /^https?:\/\/\S+$/i.test(url) || (/^[^\s:/]+(:\d+)?(\/\S*)?$/.test(url) && url !== "");
+      if (!web) throw new MockError("invalid", "keefast opens only web addresses, starting with http or https.");
+      // The mock doesn't open tabs: screenshots and tests would collect them.
+      console.info(`keefast mock: would open ${url} in the browser`);
       return null;
     }),
     forgetAccess: command((id, entryId, host) => {
@@ -943,6 +967,7 @@ export function createMockBackend(): Backend & {
       const text =
         field.kind === "username" ? e.username
         : field.kind === "password" ? e.password
+        : field.kind === "url" ? e.url
         : field.kind === "totp" ? (e.totp ? totpCode(e.totp).code : "")
         : (e.fields[field.index]?.value ?? "");
       if (!text) throw new MockError("empty", "That field is empty, so nothing was copied.");
@@ -1231,6 +1256,14 @@ export function createMockBackend(): Backend & {
         for (const v of state.vaults) v.locked = true;
         state.view = { scope: { kind: "allVaults" }, entry: null };
         break;
+      case "closed": {
+        // The prototype's Open a Vault story: Family locked, the others recent Vault files.
+        const closed = state.vaults.filter((v) => !v.locked);
+        state.vaults = state.vaults.filter((v) => v.locked);
+        state.recents = [...closed.map((v) => v.location), ...state.recents];
+        state.view = { scope: { kind: "allVaults" }, entry: null };
+        break;
+      }
     }
     changed();
   }

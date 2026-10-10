@@ -19,6 +19,7 @@ use crate::error::ApiResult;
 pub enum CopyTarget {
     Username,
     Password,
+    Url,
     /// The Entry's TOTP code now.
     Totp,
     /// A custom field, by its index in the Entry's custom fields.
@@ -48,6 +49,7 @@ pub async fn copy_field(
     let field = match field {
         CopyTarget::Username => CopyField::Username,
         CopyTarget::Password => CopyField::Password,
+        CopyTarget::Url => CopyField::Url,
         CopyTarget::Totp => CopyField::TotpCode,
         CopyTarget::CustomField { index } => CopyField::CustomField(index as usize),
     };

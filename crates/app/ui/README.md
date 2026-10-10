@@ -51,6 +51,7 @@ Production builds don't include it.
   __keefastMock.simulate("merge")       // a Merge notice
   __keefastMock.simulate("saveFailed")  // a failed save
   __keefastMock.simulate("unlocked-none") // every Vault locked: Open a Vault
+  __keefastMock.simulate("closed")      // Family locked, Personal and Work recent: Open a Vault B's story
   __keefastMock.reset()
   ```
 
