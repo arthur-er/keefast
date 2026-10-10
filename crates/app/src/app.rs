@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use keefast_plugins::PluginStore;
 use keefast_workspace::{
     Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons, LocalStorage,
     NativeMessagingHosts, OsSecretStore, Workspace,
@@ -89,6 +90,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::settings::set_browser_integration,
             commands::settings::set_download_favicons,
             commands::settings::set_pane_widths,
+            commands::plugins::list_plugins,
+            commands::plugins::choose_plugin_package,
+            commands::plugins::install_plugin,
+            commands::plugins::set_plugin_enabled,
+            commands::plugins::remove_plugin,
             commands::vault_settings::get_vault_settings,
             commands::vault_settings::change_vault_key,
             commands::vault_settings::set_default_access_policy,
@@ -212,6 +218,9 @@ pub fn run(args: Args) {
             builder.mount_events(app);
             let handle = app.handle().clone();
             let core = AppCore::new(workspace(), Box::new(TauriNotifier(handle.clone())), launch);
+            if let Some(store) = PluginStore::in_os_data_dir() {
+                core.use_plugin_store(store);
+            }
             app.manage(Arc::clone(&core));
             apply_window_theme(&handle, core.read(Workspace::theme));
             background::start(&core);

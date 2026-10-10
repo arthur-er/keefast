@@ -13,6 +13,7 @@ pub mod generator;
 pub mod groups;
 pub mod history;
 pub mod icons;
+pub mod plugins;
 pub mod settings;
 pub mod totp;
 pub mod vault_settings;

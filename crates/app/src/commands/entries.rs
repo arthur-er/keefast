@@ -543,7 +543,7 @@ pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiRes
             notes: found.notes().to_owned(),
             additional_urls: found.additional_urls().to_vec(),
             custom_fields: custom_field_views(found),
-            facets: facet_views(plugins, found.custom_fields()),
+            facets: facet_views(&plugins, found.custom_fields()),
             attachments: found
                 .attachments()
                 .iter()

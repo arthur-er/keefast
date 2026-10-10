@@ -7,7 +7,9 @@
 // Driving it from the console or agent-browser, for states a screen must show:
 //   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
-//     | "browserError" | "browserNone" | "browserServed" | "configError")
+//     | "browserError" | "browserNone" | "browserServed" | "configError"
+//     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
+//     | "plugin-cancel" | "plugins-installed")   (the Plugin scenes: ./plugin-store.ts)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
@@ -49,6 +51,7 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
 import { facetsOf } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
@@ -85,6 +88,9 @@ function command<Args extends unknown[], T>(
     } catch (error) {
       if (error instanceof MockError) {
         return { status: "error", error: { kind: error.kind, message: error.message, detail: null } };
+      }
+      if (error instanceof PluginRefusal) {
+        return { status: "error", error: { kind: "invalid", message: error.message, detail: error.detail } };
       }
       throw error;
     }
@@ -273,13 +279,15 @@ export type MockScene =
   | "browserError"
   | "browserNone"
   | "browserServed"
-  | "configError";
+  | "configError"
+  | PluginScene;
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
   reset(): void;
 } {
   let state = initialState();
+  let plugins = createMockPluginStore(changed);
   const listeners = new Map<keyof EventPayloads, Set<(event: { payload: never }) => void>>();
 
   function emit<Name extends keyof EventPayloads>(name: Name, payload: EventPayloads[Name]) {
@@ -724,6 +732,11 @@ export function createMockBackend(): Backend & {
       return { vault: v.id, group: g };
     }),
     defaultEncryption: command(() => structuredClone(DEFAULT_ENCRYPTION)),
+    listPlugins: command(() => plugins.list()),
+    choosePluginPackage: command(() => plugins.choose()),
+    installPlugin: command((path: string, digest: string) => plugins.install(path, digest)),
+    setPluginEnabled: command((id: string, enabled: boolean) => plugins.setEnabled(id, enabled)),
+    removePlugin: command((id: string) => plugins.remove(id)),
     chooseVaultFile: command(() => "~/Vaults/Picked.kdbx"),
     chooseKeyFile: command(() => "~/Vaults/Personal.keyx"),
     chooseNewVaultFile: command(() => "~/Vaults/New Vault.kdbx"),
@@ -907,7 +920,7 @@ export function createMockBackend(): Backend & {
         notes: e.notes,
         additionalUrls: [],
         customFields: fieldViews(e.fields),
-        facets: await facetsOf(e.fields),
+        facets: await facetsOf(e.fields, plugins.runs),
         attachments: e.attachments.map((a, index) => ({
           index,
           name: a.name,
@@ -1361,6 +1374,11 @@ export function createMockBackend(): Backend & {
   ) as unknown as Events;
 
   function simulate(scene: MockScene) {
+    if ((PLUGIN_SCENES as readonly string[]).includes(scene)) {
+      plugins.simulate(scene as PluginScene);
+      changed();
+      return;
+    }
     const open = readable();
     const first = open[0];
     switch (scene) {
@@ -1450,6 +1468,7 @@ export function createMockBackend(): Backend & {
     simulate,
     reset() {
       state = initialState();
+      plugins = createMockPluginStore(changed);
       changed();
     },
   };

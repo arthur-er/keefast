@@ -54,11 +54,13 @@ function hooksOf(id: string): Promise<PluginHooks> {
   return hooks;
 }
 
-/** The facets an Entry with these custom fields has, labelled by their Plugins. */
-export async function facetsOf(fields: readonly MockField[]): Promise<FacetView[]> {
+/** The facets an Entry with these custom fields has, labelled by their Plugins: those of the
+ * Plugins that `runs` (a disabled one finds none). */
+export async function facetsOf(fields: readonly MockField[], runs: (id: string) => boolean = () => true): Promise<FacetView[]> {
   const indexOf = (name: string) => fields.findIndex((field) => field.name === name);
   const found: FacetView[] = [];
   for (const { manifest } of bundledPlugins) {
+    if (!runs(manifest.id)) continue;
     for (const facet of manifest.contributions.facets) {
       if (!facet.detect.fields.every((name) => indexOf(name) >= 0)) continue;
       const indexes = facet.fields.map((owned) => indexOf(owned.name));

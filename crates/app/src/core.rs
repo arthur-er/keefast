@@ -6,10 +6,10 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard};
 use std::thread;
 
-use keefast_plugins::PluginHost;
+use keefast_plugins::{PluginHost, PluginStore};
 use keefast_workspace::{
     Clipboard, EditVaultError, Outgoing, PendingFavicon, PendingSave, VaultId, Workspace,
 };
@@ -52,8 +52,10 @@ pub struct AppCore {
     /// Counts copies, so only the latest copy's clipboard timer keeps running.
     copies: AtomicU64,
     launch: Launch,
-    /// The Plugins keefast runs: for now, the ones compiled in.
-    plugins: PluginHost,
+    /// The Plugins keefast runs: the enabled ones of `plugin_store`.
+    plugins: RwLock<PluginHost>,
+    /// The installed Plugins, and what the user agreed to for each. Locked before `plugins`.
+    plugin_store: Mutex<PluginStore>,
 }
 
 /// The browser requests waiting for the user, by number: the one put to the user now of each
@@ -119,16 +121,54 @@ impl AppCore {
             shown_requests: Mutex::new(Requests::default()),
             copies: AtomicU64::new(0),
             launch,
-            plugins: PluginHost::bundled(),
+            plugins: RwLock::new(PluginHost::bundled()),
+            plugin_store: Mutex::new(PluginStore::bundled_only()),
         })
+    }
+
+    /// Runs the Plugins installed in `store` from now on, in place of keefast's own alone.
+    pub fn use_plugin_store(&self, mut store: PluginStore) {
+        let mut host = PluginHost::new();
+        store.load(&mut host);
+        let mut current = self.plugin_store();
+        *current = store;
+        *self.plugins.write().unwrap_or_else(PoisonError::into_inner) = host;
+    }
+
+    fn plugin_store(&self) -> MutexGuard<'_, PluginStore> {
+        // Changes to the store are made whole or not at all: go on after a panic.
+        self.plugin_store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn launch(&self) -> &Launch {
         &self.launch
     }
 
-    pub fn plugins(&self) -> &PluginHost {
-        &self.plugins
+    pub fn plugins(&self) -> RwLockReadGuard<'_, PluginHost> {
+        self.plugins.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Reads the installed Plugins.
+    pub fn read_plugins<R>(&self, read: impl FnOnce(&PluginStore, &PluginHost) -> R) -> R {
+        let store = self.plugin_store();
+        read(&store, &self.plugins())
+    }
+
+    /// Installs, enables, disables or removes Plugins, then tells the UI, whose Entries may now
+    /// have facets they hadn't, or lack ones they had.
+    pub fn change_plugins<R>(
+        &self,
+        change: impl FnOnce(&mut PluginStore, &mut PluginHost) -> R,
+    ) -> R {
+        let result = {
+            let mut store = self.plugin_store();
+            let mut host = self.plugins.write().unwrap_or_else(PoisonError::into_inner);
+            change(&mut store, &mut host)
+        };
+        self.update(|_| ());
+        result
     }
 
     /// The revision the UI was last told about.

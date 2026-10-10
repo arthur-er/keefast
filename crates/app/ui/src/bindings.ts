@@ -226,6 +226,43 @@ export const commands = {
 	setDownloadFavicons: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_download_favicons", { enabled })),
 	/**  Remembers how wide the panes are. Changes nothing else, so the UI isn't told. */
 	setPaneWidths: (widths: PaneWidthsView) => typedError<null, ApiError>(__TAURI_INVOKE("set_pane_widths", { widths })),
+	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
+	/**
+	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
+	 *  chose none. Installs nothing. A package keefast would refuse fails here, with why.
+	 */
+	choosePluginPackage: () => typedError<{
+	/**  The package file, for `install_plugin`. */
+	path: string,
+	/**  Names exactly this package, for `install_plugin`. */
+	digest: string,
+	id: string,
+	name: string,
+	version: string,
+	publisher: PluginPublisher,
+	/**
+	 *  keefast hasn't seen this publisher key before, and will trust it from now on for this
+	 *  Plugin's updates.
+	 */
+	newKey: boolean,
+	/**  The version installed now, if this is an update. */
+	installedVersion: string | null,
+	capabilities: PluginCapability[],
+	ownedFields: string[],
+	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
+	newCapabilities: PluginCapability[],
+	newOwnedFields: string[],
+	icon: string | null,
+} | null, ApiError>(__TAURI_INVOKE("choose_plugin_package")),
+	/**
+	 *  Installs the package `choose_plugin_package` showed, or updates the installed Plugin to it,
+	 *  if it is still the package with `digest`.
+	 */
+	installPlugin: (path: string, digest: string) => typedError<null, ApiError>(__TAURI_INVOKE("install_plugin", { path, digest })),
+	/**  Enables or disables a Plugin. A disabled Plugin's data shows as ordinary custom fields. */
+	setPluginEnabled: (id: string, enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_plugin_enabled", { id, enabled })),
+	/**  Removes an installed Plugin. The data it kept stays in the Vaults as ordinary custom fields. */
+	removePlugin: (id: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_plugin", { id })),
 	getVaultSettings: (vault: VaultId) => typedError<VaultSettings, ApiError>(__TAURI_INVOKE("get_vault_settings", { vault })),
 	/**
 	 *  Gives the Vault a new master key, if one is given, and the encryption, and saves it now. The
@@ -867,6 +904,76 @@ export type PendingPairing = {
 	id: RequestId,
 	vault: VaultId,
 	vaultName: string,
+};
+
+/**  Something a Plugin may do, granted when it is installed. Its Owned fields are listed apart. */
+export type PluginCapability = 
+/**  Its hooks see the protected values of its Owned fields, to label them. */
+"readProtected" | 
+/**  The user can copy its Owned fields. */
+"copy";
+
+export type PluginList = {
+	/**  keefast's own first, then the installed ones by name. */
+	plugins: PluginView[],
+	/**  Why the installed Plugins couldn't be read, if they couldn't. */
+	error: string | null,
+};
+
+/**  What installing a package would do, for the user to agree to. */
+export type PluginOffer = {
+	/**  The package file, for `install_plugin`. */
+	path: string,
+	/**  Names exactly this package, for `install_plugin`. */
+	digest: string,
+	id: string,
+	name: string,
+	version: string,
+	publisher: PluginPublisher,
+	/**
+	 *  keefast hasn't seen this publisher key before, and will trust it from now on for this
+	 *  Plugin's updates.
+	 */
+	newKey: boolean,
+	/**  The version installed now, if this is an update. */
+	installedVersion: string | null,
+	capabilities: PluginCapability[],
+	ownedFields: string[],
+	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
+	newCapabilities: PluginCapability[],
+	newOwnedFields: string[],
+	icon: string | null,
+};
+
+/**  Who made a Plugin, as far as keefast can tell. */
+export type PluginPublisher = 
+/**  keefast itself. */
+{ kind: "keefast" } | 
+/**
+ *  The name the Plugin gives, which keefast can't check, and its key's fingerprint
+ *  (`3F2A 91C0 7B1E 44D2`).
+ */
+{ kind: "unverified"; name: string; fingerprint: string };
+
+export type PluginView = {
+	id: string,
+	name: string,
+	/**  `None` when its package can't be read any more. */
+	version: string | null,
+	publisher: PluginPublisher,
+	/**  Comes with keefast: it can be disabled, not removed. */
+	bundled: boolean,
+	enabled: boolean,
+	/**  Enabled, and running. */
+	running: boolean,
+	/**  The Plugin capabilities the user agreed to. */
+	capabilities: PluginCapability[],
+	/**  The custom fields it owns. */
+	ownedFields: string[],
+	/**  Its icon, as a `data:` URL. */
+	icon: string | null,
+	/**  Why it doesn't run though enabled. */
+	problem: string | null,
 };
 
 /**  How an attachment can be shown. */
