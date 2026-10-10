@@ -11,15 +11,16 @@
 //   and detail, or General / Vault settings C (6/7), which replace them and keep the sidebar.
 //   `openSettings(section)` and `openVaultSettings(vault)` go there; `showBrowser()` comes back.
 // - **Overlays.** `overlay` floats over the shell, one at a time: the command palette A (4/7),
-//   confirmations, an attachment's preview. Add a kind to `Overlay` and render it in
-//   `shell/Overlays.tsx`. Browser requests and the lock prompt are separate (`PendingRequests`):
-//   the backend asks for them. Popovers (generator, menus) anchor to their trigger instead.
+//   confirmations (`delete` for deleting for good), an attachment's preview. Add a kind to
+//   `Overlay` and render it in `shell/Overlays.tsx`. Browser requests and the lock prompt are
+//   separate (`screens/dialogs/RequestDialogs.tsx`): the backend asks for them, and they show
+//   over everything. Popovers (generator, menus) anchor to their trigger instead.
 // - **Open a Vault.** `openVault` replaces the whole window with Open a Vault B; `new` is its
 //   New Vault state (5/7).
 
 import { createContext, type ReactNode, useContext, useMemo, useReducer } from "react";
 
-import type { MergeNotice, SortOrder, VaultId } from "@/bindings";
+import type { EntryId, GroupId, MergeNotice, SortOrder, VaultId } from "@/bindings";
 
 export type Page =
   | { kind: "browser" }
@@ -45,7 +46,15 @@ export interface AttachmentOverlay {
   name: string;
 }
 
-export type Overlay = { kind: "palette" } | ConfirmOverlay | AttachmentOverlay;
+/** Confirms A's delete dialog, for an Entry or Group that deleting would delete for good
+ * (`screens/dialogs/DeleteDialog.tsx`). */
+export interface DeleteOverlay {
+  kind: "delete";
+  vault: VaultId;
+  item: { kind: "entry"; entry: EntryId } | { kind: "group"; group: GroupId };
+}
+
+export type Overlay = { kind: "palette" } | ConfirmOverlay | AttachmentOverlay | DeleteOverlay;
 
 export type OpenVaultMode = "unlock" | "new";
 

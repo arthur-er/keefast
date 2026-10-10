@@ -13,6 +13,7 @@ import type { Color, GroupNode, Scope, VaultSummary } from "@/bindings";
 import { useEntries, useGroups, useWorkspace } from "@/api/queries";
 import { colorVar, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast, Tooltip } from "@/kit";
 import { cn } from "@/lib/utils";
+import { GroupContextMenu, useDeleteGroupCommand } from "@/screens/dialogs/GroupActions";
 
 import { useCurrentVault } from "./hooks";
 import { useShell } from "./state";
@@ -29,6 +30,7 @@ const TAGS_SHOWN = 6;
 
 export function Sidebar() {
   const vault = useCurrentVault();
+  useDeleteGroupCommand();
   return (
     <aside className="vb-side" aria-label="Vaults">
       <div className="pt-1">{vault && <VaultSwitcher current={vault} />}</div>
@@ -234,16 +236,18 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
     </Tooltip>
   ) : null;
   return (
-    <div onDoubleClick={() => actions.renameGroup(`${vault}:${group.id}`)}>
-      <NavItem
-        scope={{ kind: "group", vault, group: group.id }}
-        icon={<Folder />}
-        label={group.name}
-        count={group.totalEntries || ""}
-        depth={depth}
-        extra={mark}
-      />
-    </div>
+    <GroupContextMenu vault={vault} group={group}>
+      <div onDoubleClick={() => actions.renameGroup(`${vault}:${group.id}`)}>
+        <NavItem
+          scope={{ kind: "group", vault, group: group.id }}
+          icon={<Folder />}
+          label={group.name}
+          count={group.totalEntries || ""}
+          depth={depth}
+          extra={mark}
+        />
+      </div>
+    </GroupContextMenu>
   );
 }
 
