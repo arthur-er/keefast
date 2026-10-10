@@ -6,7 +6,7 @@ over a mock backend with fake Vaults.
 
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
 PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
-and Vault browser C, and Open a Vault B. The browsers' requests and the lock prompt
+and Vault browser C, Open a Vault B, Entry editor A, Password generator A and TOTP B. The browsers' requests and the lock prompt
 (`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
 
 ## Commands
@@ -118,6 +118,9 @@ src/
   screens/
     vault-browser/     the Entry list and the tabbed Entry detail, and a locked Vault's card
     open-vault/        Open a Vault B
+    entry-editor/      Entry editor A: an Entry (or a new one) edited in place in the detail area
+    password-generator/  Password generator A, the popover on the password field
+    totp/              TOTP B: the live code as a field, and its setup expanding inline
     PendingRequests.tsx  browser requests and the lock prompt (plain until dialogs A)
 ```
 
