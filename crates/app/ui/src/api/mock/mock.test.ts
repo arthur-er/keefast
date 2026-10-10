@@ -54,4 +54,16 @@ describe("mock backend", () => {
     expect((await api.getWorkspace()).pendingPairing).toBeNull();
     expect((await api.getVaultSettings(pairing.vault)).pairings).toContain("Firefox at home");
   });
+
+  it("shows browser integration failing until it is turned on again", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    mock.simulate("browserError");
+    expect((await api.getSettings()).browser).toMatchObject({ enabled: true, error: true });
+    await api.setBrowserIntegration(true);
+    expect((await api.getSettings()).browser).toMatchObject({ error: false, browsers: ["Chrome", "Brave"] });
+    mock.simulate("configError");
+    expect((await api.getSettings()).configError).toContain("Permission denied");
+    expect((await api.getWorkspace()).configError).toContain("Permission denied");
+  });
 });

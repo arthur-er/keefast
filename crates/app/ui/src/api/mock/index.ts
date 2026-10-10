@@ -6,7 +6,8 @@
 //
 // Driving it from the console or agent-browser, for states a screen must show:
 //   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
-//     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error")
+//     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
+//     | "browserError" | "browserNone" | "browserServed" | "configError")
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
@@ -188,6 +189,19 @@ function generate(options: GeneratorOptions): string {
   return out.join("");
 }
 
+/** Where browser integration stands, as `get_settings` says it, by how registering went. */
+const BROWSER_STATUS: Record<MockState["browserHosts"], AppSettings["browser"]> = {
+  ok: { enabled: true, message: "Set up for Chrome, Brave", error: false, browsers: ["Chrome", "Brave"] },
+  failed: {
+    enabled: true,
+    message: "Browser integration could not be set up: Permission denied (os error 13)",
+    error: true,
+    browsers: [],
+  },
+  none: { enabled: true, message: "No supported browser found (Chrome, Chromium, Brave, Edge, Vivaldi).", error: false, browsers: [] },
+  served: { enabled: true, message: "Another keefast is already serving the browser.", error: true, browsers: [] },
+};
+
 interface MockState {
   vaults: MockVault[];
   recents: Location[];
@@ -204,6 +218,10 @@ interface MockState {
   dropboxConnecting: (() => void) | null;
   /** Vaults' encryption, once changed from the default. */
   encryption: Map<number, EncryptionSettings>;
+  /** How registering the browsers' native host went, while browser integration is on. */
+  browserHosts: "ok" | "failed" | "none" | "served";
+  /** Why the app config couldn't be read or saved. */
+  configError: string | null;
   nextId: number;
 }
 
@@ -232,6 +250,8 @@ function initialState(): MockState {
     dropboxAccount: { name: "Arthur Rezende", email: "arthur-er@protonmail.com" },
     dropboxConnecting: null,
     encryption: new Map(),
+    browserHosts: "ok",
+    configError: null,
     nextId: 100,
   };
 }
@@ -248,7 +268,11 @@ export type MockScene =
   | "closed"
   | "dropbox-disconnected"
   | "sync-offline"
-  | "sync-error";
+  | "sync-error"
+  | "browserError"
+  | "browserNone"
+  | "browserServed"
+  | "configError";
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
@@ -581,7 +605,7 @@ export function createMockBackend(): Backend & {
       },
       clipboardClearsIn: state.clipboardClearsAt === null ? null : Math.max(0, state.clipboardClearsAt - Date.now() / 1000),
       dropboxAvailable: true,
-      configError: null,
+      configError: state.configError,
     };
   }
 
@@ -1062,10 +1086,8 @@ export function createMockBackend(): Backend & {
       const { browserIntegration, ...settings } = state.settings;
       return {
         ...structuredClone(settings),
-        browser: browserIntegration
-          ? { enabled: true, message: "Set up for Chrome, Brave", error: false, browsers: ["Chrome", "Brave"] }
-          : { enabled: false, message: null, error: false, browsers: [] },
-        configError: null,
+        browser: browserIntegration ? BROWSER_STATUS[state.browserHosts] : { enabled: false, message: null, error: false, browsers: [] },
+        configError: state.configError,
       };
     }),
     setTheme: command((theme) => {
@@ -1095,6 +1117,8 @@ export function createMockBackend(): Backend & {
     }),
     setBrowserIntegration: command((enabled) => {
       state.settings.browserIntegration = enabled;
+      // Turned on again, the native host registers anew: as the real one, it works this time.
+      if (enabled) state.browserHosts = "ok";
       changed();
       return null;
     }),
@@ -1350,6 +1374,18 @@ export function createMockBackend(): Backend & {
       case "sync-offline":
       case "sync-error":
         for (const v of state.vaults) if (v.sync) v.sync = scene === "sync-offline" ? "offline" : "error";
+        break;
+      case "browserError":
+        state.browserHosts = "failed";
+        break;
+      case "browserNone":
+        state.browserHosts = "none";
+        break;
+      case "browserServed":
+        state.browserHosts = "served";
+        break;
+      case "configError":
+        state.configError = "could not write ~/.config/keefast/config.json: Permission denied (os error 13)";
         break;
       case "closed": {
         // The prototype's Open a Vault story: Family locked, the others recent Vault files.
