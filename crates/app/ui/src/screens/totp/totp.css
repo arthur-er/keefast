@@ -1,0 +1,49 @@
+/* TOTP B: TOTP as a field, its setup expanding inline under it, from the prototype
+ * (screens/totp.html, "TOTP code", "Setup form" and variant B). */
+
+@layer components {
+  .tt-live { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .tt-code { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; display: inline-flex; gap: 0.45em; color: var(--fg-0); font-size: 14px; }
+  .tt-secs { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; min-width: 28px; }
+  .tt-live.is-low .tt-code, .tt-live.is-low .tt-secs, .tt-prev.is-low .tt-secs { color: var(--warn); }
+  .tt-live.is-low .ring, .tt-prev.is-low .ring { background: conic-gradient(var(--warn) calc(var(--p) * 360deg), var(--border-strong) 0); }
+  .tt-row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 3px 0 9px; border-radius: var(--r-sm); }
+  .tt-row.is-open { background: var(--bg-hover); }
+  .tt-row .btn.is-on { color: var(--accent-fg); background: var(--accent-bg); }
+  .tt-setup-row { all: unset; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: var(--r-sm); color: var(--fg-2); font-size: var(--text-md); cursor: default; }
+  .tt-setup-row:hover, .tt-setup-row:focus-visible { color: var(--fg-0); background: var(--bg-hover); }
+  .tt-setup-row svg.lucide { width: 14px; height: 14px; }
+
+  .ix { margin: 6px 0 8px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--bg-1); overflow: hidden; animation: ix-open var(--dur) var(--ease); }
+  @keyframes ix-open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .ix-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px 0; }
+  .ix-head h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+  .ix-body { padding: 12px 16px 16px; }
+  .ix-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg-inset); }
+
+  .tf { display: flex; flex-direction: column; gap: 14px; }
+  .tf .field { gap: 6px; }
+  .tf-grid { display: grid; grid-template-columns: 88px 120px 1fr; gap: 12px; align-items: start; }
+  .tf .seg { width: 100%; display: flex; box-sizing: border-box; }
+  .tf .seg > button { flex: 1; justify-content: center; height: 26px; }
+  .tf .is-off { opacity: 0.5; pointer-events: none; }
+  .tf .error-msg { display: flex; align-items: center; gap: 6px; }
+  .tf .error-msg svg.lucide { width: 13px; height: 13px; flex: none; }
+  .tf-uri { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--accent-bg); color: var(--accent-fg); font-size: var(--text-sm); }
+  .tf-uri b { font-weight: 600; }
+  .tf-uri svg.lucide { width: 13px; height: 13px; flex: none; }
+  .tt-prev { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); }
+  .tt-prev .tt-code { font-size: 20px; }
+  .tt-prev .lbl { font-size: var(--text-sm); color: var(--fg-2); }
+  .tt-prev.is-empty { color: var(--fg-2); font-size: var(--text-sm); }
+  .tt-prev.is-empty svg.lucide { width: 14px; height: 14px; }
+  .tt-prev .ring { width: 18px; height: 18px; -webkit-mask: radial-gradient(circle, transparent 5.5px, #000 6px); mask: radial-gradient(circle, transparent 5.5px, #000 6px); }
+
+  /* In Vault browser C's quick tiles */
+  .C-qt .tt-tile-btn { position: absolute; right: 6px; bottom: 6px; }
+  .C-qt .tt-tile-btn.is-on { color: var(--accent-fg); background: var(--accent-bg); }
+  .C-qt.is-setup.is-action:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+  .C-qt.is-setup.is-action:hover .v { color: var(--fg-0); }
+  .C-qt.is-open { border-color: var(--accent); }
+  .C-insp-top .ix { margin: 8px 0 0; }
+}

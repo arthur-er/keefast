@@ -1180,11 +1180,23 @@ export function createMockBackend(): Backend & {
   function parseTotp(setup: TotpSetup): MockTotp {
     const text = setup.secretOrUri.trim();
     if (!text) throw new MockError("invalid", "Enter the secret key or otpauth:// URI.");
-    if (text.startsWith("otpauth://")) {
-      const url = new URL(text);
+    if (/^otpauth:\/\//i.test(text)) {
+      let url: URL;
+      try {
+        url = new URL(text);
+      } catch {
+        throw new MockError("invalid", "This isn't an otpauth://totp/ URI.");
+      }
+      if (url.host.toLowerCase() !== "totp") throw new MockError("invalid", "This isn't an otpauth://totp/ URI.");
       const secret = url.searchParams.get("secret");
       if (!secret) throw new MockError("invalid", "Enter the secret key or otpauth:// URI.");
-      return { secret, algorithm: "sha1", digits: Number(url.searchParams.get("digits") ?? 6), period: Number(url.searchParams.get("period") ?? 30) };
+      const algorithm = (url.searchParams.get("algorithm") ?? "sha1").toLowerCase().replace("-", "");
+      return {
+        secret,
+        algorithm: algorithm === "sha256" || algorithm === "sha512" ? algorithm : "sha1",
+        digits: Number(url.searchParams.get("digits") ?? 6),
+        period: Number(url.searchParams.get("period") ?? 30),
+      };
     }
     if (!/^[A-Za-z2-7\s-]+=*$/.test(text)) {
       throw new MockError("invalid", "The secret key isn't valid: use the letters A–Z and digits 2–7.");
