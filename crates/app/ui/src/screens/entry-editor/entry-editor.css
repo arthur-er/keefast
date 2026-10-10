@@ -74,7 +74,7 @@
   .gi:hover { background: var(--bg-hover); border-color: var(--border-strong); }
   .gi:focus { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
   .gi.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
-  textarea.gi { height: auto; min-height: 64px; padding: 6px 8px; line-height: 1.5; resize: none; white-space: pre-wrap; field-sizing: content; max-height: 320px; overflow: auto; }
+  textarea.gi { height: auto; min-height: 64px; padding: 6px 8px; line-height: 1.5; resize: none; white-space: pre-wrap; field-sizing: content; max-height: 320px; overflow: hidden auto; }
   .gi-group { display: flex; align-items: center; gap: 2px; height: 30px; min-width: 0; padding: 0 3px 0 0; border: 1px solid var(--border); border-radius: var(--r-sm); transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
   .gi-group:hover { background: var(--bg-hover); border-color: var(--border-strong); }
   .gi-group:focus-within, .gi-group.is-open { background: var(--bg-1); border-color: var(--accent); box-shadow: var(--ring); }
