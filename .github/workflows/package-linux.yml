@@ -28,16 +28,35 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install GPUI system libraries and the smoke check's displays
+      - name: Install Tauri's system libraries, the bundler's tools and the smoke check's displays
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libfontconfig-dev libfreetype-dev libvulkan-dev \
-            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            mesa-vulkan-drivers xvfb sway
+            pkg-config libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev \
+            libdbus-1-dev libssl-dev file xdg-utils patchelf \
+            xvfb sway
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: crates/app/ui/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: crates/app/ui/pnpm-lock.yaml
+
+      - name: Build the web UI
+        working-directory: crates/app/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Install Tauri's CLI, which makes the AppImage
+        run: cargo install tauri-cli --version "^2.12" --locked
 
       - name: Build
-        run: cargo build --release --locked -p keefast -p keefast-native-host
+        run: cargo build --release --locked -p keefast -p keefast-native-host --features keefast/custom-protocol
 
       - name: Package
         run: scripts/package-linux.sh target/release dist

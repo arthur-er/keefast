@@ -253,7 +253,10 @@ mod tests {
             std::fs::write(&committed, &fresh).unwrap();
             return;
         }
-        let committed = std::fs::read_to_string(&committed).unwrap_or_default();
+        // A Windows checkout may have turned the file's line endings into CRLF.
+        let committed = std::fs::read_to_string(&committed)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert!(
             committed == fresh,
             "crates/app/ui/src/bindings.ts is out of date: run `pnpm bindings` in crates/app/ui"

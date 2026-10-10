@@ -25,23 +25,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install GPUI system libraries
+      - name: Install Tauri's system libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libfontconfig-dev libfreetype-dev libvulkan-dev \
-            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
-
-      # GPUI compiles its HLSL shaders with fxc.exe from the Windows SDK.
-      - name: Locate fxc.exe
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
-          "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
+            pkg-config libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev \
+            libdbus-1-dev libssl-dev
 
       - name: Format
         run: cargo fmt --all --check
@@ -49,8 +39,51 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # Includes the check that crates/app/ui/src/bindings.ts matches the commands, DTOs and
+      # events (`bindings_are_up_to_date`).
       - name: Test
         run: cargo test --workspace --locked
+
+  ui:
+    name: Desktop app's web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/app/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pnpm version comes from the UI's package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: crates/app/ui/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: crates/app/ui/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # The mock backend in a plain browser, for trying a change to the UI without Rust.
+      - name: Build with the mock backend
+        run: pnpm build:mock
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keefast-ui-mock
+          path: crates/app/ui/dist-mock
+          if-no-files-found: error
 
   nix:
     name: Nix package

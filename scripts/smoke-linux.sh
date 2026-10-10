@@ -6,7 +6,7 @@
 #
 #   scripts/smoke-linux.sh <keefast binary or AppImage> [screenshot dir]
 #
-# Needs Xvfb, sway and a Vulkan driver (Mesa's lavapipe will do). With a screenshot dir, it
+# Needs Xvfb and sway; WebKitGTK renders in software there. With a screenshot dir, it
 # also saves x11.png and wayland.png there (needs xdotool, ImageMagick's `import` and grim).
 set -euo pipefail
 
@@ -60,7 +60,7 @@ pids+=($!)
 for _ in $(seq 50); do [[ -e "/tmp/.X11-unix/X$display" ]] && break; sleep 0.1; done
 check X11 -u WAYLAND_DISPLAY DISPLAY=":$display"
 if [[ -n "$shots" ]]; then
-  # With no window manager, keefast paints its first frame on the first input event.
+  # With no window manager, give the window an input event before the screenshot.
   DISPLAY=":$display" xdotool mousemove 640 400
   sleep 2
   import -display ":$display" -window root "$shots/x11.png"
@@ -85,7 +85,7 @@ if timeout 5 "$host" chrome-extension://smoke/ </dev/null >/dev/null 2>"$work/ho
 fi
 echo "keefast registered its native host at $host"
 
-# Sway rather than Weston: GPUI needs a seat, which headless Weston doesn't have.
+# Sway rather than Weston: GTK needs a seat, which headless Weston doesn't have.
 printf 'output HEADLESS-1 resolution 1280x800\n' >"$work/sway.config"
 WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
   sway --config "$work/sway.config" >"$work/sway.log" 2>&1 &
