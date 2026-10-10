@@ -1,0 +1,98 @@
+/* The app shell: Vault browser C's sidebar, the toolbar and the Merge notice, from the prototype
+ * (screens/vault-browser.html, "Shell", "Sidebar", "Toolbar", "Merge notice" and variant C). */
+
+@layer components {
+  .vb { display: flex; height: 100%; position: relative; }
+  .vb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+  .vb-panes { flex: 1; min-height: 0; display: flex; position: relative; }
+
+  /* The kit's rows as buttons: no button look, so their own hover and selection show. */
+  button.nav-item, button.menu-item, button.C-switch, button.vb-color { border: 0; background: transparent; }
+  button.menu-item:disabled { opacity: 0.45; }
+
+  /* Sidebar */
+  .vb-side { width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--bg-sidebar); border-right: 1px solid var(--border); min-height: 0; }
+  .vb-side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+  .vb-side-scroll::-webkit-scrollbar { width: 6px; }
+  .vb-side .nav-section { padding: 2px 8px; }
+  .vb-side .nav-section + .nav-section { margin-top: 10px; }
+  .vb-side .nav-item { gap: 8px; }
+  .vb-side .nav-item .count { min-width: 14px; text-align: right; }
+  .vb-nav-vault { color: var(--fg-0); }
+  .vb-nav-vault .vb-vault-ico { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+  .vb-nav-vault .vb-vault-ico svg.lucide { width: 11px; height: 11px; stroke-width: 2; }
+  .vb-sync { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 450; margin-left: auto; white-space: nowrap; }
+  .vb-nav-locked { color: var(--fg-2); }
+  .vb-nav-locked svg.lucide { color: var(--fg-2); }
+  .vb-tree .nav-item svg.lucide { color: var(--fg-2); }
+  .vb-tree .nav-item.is-selected svg.lucide { color: var(--fg-1); }
+  .vb-bmark { display: inline-grid; place-items: center; color: var(--accent-fg); margin-left: -2px; }
+  .vb-bmark svg.lucide { width: 12px !important; height: 12px !important; color: var(--accent-fg) !important; }
+  .vb-colors { display: flex; gap: 2px; padding: 2px 4px; }
+  .vb-color { width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center; cursor: default; }
+  .vb-color:hover { background: var(--bg-hover); }
+  .vb-color.is-selected { background: var(--bg-active); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .vb-color .dot { width: 10px; height: 10px; }
+  .vb-side-bottom { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; }
+  .vb-side-foot { flex: none; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; border-top: 1px solid var(--border); }
+  .vb-side-foot .btn.ghost { color: var(--fg-1); }
+  .nav-head .btn { margin-left: auto; }
+  .vb-more { color: var(--fg-2); font-weight: 450; }
+  .vb-rename { all: unset; flex: 1; min-width: 0; height: 22px; margin: 0 -4px; padding: 0 4px; border-radius: 4px; box-shadow: var(--ring); background: var(--bg-1); color: var(--fg-0); }
+
+  /* Vault switcher */
+  .C-switch { display: flex; align-items: center; gap: 10px; height: 44px; margin: 0 8px; padding: 0 8px; border-radius: var(--r-sm); cursor: default; width: calc(100% - 16px); text-align: left; }
+  .C-switch:hover, .C-switch[data-state="open"] { background: var(--bg-hover); }
+  .C-switch:focus-visible { outline: none; box-shadow: var(--ring); }
+  .C-switch .vb-vault-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-bg); color: var(--accent-fg); flex: none; }
+  .C-switch .vb-vault-ico svg.lucide { width: 13px; height: 13px; }
+  .C-switch .name { font-weight: 600; }
+  .C-switch .file { font-size: var(--text-xs); color: var(--fg-2); }
+  .C-switch > svg.lucide { margin-left: auto; color: var(--fg-2); width: 14px; height: 14px; }
+  .vb-menu-check { margin-left: auto; color: var(--accent-fg); }
+  .menu-item .vb-menu-check svg.lucide, .menu-item svg.lucide.vb-menu-check { color: var(--accent-fg); width: 14px; height: 14px; }
+  .menu-item .sub { margin-left: auto; color: var(--fg-2); font-size: var(--text-sm); }
+
+  /* Pane edges: drag to resize, double-click for the default width */
+  .vb-edge { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; z-index: 5; cursor: ew-resize; }
+  .vb-edge:hover, .vb-edge.is-dragging { background: var(--border); }
+
+  /* Toolbar */
+  .vb .toolbar { height: var(--toolbar-h); gap: 6px; padding: 0 10px 0 16px; }
+  .vb .crumbs svg.lucide { color: var(--fg-2); width: 14px; height: 14px; }
+  .vb .crumbs .sep { color: var(--fg-2); }
+  .vb .crumbs .dot { width: 8px; height: 8px; }
+  .vb-status { all: unset; display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 8px; border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-1); cursor: default; white-space: nowrap; }
+  .vb-status:hover, .vb-status[data-state="open"] { background: var(--bg-hover); color: var(--fg-0); }
+  .vb-status:focus-visible { box-shadow: var(--ring); }
+  .status-dot.warn { background: var(--warn); }
+  .status-dot.failed { background: var(--danger); }
+  .status-dot.busy { background: var(--fg-2); animation: vb-pulse 1s ease-in-out infinite; }
+  .status-dot.locked { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
+  .vb-status.is-failed { color: var(--danger); }
+  .vb-status.is-warn { color: var(--warn); }
+  @keyframes vb-pulse { 50% { opacity: 0.3; } }
+  .vb-spin { animation: vb-spin 0.9s linear infinite; }
+  @keyframes vb-spin { to { transform: rotate(360deg); } }
+  .vb-status-pop { width: 340px; padding: 4px; }
+  .vb-status-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 5px; }
+  .vb-status-row .name { font-weight: 500; }
+  .vb-status-row .file { font-size: var(--text-xs); color: var(--fg-2); font-family: var(--font-mono); }
+  .vb-status-row .tile { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+
+  /* Merge notice */
+  .vb-merge { flex: none; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-1); font-size: var(--text-sm); color: var(--fg-1); animation: kf-fade var(--dur) var(--ease); }
+  .vb-merge > svg.lucide { color: var(--accent-fg); width: 14px; height: 14px; }
+  .vb-merge b { color: var(--fg-0); font-weight: 500; }
+  .vb-merge .btn.sm { height: 24px; }
+
+  /* Empty states */
+  .vb-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-1); text-align: center; padding: 24px; }
+  .vb-empty > svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
+  .vb-empty p { margin: 0; }
+
+  /* The menus' colour swatches */
+  .vb-menu-colors { display: flex; align-items: center; gap: 2px; padding: 2px 4px 4px 30px; }
+  .vb-menu-colors .vb-color { width: 24px; height: 24px; }
+  .search:focus-within kbd { display: none; }
+}

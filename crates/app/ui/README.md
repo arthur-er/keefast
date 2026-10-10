@@ -5,8 +5,9 @@ pnpm. It runs in the Tauri window over the Rust backend in `crates/app/src/`, or
 over a mock backend with fake Vaults.
 
 The screens are being rebuilt after the Linear-style prototypes (one variant per screen, picked in
-PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). What is here now is the
-foundation they build on, and placeholder screens (`src/screens/`) that prove the round trip.
+PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built so far: the shell
+and Vault browser C, and Open a Vault B. The browsers' requests and the lock prompt
+(`screens/PendingRequests.tsx`) are still plain dialogs until dialogs A.
 
 ## Commands
 
@@ -110,8 +111,25 @@ src/
     tokens.css         the prototype's design tokens, copied (dark default, `data-theme="light"`)
     components.css     the prototype's component classes, copied (`.btn`, `.input`, `.row`, `.menu`…)
     app.css            Tailwind, the bundled fonts, and the tokens as Tailwind theme values
-  screens/             the placeholder screens; replace them
+  shell/               the app shell (Vault browser C's sidebar, toolbar, Merge notice, overlays)
+    state.tsx          what the shell shows besides the backend's view: page, detail mode, overlay…
+    view.ts            the scope and selected Entry (`snapshot.view`), shown at once, then synced
+    commands.ts        the command registry: what keys do and what the command palette lists
+  screens/
+    vault-browser/     the Entry list and the tabbed Entry detail, and a locked Vault's card
+    open-vault/        Open a Vault B
+    PendingRequests.tsx  browser requests and the lock prompt (plain until dialogs A)
 ```
+
+### Where later screens plug in
+
+`shell/state.tsx` says it in full. In short: the selected Entry's pane switches on
+`ShellState.detail` (`view`, `edit` for Entry editor A, `history` for Entry history B) in
+`screens/vault-browser/DetailArea.tsx`; settings pages replace the list and detail through
+`ShellState.page` (`shell/Shell.tsx`); overlays (the command palette, confirmations) are kinds of
+`ShellState.overlay`, drawn in `shell/Overlays.tsx`. A screen's keys are commands: register them
+with `useAppCommand` (shortcut from `SHORTCUTS`, a title and section for the palette), and the
+palette lists them with `useAppCommands`.
 
 ### Tokens and kit
 

@@ -1,0 +1,624 @@
+// Vault browser C's inspector: the Entry's hero, the username / password / TOTP tiles, and its
+// Overview, Fields, Files, History and Access tabs.
+
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, History, KeyRound, Timer,
+  Trash2, User,
+} from "lucide-react";
+
+import { api, errorMessage } from "@/api";
+import type { CopyTarget, EntryDetail as Entry } from "@/bindings";
+import { useEntryHistory, useTotpCode } from "@/api/queries";
+import {
+  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
+  TabsTrigger, toast,
+} from "@/kit";
+import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
+import { SHORTCUTS } from "@/lib/shortcuts";
+import { cn } from "@/lib/utils";
+import { useAppCommand } from "@/shell/commands";
+import { useKeysActive } from "@/shell/hooks";
+import { COLOR_NAMES } from "@/shell/Sidebar";
+import { useShell } from "@/shell/state";
+
+import { copyField, deleteEntry, openUrl } from "./actions";
+import { EntryAvatar } from "./EntryList";
+
+const MASK = "••••••••••••";
+/** How long a copied field shows "Copied". */
+const FLASH_MS = 1200;
+
+type Tab = "overview" | "fields" | "files" | "history" | "access";
+
+export function EntryDetail({ entry }: { entry: Entry }) {
+  const { actions } = useShell();
+  const keysActive = useKeysActive();
+  const [tab, setTab] = useState<Tab>("overview");
+  const [password, setPassword] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const flash = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const totp = useTotpCode(entry.vault, entry.id, entry.totp?.status === "ready");
+
+  // A revealed password goes when the window is left.
+  useEffect(() => {
+    const hide = () => setPassword(null);
+    window.addEventListener("blur", hide);
+    return () => {
+      window.removeEventListener("blur", hide);
+      clearTimeout(flash.current);
+    };
+  }, []);
+
+  const copy = async (field: CopyTarget, what: string, key: string) => {
+    if (await copyField(entry.vault, entry.id, field, what)) {
+      setCopied(key);
+      clearTimeout(flash.current);
+      flash.current = setTimeout(() => setCopied(null), FLASH_MS);
+    }
+  };
+  const togglePassword = async () => {
+    try {
+      setPassword(password === null ? await api.revealPassword(entry.vault, entry.id) : null);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+
+  const hasTotp = entry.totp?.status === "ready";
+  useAppCommand(
+    { id: "copyUsername", title: "Copy username", section: "Entry", icon: User, shortcut: SHORTCUTS.copyUsername, enabled: !!entry.username, run: () => void copy({ kind: "username" }, "Username", "username") },
+    keysActive,
+  );
+  useAppCommand(
+    {
+      id: "copyPassword",
+      title: "Copy password",
+      section: "Entry",
+      icon: KeyRound,
+      shortcut: SHORTCUTS.copyPassword,
+      enabled: entry.hasPassword,
+      // Ctrl C copies the text the user selected, when there is some.
+      when: () => !window.getSelection()?.toString(),
+      run: () => void copy({ kind: "password" }, "Password", "password"),
+    },
+    keysActive,
+  );
+  useAppCommand(
+    { id: "copyTotp", title: "Copy TOTP code", section: "Entry", icon: Timer, shortcut: SHORTCUTS.copyTotp, enabled: hasTotp, run: () => void copy({ kind: "totp" }, "TOTP code", "totp") },
+    keysActive,
+  );
+  useAppCommand({ id: "openUrl", title: "Open URL", section: "Entry", icon: Globe, enabled: !!entry.url, run: () => openUrl(entry.vault, entry.id) }, keysActive);
+
+  const location = entry.groupPath.length > 1 ? `${entry.vaultName} / ${entry.groupPath[entry.groupPath.length - 1]}` : entry.vaultName;
+
+  return (
+    <div className="vb-detail-scroll">
+      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+        <div className="C-insp-top">
+          <div className="C-hero">
+            <EntryAvatar entry={entry} size={48} />
+            <div className="min-w-0 flex-1 pt-0.5">
+              <h1 className="vb-title truncate selectable">{entry.title}</h1>
+              <div className="sub">
+                {entry.url && (
+                  <>
+                    <button type="button" className="vb-link truncate text-fg-1" onClick={() => openUrl(entry.vault, entry.id)}>
+                      {hostOf(entry.url)}
+                      <ArrowUpRight />
+                    </button>
+                    <span>·</span>
+                  </>
+                )}
+                <span className="truncate">{location}</span>
+                {entry.expired && <Badge tone="danger" className="ml-0.5">Expired</Badge>}
+              </div>
+            </div>
+            <EntryMenu entry={entry} onDelete={() => void deleteEntry(entry.vault, entry.id, actions)} />
+          </div>
+          <div className="C-quick">
+            <QuickTile
+              label="Username"
+              icon={<User className="ico-sm" />}
+              shortcut="Ctrl B"
+              copied={copied === "username"}
+              onCopy={entry.username ? () => void copy({ kind: "username" }, "Username", "username") : undefined}
+            >
+              {entry.username ? <span className="truncate selectable">{entry.username}</span> : <span className="subtle">None</span>}
+            </QuickTile>
+            <QuickTile
+              label="Password"
+              icon={<KeyRound className="ico-sm" />}
+              shortcut="Ctrl C"
+              copied={copied === "password"}
+              onCopy={entry.hasPassword ? () => void copy({ kind: "password" }, "Password", "password") : undefined}
+              extra={
+                entry.hasPassword && (
+                  <button
+                    type="button"
+                    className="btn ghost sm icon eye"
+                    aria-label={password === null ? "Show password" : "Hide password"}
+                    title={password === null ? "Show" : "Hide"}
+                    onClick={() => void togglePassword()}
+                  >
+                    {password === null ? <Eye /> : <EyeOff />}
+                  </button>
+                )
+              }
+            >
+              {!entry.hasPassword ? (
+                <span className="subtle">None</span>
+              ) : password === null ? (
+                <span className="vb-pw masked">{MASK}</span>
+              ) : (
+                <span className="mono truncate pr-7 selectable">{password}</span>
+              )}
+            </QuickTile>
+            {entry.totp?.status === "ready" ? (
+              <QuickTile
+                label="TOTP"
+                icon={<Timer className="ico-sm" />}
+                shortcut="Ctrl T"
+                copied={copied === "totp"}
+                onCopy={() => void copy({ kind: "totp" }, "TOTP code", "totp")}
+              >
+                {totp.data ? <TotpCode code={totp.data.code} remaining={totp.data.remaining} period={totp.data.period} /> : <span className="subtle">…</span>}
+              </QuickTile>
+            ) : (
+              <div className="C-qt is-setup" title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}>
+                <span className="k">
+                  <Timer className="ico-sm" /> TOTP
+                </span>
+                <span className="v subtle">{entry.totp?.status === "unreadable" ? "Can't be read" : "Not set up"}</span>
+              </div>
+            )}
+          </div>
+          <TabsList className="C-tabs mt-5">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
+            <TabsTrigger value="files" count={entry.attachments.length}>Files</TabsTrigger>
+            <TabsTrigger value="history" count={entry.historyCount}>History</TabsTrigger>
+            <TabsTrigger value="access" count={entry.rememberedAccess.length}>Access</TabsTrigger>
+          </TabsList>
+        </div>
+        <div className="C-pane">
+          <TabsContent value="overview">
+            <Overview entry={entry} copied={copied} onCopy={copy} />
+          </TabsContent>
+          <TabsContent value="fields">
+            <Fields entry={entry} copied={copied} onCopy={copy} />
+          </TabsContent>
+          <TabsContent value="files">
+            <Files entry={entry} />
+          </TabsContent>
+          <TabsContent value="history">
+            <VersionHistory entry={entry} />
+          </TabsContent>
+          <TabsContent value="access">
+            <Access entry={entry} />
+          </TabsContent>
+        </div>
+      </Tabs>
+    </div>
+  );
+}
+
+function EntryMenu({ entry, onDelete }: { entry: Entry; onDelete: () => void }) {
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <button type="button" className="btn ghost sm icon" aria-label="More">
+          <Ellipsis />
+        </button>
+      </MenuTrigger>
+      <MenuContent align="end">
+        <MenuItem icon={<Globe />} disabled={!entry.url} onSelect={() => openUrl(entry.vault, entry.id)}>
+          Open URL
+        </MenuItem>
+        <MenuItem icon={<Copy />} disabled={!entry.url} onSelect={() => void copyField(entry.vault, entry.id, { kind: "url" }, "URL")}>
+          Copy URL
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem icon={<Trash2 />} shortcut="Delete" danger onSelect={onDelete}>
+          {entry.deletesForGood ? "Delete for good…" : "Delete"}
+        </MenuItem>
+      </MenuContent>
+    </Menu>
+  );
+}
+
+function QuickTile({
+  label,
+  icon,
+  shortcut,
+  copied,
+  onCopy,
+  extra,
+  children,
+}: {
+  label: string;
+  icon: ReactNode;
+  shortcut: string;
+  copied: boolean;
+  onCopy?: () => void;
+  extra?: ReactNode;
+  children: ReactNode;
+}) {
+  // A div with a button role: the eye inside is a button of its own.
+  return (
+    <div
+      role="button"
+      tabIndex={onCopy ? 0 : -1}
+      aria-label={`Copy ${label.toLowerCase()}`}
+      aria-disabled={!onCopy}
+      className={cn("C-qt", copied && "is-copied")}
+      onClick={(event) => {
+        if ((event.target as Element).closest(".eye")) return;
+        onCopy?.();
+      }}
+      onKeyDown={(event) => {
+        if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) {
+          event.preventDefault();
+          onCopy?.();
+        }
+      }}
+    >
+      <span className="k">
+        {icon} {label} {onCopy && <Kbd combo={shortcut} />}
+      </span>
+      <span className="v">{children}</span>
+      {extra}
+    </div>
+  );
+}
+
+function TotpCode({ code, remaining, period }: { code: string; remaining: number; period: number }) {
+  const [left, setLeft] = useState(remaining);
+  useEffect(() => {
+    setLeft(remaining);
+    const timer = setInterval(() => setLeft((value) => Math.max(0, value - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [code, remaining]);
+  const half = Math.ceil(code.length / 2);
+  return (
+    <span className={cn("vb-totp", left <= 5 && "is-low")}>
+      <span className="ring" style={{ "--p": left / period } as React.CSSProperties} />
+      <span className="code">
+        {code.slice(0, half)} {code.slice(half)}
+      </span>
+      <span className="left">{left}s</span>
+    </span>
+  );
+}
+
+type CopyHandler = (field: CopyTarget, what: string, key: string) => Promise<void>;
+
+/** A row of `.vb-fields`: label, value, and its copy button, flashing "Copied". */
+function FieldRow({
+  label,
+  copied,
+  onCopy,
+  actions,
+  children,
+}: {
+  label: string;
+  copied?: boolean;
+  onCopy?: () => void;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn("vb-f", copied && "is-copied")}>
+      <span className="k" title={label}>
+        {label}
+      </span>
+      <span className="v">{children}</span>
+      <span className="acts">
+        {actions}
+        {onCopy && (
+          <button type="button" className="btn ghost sm icon" aria-label={`Copy ${label}`} title="Copy" onClick={onCopy}>
+            <Copy />
+          </button>
+        )}
+      </span>
+      <span className="flash">
+        <Check />
+        Copied
+      </span>
+    </div>
+  );
+}
+
+function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
+  const expiry = describeExpiry(entry.expires, entry.expired);
+  return (
+    <>
+      <div className="vb-fields">
+        <FieldRow label="URL" copied={copied === "url"} onCopy={entry.url ? () => void onCopy({ kind: "url" }, "URL", "url") : undefined}>
+          {entry.url ? (
+            <button type="button" className="vb-link truncate" onClick={() => openUrl(entry.vault, entry.id)}>
+              <span className="truncate">{entry.url}</span>
+              <ArrowUpRight />
+            </button>
+          ) : (
+            <span className="subtle">None</span>
+          )}
+        </FieldRow>
+        {entry.additionalUrls.map((url, index) => (
+          <FieldRow key={index} label="Also for">
+            <span className="val truncate selectable">{url}</span>
+          </FieldRow>
+        ))}
+      </div>
+      <div className="vb-sect">
+        <div className="vb-sect-head">Notes</div>
+        {entry.notes ? <div className="vb-notes">{entry.notes}</div> : <div className="vb-notes empty">No notes.</div>}
+      </div>
+      <div className="vb-sect">
+        <div className="vb-sect-head">Details</div>
+        <div className="vb-fields px-3.5 py-1">
+          <Prop label="Group">
+            <span className="vb-chip">
+              <Folder />
+              {entry.groupPath.length > 1 ? entry.groupPath[entry.groupPath.length - 1] : entry.vaultName}
+            </span>
+          </Prop>
+          <Prop label="Tags">
+            {entry.tags.length ? (
+              entry.tags.map((tag) => (
+                <span key={tag} className="tag">
+                  <span className="dot" />
+                  {tag}
+                </span>
+              ))
+            ) : (
+              <span className="subtle">None</span>
+            )}
+          </Prop>
+          <Prop label="Colour">
+            {entry.color ? (
+              <span className="hstack gap-1.5">
+                <span className="dot" style={{ background: colorVar(entry.color) }} />
+                {COLOR_NAMES[entry.color]}
+              </span>
+            ) : (
+              <span className="subtle">None</span>
+            )}
+          </Prop>
+          <Prop label="Expires">
+            {expiry.kind === "never" && <span className="subtle">Never</span>}
+            {expiry.kind === "expired" && (
+              <>
+                <Badge tone="danger">Expired</Badge>
+                <span className="subtle">{expiry.date}</span>
+              </>
+            )}
+            {expiry.kind === "soon" && (
+              <>
+                <Badge tone="warn">{expiry.days === 0 ? "Today" : `In ${expiry.days} day${expiry.days === 1 ? "" : "s"}`}</Badge>
+                <span className="subtle">{expiry.date}</span>
+              </>
+            )}
+            {expiry.kind === "later" && expiry.date}
+          </Prop>
+          <Prop label="Modified">{entry.modified !== null ? formatDate(entry.modified) : <span className="subtle">Unknown</span>}</Prop>
+          <Prop label="Created">{entry.created !== null ? formatDate(entry.created) : <span className="subtle">Unknown</span>}</Prop>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Prop({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="vb-prop">
+      <span className="k">{label}</span>
+      <span className="v">{children}</span>
+    </div>
+  );
+}
+
+function SectionHead({ title, count, children }: { title: string; count: number; children?: ReactNode }) {
+  return (
+    <div className="vb-sect-head">
+      {title} <span className="count">{count}</span>
+      {children}
+    </div>
+  );
+}
+
+function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
+  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  useEffect(() => {
+    const hide = () => setRevealed({});
+    window.addEventListener("blur", hide);
+    return () => window.removeEventListener("blur", hide);
+  }, []);
+  const toggle = async (index: number) => {
+    if (index in revealed) {
+      const next = { ...revealed };
+      delete next[index];
+      return setRevealed(next);
+    }
+    try {
+      const value = await api.revealCustomField(entry.vault, entry.id, index);
+      setRevealed((current) => ({ ...current, [index]: value }));
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  return (
+    <>
+      <SectionHead title="Custom fields" count={entry.customFields.length} />
+      {entry.customFields.length === 0 ? (
+        <div className="vb-notes empty">No custom fields.</div>
+      ) : (
+        <div className="vb-fields">
+          {entry.customFields.map((field, index) => {
+            const value = field.value ?? revealed[index];
+            const key = `field:${index}`;
+            return (
+              <FieldRow
+                key={index}
+                label={field.name}
+                copied={copied === key}
+                onCopy={field.isEmpty ? undefined : () => void onCopy({ kind: "customField", index }, field.name, key)}
+                actions={
+                  field.protected &&
+                  !field.isEmpty && (
+                    <button type="button" className="btn ghost sm icon" aria-label={index in revealed ? "Hide" : "Show"} title={index in revealed ? "Hide" : "Show"} onClick={() => void toggle(index)}>
+                      {index in revealed ? <EyeOff /> : <Eye />}
+                    </button>
+                  )
+                }
+              >
+                {field.isEmpty ? (
+                  <span className="subtle">Empty</span>
+                ) : value === undefined ? (
+                  <span className="val vb-pw masked">{MASK.slice(0, 10)}</span>
+                ) : (
+                  <span className={cn("val selectable", field.protected && "vb-pw")}>{value}</span>
+                )}
+              </FieldRow>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function Files({ entry }: { entry: Entry }) {
+  const { actions } = useShell();
+  const save = async (index: number) => {
+    try {
+      const path = await api.saveAttachment(entry.vault, entry.id, index);
+      if (path) toast(`Saved to ${path}`);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  return (
+    <>
+      <SectionHead title="Attachments" count={entry.attachments.length} />
+      {entry.attachments.length === 0 ? (
+        <div className="vb-notes empty">No attachments.</div>
+      ) : (
+        <div className="vb-fields">
+          {entry.attachments.map((attachment) => (
+            <div key={attachment.index} className="vb-file">
+              <span className="vb-file-ico">{attachment.preview === "text" ? <FileText /> : <FileKey />}</span>
+              <div className="vstack min-w-0 flex-1 gap-0">
+                <span className="name truncate">{attachment.name}</span>
+                <span className="size">{formatSize(attachment.size)}</span>
+              </div>
+              {attachment.preview !== "none" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    actions.openOverlay({ kind: "attachment", vault: entry.vault, entry: entry.id, index: attachment.index, name: attachment.name })
+                  }
+                >
+                  Preview
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => void save(attachment.index)}>
+                Save…
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function VersionHistory({ entry }: { entry: Entry }) {
+  const history = useEntryHistory(entry.vault, entry.historyCount > 0 ? entry.id : undefined);
+  if (entry.historyCount === 0) {
+    return (
+      <div className="vb-empty h-[200px]">
+        <History />
+        <p>This Entry has no earlier versions yet.</p>
+        <span className="subtle text-sm">Each edit keeps the previous version here.</span>
+      </div>
+    );
+  }
+  const restore = async (index: number, when: string) => {
+    try {
+      await api.restoreEntryVersion(entry.vault, entry.id, index);
+      toast(`Restored the version of ${when}. The current one is kept in History.`);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  // Newest first, under the current version.
+  const versions = [...(history.data ?? [])].reverse();
+  return (
+    <div>
+      <div className="C-ver is-current">
+        <span className="node" />
+        <div>
+          <div className="what">Current version</div>
+          <div className="when">{entry.modified !== null ? formatDate(entry.modified) : "Unknown"}</div>
+        </div>
+        <span />
+      </div>
+      {versions.map((version) => {
+        const when = version.modified !== null ? formatDate(version.modified) : "an unknown date";
+        return (
+          <div key={version.index} className="C-ver">
+            <span className="node" />
+            <div className="min-w-0">
+              <div className="what truncate">{version.title}</div>
+              <div className="when">Version of {when}</div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => void restore(version.index, when)}>
+              Restore
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Access({ entry }: { entry: Entry }) {
+  const forget = async (host: string | null) => {
+    try {
+      await api.forgetAccess(entry.vault, entry.id, host);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  const remembered = entry.rememberedAccess;
+  return (
+    <>
+      <SectionHead title="Browser access" count={remembered.length}>
+        {remembered.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={() => void forget(null)}>
+            Forget all
+          </Button>
+        )}
+      </SectionHead>
+      {remembered.length === 0 ? (
+        <div className="vb-notes empty">No site has asked for this Entry yet. Access decisions you remember show here.</div>
+      ) : (
+        <div className="vb-fields">
+          {remembered.map((access) => (
+            <div key={access.host} className="vb-acc">
+              <Globe />
+              <span className="host truncate">{access.host}</span>
+              <Badge tone={access.allowed ? "ok" : "danger"}>{access.allowed ? "Allowed" : "Denied"}</Badge>
+              <Button variant="ghost" size="sm" onClick={() => void forget(access.host)}>
+                Forget
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="hint mt-3">An Access decision overrides the Vault's Default access policy for that site.</p>
+    </>
+  );
+}
