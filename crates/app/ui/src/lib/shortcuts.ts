@@ -75,7 +75,7 @@ export function comboLabel(text: string): string[] {
   if (combo.meta) keys.push(isMac ? "⌘" : "Super");
   if (combo.alt) keys.push(isMac ? "⌥" : "Alt");
   if (combo.shift) keys.push("Shift");
-  const names: Record<string, string> = { arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", escape: "Esc", enter: "Enter", ",": "," };
+  const names: Record<string, string> = { arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", escape: "Esc", enter: "Enter", delete: "Del", home: "Home", end: "End", ",": "," };
   keys.push(names[combo.key] ?? (combo.key.length === 1 ? combo.key.toUpperCase() : combo.key));
   return keys;
 }
@@ -84,6 +84,9 @@ export interface ShortcutOptions {
   /** Fire while typing in a field too. Defaults to true for Escape and Ctrl/Cmd combos. */
   inFields?: boolean;
   enabled?: boolean;
+  /** Checked before the key is taken: when it says no, the key does what it would anyway (Ctrl C
+   * copies the text the user selected rather than the password). */
+  when?: (event: KeyboardEvent) => boolean;
 }
 
 /** The app's global shortcuts. Ctrl K is the command palette, Ctrl Shift P its alias. */
@@ -95,6 +98,11 @@ export const SHORTCUTS = {
   copyPassword: ["Ctrl C"],
   copyTotp: ["Ctrl T"],
   edit: ["E", "Enter"],
+  nextEntry: ["ArrowDown"],
+  previousEntry: ["ArrowUp"],
+  firstEntry: ["Home"],
+  lastEntry: ["End"],
+  deleteEntry: ["Delete"],
   save: ["Ctrl S"],
   lockAll: ["Ctrl L"],
   settings: ["Ctrl ,"],
@@ -115,6 +123,8 @@ export function useShortcut(
   const list = typeof combos === "string" ? [combos] : combos;
   const key = list.join("|");
   const { enabled = true, inFields } = options;
+  const when = useRef(options.when);
+  when.current = options.when;
   useEffect(() => {
     if (!enabled) return;
     const parsed = key.split("|").map(parseCombo);
@@ -124,6 +134,9 @@ export function useShortcut(
       if (!combo) return;
       const fieldsToo = inFields ?? (combo.key === "escape" || combo.ctrl || combo.meta);
       if (!fieldsToo && isTyping(event.target)) return;
+      // An open menu or listbox takes its own keys (arrows, Enter, Escape).
+      if (event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"]')) return;
+      if (when.current && !when.current(event)) return;
       event.preventDefault();
       latest.current(event);
     };

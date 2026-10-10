@@ -1,12 +1,13 @@
 // `.toast`: one at a time, bottom centre, with an optional countdown bar (clipboard clearing).
 
 import { type ReactNode, useEffect, useSyncExternalStore } from "react";
-import { CircleAlert, Check as CheckIcon, ClipboardCheck, Info } from "lucide-react";
+import { CircleAlert, Check as CheckIcon, ClipboardCheck, Info, type LucideIcon } from "lucide-react";
 
 export interface ToastOptions {
   /** A countdown, as for "clears in 30s"; the bar runs down over it. */
   seconds?: number;
-  icon?: "check" | "clipboard" | "info" | "error";
+  /** A named icon, or any Lucide icon (the prototype says "Moved to the Recycle Bin" with a bin). */
+  icon?: "check" | "clipboard" | "info" | "error" | LucideIcon;
   /** How long it stays up, in ms; default 2.4 s, or up to 4 s for a countdown. */
   duration?: number;
 }
@@ -58,7 +59,7 @@ export function Toaster() {
     return () => clearTimeout(timer);
   }, [shown]);
   if (!shown) return null;
-  const Icon = ICONS[shown.icon ?? "check"];
+  const Icon = typeof shown.icon === "string" || shown.icon === undefined ? ICONS[shown.icon ?? "check"] : shown.icon;
   return (
     <div className="toast-host" role="status" aria-live="polite">
       <div className="toast" key={shown.id}>
