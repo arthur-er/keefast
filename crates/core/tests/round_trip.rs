@@ -7,6 +7,7 @@
 use keefast_core::{CompositeKey, CustomField, EntryFields, OpenError, Timestamp, Vault};
 use keepass::config::{DatabaseVersion, KdfConfig, OuterCipherConfig};
 use keepass::{Database, DatabaseKey};
+use secrecy::ExposeSecret;
 
 const PASSWORD: &str = "fixture-password";
 
@@ -310,6 +311,73 @@ fn a_card_in_custom_fields_survives_saves_and_reads_in_an_independent_reader() {
         .expect("an independent reader finds the Card's Entry");
     for (name, value, protected) in card {
         assert_eq!(entry.get(name), Some(value), "{name}");
+        assert_eq!(entry.fields[name].is_protected(), protected, "{name}");
+    }
+}
+
+/// Editing an Entry with a Card as Entry editor A does when the user changes only its title: the
+/// Card's Owned fields are sent as kept (the app copies each value it had, never revealed to the
+/// UI), so after saving and reopening their values are byte for byte what they were, and the
+/// protected ones still protected, in keefast and in an independent reader.
+#[test]
+fn an_edit_leaving_a_card_untouched_keeps_its_fields_byte_identical_and_protected() {
+    let card = [
+        ("Card number", "4111 1111 1111 1111", true),
+        ("Cardholder", "ARTHUR REZENDE", false),
+        ("Expiry", "08/31", false),
+        ("CVV", "123", true),
+        ("PIN", "8271", true),
+    ];
+    let mut vault = open(fixture("keepassxc-kdbx4"));
+    let fields = EntryFields {
+        title: "Company Visa".into(),
+        custom_fields: card
+            .iter()
+            .map(|(name, value, protected)| CustomField {
+                name: (*name).into(),
+                value: (*value).into(),
+                protected: *protected,
+            })
+            .collect(),
+        ..EntryFields::default()
+    };
+    let now = Timestamp::from_unix_seconds(1_800_000_000);
+    let id = vault.create_entry(vault.root().id(), &fields, now).unwrap();
+    let mut vault = open(&vault.save().unwrap());
+    let before: Vec<_> = vault.entry(id).unwrap().custom_fields().to_vec();
+
+    let mut edit = EntryFields::from(vault.entry(id).unwrap());
+    edit.title = "Company Visa (work)".into();
+    vault.update_entry(id, &edit, now).unwrap();
+    let saved = vault.save().unwrap();
+
+    let reopened = open(&saved);
+    let entry = reopened.entry(id).unwrap();
+    assert_eq!(entry.title(), "Company Visa (work)");
+    let after = entry.custom_fields();
+    assert_eq!(after.len(), before.len());
+    for (was, is) in before.iter().zip(after) {
+        assert_eq!(is.name, was.name);
+        assert_eq!(
+            is.value.expose_secret().as_bytes(),
+            was.value.expose_secret().as_bytes(),
+            "{}",
+            is.name
+        );
+        assert_eq!(is.protected, was.protected, "{}", is.name);
+    }
+
+    let database = independent(&saved);
+    let entry = database
+        .iter_all_entries()
+        .find(|entry| entry.get_title() == Some("Company Visa (work)"))
+        .expect("an independent reader finds the edited Entry");
+    for (name, value, protected) in card {
+        assert_eq!(
+            entry.get(name).map(str::as_bytes),
+            Some(value.as_bytes()),
+            "{name}"
+        );
         assert_eq!(entry.fields[name].is_protected(), protected, "{name}");
     }
 }
