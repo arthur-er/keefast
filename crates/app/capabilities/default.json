@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "keefast's own UI: its commands (allowed for every window of the app) and hearing its events. No plugin's JavaScript API: file dialogs and opening Dropbox's page happen in Rust.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-theme"
+  ]
+}
