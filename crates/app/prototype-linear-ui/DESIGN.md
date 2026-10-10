@@ -131,3 +131,36 @@ rows), 8 (popovers, cards), 12 (dialogs). **Icons.** Lucide, 16px, stroke 1.75, 
   opening) should work; nothing persists.
 - Use tokens and kit classes. Screen-specific CSS goes in a `<style>` in the screen file and
   must still use tokens only.
+
+## 7. Chosen direction (verdict, 2026-10-10)
+
+The user picked one variant per screen. These are the reference for the GPUI implementation;
+the other variants stay on this branch for reference only.
+
+| Screen | Pick | Prototype |
+|---|---|---|
+| Open a Vault | **B**: Vault files rail + unlock pane | `screens/unlock.html?variant=B` |
+| Vault browser | **C**: Vault switcher, grouped list, tabbed detail | `screens/vault-browser.html?variant=C` |
+| Entry editor | **A**: edit in place | `screens/entry-editor.html?variant=A` |
+| Password generator | **A**: popover on the field | `screens/password-generator.html?variant=A` |
+| TOTP | **B**: TOTP as a field, setup expands inline | `screens/totp.html?variant=B` |
+| Entry history | **B**: full-window split (versions, diff) | `screens/entry-history.html?variant=B` |
+| Command palette | **A**: classic centred, grouped sections | `screens/command-palette.html?variant=A` |
+| General Settings | **C**: one long page, section index, search | `screens/settings.html?variant=C` |
+| Vault settings | **C**: same style as General Settings C | `screens/vault-settings.html?variant=C` |
+| Open from Dropbox | **A**: file browser dialog | `screens/dropbox.html?variant=A` |
+| Browser requests & confirms | **A**: centred dialogs | `screens/dialogs.html?variant=A` |
+
+**One shell.** Each screen was prototyped separately, so their sidebars differ in the details.
+When implementing, every screen uses the **Vault browser C** shell: a Vault switcher at the top of
+the sidebar, then Groups, Tags, Colours, Other Vaults, and a footer with Open / New, settings and
+lock. Entry editor A, Entry history B and TOTP B render inside that shell's detail area. The
+command palette, generator popover and centred dialogs float over it. General and Vault settings
+replace the list and detail with the settings page and keep the sidebar.
+
+**Consequences for the design rules above:**
+- Edit in place (Entry editor A) and inline TOTP setup (TOTP B) confirm "inline over modal".
+- Centred dialogs stay reserved for blocking decisions: browser requests, delete, lock with
+  unsaved changes, and the Dropbox file browser.
+- Settings use one scrolling page with an "On this page" index and `/` search, for both General
+  and Vault settings.

@@ -21,6 +21,7 @@
   .screen-head h2 { font-size: var(--text-lg); font-weight: 600; margin: 0; }
   .screen-head code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-2); }
   .variant { display: grid; grid-template-columns: 200px 1fr; gap: 20px; padding: 12px 0; }
+  .variant.is-chosen { background: var(--ok-bg); margin: 0 -12px; padding: 12px; border-radius: var(--r-md); }
   .variant + .variant { border-top: 1px dashed var(--border); }
   .vmeta b { display: block; font-size: var(--text-md); font-weight: 600; margin-bottom: 2px; }
   .vmeta .vkey { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--accent-bg); color: var(--accent-fg); font-weight: 600; font-size: var(--text-sm); margin-bottom: 8px; }
@@ -53,8 +54,8 @@
     <section class="screen" id="${s.key}">
       <div class="screen-head"><h2>${esc(s.title)}</h2><code>screens/${s.key}.html</code></div>
       ${Object.entries(s.variants).map(([v, [name, states]]) => `
-        <div class="variant">
-          <div class="vmeta"><span class="vkey">${v}</span><b>${esc(name)}</b>
+        <div class="variant${s.chosen === v ? " is-chosen" : ""}">
+          <div class="vmeta"><span class="vkey">${v}</span>${s.chosen === v ? `<span class="badge ok" style="margin-left:6px">Chosen</span>` : ""}<b>${esc(name)}</b>
             <a href="screens/${s.key}.html?variant=${v}">Open prototype <i data-lucide="arrow-up-right"></i></a></div>
           <div class="shots">${states.map(([q, cap]) => `
             <figure><img loading="lazy" src="shots/${shotName(s.key, v, q)}" alt="${esc(s.title)} ${v}: ${esc(cap)}">

@@ -170,6 +170,110 @@
   .review .changed { color: var(--accent-fg); font-size: var(--text-xs); font-weight: 500; }
   .spin { animation: kf-spin 800ms linear infinite; }
   @keyframes kf-spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Variant C: same page family as General Settings C ---------- */
+  /* Sidebar: copied from vault-browser.html variant C */
+  .vb-side { width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--bg-sidebar); border-right: 1px solid var(--border); min-height: 0; }
+  .vb-side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+  .vb-side-scroll::-webkit-scrollbar { width: 6px; }
+  .vb-side .nav-section { padding: 2px 8px; }
+  .vb-side .nav-section + .nav-section { margin-top: 10px; }
+  .vb-side .nav-item { gap: 8px; }
+  .vb-side .nav-item .count { min-width: 14px; text-align: right; }
+  .vb-nav-vault { color: var(--fg-0); }
+  .vb-nav-vault .vb-vault-ico { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
+  .vb-nav-vault .vb-vault-ico svg.lucide { width: 11px; height: 11px; stroke-width: 2; }
+  .vb-sync { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--fg-2); font-weight: 450; margin-left: auto; }
+  .vb-nav-locked { color: var(--fg-2); }
+  .vb-nav-locked svg.lucide { color: var(--fg-2); }
+  .vb-tree .nav-item svg.lucide { color: var(--fg-2); }
+  .vb-bmark { display: inline-grid; place-items: center; color: var(--accent-fg); margin-left: -2px; }
+  .vb-bmark svg.lucide { width: 12px !important; height: 12px !important; color: var(--accent-fg) !important; }
+  .vb-colors { display: flex; gap: 2px; padding: 2px 4px; }
+  .vb-color { width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center; cursor: default; }
+  .vb-color:hover { background: var(--bg-hover); }
+  .vb-color .dot { width: 10px; height: 10px; }
+  .vb-side-bottom { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; }
+  .vb-side-foot { flex: none; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; border-top: 1px solid var(--border); }
+  .vb-side-foot .btn.ghost { color: var(--fg-1); }
+  .vb-more { color: var(--fg-2); font-weight: 450; }
+  .C-switch { display: flex; align-items: center; gap: 10px; height: 44px; margin: 0 8px; padding: 0 8px; border-radius: var(--r-sm); cursor: default; }
+  .C-switch:hover { background: var(--bg-hover); }
+  .C-switch .vb-vault-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-bg); color: var(--accent-fg); flex: none; }
+  .C-switch .vb-vault-ico svg.lucide { width: 13px; height: 13px; }
+  .C-switch .name { font-weight: 600; }
+  .C-switch .file { font-size: var(--text-xs); color: var(--fg-2); }
+  .C-switch > svg.lucide { margin-left: auto; color: var(--fg-2); width: 14px; height: 14px; }
+
+  /* Settings atoms: copied from settings.html (shared + variant C) */
+  .set-section { scroll-margin-top: 24px; }
+  .set-section + .set-section { margin-top: 36px; }
+  .set-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; }
+  .set-head h2 { margin: 0; font-size: var(--text-md); font-weight: 600; letter-spacing: -0.005em; }
+  .set-head h2 .n { margin-left: 4px; font-weight: 400; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .set-head p { margin: 0; font-size: var(--text-sm); color: var(--fg-2); }
+  .set-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); }
+  :root:not([data-theme="light"]) .set-card { background: rgb(255 255 255 / 0.018); }
+  .set-row { display: flex; align-items: center; gap: 24px; min-height: 60px; padding: 12px 16px; }
+  .set-row + .set-row, .set-card > * + * { border-top: 1px solid var(--border); }
+  .set-row .txt { flex: 1; min-width: 0; }
+  .set-row .lbl { font-size: var(--text-md); font-weight: 500; color: var(--fg-0); }
+  .set-row .desc { font-size: var(--text-sm); color: var(--fg-2); margin-top: 2px; text-wrap: pretty; }
+  .set-row .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+  .set-note { display: flex; gap: 10px; padding: 12px 16px; font-size: var(--text-sm); color: var(--fg-1); line-height: 1.5; text-wrap: pretty; }
+  .set-note svg.lucide { width: 14px; height: 14px; margin-top: 2px; color: var(--fg-2); flex: none; }
+  .set-note.warn { color: var(--warn); background: var(--warn-bg); }
+  .set-note.warn svg.lucide { color: var(--warn); }
+  .vc mark { background: var(--accent-bg); color: var(--accent-fg); border-radius: 3px; box-shadow: 0 0 0 2px var(--accent-bg); }
+  .vc { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
+  .vc-main { display: flex; flex-direction: column; min-width: 0; }
+  .vc-main .toolbar .search { width: 280px; margin-left: auto; }
+  .vc-scroll { flex: 1; overflow-y: auto; scroll-behavior: smooth; scrollbar-gutter: stable; }
+  .vc-wrap { display: grid; grid-template-columns: minmax(0, 640px) 180px; gap: 48px; justify-content: center; padding: 36px 40px 120px; }
+  .vc-index { position: sticky; top: 36px; align-self: start; display: flex; flex-direction: column; gap: 1px; }
+  .vc-index .ih { font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); padding: 0 10px 6px; }
+  .vc-index a { position: relative; display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-2); }
+  .vc-index a::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: transparent; }
+  .vc-index a:hover { color: var(--fg-0); }
+  .vc-index a.is-on { color: var(--fg-0); }
+  .vc-index a.is-on::before { background: var(--accent); }
+  .vc-index a .n { margin-left: auto; font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .vc-index a.dim { opacity: 0.4; }
+  .vc-index .itip { margin-top: 14px; padding: 10px; border-top: 1px solid var(--border); font-size: var(--text-xs); color: var(--fg-2); line-height: 1.6; }
+  .vc-index .itip a { display: inline; height: auto; padding: 0; font-size: inherit; color: var(--fg-1); }
+  .vc-index .itip a::before { display: none; }
+  .vc-index .itip a:hover { color: var(--fg-0); }
+  .vc-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+  .vc-sub { color: var(--fg-1); margin: 6px 0 32px; }
+  .vc-sub a { color: var(--fg-0); font-weight: 500; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; cursor: default; }
+  .vc-sub a:hover { text-decoration-color: var(--fg-1); }
+  .vc-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 72px 0; color: var(--fg-1); text-align: center; }
+  .vc-empty svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
+
+  /* Rows specific to Vault settings C */
+  .vc .name-input { width: 240px; }
+  .vc [data-row="file"] .desc { font-family: var(--font-mono); letter-spacing: 0; }
+  .vc .set-row.pair { gap: 12px; min-height: 56px; }
+  .vc .pick { min-width: 180px; height: 30px; }
+  .vc .key-sum { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  /* Inline change-key card, in settings-C rows */
+  .kc { animation: kf-rise var(--dur) var(--ease); }
+  .kc > * + *:not([data-part]), .kc [data-part] > * { border-top: 1px solid var(--border); }
+  .kc .kc-head { background: var(--bg-inset); border-radius: var(--r-md) var(--r-md) 0 0; min-height: 56px; }
+  .kc .kc-head .vault-tile { width: 24px; height: 24px; border-radius: 7px; }
+  .kc .kc-sub { display: flex; align-items: center; height: 36px; padding: 12px 16px 0; font-size: var(--text-xs); font-weight: 500; color: var(--fg-2); }
+  .kc .kc-sub + .set-row, .kc .kc-sub + [data-part] > :first-child { border-top: 0; }
+  .kc .kin { width: 280px; }
+  .kc .set-row.tight { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
+  .kc .knum { width: 132px; }
+  .kc .ctl.col { flex-direction: column; align-items: stretch; gap: 6px; }
+  .kc .meter { margin-top: 0; }
+  .kc .error-msg svg.lucide { width: 13px; height: 13px; }
+  .kc .seg > button { padding: 0 10px; }
+  .kc .kfile-name { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-1); letter-spacing: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .kc .kfile-name.none { font-family: var(--font-ui); color: var(--fg-2); }
+  .kc .kc-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: var(--bg-inset); border-radius: 0 0 var(--r-md) var(--r-md); }
+  .kc .kc-foot .hint { display: inline-flex; align-items: center; gap: 6px; }
 </style>
 </head>
 <body>
@@ -659,9 +763,241 @@ function renderB(root) {
   paint();
 }
 
+/* ---------------- Variant C: same page family as General Settings C ---------------- */
+function renderC(root) {
+  const st = freshState();
+  st.K = freshKey(st);
+  let keyOpen = S === "key";
+  let query = S === "search" ? "browser" : "";
+  if (S === "key") Object.assign(st.K, { setKey: true, pw: "lantern-orbit-maple-07!", pw2: "lantern-orbit-maple-7", keyFile: "~/Keys/Personal.keyx" });
+
+  const hl = (text, q) => {
+    if (!q) return KF.esc(text);
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return KF.esc(text);
+    return KF.esc(text.slice(0, i)) + `<mark>${KF.esc(text.slice(i, i + q.length))}</mark>` + KF.esc(text.slice(i + q.length));
+  };
+  const row = (id, label, desc, ctl, q, kw = "", extra = "") =>
+    `<div class="set-row" data-row="${id}" data-search="${KF.esc(label + " " + desc + " " + kw)}"${extra}><div class="txt"><div class="lbl">${hl(label, q)}</div>${desc ? `<div class="desc">${hl(desc, q)}</div>` : ""}</div><div class="ctl">${ctl}</div></div>`;
+  const keySummaryText = () => `Master password + key file · ${st.key.cipher} · ${st.key.kdf}${st.key.kdf === "AES-KDF" ? ` · ${st.key.rounds.toLocaleString("en")} rounds` : ` · ${st.key.mem} MiB`}`;
+
+  /* ---- sections ---- */
+  const SECS = [
+    { id: "general", name: "General", desc: "", body: (q) => `<div class="set-card">
+      ${row("name", "Name", "Shown in the sidebar and when a browser asks for logins.", `<div class="input name-input"><input data-name value="${KF.esc(st.name)}" spellcheck="false"></div>`, q, "title rename")}
+      ${row("file", "Vault file", st.file, `<button class="btn sm ghost" data-act="reveal">${I("folder-open")}Show in folder</button>`, q, "path location kdbx disk")}
+      ${row("recycle", "Recycle Bin", "Deleted Entries and Groups move to the Recycle Bin, so a delete can be undone.", `<button class="switch ${st.recycle ? "is-on" : ""}" data-act="recycle"></button>`, q, "trash delete undo")}
+    </div>` },
+    { id: "browser", name: "Browser access", desc: "How this Vault answers the Companion extension.", body: (q) => `<div class="set-card">
+      ${row("policy", "Default access policy", "When a site asks for an Entry you haven't decided on for it. A decision remembered on the Entry always comes first.", `<div class="seg" data-policy>${POLICIES.map(([v, l]) => `<button class="${st.policy === v ? "is-on" : ""}" data-v="${v}">${l}</button>`).join("")}</div>`, q, "ask allow deny site extension companion")}
+      ${row("bgroup", "Browser group", "Where logins captured in the browser are saved by default.", `<div class="anchor"><button class="pick" data-act="open-bg">${I(V.groups.find((g) => g.id === st.browserGroup).icon)}${groupName(st.browserGroup)}${I("chevrons-up-down", "chev ico-sm")}</button></div>`, q, "save logins group companion")}
+    </div>` },
+    { id: "pairings", name: "Paired browsers", count: () => st.pairings.length, desc: "These browsers can ask this Vault for logins while it is open.", body: (q) => `<div class="set-card">
+      ${st.pairings.length ? st.pairings.map((p, i) => `<div class="set-row pair" data-search="${KF.esc(p.name + " pairing paired browser revoke")}">
+        <div class="pair-ico">${I(/brave/i.test(p.name) ? "shield" : "chrome")}</div>
+        <div class="txt"><div class="lbl truncate">${hl(p.name, q)}</div><div class="desc pair-meta">${/minute/.test(p.lastUsed) ? `<span class="live"><span class="status-dot"></span>Used ${p.lastUsed}</span>` : `<span>Used ${p.lastUsed.toLowerCase()}</span>`}<span>·</span><span>Paired ${fmtDate(p.created)}</span></div></div>
+        <div class="ctl"><div class="anchor"><button class="btn sm secondary" data-revoke="${i}">Revoke</button></div></div>
+      </div>`).join("") : `<div class="set-row" data-search="No browser is paired with this Vault pairing"><div class="txt"><div class="desc" style="margin:0">${I("plug-zap", "ico-sm")} No browser is paired with this Vault.</div></div></div>`}
+    </div>` },
+    { id: "security", name: "Security", desc: "What it takes to unlock this Vault.", body: (q) => `<div class="set-card" data-keygroup>
+      ${keyOpen ? keyCard() : row("key", "Master key and encryption", keySummaryText(), `<button class="btn sm secondary" data-act="open-key">Change…</button>`, q, "password key file cipher kdf argon2 aes chacha20 twofish change master")}
+    </div>` },
+  ];
+  const secById = (id) => SECS.find((s) => s.id === id);
+
+  function keyCard() {
+    const K = st.K;
+    const seg = (name, opts, cur) => `<div class="seg" data-seg="${name}">${opts.map((v) => `<button class="${v === cur ? "is-on" : ""}" data-v="${v}">${v}</button>`).join("")}</div>`;
+    const krow = (label, desc, ctl, extra = "") => `<div class="set-row${desc ? "" : " tight"}"${extra}><div class="txt"><div class="lbl">${label}</div>${desc ? `<div class="desc">${desc}</div>` : ""}</div><div class="ctl${/col/.test(extra) ? " col" : ""}">${ctl}</div></div>`;
+    const num = (k, unit = "") => `<div class="input mono knum" data-wrap="${k}"><input data-k="${k}" value="${KF.esc(K[k])}" inputmode="numeric">${unit ? `<span class="unit">${unit}</span>` : ""}</div>`;
+    return `<div class="kc" data-key-card>
+      <div class="set-row kc-head">
+        <span class="vault-tile">${I("key-round")}</span>
+        <div class="txt" style="margin-left:-12px"><div class="lbl">Master key and encryption of “${KF.esc(st.name)}”</div><div class="desc">Now: ${keySummaryText()}</div></div>
+        <div class="ctl"><button class="btn sm ghost icon" data-act="close-key" title="Cancel (Esc)">${I("x")}</button></div>
+      </div>
+      <div class="kc-sub">Master key</div>
+      ${krow("Set a new master key", "Leave this off to keep the current master key and change only the encryption.", `<button class="switch ${K.setKey ? "is-on" : ""}" data-act="toggle-set"></button>`)}
+      <div data-part="key">
+        <div class="set-row"><div class="txt"><div class="lbl">Master password</div><div class="desc"><span class="meter" style="max-width:200px"><span class="strength" data-strength data-score="0"><i></i><i></i><i></i><i></i></span><span class="bits" data-bits style="min-width:0;text-align:left"></span></span></div></div>
+          <div class="ctl"><div class="input mono kin"><input type="${K.show ? "text" : "password"}" data-k="pw" value="${KF.esc(K.pw)}" placeholder="Type your master password" spellcheck="false"><button class="eye" data-act="eye" title="Show password">${I(K.show ? "eye-off" : "eye", "ico-sm")}</button></div></div></div>
+        <div class="set-row"><div class="txt"><div class="lbl">Repeat the master password</div><div class="desc"><span class="error-msg is-hidden" data-err="mismatch">${I("circle-alert", "ico-sm")}The two master passwords are different.</span></div></div>
+          <div class="ctl"><div class="input mono kin" data-wrap="pw2"><input type="${K.show ? "text" : "password"}" data-k="pw2" value="${KF.esc(K.pw2)}" placeholder="Type it again" spellcheck="false"></div></div></div>
+        <div class="set-row"><div class="txt"><div class="lbl">Key file</div><div class="desc"><span class="kfile-name" data-keyfile>${I("file-key-2", "ico-sm")}<span class="truncate" data-keyfile-label>None (optional)</span></span><span class="error-msg is-hidden" data-err="none" style="margin-top:4px">${I("circle-alert", "ico-sm")}Set a master password, a key file, or both.</span></div></div>
+          <div class="ctl"><button class="btn sm ghost icon is-hidden" data-act="clear-file" title="Remove key file">${I("x")}</button><button class="btn sm secondary" data-act="choose-file">Choose…</button><button class="btn sm secondary" data-act="create-file">${I("plus")}Create new…</button></div></div>
+        <div class="set-note warn">${I("triangle-alert")}<span>Use a master password, a key file, or both. Keep a copy of the key file somewhere safe: without it the Vault can't be opened.</span></div>
+      </div>
+      <div class="kc-sub">Encryption</div>
+      ${krow("Cipher", "", seg("cipher", ["AES-256", "ChaCha20", "Twofish"], K.cipher))}
+      ${krow("Key derivation", "", seg("kdf", ["Argon2id", "Argon2d", "AES-KDF"], K.kdf))}
+      <div data-part="argon">
+        ${krow("Memory (MiB)", "", num("mem", "MiB"))}
+        ${krow("Iterations", "", num("it"))}
+        ${krow("Parallelism", "", num("par", "lanes"))}
+      </div>
+      <div data-part="aes">${krow("Rounds", "", num("rounds"))}</div>
+      <div class="set-note">${I("gauge")}<div><div>Higher values make guessing the master password slower, and unlocking and saving too.</div><div class="error-msg is-hidden" data-err="kdf" style="margin-top:4px"></div></div></div>
+      <div class="kc-foot">
+        <span class="hint">${I("info", "ico-sm")}keefast saves the Vault file as soon as you apply.</span>
+        <span class="spacer"></span>
+        <button class="btn sm ghost" data-act="close-key">Cancel</button>
+        <button class="btn sm primary" data-act="save-key" data-needs-valid>Save changes ${KF.kbd("Ctrl", "↵")}</button>
+      </div>
+    </div>`;
+  }
+
+  /* ---- sidebar (vault-browser C) ---- */
+  const live = V.entries.filter((e) => e.group !== "bin");
+  const nav = (icon, label, count = "", cls = "", extra = "") => `<div class="nav-item ${cls}">${icon}<span class="truncate">${label}</span>${extra}${count !== "" ? `<span class="count">${count}</span>` : ""}</div>`;
+  const switchSub = () => ({ saved: "Local · Saved", unsaved: "Local · Unsaved changes", saving: "Local · Saving…" }[st.status]);
+  function sidebar() {
+    const tagCounts = KF.data.tags.map((t) => [t, live.filter((e) => e.tags.includes(t)).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]);
+    return `<aside class="vb-side">
+      <div style="padding:4px 0 0"><div class="C-switch" data-act="switcher"><span class="vb-vault-ico">${I("hard-drive")}</span>
+        <div class="vstack" style="gap:0;min-width:0"><span class="name truncate" data-c-vname>${KF.esc(st.name)}</span><span class="file truncate" data-c-vstatus>${switchSub()}</span></div>${I("chevrons-up-down")}</div></div>
+      <div class="vb-side-scroll" style="padding-top:6px">
+        <div class="nav-section">
+          ${nav(I("layout-list"), "All Entries", live.length)}
+          ${nav(I("timer"), "With TOTP", live.filter((e) => e.totp).length)}
+          ${nav(I("sliders-horizontal"), "Vault settings", "", "is-selected")}
+        </div>
+        <div class="nav-section"><div class="nav-head">Groups<button class="btn ghost sm icon" style="width:20px;height:20px;margin-left:auto" title="New Group">${I("plus")}</button></div><div class="vb-tree">
+          ${V.groups.filter((g) => g.parent && !g.recycle).map((g) => nav(I(g.icon), g.name, V.entries.filter((e) => e.group === g.id).length || "", "", g.id === st.browserGroup ? `<span class="vb-bmark" title="Browser group">${I("mouse-pointer-click")}</span>` : "")).join("")}
+        </div></div>
+        <div class="nav-section"><div class="nav-head">Tags</div>${tagCounts.slice(0, 6).map(([t, n]) => nav(I("hash"), t, n)).join("")}
+          ${tagCounts.length > 6 ? `<div class="nav-item vb-more">${I("ellipsis")}<span>${tagCounts.length - 6} more</span></div>` : ""}</div>
+        <div class="nav-section"><div class="nav-head" style="height:30px;padding-right:0">Colours<div class="vb-colors" style="margin-left:auto;padding:0">${KF.data.colors.map((c) => `<span class="vb-color"><span class="dot" style="background:${KF.colorVar(c)}"></span></span>`).join("")}</div></div></div>
+        <div class="nav-section"><div class="nav-head">Other Vaults</div>
+          ${nav(`<span class="vb-vault-ico">${I("cloud")}</span>`, "Work", "", "vb-nav-vault", `<span class="vb-sync"><span class="status-dot"></span>Synced</span>`)}
+          ${nav(`<span class="vb-vault-ico">${I("lock")}</span>`, "Family", "", "vb-nav-vault vb-nav-locked", `<span class="vb-sync">Locked</span>`)}
+        </div>
+      </div>
+      <div class="vb-side-bottom">${nav(I("trash-2"), "Recycle Bin", V.entries.filter((e) => e.group === "bin").length)}</div>
+      <div class="vb-side-foot">
+        <button class="btn ghost sm">${I("plus")} Open / New</button><span class="spacer"></span>
+        <button class="btn ghost sm icon" title="Commands · Ctrl K">${I("circle-help")}</button>
+        <button class="btn ghost sm icon" title="General Settings · Ctrl ," data-act="general-settings">${I("settings")}</button>
+        <button class="btn ghost sm icon" title="Lock all Vaults · Ctrl L">${I("lock")}</button></div>
+    </aside>`;
+  }
+
+  root.innerHTML = `<div class="vc">
+    ${sidebar()}
+    <main class="vc-main">
+      <div class="toolbar"><span class="crumbs"><span data-c-crumb>${KF.esc(st.name)}</span> ${I("chevron-right", "ico-sm subtle")}<b>Vault settings</b></span>
+        <div class="search">${I("search", "ico-sm")}<input placeholder="Search Vault settings" data-c-search value="${KF.esc(query)}"><span data-c-sbtn></span></div>
+      </div>
+      <div class="vc-scroll"><div class="vc-wrap">
+        <div data-c-content></div>
+        <nav class="vc-index" data-c-index></nav>
+      </div></div>
+    </main>
+  </div>`;
+  const box = root.querySelector(".vc");
+  const $ = (s) => box.querySelector(s);
+  const scroller = $(".vc-scroll");
+
+  const paintSearchBtn = () => ($("[data-c-sbtn]").innerHTML = query ? `<button class="btn sm ghost icon" data-act="clear-q" style="width:20px;height:20px">${I("x", "ico-sm")}</button>` : KF.kbd("/"));
+  const paintStatus = () => ($("[data-c-vstatus]").textContent = switchSub());
+  const autosave = () => fakeSave(st, paintStatus); // General Settings: Autosave is on
+
+  function render() {
+    const q = query.trim();
+    const content = $("[data-c-content]"), index = $("[data-c-index]");
+    content.innerHTML = `<h1 class="vc-title">Vault settings</h1>
+      <p class="vc-sub">Saved in the Vault file, so they travel with it. For every Vault, see <a data-act="general-settings">General Settings</a>.</p>
+      ${SECS.map((s) => `<section class="set-section" id="vs-${s.id}" data-sec="${s.id}"><div class="set-head"><h2>${hl(s.name, q)}${s.count ? `<span class="n">${s.count()}</span>` : ""}</h2>${s.desc ? `<p>${hl(s.desc, q)}</p>` : ""}</div>${s.body(q)}</section>`).join("")}
+      <div class="vc-empty" data-c-empty hidden>${I("search-x")}<div>No Vault settings match “<b data-c-q></b>”</div><button class="btn sm secondary" data-act="clear-q">Clear search</button></div>`;
+    const counts = {};
+    if (q) {
+      const ql = q.toLowerCase();
+      KF.$$(".set-section", content).forEach((secEl) => {
+        const s = secById(secEl.dataset.sec);
+        const titleHit = (s.name + " " + s.desc).toLowerCase().includes(ql);
+        let n = 0;
+        KF.$$(".set-row[data-search]", secEl).forEach((el) => {
+          const hit = el.dataset.search.toLowerCase().includes(ql);
+          if (hit) n++;
+          if (!titleHit) el.classList.toggle("is-hidden", !hit);
+        });
+        if (keyOpen && s.id === "security") n = Math.max(n, 1); // never hide an open change-key card
+        counts[s.id] = n + (titleHit ? 1 : 0);
+        secEl.classList.toggle("is-hidden", !counts[s.id]);
+      });
+      $("[data-c-empty]").hidden = Object.values(counts).some(Boolean);
+      $("[data-c-q]").textContent = q;
+    }
+    index.innerHTML = `<div class="ih">On this page</div>${SECS.map((s) => `<a href="#vs-${s.id}" data-act="jump" data-sec="${s.id}" class="${q && !counts[s.id] ? "dim" : ""}">${s.name}${q && counts[s.id] ? `<span class="n">${counts[s.id]}</span>` : ""}</a>`).join("")}
+      <div class="itip">Press ${KF.kbd("/")} to search settings.<br>Changes are saved to the Vault file.</div>`;
+    if (keyOpen) st.refresh = bindKey($("[data-key-card]"), st.K, () => {
+      const kf = $("[data-keyfile]"); if (kf) kf.classList.toggle("none", !st.K.keyFile);
+    });
+    $("[data-name]").addEventListener("input", (e) => {
+      st.name = e.target.value || "Personal";
+      ["[data-c-vname]", "[data-c-crumb]"].forEach((s) => ($(s).textContent = st.name));
+      autosave();
+    });
+    spy();
+  }
+  function spy() {
+    const secs = KF.$$(".set-section:not(.is-hidden)", box);
+    const top = scroller.getBoundingClientRect().top + 80;
+    let cur = secs[0]?.dataset.sec;
+    secs.forEach((s) => { if (s.getBoundingClientRect().top <= top) cur = s.dataset.sec; });
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) cur = secs[secs.length - 1]?.dataset.sec;
+    KF.$$(".vc-index a[data-sec]", box).forEach((a) => a.classList.toggle("is-on", a.dataset.sec === cur));
+  }
+  const secTop = (id) => scroller.scrollTop + $("#vs-" + id).getBoundingClientRect().top - scroller.getBoundingClientRect().top - 28;
+  /** Repaint the content but keep the scroll position. */
+  const repaint = () => { const t = scroller.scrollTop; render(); scroller.style.scrollBehavior = "auto"; scroller.scrollTop = t; scroller.style.scrollBehavior = ""; spy(); };
+  const scrollToKey = () => { scroller.style.scrollBehavior = "auto"; scroller.scrollTop = secTop("security"); scroller.style.scrollBehavior = ""; spy(); };
+
+  bindCommon(box, st, () => repaint(), autosave);
+  scroller.addEventListener("scroll", spy, { passive: true });
+  box.addEventListener("input", (e) => {
+    if (!("cSearch" in e.target.dataset)) return;
+    query = e.target.value; paintSearchBtn(); render(); scroller.scrollTop = 0;
+  });
+  const clearQ = () => { query = ""; const i = $("[data-c-search]"); i.value = ""; paintSearchBtn(); render(); i.focus(); };
+  box.addEventListener("click", (e) => {
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (a === "jump") { e.preventDefault(); scroller.scrollTo({ top: secTop(e.target.closest("[data-sec]").dataset.sec) }); }
+    else if (a === "clear-q") clearQ();
+    else if (a === "reveal") KF.toast("Opened ~/Vaults in the file manager", { icon: "folder-open" });
+    else if (a === "general-settings") KF.toast("General Settings open in the same window", { icon: "settings" });
+    else if (a === "switcher") KF.toast("Vault switcher: Personal, Work, Family", { icon: "chevrons-up-down" });
+    else if (a === "open-key") { keyOpen = true; st.K = freshKey(st); repaint(); setTimeout(() => $("[data-key-card]").scrollIntoView({ block: "nearest", behavior: "smooth" }), 20); }
+    else if (a === "close-key") { keyOpen = false; repaint(); }
+    else if (a === "save-key") {
+      st.K.tried = true;
+      if (!keyValid(st.K)) { st.refresh && st.refresh(); return; }
+      const K = st.K; Object.assign(st.key, { cipher: K.cipher, kdf: K.kdf, mem: +K.mem, it: +K.it, par: +K.par, rounds: +K.rounds });
+      keyOpen = false; repaint(); fakeSave(st, paintStatus);
+      KF.toast(K.setKey ? "New master key saved to the Vault file" : "Encryption settings saved to the Vault file", { icon: "shield-check" });
+    }
+  });
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && e.target.matches("[data-c-search]")) { query = ""; e.target.value = ""; e.target.blur(); paintSearchBtn(); render(); return; }
+  });
+  // `/` focuses the search from anywhere on the page (only while C is mounted)
+  const slash = (e) => {
+    if (!document.body.contains(box)) return window.removeEventListener("keydown", slash);
+    if (e.key === "/" && !e.target.closest("input, textarea")) { e.preventDefault(); $("[data-c-search]").focus(); }
+    else if (e.key === "Escape" && keyOpen && !e.cancelBubble && !e.target.matches?.("[data-c-search]")) { keyOpen = false; repaint(); }
+    else if (e.key === "Enter" && e.ctrlKey && keyOpen) box.querySelector('[data-act="save-key"]')?.click();
+  };
+  window.addEventListener("keydown", slash);
+
+  paintSearchBtn();
+  render();
+  if (keyOpen) requestAnimationFrame(scrollToKey);
+  if (query) setTimeout(() => $("[data-c-search]").focus(), 0);
+}
+
 KF.variants({
   A: { name: "Settings page in the window · inline key card", render: renderA },
   B: { name: "Settings dialog · stepped key change", render: renderB },
+  C: { name: "Same style as General Settings C", render: renderC },
 });
 </script>
 </body>
