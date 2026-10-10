@@ -57,7 +57,7 @@ impl Default for PaneWidths {
     }
 }
 
-/// Which colours the app is drawn in: KeeWeb's themes, or the OS's light/dark setting.
+/// Which colours the app is drawn in: dark, light, or the OS's light/dark setting.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
     /// Follow the OS light/dark setting.
@@ -65,34 +65,10 @@ pub enum ThemeSetting {
     System,
     Dark,
     Light,
-    SolarizedDark,
-    SolarizedLight,
-    DarkBlue,
-    LightBlue,
-    DarkBrown,
-    LightBrown,
-    Terminal,
-    TerminalLight,
-    DarkContrast,
-    HighContrast,
 }
 
 impl ThemeSetting {
-    pub const ALL: [ThemeSetting; 13] = [
-        Self::System,
-        Self::Dark,
-        Self::Light,
-        Self::SolarizedDark,
-        Self::SolarizedLight,
-        Self::DarkBlue,
-        Self::LightBlue,
-        Self::DarkBrown,
-        Self::LightBrown,
-        Self::Terminal,
-        Self::TerminalLight,
-        Self::DarkContrast,
-        Self::HighContrast,
-    ];
+    pub const ALL: [ThemeSetting; 3] = [Self::System, Self::Dark, Self::Light];
 
     /// The name the config file keeps it by.
     fn key(self) -> &'static str {
@@ -100,16 +76,18 @@ impl ThemeSetting {
             Self::System => "system",
             Self::Dark => "dark",
             Self::Light => "light",
-            Self::SolarizedDark => "solarized-dark",
-            Self::SolarizedLight => "solarized-light",
-            Self::DarkBlue => "dark-blue",
-            Self::LightBlue => "light-blue",
-            Self::DarkBrown => "dark-brown",
-            Self::LightBrown => "light-brown",
-            Self::Terminal => "terminal",
-            Self::TerminalLight => "terminal-light",
-            Self::DarkContrast => "dark-contrast",
-            Self::HighContrast => "high-contrast",
+        }
+    }
+
+    /// The theme a config file names, KeeWeb's themes from earlier versions read as the nearest
+    /// of dark and light. A name this version doesn't know follows the OS.
+    fn from_key(key: &str) -> Self {
+        match key {
+            "dark" | "solarized-dark" | "dark-blue" | "dark-brown" | "terminal"
+            | "dark-contrast" => Self::Dark,
+            "light" | "solarized-light" | "light-blue" | "light-brown" | "terminal-light"
+            | "high-contrast" => Self::Light,
+            _ => Self::System,
         }
     }
 }
@@ -263,10 +241,7 @@ impl From<ConfigFile> for AppConfig {
             idle_lock_after: wait_from_seconds(file.idle_lock_seconds),
             lock_on_os_lock: file.lock_on_os_lock,
             dropbox_app_key: file.dropbox_app_key.filter(|key| !key.is_empty()),
-            theme: ThemeSetting::ALL
-                .into_iter()
-                .find(|theme| theme.key() == file.theme)
-                .unwrap_or_default(),
+            theme: ThemeSetting::from_key(&file.theme),
             download_favicons: file.download_favicons,
             pane_widths: PaneWidths {
                 sidebar: read_width(file.sidebar_width, PaneWidths::default().sidebar),
