@@ -20,7 +20,9 @@ import { Badge, Button, IconButton, Kbd, Switch, toast } from "@/kit";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { GeneratorPopover, GeneratorTrigger } from "@/screens/password-generator/GeneratorPopover";
-import { addableFacets, addFacet, type OwnedRow, sameFacet } from "@/screens/plugins/editing";
+import {
+  addableFacets, addFacet, type FacetDraft, type OwnedRow, sameFacet, withChange, withFormatted, withRevealed,
+} from "@/screens/plugins/editing";
 import { FacetEditor, rowsWithErrors, useFacetChecks } from "@/screens/plugins/FacetEditor";
 import { LiveTotp, TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { copyField, openUrl } from "@/screens/vault-browser/actions";
@@ -170,15 +172,8 @@ function EditorForm({
   };
   const updateRow = (key: number, change: Partial<FieldRow>) =>
     setDraft((current) => ({ ...current, fields: current.fields.map((row) => (row.key === key ? { ...row, ...change } : row)) }));
-  /** Changes an Owned field's row; `when` must hold of it for the change to apply. */
-  const updateOwned = (key: number, change: Partial<OwnedRow>, when: (row: OwnedRow) => boolean = () => true) => {
-    setDraft((current) => ({
-      ...current,
-      facets: current.facets.map((facet) => ({
-        ...facet,
-        rows: facet.rows.map((row) => (row.key === key && when(row) ? { ...row, ...change } : row)),
-      })),
-    }));
+  const updateFacets = (change: (facets: FacetDraft[]) => FacetDraft[]) => {
+    setDraft((current) => ({ ...current, facets: change(current.facets) }));
     setSaveError(null);
   };
   const templates = useFacets().data ?? [];
@@ -227,7 +222,7 @@ function EditorForm({
     if (row.value !== null || !entry || index === null) return;
     try {
       const value = await api.revealCustomField(entry.vault, entry.id, index);
-      updateOwned(row.key, { value, savedValue: value }, (current) => current.value === null);
+      updateFacets((facets) => withRevealed(facets, row.key, value));
     } catch (error) {
       toast(errorMessage(error), { icon: "error" });
     }
@@ -566,8 +561,8 @@ function EditorForm({
               checks={checks}
               shown={shownFields}
               onShow={(row, show) => showRow(row.key, show)}
-              onRow={(key, change) => updateOwned(key, change)}
-              onFormatted={(key, typed, formatted) => updateOwned(key, { value: formatted }, (row) => row.value === typed)}
+              onRow={(key, change) => updateFacets((facets) => withChange(facets, key, change))}
+              onFormatted={(key, typed, formatted) => updateFacets((facets) => withFormatted(facets, key, typed, formatted))}
               onReveal={revealOwned}
               onRemove={() => update({ facets: draft.facets.filter((candidate) => !sameFacet(candidate, facet)) })}
             />

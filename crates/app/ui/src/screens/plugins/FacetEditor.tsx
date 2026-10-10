@@ -5,6 +5,7 @@
 // fields are revealed when focused, as protected custom fields are.
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { CircleAlert, Eye, EyeOff, Trash2, TriangleAlert } from "lucide-react";
 
 import { api } from "@/api";
@@ -89,12 +90,12 @@ export function FacetEditor({
       return;
     }
     if (formatted === typed) return;
-    onFormatted(row.key, typed, formatted);
-    requestAnimationFrame(() => {
-      if (document.activeElement !== input || input.value !== formatted) return;
-      const at = caretAfterFormat(typed, caret, formatted);
-      input.setSelectionRange(at, at);
-    });
+    // Committed at once, so the caret is put back after React sets the value (which moves it to
+    // the end), not before. An answer the user has typed past changes nothing.
+    flushSync(() => onFormatted(row.key, typed, formatted));
+    if (document.activeElement !== input || input.value !== formatted) return;
+    const at = caretAfterFormat(typed, caret, formatted);
+    input.setSelectionRange(at, at);
   };
 
   return (

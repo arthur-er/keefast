@@ -130,6 +130,31 @@ export function rowSaves(facet: FacetDraft, row: OwnedRow): boolean {
   return row.original !== null || (row.value ?? "") !== "" || facet.detect.includes(row.name);
 }
 
+// What the backend answers late. A reveal or a formatted value is for the value the row had when
+// it was asked for: it applies only while the row still has that value, so what the user typed
+// meanwhile is never mixed with a saved secret or with an older answer.
+
+function withRow(facets: readonly FacetDraft[], key: number, change: Partial<OwnedRow>, when: (row: OwnedRow) => boolean): FacetDraft[] {
+  return facets.map((facet) => ({
+    ...facet,
+    rows: facet.rows.map((row) => (row.key === key && when(row) ? { ...row, ...change } : row)),
+  }));
+}
+
+/** The facets with a row changed as the user changed it. */
+export const withChange = (facets: readonly FacetDraft[], key: number, change: Partial<OwnedRow>) =>
+  withRow(facets, key, change, () => true);
+
+/** The facets with a row's saved value revealed, if it is still unrevealed: once the user has
+ * typed into it, the reveal is dropped and the row keeps exactly what they typed. */
+export const withRevealed = (facets: readonly FacetDraft[], key: number, value: string) =>
+  withRow(facets, key, { value, savedValue: value }, (row) => row.value === null);
+
+/** The facets with a row's value replaced by what `format` made of `typed`, if the row still
+ * has `typed`: an answer to an earlier keystroke, come late, is dropped. */
+export const withFormatted = (facets: readonly FacetDraft[], key: number, typed: string, formatted: string) =>
+  withRow(facets, key, { value: formatted }, (row) => row.value === typed);
+
 /** Letters and digits: what a `format` hook keeps, unlike the spaces and slashes it adds. */
 const significant = (char: string) => /[\p{L}\p{N}]/u.test(char);
 
