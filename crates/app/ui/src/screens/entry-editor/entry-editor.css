@@ -87,6 +87,12 @@
   .gi-group .btn.sm.icon:hover { color: var(--fg-0); }
   .gi-group .btn.secondary.sm { color: var(--fg-0); }
 
+  /* Plugins' facets (screens/plugins/FacetEditor.tsx): what a Plugin's `validate` says */
+  .ee-hint { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; font-size: var(--text-sm); color: var(--warn); animation: kf-fade var(--dur) var(--ease); }
+  .ee-hint.is-error { color: var(--danger); }
+  .ee-hint svg.lucide { width: 13px; height: 13px; flex: none; }
+  .gi-group.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
+
   /* Custom fields */
   .ee-cf { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
   .ee-cf .gi { color: var(--fg-1); }

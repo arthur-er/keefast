@@ -9,9 +9,9 @@ PR #83: `DESIGN.md` §7 on the `feat/linear-style-ui-prototypes` branch). Built 
 and Vault browser C, Open a Vault B with its New Vault state, Open from Dropbox A, Entry editor A,
 Password generator A, TOTP B, Entry history B, command palette A, General Settings C, Vault settings
 C with the card that changes a Vault's master key and encryption, Browser requests & confirms A
-(`screens/dialogs/`), Plugins' facets as sections of the detail (the Card, card prototype A), and
-Settings → Plugins with installing a Plugin from a file (no prototype: Settings C's rows and
-Dialogs A's parts).
+(`screens/dialogs/`), Plugins' facets as sections of the detail and of Entry editor A (the Card,
+card prototype A), and Settings → Plugins with installing a Plugin from a file (no prototype:
+Settings C's rows and Dialogs A's parts).
 
 ## Commands
 
@@ -46,9 +46,11 @@ Production builds don't include it.
 The mock runs Plugins (ADR 0009) as the app does, from the same WASM components:
 `bundled-plugins.ts`, a Vite plugin, transpiles each one compiled into keefast (`plugins/<name>/`)
 with jco when the mock imports `virtual:keefast/bundled-plugins`, and `src/api/mock/plugins.ts`
-finds facets and asks for labels as `crates/plugins` does. The fake Vaults have Cards: Nubank
-Ultravioleta in Personal, Company Visa (expiring soon) in Work. Disabling the Card in Settings →
-Plugins hides their Card sections, and their fields show under Custom fields.
+finds facets and asks for labels as `crates/plugins` does. It runs the `format` and `validate`
+hooks for Entry editor A too, passing `validate` the month it is, as the app does. The fake Vaults
+have Cards: Nubank Ultravioleta in Personal, Company Visa (expiring soon) in Work; Nubank in
+Personal has none, to add one. Disabling the Card in Settings → Plugins hides their Card sections,
+in the detail and the editor, and their fields show under Custom fields.
 
 Installing Plugins is faked in `src/api/mock/plugin-store.ts`: the file dialog "picks" a made-up
 package, chosen by a scene below (`plugin-new` unless another is set), and installed Plugins have
@@ -163,8 +165,10 @@ src/
     dialogs/           browser requests & confirms A: Pairing, Access, captured login, lock with
                        unsaved changes (one at a time, over everything), and deleting for good
     plugins/           Plugins' facets on an Entry (`FacetSection`, drawn from the manifest and the
-                       Plugin's labels), what the kit knows of Owned fields' kinds, installing a
-                       Plugin (`InstallDialog`) and Plugin capabilities in plain words
+                       Plugin's labels), their sections in Entry editor A (`FacetEditor`, `editing.ts`:
+                       added beside "+ Field", formatted and checked by the Plugin's hooks), what
+                       the kit knows of Owned fields' kinds, installing a Plugin (`InstallDialog`)
+                       and Plugin capabilities in plain words
 ```
 
 ### Where later screens plug in

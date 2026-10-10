@@ -17,6 +17,9 @@ import { monthYearState } from "./fields";
 /** The icons a facet may name in its manifest. */
 const ICONS: Record<string, LucideIcon> = { "credit-card": CreditCard, landmark: Landmark };
 
+/** A facet's icon, by the name its manifest gives; a generic one for a name the kit lacks. */
+export const facetIcon = (name: string | null): LucideIcon => (name && ICONS[name]) || Puzzle;
+
 export function FacetSection({
   entry,
   facet,
@@ -52,7 +55,7 @@ export function FacetSection({
     }
   };
 
-  const Icon = (facet.icon && ICONS[facet.icon]) || Puzzle;
+  const Icon = facetIcon(facet.icon);
   return (
     <div className="vb-sect mt-0 mb-6" aria-label={facet.title}>
       <div className="vb-sect-head">

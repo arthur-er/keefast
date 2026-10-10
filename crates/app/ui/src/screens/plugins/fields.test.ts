@@ -11,10 +11,11 @@ describe("monthYearState", () => {
     expect(monthYearState("10/26", new Date(Date.UTC(2026, 10, 1)))).toBe("expired");
   });
 
-  it("is soon within 60 days, and fine after", () => {
+  it("is soon this month and the next, and fine after", () => {
     expect(monthYearState("11/26", now)).toBe("soon");
     expect(monthYearState("12/26", now)).toBe("ok");
     expect(monthYearState("08/31", now)).toBe("ok");
+    expect(monthYearState("01/27", new Date(Date.UTC(2026, 11, 31)))).toBe("soon");
   });
 
   it("says when it isn't MM/YY", () => {
