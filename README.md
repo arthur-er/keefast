@@ -2,19 +2,20 @@
 
 # keefast
 
-A fast, native password manager for KeePass (KDBX) Vault files, written in Rust with GPUI.
+A fast password manager for KeePass (KDBX) Vault files, written in Rust, with a Tauri desktop app.
 
 Created in [T3 Code](https://t3.codes).
 
 ## Install on Linux
 
 Each release has an AppImage, a tarball and the Companion extension as a zip. keefast runs on
-Wayland and X11; it needs a Vulkan driver (Mesa's is enough).
+Wayland and X11, and draws its window with WebKitGTK 4.1.
 
 - **AppImage**: `chmod +x keefast-*.AppImage` and run it.
 - **Tarball**: unpack it and run `bin/keefast`, or install it for your user with
   `tar -xzf keefast-*-linux-*.tar.gz --strip-components=1 -C ~/.local`. It uses the system's
-  libxkbcommon and libxkbcommon-x11, which the AppImage brings along.
+  WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` on Fedora), which
+  the AppImage brings along.
 - **Nix**: `nix run github:arthur-er/keefast`, or add the flake to your NixOS configuration:
 
   ```nix
@@ -39,7 +40,9 @@ Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is
 
 Each release has an MSI, `keefast-<version>-windows-x86_64.msi`. It installs keefast for your
 user, without asking for administrator rights, in `%LOCALAPPDATA%\Programs\keefast`, with a
-Start menu shortcut. Installing a newer MSI upgrades keefast in place.
+Start menu shortcut. Installing a newer MSI upgrades keefast in place. keefast draws its window
+with the Microsoft Edge WebView2 Runtime, which Windows 11 and up-to-date Windows 10 have; the
+MSI says so if it is missing.
 
 Browser integration registers the `keefast-native-host` installed next to `keefast.exe`.
 Uninstalling keefast (Settings > Apps) removes those registrations, and only keefast's; your
@@ -56,23 +59,29 @@ alone. Pull requests that change the installer run that workflow too.
 
 The Cargo workspace lives in `crates/`:
 
-- `core`: domain model and KDBX handling. No I/O, no GPUI, no async runtime.
-- `workspace`: the headless app model, with Storage providers injected. No GPUI.
-- `app`: the GPUI views (the `keefast` binary).
+- `core`: domain model and KDBX handling. No I/O, no UI, no async runtime.
+- `workspace`: the headless app model, with Storage providers injected. No UI.
+- `app`: the desktop app (the `keefast` binary): a Tauri 2 window whose web UI, in
+  `crates/app/ui/` (React, TypeScript, Tailwind), talks to the Workspace through typed commands
+  (ADR 0008). See [`crates/app/ui/README.md`](crates/app/ui/README.md) for working on it.
 - `native-host`: the native-messaging host Chromium starts for the browser extension
   (`keefast-native-host`). It relays messages to the running app over a local socket.
 
 The Companion extension, a Chromium MV3 extension in TypeScript, lives in `extension/`.
 
-On NixOS (or anywhere with Nix), `nix develop` gives you the Rust toolchain and the system
-libraries GPUI needs. Elsewhere, install stable Rust; on Linux also install the libraries listed
-in `.github/workflows/ci.yml`.
+On NixOS (or anywhere with Nix), `nix develop` gives you the Rust toolchain, Node, pnpm,
+`cargo tauri` and the system libraries Tauri needs (WebKitGTK). Elsewhere, install stable Rust,
+Node 24 and pnpm; on Linux also install the libraries listed in `.github/workflows/ci.yml`.
 
 ```sh
 cargo test --workspace
-cargo run -p keefast -- fixtures/keepassxc-kdbx4.kdbx   # master password: fixture-password
+pnpm --dir crates/app/ui install
+# The app, with the web UI reloading as you edit (runs `pnpm dev` itself):
+cd crates/app && cargo tauri dev -- -- ../../fixtures/keepassxc-kdbx4.kdbx   # master password: fixture-password
 # With a key file (fixtures/key-files/ has one Vault file per key file format):
-cargo run -p keefast -- fixtures/key-files/keepassxc-xml-v2.kdbx --key-file fixtures/key-files/xml-v2.keyx
+cd crates/app && cargo tauri dev -- -- ../../fixtures/key-files/keepassxc-xml-v2.kdbx --key-file ../../fixtures/key-files/xml-v2.keyx
+# The web UI alone, in any browser, over a mock backend with fake Vaults:
+pnpm --dir crates/app/ui dev:mock
 ```
 
 The Vault files in `fixtures/` are the round-trip corpus (ADR 0002): real files written by
@@ -85,6 +94,11 @@ nix develop .#corpus -c scripts/check-interop.sh
 ```
 
 ## Keyboard
+
+> The desktop app's screens are being rebuilt in its Tauri web UI (ADR 0008), after the
+> Linear-style prototypes. Until that lands, the app shows plain placeholder screens, and this
+> section and the next two describe what the GPUI app did and the rebuilt screens bring back. The
+> command palette moves to Ctrl+K, with Ctrl+Shift+P kept as an alias.
 
 Ctrl+Shift+P opens the command palette: type part of a command's name, pick one with Up/Down and
 press Enter to run it, or Escape to close the palette. It lists every action of what has focus,
@@ -108,9 +122,8 @@ command palette), settings and lock-all buttons.
 
 The settings (Ctrl+, or the gear in the footer and "Settings" in the unlock dialog) have a menu
 of their sections and the open Vaults. **General** holds the preferences kept on this machine, in
-`keefast/config.toml` in the OS config directory: the theme (one of KeeWeb's: Dark, Light,
-Solarized dark and light, Dark and Light blue, Dark and Light brown, Terminal, Terminal light,
-Dark contrast and High contrast, or System, following the OS's light/dark setting), the idle lock
+`keefast/config.toml` in the OS config directory: the theme (Dark, Light, or System, following
+the OS's light/dark setting; KeeWeb's themes from earlier versions read as the nearer), the idle lock
 and locking with the OS, how long copied secrets stay on the clipboard, autosave, the password
 generator, browser integration and favicon download. Each Vault's page (also reached by clicking
 it in the footer) saves or locks it, changes its master key, and holds its Default access policy
@@ -126,8 +139,8 @@ every Vault locks: a cache on disk would list your sites in the clear.
 Edit an Entry to give it tags (separated by commas), a colour, an icon and an expiry date. The
 sidebar lists every tag and colour; click one to list the Entries with it across the open
 Vaults. Expired Entries are struck through and flagged in the Entry list. Icons are KeePass's
-standard icons, drawn with [Lucide](https://lucide.dev) icons (ISC) from
-[gpui-kit](https://gpui-kit.com)'s catalog, or PNG images imported into the Vault as custom
+standard icons, drawn with [Lucide](https://lucide.dev) icons (ISC), or PNG images imported
+into the Vault as custom
 icons. All of these are stored as
 KeePassXC, KeePass and KeeWeb store them, so those clients show them too.
 
