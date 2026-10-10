@@ -18,6 +18,7 @@ pub trait Clipboard {
 pub enum CopyField {
     Username,
     Password,
+    Url,
     /// The Entry's TOTP code now. Empty when the Entry has no TOTP, or its settings can't be
     /// read.
     TotpCode,

@@ -88,6 +88,22 @@ fn copying_puts_the_username_or_password_on_the_clipboard() {
 }
 
 #[test]
+fn copying_the_url_puts_it_on_the_clipboard() {
+    let mut h = harness();
+    let url = h
+        .workspace
+        .entry(h.vault, h.github)
+        .unwrap()
+        .url()
+        .to_owned();
+    assert!(!url.is_empty());
+
+    h.copy(CopyField::Url);
+
+    assert_eq!(h.clipboard.text(), Some(url.as_str()));
+}
+
+#[test]
 fn a_copied_password_is_cleared_after_30_seconds() {
     let mut h = harness();
     h.copy(CopyField::Password);

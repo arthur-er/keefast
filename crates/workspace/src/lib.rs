@@ -888,6 +888,7 @@ impl Workspace {
         let text = match field {
             CopyField::Username => entry.username(),
             CopyField::Password => entry.password().expose_secret(),
+            CopyField::Url => entry.url(),
             CopyField::CustomField(index) => entry
                 .custom_fields()
                 .get(index)
