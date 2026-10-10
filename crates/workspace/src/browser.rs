@@ -714,6 +714,14 @@ pub struct ConnectionId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PairingId(u64);
 
+impl PairingId {
+    /// The Pairing request's number, to tell it apart in a UI outside this process. Compare it with the
+    /// pending one's: there is no way back from a number.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 /// A Pairing request waiting for the user's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingPairing {
@@ -724,6 +732,14 @@ pub struct PendingPairing {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccessId(u64);
+
+impl AccessId {
+    /// The Access request's number, to tell it apart in a UI outside this process. Compare it with the
+    /// pending one's: there is no way back from a number.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
 
 /// A site asking for Entries, waiting for the user's Access decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -737,6 +753,14 @@ pub struct PendingAccess {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoginId(u64);
+
+impl LoginId {
+    /// The captured login's number, to tell it apart in a UI outside this process. Compare it with the
+    /// pending one's: there is no way back from a number.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
 
 /// A captured login waiting for the user to say where it goes.
 #[derive(Debug, Clone, PartialEq, Eq)]

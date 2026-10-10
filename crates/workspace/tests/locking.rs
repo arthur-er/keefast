@@ -180,6 +180,20 @@ fn one_vault_can_be_locked_while_the_others_stay_open() {
 }
 
 #[test]
+fn a_vault_keeps_its_number_while_locked_and_each_vault_has_its_own() {
+    let mut h = harness();
+    let (personal, work) = (h.personal.as_u64(), h.work.as_u64());
+    assert_ne!(personal, work);
+
+    h.lock(h.personal);
+
+    let locked = h.workspace.locked_vaults().map(|locked| locked.id().as_u64());
+    assert_eq!(locked.collect::<Vec<_>>(), [personal]);
+    let unlocked = h.unlock(&personal_vault()).unwrap();
+    assert_eq!(unlocked.as_u64(), personal);
+}
+
+#[test]
 fn a_locked_vault_unlocks_with_its_key_under_the_same_id() {
     let mut h = harness();
     h.lock_all();

@@ -69,6 +69,15 @@ pub use unlock_secrets::{NewKeyError, UnlockSecrets, write_new_key_file};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VaultId(u64);
 
+impl VaultId {
+    /// The Vault's number, for a UI that names Vaults outside this process. Find the Vault again
+    /// by comparing numbers with those of [`Workspace::vaults`] and [`Workspace::locked_vaults`]:
+    /// there is no way back from a number, so none can be made up.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 /// What the Entry list shows: every open Vault, one Vault, one Group of a Vault, or the
 /// Entries of every open Vault with a tag or colour.
 #[derive(Debug, Clone, PartialEq, Eq)]
