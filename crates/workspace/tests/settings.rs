@@ -59,7 +59,11 @@ fn the_theme_is_kept_in_the_config_file() {
         ("terminal-light", ThemeSetting::Light),
         ("high-contrast", ThemeSetting::Light),
     ] {
-        assert_eq!(load(&format!("theme = \"{theme}\"\n")).theme, nearest, "{theme}");
+        assert_eq!(
+            load(&format!("theme = \"{theme}\"\n")).theme,
+            nearest,
+            "{theme}"
+        );
     }
     // A theme from a newer version doesn't fail the file.
     let config = load("theme = \"neon\"\nautosave = true\n");

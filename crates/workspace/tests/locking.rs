@@ -187,7 +187,10 @@ fn a_vault_keeps_its_number_while_locked_and_each_vault_has_its_own() {
 
     h.lock(h.personal);
 
-    let locked = h.workspace.locked_vaults().map(|locked| locked.id().as_u64());
+    let locked = h
+        .workspace
+        .locked_vaults()
+        .map(|locked| locked.id().as_u64());
     assert_eq!(locked.collect::<Vec<_>>(), [personal]);
     let unlocked = h.unlock(&personal_vault()).unwrap();
     assert_eq!(unlocked.as_u64(), personal);
