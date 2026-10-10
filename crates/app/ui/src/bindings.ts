@@ -583,11 +583,21 @@ export type EntryVersion = {
 	 *  password without showing either.
 	 */
 	passwordIsCurrent: boolean,
+	/**  Whether its password is the one of the version before it. False for the oldest version. */
+	passwordIsPrevious: boolean,
 	customFields: CustomFieldView[],
 	tags: string[],
 	color: Color | null,
 	totp: TotpState,
 	attachments: string[],
+	/**
+	 *  The custom fields, by name, it has like the version before it, protected in either, whose
+	 *  values differ: what a comparison can't tell from the values it is shown. Empty for the
+	 *  oldest version.
+	 */
+	protectedChangedFromPrevious: string[],
+	/**  The same, against the Entry as it is now. */
+	protectedChangedFromCurrent: string[],
 };
 
 /**  What went wrong, for the UI to branch on. */

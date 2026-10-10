@@ -43,6 +43,7 @@ import {
   fakeRecents,
   fakeVaults,
   type MockEntry,
+  type MockField,
   type MockGroup,
   type MockTotp,
   type MockVault,
@@ -877,21 +878,35 @@ export function createMockBackend(): Backend & {
     }),
     getEntryHistory: command((id, entryId): EntryVersion[] => {
       const [, e] = entryOf(id, entryId);
-      return e.history.map((version, index) => ({
-        index,
-        modified: version.modified,
-        title: version.title || "(untitled)",
-        username: version.username,
-        url: version.url,
-        notes: version.notes,
-        hasPassword: version.password !== "",
-        passwordIsCurrent: version.password === e.password,
-        customFields: fieldViews(version.fields),
-        tags: version.tags,
-        color: version.color,
-        totp: version.totp ? "set" : "none",
-        attachments: version.attachments,
-      }));
+      // The protected fields both have whose values differ, as the backend tells them.
+      const protectedChanges = (a: MockField[], b: MockField[]) =>
+        a
+          .filter((field) => {
+            const other = b.find((o) => o.name === field.name);
+            return other !== undefined && (field.protected || other.protected) && field.value !== other.value;
+          })
+          .map((field) => field.name);
+      return e.history.map((version, index) => {
+        const previous = e.history[index - 1];
+        return {
+          index,
+          modified: version.modified,
+          title: version.title || "(untitled)",
+          username: version.username,
+          url: version.url,
+          notes: version.notes,
+          hasPassword: version.password !== "",
+          passwordIsCurrent: version.password === e.password,
+          passwordIsPrevious: previous !== undefined && version.password === previous.password,
+          customFields: fieldViews(version.fields),
+          tags: version.tags,
+          color: version.color,
+          totp: version.totp ? "set" : "none",
+          attachments: version.attachments,
+          protectedChangedFromPrevious: previous ? protectedChanges(version.fields, previous.fields) : [],
+          protectedChangedFromCurrent: protectedChanges(version.fields, e.fields),
+        };
+      });
     }),
     revealVersionPassword: command((id, entryId, index) => {
       const version = entryOf(id, entryId)[1].history[index];
