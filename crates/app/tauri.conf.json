@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "keefast",
+  "productName": "KeeFast",
   "mainBinaryName": "keefast",
   "identifier": "io.github.arthur-er.keefast",
   "build": {
@@ -20,7 +20,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "keefast",
+        "title": "KeeFast",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -47,9 +47,9 @@
       "appimage"
     ],
     "icon": [
+      "icons/128x128@2x.png",
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ],

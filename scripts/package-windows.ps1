@@ -25,7 +25,8 @@ $msiVersion = $version -replace '[-+].*$', ''
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $msi = Join-Path $OutDir "keefast-$version-windows-x86_64.msi"
 wix build (Join-Path $root 'packaging\windows\keefast.wxs') -arch x64 `
-    -d "Version=$msiVersion" -d "BinDir=$((Resolve-Path $BinDir).Path)" -o $msi
+    -d "Version=$msiVersion" -d "BinDir=$((Resolve-Path $BinDir).Path)" `
+    -d "IconFile=$(Join-Path $root 'crates\app\icons\icon.ico')" -o $msi
 if ($LASTEXITCODE) { throw 'wix build failed' }
 wix msi validate $msi
 if ($LASTEXITCODE) { throw 'wix msi validate failed' }
