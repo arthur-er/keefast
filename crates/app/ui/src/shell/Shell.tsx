@@ -3,6 +3,7 @@
 
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { KeyRound } from "lucide-react";
 
 import { api } from "@/api";
 import type { AppSettings, PaneWidthsView } from "@/bindings";
@@ -13,9 +14,9 @@ import { SettingsPage } from "@/screens/settings/SettingsPage";
 import { DetailArea } from "@/screens/vault-browser/DetailArea";
 import { EntryList } from "@/screens/vault-browser/EntryList";
 import { LockedVault } from "@/screens/vault-browser/LockedVault";
-import { VaultKeyCommand } from "@/screens/vault-key/ChangeVaultKey";
 
-import { scopeVault } from "./hooks";
+import { useAppCommand } from "./commands";
+import { scopeVault, useKeysActive } from "./hooks";
 import { Sidebar } from "./Sidebar";
 import { useShell } from "./state";
 import { MergeNotice, Toolbar } from "./Toolbar";
@@ -28,6 +29,7 @@ const LIMITS = { sidebar: [180, 360], entryList: [260, 560] } as const;
 export function Shell() {
   const widths = usePaneWidths();
   const { state } = useShell();
+  useChangeKeyCommand();
   return (
     <div className="vb" style={{ "--sidebar-w": `${widths.current.sidebar}px`, "--list-w": `${widths.current.entryList}px` } as CSSProperties}>
       <Sidebar />
@@ -48,9 +50,27 @@ export function Shell() {
           </>
         )}
       </div>
-      {/* Until Vault settings C (Tauri UI 6/7) embeds the change-key card. */}
-      <VaultKeyCommand />
     </div>
+  );
+}
+
+/** "Change master key and encryption…" for the Vault shown: Vault settings C, at the card. */
+function useChangeKeyCommand() {
+  const { actions } = useShell();
+  const view = useView();
+  const snapshot = useWorkspace().data;
+  const shown = view ? scopeVault(view.scope) : null;
+  const unlocked = snapshot?.vaults.some((vault) => vault.id === shown && vault.state === "unlocked") ?? false;
+  useAppCommand(
+    {
+      id: "changeVaultKey",
+      title: "Change master key and encryption…",
+      section: "Vaults",
+      icon: KeyRound,
+      enabled: unlocked,
+      run: () => shown !== null && actions.openVaultSettings(shown, "key"),
+    },
+    useKeysActive(),
   );
 }
 

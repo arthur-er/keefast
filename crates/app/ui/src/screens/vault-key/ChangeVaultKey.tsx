@@ -5,9 +5,8 @@
 // settings and saves the Vault file straight away (`change_vault_key`; the Vault keeps its old key
 // until the save has written the new one, ADR 0006).
 //
-// Vault settings C (Tauri UI 6/7) embeds `MasterKeySection` as its Security section's card, or
-// `ChangeVaultKey` alone where it opens the card itself. Until then `VaultKeyCommand` (in the
-// shell) reaches it from the command palette.
+// Vault settings C opens `ChangeVaultKey` in its Security section's card, in place of the row
+// (`screens/settings/VaultKeySection.tsx`).
 
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, Eye, EyeOff, FileKey2, Gauge, Info, KeyRound, Plus, ShieldCheck, TriangleAlert, X } from "lucide-react";
@@ -15,12 +14,9 @@ import { CircleAlert, Eye, EyeOff, FileKey2, Gauge, Info, KeyRound, Plus, Shield
 import { api, errorMessage } from "@/api";
 import type { EncryptionSettings, VaultId } from "@/bindings";
 import { useVaultSettings } from "@/api/queries";
-import { Button, Dialog, Kbd, Switch, toast } from "@/kit";
+import { Button, Kbd, Switch, toast } from "@/kit";
 import { useShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
-import { useAppCommand } from "@/shell/commands";
-import { useShell } from "@/shell/state";
-import { useView } from "@/shell/view";
 
 import { Choice } from "./EncryptionFields";
 import { CIPHERS, checkEncryption, type EncryptionField, encryptionForm, type EncryptionForm, encryptionSummary, KDFS } from "./encryption";
@@ -28,34 +24,8 @@ import { checkKey, KEY_MESSAGES, matchState } from "./masterKey";
 import { useKeyFile } from "./useKeyFile";
 import "./vault-key.css";
 
-/** The Security section's card: the row with the Vault's encryption and "Change…", or the
- * change-key card in its place. Put it under Vault settings' Security heading. */
-export function MasterKeySection({ vault, initiallyOpen = false }: { vault: VaultId; initiallyOpen?: boolean }) {
-  const [open, setOpen] = useState(initiallyOpen);
-  const settings = useVaultSettings(vault).data;
-  return (
-    <div className="vk set-card">
-      {open ? (
-        <ChangeVaultKey vault={vault} onClose={() => setOpen(false)} />
-      ) : (
-        <div className="set-row">
-          <div className="txt">
-            <div className="lbl">Master key and encryption</div>
-            <div className="desc">{settings ? encryptionSummary(settings.encryption).join(" · ") : " "}</div>
-          </div>
-          <div className="ctl">
-            <Button size="sm" onClick={() => setOpen(true)}>
-              Change…
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** The change-key card for `vault`. `onClose` after Cancel, Escape, or a save begun. Wrap it in
- * `.vk.set-card` (as `MasterKeySection` does) or anything with the `vk` class. */
+/** The change-key card for `vault`. `onClose` after Cancel, Escape, or a save begun. Put it in
+ * an element with the `vk` class, which its styles are scoped under. */
 export function ChangeVaultKey({ vault, onClose }: { vault: VaultId; onClose: () => void }) {
   const settings = useVaultSettings(vault).data;
   if (!settings) return null;
@@ -339,31 +309,5 @@ function ChangeKeyCard({
         </Button>
       </div>
     </form>
-  );
-}
-
-/** For now, until Vault settings C: "Change master key…" in the command palette opens the
- * change-key card for the Vault shown, in a dialog. Vault settings C replaces this. */
-export function VaultKeyCommand() {
-  const { state } = useShell();
-  const view = useView();
-  const [vault, setVault] = useState<VaultId | null>(null);
-  const scope = view?.scope;
-  const shown = scope && (scope.kind === "vault" || scope.kind === "group") ? scope.vault : null;
-  useAppCommand({
-    id: "changeVaultKey",
-    title: "Change master key and encryption…",
-    section: "Vaults",
-    icon: KeyRound,
-    enabled: shown !== null,
-    run: () => shown !== null && setVault(shown),
-  }, state.overlay === null);
-  if (vault === null) return null;
-  return (
-    <Dialog open onOpenChange={(open) => !open && setVault(null)} title="Master key and encryption" className="vk max-h-[calc(100vh-48px)] w-[680px] overflow-auto p-0 [&_.dialog-head]:sr-only [&_.dialog-body]:p-0">
-      <div className="set-card">
-        <ChangeVaultKey vault={vault} onClose={() => setVault(null)} />
-      </div>
-    </Dialog>
   );
 }

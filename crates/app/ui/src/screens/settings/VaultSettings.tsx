@@ -3,7 +3,7 @@
 // Browser group), its Pairings, and its master key and encryption. Same page as General
 // Settings C; leaves when the Vault locks.
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Check as CheckIcon, ChevronsUpDown, Folder, Globe, Lock, PlugZap, Save, Shield, Trash2 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
@@ -16,7 +16,7 @@ import { useShell } from "@/shell/state";
 import { vaultStatus } from "@/shell/vaultStatus";
 
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
-import { KEY_SEARCH, KeyEditor, VaultKeySection } from "./VaultKeySection";
+import { KEY_SEARCH, VaultKeySection } from "./VaultKeySection";
 
 const fail = (error: unknown) => toast(errorMessage(error), { icon: "error" });
 
@@ -34,7 +34,16 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
   const unlocked = summary?.state === "unlocked";
   const settings = useVaultSettings(unlocked ? vault : undefined).data;
   const { actions } = useShell();
-  const [changingKey, setChangingKey] = useState(section === "key" && KeyEditor !== null);
+  const [changingKey, setChangingKey] = useState(section === "key");
+  // Asked for again while the page shows (the palette's "Change master key and encryption…").
+  useEffect(() => {
+    if (section === "key") setChangingKey(true);
+  }, [section]);
+  // Once closed, the card is no longer asked for: back on the page (after a lock), the row shows.
+  const closeKey = useCallback(() => {
+    setChangingKey(false);
+    if (section === "key") actions.openVaultSettings(vault);
+  }, [section, actions, vault]);
 
   // A Vault's settings go when it locks or closes, as in the GPUI app.
   const gone = snapshot !== undefined && !unlocked;
@@ -119,20 +128,13 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
           id: "key",
           search: KEY_SEARCH,
           pinned: changingKey,
-          render: () =>
-            changingKey && KeyEditor ? (
-              <KeyEditor vault={vault} settings={settings} onClose={() => setChangingKey(false)} />
-            ) : (
-              <VaultKeySection
-               
-                settings={settings}
-                onChange={() => (KeyEditor ? setChangingKey(true) : toast("Changing the master key arrives with Tauri UI 5/7.", { icon: "info" }))}
-              />
-            ),
+          render: () => (
+            <VaultKeySection vault={vault} settings={settings} open={changingKey} onOpen={() => setChangingKey(true)} onClose={closeKey} />
+          ),
         }]],
       },
     ];
-  }, [settings, summary, vault, changingKey]);
+  }, [settings, summary, vault, changingKey, closeKey]);
 
   if (!summary || !unlocked) return null;
   return (
