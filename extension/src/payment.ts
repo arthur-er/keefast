@@ -74,11 +74,15 @@ function usable(element: HTMLInputElement | HTMLSelectElement): boolean {
 
 /**
  * The payment form's fields in a document the user could see and fill, in the page's order.
- * None when it has no card number field: on its own, a name or a date isn't a payment form's.
- * A frame of a payment provider may hold one field alone, so a field the page marked counts
- * without a number.
+ * Fields keefast guessed count only beside a card number field: on its own, a name or a date
+ * isn't a payment form's. A frame of a payment provider may hold one field alone, so a field the
+ * page marked counts without a number. With `guessesAlone`, for filling a Card the user picked
+ * for the page, guesses count without a number too: the number may be in a provider's frame.
  */
-export function findPaymentFields(document: Document): PaymentField[] {
+export function findPaymentFields(
+  document: Document,
+  { guessesAlone = false } = {},
+): PaymentField[] {
   const view = document.defaultView;
   if (!view) return [];
   const elements = Array.from(
@@ -109,15 +113,20 @@ export function findPaymentFields(document: Document): PaymentField[] {
     if (hint) guessed.push({ element, token: hint[0], marked: false });
   }
   const hasNumber = [...marked, ...guessed].some(({ token }) => token === "cc-number");
-  const found = hasNumber ? [...marked, ...guessed] : marked;
+  const found = hasNumber || guessesAlone ? [...marked, ...guessed] : marked;
   return found.sort((a, b) =>
     a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
   );
 }
 
-/** The tokens of the payment fields in a document, each once, as a frame tells the extension. */
+/**
+ * The tokens of the payment fields in a document, each once, as a frame tells the extension when
+ * the user has picked a Card for the page: guesses count without a number.
+ */
 export function paymentTokens(document: Document): PaymentToken[] {
-  return [...new Set(findPaymentFields(document).map(({ token }) => token))];
+  return [
+    ...new Set(findPaymentFields(document, { guessesAlone: true }).map(({ token }) => token)),
+  ];
 }
 
 /** A card's expiry, its year in four digits. */
@@ -126,18 +135,25 @@ export interface Expiry {
   year: number;
 }
 
-/** The expiry a Card's values give: from `cc-exp` (`08/31`, `08/2031`, `0831`), or its parts. */
+/**
+ * The expiry a Card's values give: whole (`08/31`, `08/2031`, `0831`), as `cc-exp` holds it and
+ * as {@link valuesFor} gives each expiry field a frame has, or else from a month and a year apart.
+ */
 export function expiryOf(values: CardValues): Expiry | undefined {
   const fullYear = (year: number) => (year < 100 ? 2000 + year : year);
   const valid = (month: number, year: number) =>
     month >= 1 && month <= 12 && year > 0 ? { month, year: fullYear(year) } : undefined;
-  if (values["cc-exp"]) {
-    const exp = values["cc-exp"].trim();
-    const parts = exp.match(/^(\d{1,2})\s*[/\-. ]\s*(\d{2}|\d{4})$/) ?? exp.match(/^(\d{2})(\d{2})$/);
+  const whole = (exp: string) => {
+    const parts =
+      exp.match(/^(\d{1,2})\s*[/\-. ]\s*(\d{2}|\d{4})$/) ?? exp.match(/^(\d{2})(\d{2})$/);
     if (parts) return valid(Number(parts[1]), Number(parts[2]));
     // As `<input type="month">` writes it.
     const iso = exp.match(/^(\d{4})-(\d{2})$/);
-    if (iso) return valid(Number(iso[2]), Number(iso[1]));
+    return iso ? valid(Number(iso[2]), Number(iso[1])) : undefined;
+  };
+  for (const token of ["cc-exp", "cc-exp-month", "cc-exp-year"] as const) {
+    const expiry = values[token] && whole(values[token].trim());
+    if (expiry) return expiry;
   }
   if (values["cc-exp-month"] && values["cc-exp-year"]) {
     return valid(Number(values["cc-exp-month"]), Number(values["cc-exp-year"]));
@@ -253,16 +269,17 @@ function fillField({ element, token }: PaymentField, value: string): boolean {
 }
 
 /**
- * Fills a document's payment fields with a Card's values, if it is still at `origin`, the origin
- * they were given for: it may have navigated meanwhile. Each value goes into the first field
- * taking it. The security code goes only into a field marked `cc-csc`. Says whether it filled
- * anything.
+ * Fills a document's payment fields with the values of a Card the user picked for the page, if
+ * it is still at `origin`, the origin they were given for: it may have navigated meanwhile. Each
+ * value goes into the first field taking it; guesses count without a number in this document,
+ * as the number may be in a provider's frame. The security code goes only into a field marked
+ * `cc-csc`. Says whether it filled anything.
  */
 export function fillPayment(document: Document, origin: string, values: CardValues): boolean {
   if (document.location.origin !== origin) return false;
   const done = new Set<PaymentToken>();
   let filled = false;
-  for (const field of findPaymentFields(document)) {
+  for (const field of findPaymentFields(document, { guessesAlone: true })) {
     if (done.has(field.token)) continue;
     // Guessed fields never get the security code, whatever they are called.
     if (field.token === "cc-csc" && (!field.marked || markedToken(field.element) !== "cc-csc")) {

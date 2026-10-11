@@ -76,6 +76,16 @@ describe("findPaymentFields", () => {
     expect(pageFields(document).payment).toBe(false);
   });
 
+  it("guesses alone when filling a Card picked for the page, its number in another frame", () => {
+    page(`<input id="name" name="name-on-card"><input id="email" name="email">`);
+
+    expect(findPaymentFields(document)).toEqual([]);
+    expect(paymentTokens(document)).toEqual(["cc-name"]);
+    fillPayment(document, ORIGIN, visa);
+    expect(byId("name").value).toBe("Ada Lovelace");
+    expect(byId("email").value).toBe("");
+  });
+
   it("takes a lone field the page marked, as a payment provider's frame has", () => {
     page(`<input id="cvc" autocomplete="cc-csc">`);
 
@@ -127,6 +137,16 @@ describe("fillPayment", () => {
     expect(byId<HTMLSelectElement>("year").value).toBe("31");
     expect(byId("cvc").value).toBe("737");
     for (const id of ["email", "promo", "trap", "trap-cvc"]) expect(byId(id).value, id).toBe("");
+  });
+
+  it("fills what a frame was given for its fields, as the extension gives it", () => {
+    checkout();
+
+    fillPayment(document, ORIGIN, valuesFor(paymentTokens(document), visa));
+
+    expect(byId<HTMLSelectElement>("month").value).toBe("8");
+    expect(byId<HTMLSelectElement>("year").value).toBe("31");
+    expect(byId("cvc").value).toBe("737");
   });
 
   it("never fills the CVV into a field that isn't marked cc-csc", () => {
