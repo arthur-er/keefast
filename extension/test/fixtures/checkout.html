@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  A checkout page for the Companion extension's tests (test/payment.test.ts), and for trying
+  payment form filling by hand: serve this directory, and open it with keefast's icons on.
+  Its fields are marked as most shops mark them, and some aren't marked at all, as on many.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Checkout · Example Shop</title>
+    <style>
+      body { font: 15px/1.4 system-ui, sans-serif; margin: 0; background: #f6f6f7; color: #18181b; }
+      main { max-width: 440px; margin: 48px auto; padding: 28px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.08); }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p.total { margin: 0 0 20px; color: #52525b; }
+      label { display: block; font-size: 13px; font-weight: 500; margin: 14px 0 4px; }
+      input, select { box-sizing: border-box; width: 100%; height: 38px; padding: 0 10px; border: 1px solid #d4d4d8; border-radius: 6px; font: inherit; background: #fff; }
+      .row { display: flex; gap: 10px; }
+      .row > div { flex: 1; }
+      button { margin-top: 22px; width: 100%; height: 40px; border: 0; border-radius: 6px; background: #18181b; color: #fff; font: inherit; font-weight: 600; }
+      .honeypot { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Checkout</h1>
+      <p class="total">Example Shop · 1 item · €42.00</p>
+      <form id="pay" action="/pay" method="post">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" />
+
+        <label for="holder">Name on card</label>
+        <input id="holder" name="card-holder" type="text" />
+
+        <label for="number">Card number</label>
+        <input id="number" name="cardnumber" type="text" inputmode="numeric" autocomplete="cc-number" placeholder="1234 1234 1234 1234" />
+
+        <div class="row">
+          <div>
+            <label for="month">Expiry month</label>
+            <select id="month" name="exp_month" autocomplete="cc-exp-month">
+              <option value="">Month</option>
+              <option value="1">01 - January</option>
+              <option value="2">02 - February</option>
+              <option value="3">03 - March</option>
+              <option value="4">04 - April</option>
+              <option value="5">05 - May</option>
+              <option value="6">06 - June</option>
+              <option value="7">07 - July</option>
+              <option value="8">08 - August</option>
+              <option value="9">09 - September</option>
+              <option value="10">10 - October</option>
+              <option value="11">11 - November</option>
+              <option value="12">12 - December</option>
+            </select>
+          </div>
+          <div>
+            <label for="year">Expiry year</label>
+            <select id="year" name="exp_year">
+              <option value="">Year</option>
+              <option value="26">2026</option>
+              <option value="27">2027</option>
+              <option value="28">2028</option>
+              <option value="29">2029</option>
+              <option value="30">2030</option>
+              <option value="31">2031</option>
+              <option value="32">2032</option>
+            </select>
+          </div>
+          <div>
+            <label for="cvc">CVC</label>
+            <input id="cvc" name="cvc" type="text" inputmode="numeric" autocomplete="cc-csc" maxlength="4" />
+          </div>
+        </div>
+
+        <label for="promo">Promo code</label>
+        <input id="promo" name="promo" type="text" />
+
+        <div class="honeypot">
+          <input id="trap" name="card_number_2" type="text" autocomplete="cc-number" />
+          <input id="trap-cvc" name="cvc2" type="text" autocomplete="cc-csc" />
+        </div>
+
+        <button type="submit">Pay €42.00</button>
+      </form>
+    </main>
+  </body>
+</html>

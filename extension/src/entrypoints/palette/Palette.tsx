@@ -1,10 +1,11 @@
 // The command palette, framed over the page by keefast's icon in a field or the shortcut. It
 // lists the site's Entries, searches the paired Vaults for others as the user types, and fills
 // the one picked; or, for a new password field, shows a password from keefast's generator to
-// fill. It shows no passwords but a generated one (ADR 0007).
+// fill; or, for a payment form, lists the Entries with a Card to fill one (ADR 0010). It shows
+// no passwords but a generated one, and no Card's values (ADR 0007).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browser } from "wxt/browser";
-import { EyeOff, KeyRound, LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { CreditCard, EyeOff, KeyRound, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,6 +99,8 @@ export function Palette() {
           <Waiting />
         ) : start.mode === "generate" ? (
           <Generator site={start.site} />
+        ) : start.mode === "payment" ? (
+          <Cards start={start} />
         ) : (
           <Entries start={start} />
         )}
@@ -267,6 +270,108 @@ function EntryItem({
         <span className="max-w-[40%] truncate text-xs text-muted-foreground">{entry.group}</span>
       )}
     </CommandItem>
+  );
+}
+
+/**
+ * The Entries with a Card, for a payment form: all of them, and those matching what the user
+ * types. Picking one fills it; when the form is in a frame from elsewhere, the palette says so
+ * first, since the Card goes there too.
+ */
+function Cards({ start }: { start: PaletteStart }) {
+  const { site, frame } = start;
+  const [query, setQuery] = useState("");
+  const [cards, setCards] = useState<FoundEntry[]>();
+  const [notice, setNotice] = useState<Problem>();
+  const [filling, setFilling] = useState<string>();
+  const searched = useRef(0);
+
+  useEffect(() => {
+    const search = ++searched.current;
+    const timer = setTimeout(
+      async () => {
+        const answer = await ask({ type: "cards", query });
+        if (search !== searched.current) return;
+        if (answer.ok) setCards(answer.value);
+        else setNotice(problem(answer.reason));
+      },
+      query ? SEARCH_DELAY_MS : 0,
+    );
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const fill = useCallback(async (uuid: string) => {
+    setFilling(uuid);
+    setNotice(undefined);
+    const answer = await ask({ type: "fill-card", uuid });
+    setFilling(undefined);
+    // Once filled, keefast closes the palette.
+    if (!answer.ok) setNotice(problem(answer.reason));
+    else if (!answer.value) {
+      setNotice({
+        title: "Nothing was filled.",
+        detail: "This page changed, or keefast was turned down for it.",
+      });
+    }
+  }, []);
+
+  return (
+    <Command shouldFilter={false} loop label="Fill a card with keefast">
+      <CommandInput
+        autoFocus
+        value={query}
+        onValueChange={setQuery}
+        placeholder="Search keefast for a card…"
+        className="h-12"
+      />
+      <CommandList className="max-h-[min(360px,60vh)]">
+        {frame && (
+          <div className="border-b px-4 py-3" role="note">
+            <p className="font-medium">The card fields are in a frame from {frame}.</p>
+            <p className="text-muted-foreground">
+              The card you pick is filled there and on {site}, and nowhere else.
+            </p>
+          </div>
+        )}
+        {notice && (
+          <div className="border-b px-4 py-3" role="status">
+            <p className="font-medium">{notice.title}</p>
+            {notice.detail && <p className="text-muted-foreground">{notice.detail}</p>}
+          </div>
+        )}
+        {cards === undefined ? (
+          <div className="flex items-center gap-2 px-4 py-3 text-muted-foreground">
+            <LoaderCircle className="size-4 shrink-0 animate-spin" />
+            Asking keefast for your cards…
+          </div>
+        ) : cards.length === 0 ? (
+          <div className="flex items-center gap-2 px-4 py-3 text-muted-foreground">
+            <Search className="size-4 shrink-0" />
+            {query.trim() ? "No cards match." : "No Entries in keefast have a card."}
+          </div>
+        ) : (
+          <CommandGroup heading={`Fill a card on ${site}`}>
+            {cards.map((card) => (
+              <CommandItem
+                key={card.uuid}
+                value={card.uuid}
+                onSelect={() => void fill(card.uuid)}
+                className="gap-3 py-2"
+              >
+                {filling === card.uuid ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
+                <span className="min-w-0 flex-1 truncate font-medium">{card.name}</span>
+                {card.group && (
+                  <span className="max-w-[40%] truncate text-xs text-muted-foreground">
+                    {card.group}
+                  </span>
+                )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+      <Footer site={site} />
+    </Command>
   );
 }
 

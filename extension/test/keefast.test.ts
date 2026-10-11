@@ -344,3 +344,53 @@ function disconnectedPort(): NativePort {
     disconnect: () => {},
   };
 }
+
+describe("searchForm and fillForm", () => {
+  const visa = {
+    uuid: "c0de",
+    name: "Company Visa",
+    values: { "cc-number": "4111 1111 1111 1111", "cc-csc": "737", "cc-unknown": "x" },
+  };
+
+  beforeEach(async () => {
+    keefast.cards = [visa];
+    await client.pair();
+  });
+
+  it("lists the Entries with a Card, without their values", async () => {
+    const found = await client.searchForm("payment", "https://shop.test/pay", undefined, "");
+
+    expect(found).toEqual([
+      { uuid: "c0de", name: "Company Visa", username: "", url: "", group: "", hasTotp: false },
+    ]);
+    const request = keefast.received.find((m) => m.action === "keefast-search-entries")!;
+    expect(request).toMatchObject({ form: "payment", query: "", url: "https://shop.test/pay" });
+  });
+
+  it("gets the picked Card's values by token, for the page and its frame", async () => {
+    const card = await client.fillForm(
+      "payment",
+      "c0de",
+      "https://shop.test/pay",
+      undefined,
+      "https://js.payments.test/frame",
+    );
+
+    expect(card).toEqual({
+      uuid: "c0de",
+      name: "Company Visa",
+      // Only tokens the extension knows.
+      values: { "cc-number": "4111 1111 1111 1111", "cc-csc": "737" },
+    });
+    expect(keefast.filledForms).toEqual([
+      { uuid: "c0de", url: "https://shop.test/pay", frameUrl: "https://js.payments.test/frame" },
+    ]);
+  });
+
+  it("gets nothing for a Card keefast won't give", async () => {
+    keefast.cards = [{ ...visa, denied: ["shop.test"] }];
+
+    const url = "https://shop.test/pay";
+    expect(await client.fillForm("payment", "c0de", url, undefined, url)).toBeUndefined();
+  });
+});

@@ -81,11 +81,11 @@ The Group in each Vault where logins captured by the Companion extension are sav
 _Avoid_: Inbox, new logins folder
 
 **Field icon**:
-keefast's icon in a page's login, 2FA and new password fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette.
+keefast's icon in a page's login, 2FA, new password and payment fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette; in a payment field, it always opens the Command palette.
 _Avoid_: Autofill button, inline menu
 
 **Command palette** (browser):
-The palette the Companion extension opens over a page to pick an Entry to fill, the site's or any found by searching the paired Vaults, or to fill a generated password. Not the desktop app's command palette.
+The palette the Companion extension opens over a page to pick an Entry to fill, the site's or any found by searching the paired Vaults, to fill a generated password, or to pick an Entry with a Card to fill a payment form. Not the desktop app's command palette.
 _Avoid_: Inline menu, overlay
 
 ### Plugins

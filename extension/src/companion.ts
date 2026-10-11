@@ -4,12 +4,14 @@
 // fill a password keefast's generator made. Entries' passwords and TOTP codes stay here, never
 // in the popup or the palette, and only until filled; they show only a generated password, for
 // the user to see what they sign up with. Then, what the page does: offer keefast the logins
-// the user submits there that it doesn't have yet.
+// the user submits there that it doesn't have yet. On a payment form, list the Entries with a
+// Card and fill the one the user picks (ADR 0010), whose values likewise stay here until filled.
 import nacl from "tweetnacl";
 import type { SubmittedLogin } from "./capture";
 import { encodeBase64 } from "./crypto";
 import { type Credentials, type PageFields, isTwoFactorStep } from "./forms";
 import { KeefastError, type Entry, type FoundEntry, type KeefastClient } from "./keefast";
+import { type CardValues, type PaymentToken, valuesFor } from "./payment";
 
 /** A page the extension may fill, as its login form sees it. */
 export interface Page {
@@ -25,6 +27,23 @@ export interface InspectedPage extends Page {
   fields: PageFields;
 }
 
+/** A document in a tab, the page or one of its frames, with payment fields. */
+export interface PaymentFrame {
+  /** The browser's id of the document: filling it fails once it has navigated. */
+  documentId: string;
+  frameId: number;
+  url: string;
+  origin: string;
+  /** What its payment fields take. */
+  tokens: PaymentToken[];
+}
+
+/** A frame the user clicked keefast's icon in, whose origin may get a Card's values. */
+export interface ChosenFrame {
+  url: string;
+  origin: string;
+}
+
 /** The browser's tabs, as far as filling them goes. */
 export interface Tabs {
   /** The page in a tab, or none if the extension can't fill it. */
@@ -36,6 +55,10 @@ export interface Tabs {
   fill(tab: number, origin: string, credentials: Credentials): Promise<boolean>;
   /** Fills a new password into the tab's new password fields, if the tab is still at `origin`. */
   fillNewPassword(tab: number, origin: string, password: string): Promise<boolean>;
+  /** The documents in the tab with payment fields the extension may read: the page, and frames. */
+  paymentFrames(tab: number): Promise<PaymentFrame[]>;
+  /** Fills a Card's values into a document's payment fields, if it is still at its origin. */
+  fillPayment(tab: number, frame: PaymentFrame, values: CardValues): Promise<boolean>;
 }
 
 /** An Entry as the popup and the palette list it, without its password. */
@@ -195,6 +218,49 @@ export class Companion {
       known.entries.push(this.knownEntry(entry));
     }
     if (filled) known.filled = entry.uuid;
+    return filled;
+  }
+
+  /**
+   * The Entries with a Card in the paired Vaults matching `query`, all of them for an empty one,
+   * for the user to pick one in the command palette over the page in `tab`; none if the
+   * extension can't fill the page.
+   */
+  async cards(tab: number, query: string): Promise<FoundEntry[] | undefined> {
+    const page = await this.tabs.inspect(tab);
+    if (!page) return undefined;
+    return this.client.searchForm("payment", page.url, page.submitUrl, query);
+  }
+
+  /**
+   * Fills the Card of the Entry `uuid`, which the user picked in the command palette, into the
+   * payment fields in `tab`: the page's own, and those of frames from the page's origin or from
+   * `frame`'s, the one the user clicked keefast's icon in. A frame from any other origin gets
+   * nothing, and each gets only the values its fields take. keefast is asked only when there is
+   * a field to fill; it remembers the pick for the site and the frame. Says whether it filled any.
+   */
+  async fillCard(tab: number, uuid: string, frame?: ChosenFrame): Promise<boolean> {
+    const page = await this.tabs.inspect(tab);
+    if (!page) return false;
+    const origins = new Set([page.origin, frame?.origin ?? page.origin]);
+    const targets = (await this.tabs.paymentFrames(tab)).filter(
+      (target) => origins.has(target.origin) && target.tokens.length > 0,
+    );
+    if (targets.length === 0) return false;
+    const card = await this.client.fillForm(
+      "payment",
+      uuid,
+      page.url,
+      page.submitUrl,
+      frame?.url ?? page.url,
+    );
+    if (!card) return false;
+    let filled = false;
+    for (const target of targets) {
+      const values = valuesFor(target.tokens, card.values);
+      if (Object.keys(values).length === 0) continue;
+      if (await this.tabs.fillPayment(tab, target, values)) filled = true;
+    }
     return filled;
   }
 

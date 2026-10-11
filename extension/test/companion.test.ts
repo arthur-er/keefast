@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Companion, type InspectedPage, type Tabs } from "../src/companion";
+import { Companion, type InspectedPage, type PaymentFrame, type Tabs } from "../src/companion";
+import type { CardValues } from "../src/payment";
 import type { Credentials, PageFields } from "../src/forms";
 import { KeefastClient, type Pairing } from "../src/keefast";
 import { FakeKeefast } from "./fake-keefast";
@@ -14,12 +15,16 @@ const carol = {
   totp: "123456",
 };
 
-const signIn: PageFields = { login: true, totp: false, newPassword: false };
-const twoFactor: PageFields = { login: false, totp: true, newPassword: false };
-const signUp: PageFields = { login: true, totp: false, newPassword: true };
+const signIn: PageFields = { login: true, totp: false, newPassword: false, payment: false };
+const twoFactor: PageFields = { login: false, totp: true, newPassword: false, payment: false };
+const signUp: PageFields = { login: true, totp: false, newPassword: true, payment: false };
 
 class FakeTabs implements Tabs {
   pages = new Map<number, InspectedPage>();
+  /** The documents with payment fields in each tab. */
+  frames = new Map<number, PaymentFrame[]>();
+  /** The values filled into each document, by its id. */
+  payments: { documentId: string; values: CardValues }[] = [];
   filled: { tab: number; origin: string; credentials: Credentials }[] = [];
   newPasswords: { tab: number; origin: string; password: string }[] = [];
   async inspect(tab: number) {
@@ -34,6 +39,13 @@ class FakeTabs implements Tabs {
     const page = this.pages.get(tab);
     if (page?.origin !== origin || !page.fields.newPassword) return false;
     this.newPasswords.push({ tab, origin, password });
+    return true;
+  }
+  async paymentFrames(tab: number) {
+    return this.frames.get(tab) ?? [];
+  }
+  async fillPayment(_tab: number, frame: PaymentFrame, values: CardValues) {
+    this.payments.push({ documentId: frame.documentId, values });
     return true;
   }
 }
@@ -181,7 +193,7 @@ describe("a 2FA step", () => {
     tabs.pages.set(1, {
       url: "https://example.com/login",
       origin: "https://example.com",
-      fields: { login: true, totp: true, newPassword: false },
+      fields: { login: true, totp: true, newPassword: false, payment: false },
     });
     await companion.entries(1);
 
@@ -484,5 +496,98 @@ describe("a submitted login", () => {
     await expect(
       companion.submitted(1, loginPage, { username: "carol", password: "pa55" }),
     ).rejects.toMatchObject({ reason: "locked" });
+  });
+});
+
+describe("filling a Card", () => {
+  const visa = {
+    uuid: "c0de",
+    name: "Company Visa",
+    group: "Work",
+    values: {
+      "cc-number": "4111 1111 1111 1111",
+      "cc-name": "Ada Lovelace",
+      "cc-exp": "08/31",
+      "cc-csc": "737",
+    },
+  };
+  const checkout = "https://shop.test/checkout";
+  const psp = "https://js.payments.test";
+  const frame = (
+    documentId: string,
+    url: string,
+    tokens: PaymentFrame["tokens"],
+  ): PaymentFrame => ({ documentId, frameId: Number(documentId.length), url, origin: new URL(url).origin, tokens });
+
+  beforeEach(() => {
+    keefast.cards = [visa];
+    tabs.pages.set(2, at(checkout, { login: false, totp: false, newPassword: false, payment: true }));
+  });
+
+  it("lists the Entries with a Card, all of them for nothing typed, without their values", async () => {
+    keefast.cards = [visa, { ...visa, uuid: "beef", name: "Nubank", values: {} }];
+
+    const all = await companion.cards(2, "");
+    expect(all?.map(({ name }) => name)).toEqual(["Company Visa", "Nubank"]);
+    expect(JSON.stringify(all)).not.toMatch(/4111|737|Ada/);
+    expect((await companion.cards(2, "nu"))?.map(({ name }) => name)).toEqual(["Nubank"]);
+  });
+
+  it("fills the page's own fields, each with only what it takes", async () => {
+    tabs.frames.set(2, [frame("top", checkout, ["cc-name", "cc-number", "cc-exp-month", "cc-exp-year"])]);
+
+    expect(await companion.fillCard(2, "c0de")).toBe(true);
+
+    expect(tabs.payments).toEqual([
+      {
+        documentId: "top",
+        values: {
+          "cc-name": "Ada Lovelace",
+          "cc-number": "4111 1111 1111 1111",
+          "cc-exp-month": "08/2031",
+          "cc-exp-year": "08/2031",
+        },
+      },
+    ]);
+    expect(JSON.stringify(tabs.payments)).not.toContain("737");
+    expect(keefast.filledForms).toEqual([{ uuid: "c0de", url: checkout, frameUrl: checkout }]);
+  });
+
+  it("fills the frame the user clicked in, and no frame from another origin", async () => {
+    tabs.frames.set(2, [
+      frame("top", checkout, ["cc-name"]),
+      frame("number", `${psp}/number`, ["cc-number"]),
+      frame("cvc", `${psp}/cvc`, ["cc-csc"]),
+      frame("ad", "https://ads.test/banner", ["cc-number", "cc-csc"]),
+    ]);
+
+    await companion.fillCard(2, "c0de", { url: `${psp}/number`, origin: psp });
+
+    expect(tabs.payments.map(({ documentId }) => documentId)).toEqual(["top", "number", "cvc"]);
+    expect(tabs.payments.find(({ documentId }) => documentId === "cvc")?.values).toEqual({
+      "cc-csc": "737",
+    });
+    expect(keefast.filledForms).toEqual([
+      { uuid: "c0de", url: checkout, frameUrl: `${psp}/number` },
+    ]);
+  });
+
+  it("fills no frame from another origin when the user clicked in the page", async () => {
+    tabs.frames.set(2, [frame("number", `${psp}/number`, ["cc-number", "cc-csc"])]);
+
+    expect(await companion.fillCard(2, "c0de")).toBe(false);
+
+    expect(tabs.payments).toEqual([]);
+    // keefast wasn't even asked: the values had nowhere to go.
+    expect(keefast.filledForms).toEqual([]);
+  });
+
+  it("fills nothing with a Card keefast won't give the site or the frame", async () => {
+    tabs.frames.set(2, [frame("top", checkout, ["cc-number"]), frame("f", `${psp}/f`, ["cc-number"])]);
+    keefast.cards = [{ ...visa, denied: ["js.payments.test"] }];
+
+    expect(await companion.fillCard(2, "c0de", { url: `${psp}/f`, origin: psp })).toBe(false);
+    expect(await companion.fillCard(2, "c0de")).toBe(true);
+    expect(tabs.payments.map(({ documentId }) => documentId)).toEqual(["top"]);
   });
 });

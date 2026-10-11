@@ -1,6 +1,7 @@
 // Finding a page's login form, 2FA field and new password fields, and filling them. This runs
 // in the page, injected only when the user asks to fill (the popup or the shortcut): nothing is
-// read or filled on page load.
+// read or filled on page load. Payment forms are found and filled in ./payment.ts.
+import { findPaymentFields, isPaymentMarked } from "./payment";
 
 /** What fills a login form: an Entry's username and password, and its TOTP code. */
 export interface Credentials {
@@ -29,6 +30,8 @@ export interface PageFields {
   totp: boolean;
   /** Fields for a new password, as sign-up and password change forms have. */
   newPassword: boolean;
+  /** A payment form's fields, which a Card fills. */
+  payment: boolean;
 }
 
 export const TEXT_TYPES = new Set(["text", "email", "tel"]);
@@ -62,6 +65,7 @@ export function pageFields(document: Document): PageFields {
     login: findLoginFields(document) !== undefined,
     totp: findTotpFields(document).length > 0,
     newPassword: findNewPasswordFields(document).length > 0,
+    payment: findPaymentFields(document).length > 0,
   };
 }
 
@@ -73,7 +77,9 @@ export function findLoginFields(document: Document): LoginFields | undefined {
     passwords.find((input) => autocomplete(input) === "current-password") ??
     passwords.find((input) => autocomplete(input) !== "new-password") ??
     passwords[0];
-  const textInputs = inputs.filter((input) => TEXT_TYPES.has(input.type) && !isTotpField(input));
+  const textInputs = inputs.filter(
+    (input) => TEXT_TYPES.has(input.type) && !isTotpField(input) && !isPaymentMarked(input),
+  );
 
   if (password) {
     // The username is in the password's form (or, outside forms, among the fields outside
@@ -234,11 +240,11 @@ function besideEachOther(a: HTMLInputElement, b: HTMLInputElement): boolean {
 }
 
 /** What a field is named and labelled, for telling what it is for. */
-function labels(input: HTMLInputElement): string {
+export function labels(input: HTMLInputElement | HTMLSelectElement): string {
   return [
     input.name,
     input.id,
-    input.placeholder,
+    input.getAttribute("placeholder"),
     input.getAttribute("aria-label"),
     ...Array.from(input.labels ?? [], (label) => label.textContent),
   ].join(" ");
@@ -258,12 +264,12 @@ export function precedes(a: Node, b: Node): boolean {
 }
 
 /** Whether the user could see and type into the field: a page may hide fields to harvest. */
-function fillable(input: HTMLInputElement): boolean {
+export function fillable(input: HTMLInputElement): boolean {
   return !input.disabled && !input.readOnly && shown(input);
 }
 
 /** Whether the user could see the field. */
-export function shown(input: HTMLInputElement): boolean {
+export function shown(input: HTMLInputElement | HTMLSelectElement): boolean {
   if (input.hidden) {
     return false;
   }
@@ -293,7 +299,7 @@ export function shown(input: HTMLInputElement): boolean {
 }
 
 /** Sets a field's value as typing would, so the page's scripts see the change. */
-function setValue(input: HTMLInputElement, value: string): void {
+export function setValue(input: HTMLInputElement, value: string): void {
   input.focus();
   // Through the prototype's setter: frameworks such as React shadow `value` on the element.
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;

@@ -1,9 +1,11 @@
 // keefast's icon in sign-in fields, as KeePassXC-Browser shows its own: the logo in a login's
-// username field and a 2FA code field, a key in password fields. Clicking it fills the site's
-// only Entry, or opens the command palette; when keefast isn't ready, a tooltip says why, and
+// username field and a 2FA code field, a key in password fields, and the logo in a payment
+// form's fields (ADR 0010). Clicking it fills the site's only Entry, or opens the command
+// palette, which a payment field's always opens, to pick a Card; when keefast isn't ready, a tooltip says why, and
 // offers to connect the browser when it isn't paired. The icons show nothing secret, and are
 // drawn in a closed shadow root over the page, which they leave as it is (ADR 0007).
 import { findLoginFields, findNewPasswordFields, findTotpFields, shown } from "./forms";
+import { findPaymentFields } from "./payment";
 import type { FieldClickAnswer, FieldKind } from "./messages";
 import type { FailureReason, Status } from "./keefast";
 
@@ -24,11 +26,25 @@ const RESCAN_DELAY_MS = 250;
 
 /**
  * The fields to show keefast's icon in: a login's username and password, a 2FA code field
- * (the first, when split over digit fields), and new password fields, which the icon offers a
- * generated password for.
+ * (the first, when split over digit fields), new password fields, which the icon offers a
+ * generated password for, and a payment form's text fields. With `paymentOnly`, as in a page's
+ * frames, only payment fields.
  */
-export function fieldsToMark(document: Document): MarkedField[] {
+export function fieldsToMark(document: Document, { paymentOnly = false } = {}): MarkedField[] {
   const marked = new Map<HTMLInputElement, MarkedField>();
+  const view = document.defaultView;
+  const payment = findPaymentFields(document).flatMap(({ element }) =>
+    // A select has no room for the icon.
+    view && element instanceof view.HTMLInputElement ? [element] : [],
+  );
+  const markPayment = () => {
+    // Over any other kind a field was taken for, such as a cardholder's name for a username.
+    for (const input of payment) marked.set(input, { input, kind: "payment", icon: "logo" });
+  };
+  if (paymentOnly) {
+    markPayment();
+    return [...marked.values()].filter(({ input }) => roomy(input));
+  }
   const login = findLoginFields(document);
   if (login?.username)
     marked.set(login.username, { input: login.username, kind: "login", icon: "logo" });
@@ -39,6 +55,7 @@ export function fieldsToMark(document: Document): MarkedField[] {
   for (const input of findNewPasswordFields(document)) {
     marked.set(input, { input, kind: "new-password", icon: "key" });
   }
+  markPayment();
   return [...marked.values()].filter(({ input }) => roomy(input));
 }
 
@@ -52,6 +69,7 @@ const TITLES: Record<FieldKind, string> = {
   login: "Fill with keefast",
   totp: "Fill the code with keefast",
   "new-password": "Generate a password with keefast",
+  payment: "Fill a card with keefast",
 };
 
 /** The slanted keyhole of keefast's logo, as one colour. */
@@ -161,6 +179,8 @@ export class FieldIcons {
       shadowMode?: ShadowRootMode;
       /** Whether the user did this: the page's own scripts can click too. */
       byUser?: (event: Event) => boolean;
+      /** Marks only payment fields, as in a page's frames. */
+      paymentOnly?: boolean;
     } = {},
   ) {}
 
@@ -221,7 +241,7 @@ export class FieldIcons {
   scan(): void {
     const shadow = this.shadow;
     if (!shadow) return;
-    const fields = fieldsToMark(this.document);
+    const fields = fieldsToMark(this.document, { paymentOnly: this.options.paymentOnly });
     const current = new Set(fields.map(({ input }) => input));
     for (const [input, { button }] of this.icons) {
       if (!current.has(input)) {

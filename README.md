@@ -187,6 +187,14 @@ the site to). In a new password field, the palette shows a password from keefast
 fill. "Don't show keefast on this site" in the palette hides the icon there. With the icons
 off, nothing is filled until you ask, and pages are read only when you do.
 
+On a payment form, the icon sits in the card fields, and opens the palette listing the Entries
+with a Card (the Card Plugin fills payment forms, a Plugin capability you can see in Settings →
+Plugins). Picking one fills the card's number, cardholder, expiry and CVV, the CVV only into a
+field the page marked as a security code. Payment fields in a payment provider's frame get the
+icon too; the palette then names the frame's site, and fills only there and in the page itself
+(ADR 0010). The shortcut opens the same palette on a payment form. A Card is never filled
+without you picking it.
+
 Once you've filled a page, the extension also notices the logins you submit there: a sign-in
 it doesn't have, a sign-up, or a password change. keefast asks you whether to save it, and
 where; a changed password updates its Entry. A sign-in with an Entry as filled sends nothing.
