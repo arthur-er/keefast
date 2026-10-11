@@ -8,6 +8,11 @@
 //! the [`PluginStore`], which loads the enabled ones into the host. Both are checked the same way
 //! at every load.
 //!
+//! What a Plugin adds to the Entry list and the command palette is declared too: a facet's label
+//! as the list's subtitle ([`PluginHost::list_label`]), and commands with shortcuts the host
+//! checks against keefast's own and other Plugins' whenever a Plugin loads or unloads
+//! ([`shortcut`]), bundled or installed alike.
+//!
 //! Plugin authors don't use this crate: they write against the SDK, `keefast-plugin-sdk`, and
 //! package with the `keefast-plugin` command (docs/plugins/README.md).
 
@@ -15,20 +20,25 @@ mod bundled;
 pub mod manifest;
 pub mod package;
 mod runtime;
+pub mod shortcut;
 mod store;
 
+use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use wasmtime::Engine;
 
 pub use bundled::{bundled_by_release_key, bundled_key, is_release_key};
-pub use manifest::{API_VERSION, Capability, Editor, Facet, FieldKind, Manifest, OwnedField};
+pub use manifest::{
+    API_VERSION, Capability, Command, Editor, Facet, FieldKind, Manifest, OwnedField,
+};
 pub use package::{Package, PackageError, PublisherKey};
 pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, MonthYear, Problem, Severity};
+pub use shortcut::{Combo, RefusedShortcut, ShortcutRefusal};
 pub use store::{InstallError, InstalledPlugin, Offer, PluginStore, Publisher};
 
 use bundled::bundled_plugins;
-use runtime::{Field, Runtime};
+use runtime::{Derived, Field, Runtime};
 
 /// The longest label or field text a Plugin can have shown; longer ones are cut.
 pub const MAX_LABEL: usize = 64;
@@ -68,6 +78,18 @@ pub struct FoundFacet<'h> {
     pub label: Option<String>,
     /// Its Owned fields, in the manifest's order, whether the Entry has them or not.
     pub fields: Vec<FoundField<'h>>,
+    /// Its command palette commands, in the manifest's order.
+    pub commands: Vec<FoundCommand<'h>>,
+}
+
+/// A facet's command, with the shortcut the host let it have.
+#[derive(Debug, Clone)]
+pub struct FoundCommand<'h> {
+    pub command: &'h Command,
+    /// The Owned field it copies.
+    pub owned: &'h OwnedField,
+    /// As the UI writes it ("Ctrl Shift C"); `None` when it declared none or was refused one.
+    pub shortcut: Option<&'h str>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +104,8 @@ pub struct FoundField<'h> {
 struct Plugin {
     manifest: Manifest,
     runtime: Mutex<Runtime>,
+    /// The shortcuts its commands got, by facet and command id, as the UI writes them.
+    shortcuts: HashMap<(String, String), String>,
 }
 
 impl Plugin {
@@ -89,12 +113,40 @@ impl Plugin {
         // A panic mid-call leaves at worst an instance the next failed call replaces.
         self.runtime.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// `derive` on one Entry's facet, `indexes` being where its Owned fields are in `fields`.
+    /// Protected values reach it only with the `readProtected` Plugin capability. `None` when
+    /// the hook failed.
+    fn derive(
+        &self,
+        facet: &Facet,
+        fields: &[EntryField],
+        indexes: &[Option<usize>],
+    ) -> Option<Derived> {
+        let inputs: Vec<Field> = facet
+            .fields
+            .iter()
+            .zip(indexes)
+            .map(|(owned, index)| Field {
+                key: owned.key.clone(),
+                value: index.map(|index| fields[index]).and_then(|field| {
+                    (!field.protected || self.manifest.has(Capability::ReadProtected))
+                        .then(|| field.value.to_owned())
+                }),
+            })
+            .collect();
+        self.runtime().derive(&facet.id, &inputs).ok()
+    }
 }
 
 /// The Plugins keefast runs.
 pub struct PluginHost {
     engine: Engine,
     plugins: Vec<Plugin>,
+    /// keefast's own shortcuts and the keys text fields own: no Plugin may have one.
+    reserved: Vec<Combo>,
+    /// The shortcuts Plugins declared and didn't get, in the order they were loaded.
+    refused: Vec<RefusedShortcut>,
 }
 
 impl Default for PluginHost {
@@ -109,12 +161,26 @@ impl PluginHost {
         Self {
             engine: runtime::engine(),
             plugins: Vec::new(),
+            reserved: shortcut::TEXT_KEYS
+                .iter()
+                .filter_map(|text| Combo::parse(text))
+                .collect(),
+            refused: Vec::new(),
         }
     }
 
-    /// A host with the Plugins bundled with keefast whose packages pass their checks.
+    /// A host with the Plugins bundled with keefast whose packages pass their checks, which
+    /// keeps none of keefast's shortcuts from them but the keys text fields own: see
+    /// [`Self::bundled_reserving`].
     pub fn bundled() -> Self {
+        Self::bundled_reserving(&[])
+    }
+
+    /// A host with the Plugins bundled with keefast, none of which may have one of `shortcuts`,
+    /// keefast's own (the UI's `SHORTCUTS`).
+    pub fn bundled_reserving(shortcuts: &[&str]) -> Self {
         let mut host = Self::new();
+        host.reserve_shortcuts(shortcuts);
         for bundled in bundled_plugins() {
             if let Ok(package) = bundled.package {
                 // Two bundled Plugins never clash: the bundled tests load them all.
@@ -124,7 +190,22 @@ impl PluginHost {
         host
     }
 
-    /// Loads a Plugin, refusing one whose id is taken or whose Owned fields another owns.
+    /// Keeps these shortcuts from Plugins loaded from now on.
+    pub fn reserve_shortcuts(&mut self, shortcuts: &[&str]) {
+        self.reserved
+            .extend(shortcuts.iter().filter_map(|text| Combo::parse(text)));
+    }
+
+    /// The shortcuts Plugins declared and didn't get, and why: their commands are in the command
+    /// palette without keys.
+    pub fn refused_shortcuts(&self) -> &[RefusedShortcut] {
+        &self.refused
+    }
+
+    /// Loads a Plugin, refusing one whose id is taken or whose Owned fields another owns. A
+    /// shortcut one of its commands declares that keefast or a Plugin loaded earlier has is
+    /// refused, not the Plugin: the command loads without keys, and [`Self::refused_shortcuts`]
+    /// says why.
     pub fn load(&mut self, manifest: &str, component: &[u8]) -> Result<&Manifest, PluginError> {
         self.add(Manifest::parse(manifest)?, component)
     }
@@ -135,11 +216,22 @@ impl PluginHost {
         Runtime::new(&self.engine, component).map(|_| ())
     }
 
-    /// Stops running a Plugin; its facets are no longer found. Whether it ran.
+    /// Stops running a Plugin; its facets are no longer found. Whether it ran. The shortcuts it
+    /// had are free again: the Plugins still running get theirs anew, in the order they loaded,
+    /// so one refused a key the unloaded Plugin held gets it now.
     pub fn unload(&mut self, id: &str) -> bool {
         let before = self.plugins.len();
         self.plugins.retain(|plugin| plugin.manifest.id != id);
-        self.plugins.len() != before
+        let unloaded = self.plugins.len() != before;
+        if unloaded {
+            self.refused.clear();
+            let plugins = std::mem::take(&mut self.plugins);
+            for mut plugin in plugins {
+                plugin.shortcuts = self.give_shortcuts(&plugin.manifest);
+                self.plugins.push(plugin);
+            }
+        }
+        unloaded
     }
 
     /// [`Self::load`] for a manifest already read.
@@ -160,11 +252,63 @@ impl PluginHost {
             }
         }
         let runtime = Runtime::new(&self.engine, component)?;
+        let shortcuts = self.give_shortcuts(&manifest);
         self.plugins.push(Plugin {
             manifest,
             runtime: Mutex::new(runtime),
+            shortcuts,
         });
         Ok(&self.plugins.last().expect("pushed above").manifest)
+    }
+
+    /// The shortcuts a Plugin about to load may have, the others noted as refused.
+    fn give_shortcuts(&mut self, manifest: &Manifest) -> HashMap<(String, String), String> {
+        let mut given: HashMap<(String, String), String> = HashMap::new();
+        let mut taken: Vec<Combo> = Vec::new();
+        for facet in &manifest.contributions.facets {
+            for command in &facet.commands {
+                let Some(text) = &command.shortcut else {
+                    continue;
+                };
+                let checked = Combo::parse_plugin(text).and_then(|combo| {
+                    if self.reserved.contains(&combo) {
+                        return Err(ShortcutRefusal::Keefast(combo.to_string()));
+                    }
+                    let owner = self.plugins.iter().find(|plugin| {
+                        plugin
+                            .shortcuts
+                            .values()
+                            .any(|other| Combo::parse(other).as_ref() == Some(&combo))
+                    });
+                    if let Some(owner) = owner {
+                        return Err(ShortcutRefusal::Taken {
+                            shortcut: combo.to_string(),
+                            other: owner.manifest.name.clone(),
+                        });
+                    }
+                    if taken.contains(&combo) {
+                        return Err(ShortcutRefusal::Taken {
+                            shortcut: combo.to_string(),
+                            other: manifest.name.clone(),
+                        });
+                    }
+                    Ok(combo)
+                });
+                match checked {
+                    Ok(combo) => {
+                        given.insert((facet.id.clone(), command.id.clone()), combo.to_string());
+                        taken.push(combo);
+                    }
+                    Err(reason) => self.refused.push(RefusedShortcut {
+                        plugin: manifest.id.clone(),
+                        facet: facet.id.clone(),
+                        command: command.id.clone(),
+                        reason,
+                    }),
+                }
+            }
+        }
+        given
     }
 
     pub fn manifests(&self) -> impl Iterator<Item = &Manifest> {
@@ -202,19 +346,7 @@ impl PluginHost {
                     continue;
                 }
                 let indexes: Vec<_> = facet.fields.iter().map(|f| index_of(&f.name)).collect();
-                let inputs: Vec<Field> = facet
-                    .fields
-                    .iter()
-                    .zip(&indexes)
-                    .map(|(owned, index)| Field {
-                        key: owned.key.clone(),
-                        value: index.map(|index| fields[index]).and_then(|field| {
-                            (!field.protected || manifest.has(Capability::ReadProtected))
-                                .then(|| field.value.to_owned())
-                        }),
-                    })
-                    .collect();
-                let derived = plugin.runtime().derive(&facet.id, &inputs).ok();
+                let derived = plugin.derive(facet, fields, &indexes);
                 let text_of = |key: &str| {
                     derived.as_ref().and_then(|derived| {
                         derived
@@ -241,10 +373,69 @@ impl PluginHost {
                             text: text_of(&owned.key),
                         })
                         .collect(),
+                    commands: facet
+                        .commands
+                        .iter()
+                        .filter_map(|command| {
+                            Some(FoundCommand {
+                                command,
+                                owned: facet.fields.iter().find(|f| f.key == command.copy)?,
+                                shortcut: plugin
+                                    .shortcuts
+                                    .get(&(facet.id.clone(), command.id.clone()))
+                                    .map(String::as_str),
+                            })
+                        })
+                        .collect(),
                 });
             }
         }
         found
+    }
+
+    /// Whether a custom field of this name is one the Entry list's subtitles are derived from,
+    /// so the list collects only those before calling [`Self::list_label`].
+    pub fn lists_by(&self, name: &str) -> bool {
+        self.manifests().any(|manifest| {
+            manifest
+                .contributions
+                .facets
+                .iter()
+                .filter(|facet| facet.subtitle)
+                .any(|facet| facet.fields.iter().any(|field| field.name == name))
+        })
+    }
+
+    /// The subtitle the Entry list shows for an Entry with these custom fields and no username:
+    /// the label of its first facet, in the order the Plugins were loaded, that declares
+    /// `subtitle` and has a label. Only those facets' `derive` runs, and it never gets the
+    /// Workspace: the list collects the fields first ([`Self::lists_by`]), and calls this after
+    /// letting the Workspace go.
+    pub fn list_label(&self, fields: &[EntryField]) -> Option<String> {
+        let index_of = |name: &str| fields.iter().position(|field| field.name == name);
+        self.plugins.iter().find_map(|plugin| {
+            plugin
+                .manifest
+                .contributions
+                .facets
+                .iter()
+                .filter(|facet| facet.subtitle)
+                .filter(|facet| {
+                    facet
+                        .detect
+                        .fields
+                        .iter()
+                        .all(|name| index_of(name).is_some())
+                })
+                .find_map(|facet| {
+                    let indexes: Vec<_> = facet.fields.iter().map(|f| index_of(&f.name)).collect();
+                    plugin
+                        .derive(facet, fields, &indexes)?
+                        .label
+                        .map(|label| shorten(&label))
+                        .filter(|label| !label.is_empty())
+                })
+        })
     }
 
     /// A Plugin's facet, checked to exist.

@@ -50,8 +50,8 @@ pub enum Capability {
     Copy,
 }
 
-/// What a Plugin adds to keefast. Later API versions add list subtitles, palette commands and
-/// browser fill; each is a key here.
+/// What a Plugin adds to keefast: facets, each with its sections, Entry list subtitle and command
+/// palette commands. Later API versions add browser fill; each is a key here.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Contributions {
@@ -79,6 +79,30 @@ pub struct Facet {
     /// as custom fields.
     #[serde(default)]
     pub editor: Option<Editor>,
+    /// Whether the facet's label (from `derive`) shows in the Entry list under the title of an
+    /// Entry with no username, such as "Visa •••• 1111".
+    #[serde(default)]
+    pub subtitle: bool,
+    /// Commands in the command palette's Entry section for an Entry with the facet.
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// A command palette command acting on the selected Entry when it has the facet. v1 has one
+/// kind: copying an Owned field, which needs the `copy` Plugin capability.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Command {
+    /// Unique within the facet.
+    pub id: String,
+    /// As the command palette lists it, in sentence case: "Copy card number".
+    pub title: String,
+    /// The key of the Owned field it copies, Rust-to-clipboard as any copy.
+    pub copy: String,
+    /// The keys that run it, such as "Ctrl Shift C". The host refuses one that keefast or a
+    /// Plugin loaded earlier has (`shortcut.rs`); the command stays, without keys.
+    #[serde(default)]
+    pub shortcut: Option<String>,
 }
 
 /// A facet's section in the Entry editor, and the actions that add it to an Entry and take it
@@ -208,6 +232,27 @@ impl Manifest {
                 }
                 if !names.insert(field.name.as_str()) {
                     return invalid(format!("two fields are named \"{}\"", field.name));
+                }
+            }
+            let mut commands = HashSet::new();
+            for command in &facet.commands {
+                if !is_id(&command.id, false) || !commands.insert(command.id.as_str()) {
+                    return invalid(format!("command id \"{}\" is invalid or taken", command.id));
+                }
+                if command.title.trim().is_empty() {
+                    return invalid(format!("command \"{}\" needs a title", command.id));
+                }
+                if !keys.contains(command.copy.as_str()) {
+                    return invalid(format!(
+                        "command \"{}\" copies \"{}\", which facet \"{}\" hasn't",
+                        command.id, command.copy, facet.id
+                    ));
+                }
+                if !self.has(Capability::Copy) {
+                    return invalid(format!(
+                        "command \"{}\" copies, which needs the copy Plugin capability",
+                        command.id
+                    ));
                 }
             }
             let owned = |name: &String| facet.fields.iter().any(|field| &field.name == name);
