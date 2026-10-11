@@ -36,9 +36,9 @@ use secrecy::SecretString;
 
 pub use attachments::{read_attachment, write_attachment};
 pub use browser::{
-    AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId,
-    KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId, PairingRequest,
-    PendingAccess, PendingLogin, PendingPairing, ProtocolError,
+    AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId, FormFill,
+    FormPick, KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId,
+    PairingRequest, PendingAccess, PendingLogin, PendingPairing, ProtocolError,
 };
 pub use browser_hosts::{
     ALLOWED_ORIGINS, Browser, BrowserHosts, HOST_BINARY, HOST_NAME, NativeMessagingHosts,

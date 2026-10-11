@@ -8,12 +8,15 @@
 //! Entries the user hasn't decided on for that site waits for an Access decision, and a
 //! `set-login` request waits for the user to say where the login goes. keefast's own
 //! `keefast-search-entries` and `keefast-pick-entry` serve the Companion extension's command
-//! palette (ADR 0007).
+//! palette (ADR 0007), and `keefast-fill-form` fills a form other than a login, such as a payment
+//! form, from the Entry picked there (ADR 0010).
 
+mod fill_form;
 mod generate_password;
 mod get_totp;
 mod search_entries;
 
+pub use fill_form::{FormFill, FormPick};
 pub use search_entries::PickRequest;
 
 use std::collections::{HashMap, VecDeque};
@@ -94,6 +97,8 @@ pub enum BrowserReply {
     AskLogin(LoginRequest),
     /// Give the site the Entry the user picked in the command palette.
     Pick(PickRequest),
+    /// Fill a form from the Entry the user picked in the command palette.
+    FillForm(FormPick),
 }
 
 /// An extension asking to be paired with a Vault, waiting for the user's answer.
@@ -279,6 +284,7 @@ impl BrowserSession {
             "generate-password" => self.generate_password(workspace, &request),
             "keefast-search-entries" => self.search_entries(workspace, &request),
             "keefast-pick-entry" => self.pick_entry(workspace, &request),
+            "keefast-fill-form" => self.fill_form(workspace, &request),
             _ => Err(ProtocolError::IncorrectAction),
         };
         reply.unwrap_or_else(fail)
@@ -800,6 +806,8 @@ pub(crate) struct BrowserConnections {
     /// Messages for extensions that no request of theirs is waiting on: news of Vaults locking
     /// and unlocking, and answers to requests that locking cut off.
     unsolicited: Vec<Outgoing>,
+    /// What the extension may fill into forms other than logins, from the running Plugins.
+    fills: Vec<FormFill>,
 }
 
 impl Workspace {
@@ -848,6 +856,16 @@ impl Workspace {
                     .remove(&connection)
                     .unwrap_or_default();
                 let reply = self.give_picked_entry(&session, &pick);
+                self.browser.sessions.insert(connection, session);
+                Some(reply)
+            }
+            BrowserReply::FillForm(pick) => {
+                let session = self
+                    .browser
+                    .sessions
+                    .remove(&connection)
+                    .unwrap_or_default();
+                let reply = self.give_form(&session, &pick);
                 self.browser.sessions.insert(connection, session);
                 Some(reply)
             }

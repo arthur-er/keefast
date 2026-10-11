@@ -6,6 +6,10 @@
 //! password. `keefast-pick-entry` gives the picked Entry to the site: the user picking it is
 //! the Access decision, so it is remembered as allowed for the site, and with `addUrl` the site
 //! is added to the Entry's URLs, so it is offered there from now on.
+//!
+//! With a `form`, such as `payment`, the search finds only Entries with data that fills that
+//! kind of form, such as a Card (`keefast-fill-form`, ADR 0010), and an empty query lists them
+//! all, up to the palette's few: a Vault holds few of them, and the palette lists them by name.
 
 use keefast_core::{
     AccessDecision, BrowserEntry, DefaultAccessPolicy, EntryId, EntrySearch, EntrySort, Site,
@@ -39,7 +43,8 @@ impl BrowserSession {
     /// Answers with the Entries matching the request's query in the open Vaults the extension
     /// is paired with, best match first. A Vault whose Default access policy is to deny is not
     /// searched, nor are Entries denied the site. An empty query finds nothing: the palette
-    /// never lists a whole Vault.
+    /// never lists a whole Vault. With a `form`, only Entries that fill it are searched, and an
+    /// empty query lists them.
     pub(super) fn search_entries(
         &mut self,
         workspace: &Workspace,
@@ -53,16 +58,19 @@ impl BrowserSession {
         let hosts = hosts(&site, text(&message, "submitUrl"));
         let keys = keys(&message);
         let search = EntrySearch::new(text(&message, "query"));
-        let found: Vec<(VaultId, BrowserEntry)> = if search.is_empty() {
+        let form = text(&message, "form");
+        let fills: Vec<_> = workspace.fills_for(form).collect();
+        let found: Vec<(VaultId, BrowserEntry)> = if search.is_empty() && form.is_empty() {
             Vec::new()
         } else {
             let offered = searchable(workspace, &keys).flat_map(|open| {
-                let hosts = &hosts;
+                let (hosts, fills) = (&hosts, &fills);
                 open.vault
                     .entries_for_browsers()
                     .into_iter()
                     .filter(move |found| {
                         found.entry.access_decision(hosts) != Some(AccessDecision::Deny)
+                            && (form.is_empty() || fills.iter().any(|fill| fill.is_on(found.entry)))
                     })
                     .map(move |found| (open.id, found))
             });
@@ -185,7 +193,7 @@ impl Workspace {
 
 /// The open Vaults the palette may search: those paired with one of `keys`, unless their
 /// Default access policy is to deny.
-fn searchable<'a>(
+pub(super) fn searchable<'a>(
     workspace: &'a Workspace,
     keys: &'a [(String, String)],
 ) -> impl Iterator<Item = &'a OpenVault> {
@@ -198,7 +206,7 @@ fn searchable<'a>(
 }
 
 /// The site's host, and its form's if that submits elsewhere.
-fn hosts(site: &Site, submit_url: &str) -> Vec<String> {
+pub(super) fn hosts(site: &Site, submit_url: &str) -> Vec<String> {
     let host = site.host();
     let form = Site::parse(submit_url)
         .map(|form| form.host())
@@ -207,7 +215,7 @@ fn hosts(site: &Site, submit_url: &str) -> Vec<String> {
 }
 
 /// The Pairings the request holds keys for, as name and key.
-fn keys(message: &Map<String, Value>) -> Vec<(String, String)> {
+pub(super) fn keys(message: &Map<String, Value>) -> Vec<(String, String)> {
     match message.get("keys") {
         Some(Value::Array(keys)) => keys
             .iter()
