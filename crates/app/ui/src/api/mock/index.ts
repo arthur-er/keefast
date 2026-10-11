@@ -52,7 +52,7 @@ import {
   type MockVault,
 } from "./data";
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
-import { facetsOf, facetTemplates, formatOwned, validateOwned } from "./plugins";
+import { facetsOf, facetTemplates, formatOwned, listLabel, validateOwned } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -405,6 +405,7 @@ export function createMockBackend(): Backend & {
       id: e.id,
       title: e.title.trim() || "(untitled)",
       username: e.username,
+      label: null,
       url: e.url,
       tags: e.tags,
       color: e.color,
@@ -422,6 +423,11 @@ export function createMockBackend(): Backend & {
       vaultName: v.name,
       inRecycleBin: inBin(v, e.group),
     };
+  }
+
+  /** The summary with the subtitle a Plugin derives when the Entry has no username. */
+  async function labelled(s: EntrySummary, e: MockEntry): Promise<EntrySummary> {
+    return s.username !== "" ? s : { ...s, label: await listLabel(e.fields, plugins.runs) };
   }
 
   function fieldViews(fields: MockEntry["fields"]): CustomFieldView[] {
@@ -900,9 +906,9 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
-    listEntries: command((query: EntryQuery) => {
+    listEntries: command(async (query: EntryQuery) => {
       const words = query.search.toLowerCase().split(/\s+/).filter(Boolean);
-      return scoped(query.scope)
+      const listed = scoped(query.scope)
         .map(([v, e]) => ({ v, e, score: matches(e, words) }))
         .filter((x): x is { v: MockVault; e: MockEntry; score: number } => x.score !== null)
         .sort((a, b) => {
@@ -910,12 +916,13 @@ export function createMockBackend(): Backend & {
           const [ka, kb] = [sortKey(a.e, query.sort), sortKey(b.e, query.sort)];
           return ka < kb ? -1 : ka > kb ? 1 : 0;
         })
-        .map(({ v, e }) => summary(v, e));
+        .map(({ v, e }) => labelled(summary(v, e), e));
+      return Promise.all(listed);
     }),
     getEntry: command(async (id, entryId): Promise<EntryDetail> => {
       const [v, e] = entryOf(id, entryId);
       return {
-        ...summary(v, e),
+        ...(await labelled(summary(v, e), e)),
         rawTitle: e.title,
         notes: e.notes,
         additionalUrls: [],

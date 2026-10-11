@@ -51,6 +51,7 @@ function Harness({ saved }: { saved: boolean }) {
               ...template,
               label: null,
               canCopy: true,
+              commands: [],
               fields: template.fields.map((field, index) => ({
                 ...field,
                 index,

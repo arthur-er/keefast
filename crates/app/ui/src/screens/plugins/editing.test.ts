@@ -23,6 +23,7 @@ const template: FacetTemplate = {
 
 /** The Card as `get_entry` finds it: the number at index 1, the expiry at 3, no CVV. */
 const view: FacetView = {
+  commands: [],
   plugin: "keefast.card",
   facet: "card",
   title: "Card",

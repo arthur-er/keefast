@@ -99,7 +99,10 @@ export const commands = {
 	deletesGroupForGood: (vault: VaultId, group: GroupId) => typedError<boolean, ApiError>(__TAURI_INVOKE("deletes_group_for_good", { vault, group })),
 	/**  Makes the Group the Vault's Browser group, where captured logins are saved. */
 	setBrowserGroup: (vault: VaultId, group: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("set_browser_group", { vault, group })),
-	/**  The Entry list. */
+	/**
+	 *  The Entry list. Plugins derive subtitles for Entries without a username after the Workspace
+	 *  is let go of, so a slow `derive` never holds it.
+	 */
 	listEntries: (query: EntryQuery) => typedError<EntrySummary[], ApiError>(__TAURI_INVOKE("list_entries", { query })),
 	/**  An Entry, without its password and protected custom fields. */
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
@@ -608,6 +611,12 @@ export type EntrySummary = {
 	/**  The title, or "(untitled)". */
 	title: string,
 	username: string,
+	/**
+	 *  What the list shows under the title in place of a username, when the Entry has none: the
+	 *  label a Plugin derived for one of its facets, such as "Visa •••• 1111" (ADR 0009). A
+	 *  username always wins, so this is `None` when there is one. Never a protected value.
+	 */
+	label: string | null,
 	url: string,
 	tags: string[],
 	color: Color | null,
@@ -685,6 +694,21 @@ export type ErrorKind =
 /**  The user stopped it. */
 "cancelled";
 
+/**  A facet's command palette command, copying one of its Owned fields with `copy_field`. */
+export type FacetCommandView = {
+	/**  Unique within the facet, such as `copy-number`. */
+	id: string,
+	/**  As the palette lists it: "Copy card number". */
+	title: string,
+	/**  The key of the Owned field it copies, as in `fields`. */
+	field: string,
+	/**
+	 *  The keys that run it, such as "Ctrl Shift C"; `None` when the Plugin declared none, or
+	 *  keefast or another Plugin has them.
+	 */
+	shortcut: string | null,
+};
+
 /**  A facet's section in the Entry editor: the actions adding it and taking it off an Entry. */
 export type FacetEditorView = {
 	/**  Such as "Add card". */
@@ -730,6 +754,11 @@ export type FacetView = {
 	/**  Its section in the Entry editor; `None` when its Owned fields are edited as custom fields. */
 	editor: FacetEditorView | null,
 	fields: OwnedFieldView[],
+	/**
+	 *  Its commands in the command palette's Entry section. Empty without the `copy` Plugin
+	 *  capability, which every v1 command needs.
+	 */
+	commands: FacetCommandView[],
 };
 
 /**  What the generator's controls may be set to. */

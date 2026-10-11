@@ -19,6 +19,7 @@ import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { HistoryTab } from "@/screens/entry-history/HistoryTab";
 import { useShowHistoryCommand } from "@/screens/entry-history/open";
+import { FacetCommands } from "@/screens/plugins/commands";
 import { FacetSection } from "@/screens/plugins/FacetSection";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
@@ -114,6 +115,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
 
   return (
     <div className="vb-detail-scroll">
+      <FacetCommands entry={entry} active={keysActive} onCopy={copy} />
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <div className="C-insp-top">
           <div className="C-hero">

@@ -2,12 +2,16 @@
 // through jco (bundled-plugins.ts). It finds the facets an Entry has by its custom fields' names,
 // asks each Plugin's `derive` for labels, and answers in `FacetView`s, protected values left out.
 // For Entry editor A it lists the facets Plugins contribute, and runs `format` and `validate`
-// (passing the month it is, as the app does: Plugins have no clock). No fuel or memory limits:
-// the mock trusts the Plugins compiled into keefast.
+// (passing the month it is, as the app does: Plugins have no clock). For the Entry list, a
+// facet's label is the subtitle of an Entry with no username; for the command palette, a facet's
+// commands get the shortcuts keefast and earlier Plugins haven't taken, as the host checks them
+// (crates/plugins/src/shortcut.rs). No fuel or memory limits: the mock trusts the Plugins
+// compiled into keefast.
 
 import { bundledPlugins } from "virtual:keefast/bundled-plugins";
 
 import type { FacetTemplate, FacetView, OwnedFieldKind, ProblemView } from "@/bindings";
+import { SHORTCUTS } from "@/lib/shortcuts";
 
 import type { MockField } from "./data";
 
@@ -26,6 +30,8 @@ export interface PluginManifest {
       detect: { fields: string[] };
       fields: { key: string; name: string; label: string; kind: OwnedFieldKind; protected?: boolean; placeholder?: string }[];
       editor?: { add: string; remove: string };
+      subtitle?: boolean;
+      commands?: { id: string; title: string; copy: string; shortcut?: string }[];
     }[];
   };
 }
@@ -50,6 +56,83 @@ const shorten = (text: string) => {
   return chars.length > MAX_LABEL ? `${chars.slice(0, MAX_LABEL - 1).join("")}…` : line;
 };
 
+/** Keys every text field owns, as the host's `TEXT_KEYS`: reserved even though `SHORTCUTS`
+ * doesn't name them. */
+const TEXT_KEYS = ["Ctrl A", "Ctrl C", "Ctrl V", "Ctrl X", "Ctrl Y", "Ctrl Z", "Ctrl Shift Z"];
+
+/** A combo as the host compares them ("Ctrl Shift C"), "Mod" counting as Ctrl; `null` without a
+ * key. */
+function canonical(text: string): { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean; key: string; name: string } | null {
+  const combo = { ctrl: false, shift: false, alt: false, meta: false, key: "" };
+  for (const part of text.split(/[\s+]+/).filter(Boolean)) {
+    const lower = part.toLowerCase();
+    if (lower === "ctrl" || lower === "control" || lower === "mod") combo.ctrl = true;
+    else if (lower === "shift") combo.shift = true;
+    else if (lower === "alt" || lower === "option") combo.alt = true;
+    else if (lower === "cmd" || lower === "meta" || lower === "super") combo.meta = true;
+    else combo.key = lower;
+  }
+  if (!combo.key) return null;
+  const parts = [combo.ctrl && "Ctrl", combo.meta && "Meta", combo.alt && "Alt", combo.shift && "Shift"].filter(Boolean);
+  return { ...combo, name: [...parts, [...combo.key].length === 1 ? combo.key.toUpperCase() : combo.key].join(" ") };
+}
+
+/** A shortcut a Plugin declared and didn't get, and why, as the host says it. */
+export interface RefusedShortcut {
+  plugin: string;
+  facet: string;
+  command: string;
+  reason: string;
+}
+
+/** The shortcuts each Plugin's commands get, by `plugin/facet/command`, as the host gives them
+ * at load: Ctrl with a letter or digit, or Ctrl Shift with a letter, that neither keefast
+ * (`reserved` and the keys text fields own) nor a Plugin loaded earlier has. */
+export function giveShortcuts(
+  manifests: readonly PluginManifest[],
+  reserved: readonly string[],
+): { given: Map<string, string>; refused: RefusedShortcut[] } {
+  const taken = new Set([...reserved, ...TEXT_KEYS].map((text) => canonical(text)?.name));
+  const owners = new Map<string, string>();
+  const given = new Map<string, string>();
+  const refused: RefusedShortcut[] = [];
+  for (const manifest of manifests) {
+    for (const facet of manifest.contributions.facets) {
+      for (const command of facet.commands ?? []) {
+        if (command.shortcut === undefined) continue;
+        const refuse = (reason: string) => refused.push({ plugin: manifest.id, facet: facet.id, command: command.id, reason });
+        const combo = canonical(command.shortcut);
+        const single = combo && [...combo.key].length === 1;
+        const letter = single && /[a-z]/.test(combo.key);
+        const digit = single && /[0-9]/.test(combo.key);
+        if (!combo || !combo.ctrl || combo.alt || combo.meta || !(letter || (digit && !combo.shift))) {
+          refuse(`"${command.shortcut}" isn't a shortcut a Plugin can have: use Ctrl with a letter or a digit, or Ctrl Shift with a letter`);
+        } else if (taken.has(combo.name)) {
+          refuse(`${combo.name} is one of keefast's own shortcuts`);
+        } else if (owners.has(combo.name)) {
+          refuse(`${combo.name} is taken by the ${owners.get(combo.name)} Plugin`);
+        } else {
+          owners.set(combo.name, manifest.name);
+          given.set(`${manifest.id}/${facet.id}/${command.id}`, combo.name);
+        }
+      }
+    }
+  }
+  return { given, refused };
+}
+
+/** The shortcuts the Plugins that `runs` get, handed out again whenever one is enabled or
+ * disabled, as the host does when it loads or unloads one. */
+export function shortcutsOf(runs: (id: string) => boolean = () => true) {
+  return giveShortcuts(
+    bundledPlugins.filter(({ manifest }) => runs(manifest.id)).map(({ manifest }) => manifest),
+    Object.values(SHORTCUTS).flat(),
+  );
+}
+for (const refused of shortcutsOf().refused) {
+  console.warn(`keefast mock: the ${refused.plugin} Plugin's command ${refused.facet}/${refused.command} has no shortcut: ${refused.reason}`);
+}
+
 const instances = new Map<string, Promise<PluginHooks>>();
 function hooksOf(id: string): Promise<PluginHooks> {
   let hooks = instances.get(id);
@@ -69,6 +152,7 @@ export async function facetsOf(fields: readonly MockField[], runs: (id: string) 
   const found: FacetView[] = [];
   for (const { manifest } of bundledPlugins) {
     if (!runs(manifest.id)) continue;
+    const shortcuts = shortcutsOf(runs);
     for (const facet of manifest.contributions.facets) {
       if (!facet.detect.fields.every((name) => indexOf(name) >= 0)) continue;
       const indexes = facet.fields.map((owned) => indexOf(owned.name));
@@ -96,6 +180,14 @@ export async function facetsOf(fields: readonly MockField[], runs: (id: string) 
         canCopy: manifest.capabilities.includes("copy"),
         detect: facet.detect.fields,
         editor: facet.editor ?? null,
+        commands: manifest.capabilities.includes("copy")
+          ? (facet.commands ?? []).map((command) => ({
+              id: command.id,
+              title: command.title,
+              field: command.copy,
+              shortcut: shortcuts.given.get(`${manifest.id}/${facet.id}/${command.id}`) ?? null,
+            }))
+          : [],
         fields: facet.fields.map((owned, at) => {
           const index = indexes[at]!;
           const kept = fields[index];
@@ -117,6 +209,32 @@ export async function facetsOf(fields: readonly MockField[], runs: (id: string) 
     }
   }
   return found;
+}
+
+/** The Entry list's subtitle for an Entry with these custom fields and no username, as the
+ * host's `list_label`: the label of its first facet, of a Plugin that `runs`, that declares
+ * `subtitle`. A username wins,
+ * so the list doesn't ask with one. */
+export async function listLabel(fields: readonly MockField[], runs: (id: string) => boolean = () => true): Promise<string | null> {
+  const indexOf = (name: string) => fields.findIndex((field) => field.name === name);
+  for (const { manifest } of bundledPlugins) {
+    if (!runs(manifest.id)) continue;
+    const readProtected = manifest.capabilities.includes("readProtected");
+    for (const facet of manifest.contributions.facets) {
+      if (!facet.subtitle || !facet.detect.fields.every((name) => indexOf(name) >= 0)) continue;
+      const inputs = facet.fields.map((owned) => {
+        const kept = fields[indexOf(owned.name)];
+        return { key: owned.key, value: kept && (!kept.protected || readProtected) ? kept.value : undefined };
+      });
+      try {
+        const label = (await hooksOf(manifest.id)).derive(facet.id, inputs).label;
+        if (label !== undefined && shorten(label) !== "") return shorten(label);
+      } catch (error) {
+        console.warn(`keefast mock: the ${manifest.name} Plugin failed`, error);
+      }
+    }
+  }
+  return null;
 }
 
 /** Every facet the Plugins that `runs` contribute, as `list_facets` answers. */

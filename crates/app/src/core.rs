@@ -109,6 +109,41 @@ struct Aftermath {
     clipboard_cleared: bool,
 }
 
+/// keefast's own shortcuts, the UI's `SHORTCUTS`, which no Plugin may take.
+pub(crate) fn keefast_shortcuts() -> Vec<String> {
+    let shortcuts: std::collections::BTreeMap<String, Vec<String>> =
+        serde_json::from_str(include_str!("../ui/src/lib/shortcuts.json"))
+            .expect("shortcuts.json lists keefast's shortcuts");
+    shortcuts.into_values().flatten().collect()
+}
+
+/// A host with no Plugins yet, which keeps keefast's shortcuts from every Plugin loaded into
+/// it, bundled or installed.
+fn plugin_host() -> PluginHost {
+    let reserved = keefast_shortcuts();
+    let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
+    let mut host = PluginHost::new();
+    host.reserve_shortcuts(&reserved);
+    host
+}
+
+/// keefast's own Plugins alone, until [`AppCore::use_plugin_store`] runs the installed ones too.
+fn bundled_plugin_host() -> PluginHost {
+    let reserved = keefast_shortcuts();
+    let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
+    let host = PluginHost::bundled_reserving(&reserved);
+    say_refused_shortcuts(&host);
+    host
+}
+
+/// Says on stderr which shortcuts Plugins couldn't have, and why. Settings → Plugins shows it on
+/// the Plugin's row too; the commands are still in the command palette, without keys.
+fn say_refused_shortcuts(host: &PluginHost) {
+    for refused in host.refused_shortcuts() {
+        eprintln!("keefast: {refused}");
+    }
+}
+
 impl AppCore {
     pub fn new(workspace: Workspace, notifier: Box<dyn Notifier>, launch: Launch) -> Arc<Self> {
         Arc::new(Self {
@@ -121,15 +156,16 @@ impl AppCore {
             shown_requests: Mutex::new(Requests::default()),
             copies: AtomicU64::new(0),
             launch,
-            plugins: RwLock::new(PluginHost::bundled()),
+            plugins: RwLock::new(bundled_plugin_host()),
             plugin_store: Mutex::new(PluginStore::bundled_only()),
         })
     }
 
     /// Runs the Plugins installed in `store` from now on, in place of keefast's own alone.
     pub fn use_plugin_store(&self, mut store: PluginStore) {
-        let mut host = PluginHost::new();
+        let mut host = plugin_host();
         store.load(&mut host);
+        say_refused_shortcuts(&host);
         let mut current = self.plugin_store();
         *current = store;
         *self.plugins.write().unwrap_or_else(PoisonError::into_inner) = host;
@@ -408,6 +444,27 @@ pub(crate) mod tests {
         let workspace = Workspace::new(Arc::new(keefast_workspace::LocalStorage));
         let core = AppCore::new(workspace, Box::new(recorder.clone()), Launch::default());
         (core, recorder)
+    }
+
+    #[test]
+    fn keefasts_shortcuts_are_kept_from_plugins() {
+        let shortcuts = keefast_shortcuts();
+        // `shortcuts.json` is the UI's `SHORTCUTS`.
+        for combo in [
+            "Ctrl K",
+            "Ctrl Shift P",
+            "Ctrl B",
+            "Ctrl Shift N",
+            "Ctrl ,",
+            "Escape",
+        ] {
+            assert!(shortcuts.iter().any(|s| s == combo), "{combo}");
+        }
+        for combo in &shortcuts {
+            assert!(keefast_plugins::Combo::parse(combo).is_some(), "{combo}");
+        }
+        // The Card Plugin takes none of them, so it gets every shortcut it asks for.
+        assert!(bundled_plugin_host().refused_shortcuts().is_empty());
     }
 
     #[test]

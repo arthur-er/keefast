@@ -209,7 +209,8 @@ function EntryRow({
             <Marked text={entry.title} query={search} />
           </span>
           <span className="u truncate">
-            <Marked text={entry.username} query={search} />
+            {/* A username wins; without one, the label a Plugin derived ("Visa •••• 1111"). */}
+            {entry.username || entry.label === null ? <Marked text={entry.username} query={search} /> : entry.label}
           </span>
           <span className="m">
             {entry.expired && <Badge tone="danger" className="vb-badge-exp">Expired</Badge>}

@@ -2,7 +2,8 @@
 // Shift P too). With nothing typed it lists every command the screens on display registered
 // (`useAppCommand`), grouped by section, with their keys; typing ranks commands and Entries
 // together with keefast's fuzzy matching. Enter on an Entry opens a page of its actions (copy,
-// open, go to it, edit, history…); Ctrl C / B / T on a highlighted Entry copy at once.
+// open, go to it, edit, history…, and its Plugins' commands, such as "Copy card number"); Ctrl C /
+// B / T on a highlighted Entry copy at once, and a Plugin command's keys on its page.
 //
 // A screen's commands show here by registering them with `useAppCommand`; nothing here needs
 // to change. Sections the palette doesn't know yet are listed by name before "App".
@@ -22,6 +23,9 @@ import { useEntry, useTotpCode, useWorkspace } from "@/api/queries";
 import { Kbd, toast } from "@/kit";
 import { highlightRuns } from "@/lib/fuzzy";
 import { hostOf } from "@/lib/format";
+import { matchesCombo, parseCombo } from "@/lib/shortcuts";
+import { facetCopies } from "@/screens/plugins/commands";
+import { facetIcon } from "@/screens/plugins/FacetSection";
 import { openHistory } from "@/screens/entry-history/open";
 import { copyField, openUrl } from "@/screens/vault-browser/actions";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
@@ -122,6 +126,16 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     if (entry.hasTotp) {
       list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: "Ctrl T", enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
     }
+    facetCopies(detail).forEach(({ facet, command, field, enabled }) => {
+      // The Plugin's text ("Visa •••• 1111"), a value, or a mask: never a protected value.
+      const shown = field.text ?? field.value;
+      list.push({
+        kind: "action", value: `act:${id}:plugin:${facet.plugin}:${facet.facet}:${command.id}`, section, title: command.title, icon: facetIcon(facet.icon),
+        shortcut: command.shortcut ?? undefined, enabled,
+        trail: enabled && (shown !== null ? <span className={field.kind === "text" ? "ctx" : "pal-mono"}>{shown}</span> : <span className="pal-mono">{MASK}</span>),
+        run: () => field.index !== null && void copyField(entry.vault, entry.id, { kind: "customField", index: field.index }, field.name),
+      });
+    });
     customFieldsOf(detail).forEach(({ field, index }) =>
       list.push({ kind: "action", value: `act:${id}:field:${index}`, section, title: `Copy ${field.name}`, icon: TextCursorInput, enabled: !field.isEmpty, trail: <span className="ctx">Custom field</span>, run: () => void copyField(entry.vault, entry.id, { kind: "customField", index }, field.name) }),
     );
@@ -250,6 +264,16 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       openPage(null);
       return;
     }
+    // A Plugin command's keys run it on the Entry whose actions show.
+    if (page?.kind === "entry" && pageDetail) {
+      const copy = facetCopies(pageDetail).find(({ command, enabled }) => enabled && command.shortcut !== null && matchesCombo(event, parseCombo(command.shortcut)));
+      if (copy && copy.field.index !== null) {
+        event.preventDefault();
+        onClose();
+        void copyField(page.entry.vault, page.entry.id, { kind: "customField", index: copy.field.index }, copy.field.name);
+        return;
+      }
+    }
     // Ctrl C / B / T copy from the highlighted Entry, or the one whose actions show, unless
     // text is selected in the query.
     const target = highlightedItem?.kind === "entry" ? highlightedItem.entry : page?.kind === "entry" ? page.entry : null;
@@ -328,7 +352,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           <span className="lbl fit">
             <Marked text={entry.title} positions={item.positions} />
           </span>
-          <span className="sub">{entry.username}</span>
+          <span className="sub">{entry.username || entry.label}</span>
           <span className="trail">
             {isHighlighted ? (
               <>
@@ -382,20 +406,23 @@ function EntryContext({ title }: { title: string }) {
 }
 
 /** The fields to copy, by their index in the Entry: those TOTP settings are kept in are the TOTP
- * code's while the Entry has TOTP. */
+ * code's while the Entry has TOTP, and those a Plugin's command copies are that command's. */
 function customFieldsOf(entry: EntryDetail | undefined) {
-  return (entry?.customFields ?? []).flatMap((field, index) => (entry?.totp && field.totpStorage ? [] : [{ field, index }]));
+  const byPlugins = new Set(facetCopies(entry).map(({ field }) => field.index));
+  return (entry?.customFields ?? []).flatMap((field, index) => ((entry?.totp && field.totpStorage) || byPlugins.has(index) ? [] : [{ field, index }]));
 }
 
 /** Commands the palette puts first in their section, as the prototype lists them, and last. */
 const FIRST = ["cmd:copyPassword", "cmd:copyUsername", "cmd:copyTotp", "own:fields", "cmd:editEntry", "cmd:showHistory"];
 const LAST = ["cmd:deleteEntry"];
 
-/** A section's actions: the known ones in the prototype's order, the others as registered. */
+/** A section's actions: the known ones in the prototype's order, Plugins' commands after the
+ * Entry's own copies, the others as registered. */
 function inOrder(actions: Action[]): Action[] {
   const rank = (action: Action) => {
     const first = FIRST.indexOf(action.value);
     if (first >= 0) return first - FIRST.length;
+    if (action.value.startsWith("cmd:plugin:")) return FIRST.indexOf("cmd:copyTotp") - FIRST.length + 0.5;
     return LAST.includes(action.value) ? 1 : 0;
   };
   return actions.map((action, index) => ({ action, index })).sort((a, b) => rank(a.action) - rank(b.action) || a.index - b.index).map(({ action }) => action);
