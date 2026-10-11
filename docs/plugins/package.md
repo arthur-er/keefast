@@ -1,13 +1,16 @@
 # The Plugin package (`.kfplugin`), version 1
 
 A Plugin is installed from one file, its package: the manifest, the WASM component and an icon,
-signed with its publisher's ed25519 key (ADR 0009). keefast reads it with
-`keefast_plugins::Package::read` (`src/package.rs`) and makes one with
-`keefast_plugins::package::pack`, or from the command line:
+signed with its publisher's ed25519 key ([ADR 0009](../adr/0009-third-party-plugins.md)).
+`keefast-plugin-package` (`crates/plugin-package`) reads and makes the container, and keefast's
+host reads the manifest (`crates/plugins/src/package.rs`). Plugin authors make packages with the
+`keefast-plugin` command ([the guide](README.md#packaging-and-signing)):
 
 ```sh
-cargo run -p keefast-plugins --example pack -- new-key publisher.key   # prints the publisherKey
-cargo run -p keefast-plugins --example pack -- pack publisher.key plugin.json plugin.wasm icon.png acme.iban.kfplugin
+keefast-plugin keygen publisher.key   # prints the publisherKey
+keefast-plugin pack --key publisher.key --manifest plugin.json --component plugin.wasm \
+  --icon icon.png -o acme.iban.kfplugin
+keefast-plugin verify acme.iban.kfplugin
 ```
 
 ## Container
@@ -18,7 +21,7 @@ its top level and nothing else:
 | Entry | Needed | At most | What it is |
 |---|---|---|---|
 | `plugin.json` | yes | 64 KiB | The manifest, UTF-8 JSON (below). |
-| `plugin.wasm` | yes | 8 MiB | The WebAssembly component, of the `plugin` world in `wit/plugin.wit`. |
+| `plugin.wasm` | yes | 8 MiB | The WebAssembly component, of the `plugin` world in `crates/plugins/wit/plugin.wit`. |
 | `icon.png` | no | 256 KiB | The Plugin's icon, a PNG, shown in Settings → Plugins. SVG isn't accepted: it can hold script. |
 | `signature` | yes | 64 bytes | The ed25519 signature (below), raw. |
 
@@ -33,9 +36,9 @@ The entries may come in any order. keefast refuses a package that has:
 
 ## Manifest
 
-`plugin.json` is the manifest `src/manifest.rs` reads, strictly: an unknown key, field kind or
-Plugin capability is refused rather than ignored. A package's manifest must also name its
-publisher:
+`plugin.json` is the manifest [the guide](README.md#the-manifest) describes, read strictly: an
+unknown key, field kind or Plugin capability is refused rather than ignored. A package's manifest
+must also name its publisher:
 
 ```json
 {
@@ -53,7 +56,9 @@ publisher:
 - `publisher`: who made it, as they call themselves. keefast can't check a name, so it is shown as
   unverified.
 - `publisherKey`: the publisher's ed25519 public key, 32 bytes in standard base64.
-- Ids starting `keefast.` are keefast's own; a package with one is refused.
+- Ids starting `keefast.` are keefast's own: a package with one is refused unless it is signed by
+  one of keefast's release keys ([signing.md](signing.md)). A package for a Plugin bundled with
+  keefast, such as `keefast.card`, is refused whatever its key: it is updated with keefast.
 
 ## Signature
 
@@ -93,6 +98,10 @@ pins its key (trust on first use), and the publisher is shown as unverified. Eve
 that id, updates included, must be signed by the same key, or it is refused. Removing the Plugin
 forgets the key.
 
+A package signed by one of keefast's release keys is shown as keefast's, not unverified, and its
+key isn't trusted on first use: keefast already knows it. An update signed by keefast's next
+release key, after a rotation, is accepted too.
+
 Signatures are checked when a package is installed and again each time keefast loads it.
 
 ## Where installed Plugins live
@@ -104,6 +113,10 @@ In keefast's local data directory, `keefast/plugins/` (`~/.local/share/keefast/p
 - `plugins.json`: for each installed Plugin, whether it is enabled, the Plugin capabilities and
   Owned fields the user agreed to, and the publisher key pinned for it; and which of keefast's own
   Plugins the user disabled.
+
+The Plugins bundled with keefast aren't kept there: they are compiled into keefast as packages
+signed when keefast was built, and read and checked the same way at every load
+([signing.md](signing.md)).
 
 A package that fails its checks at load, or asks for more than the user agreed to, doesn't run,
 and Settings → Plugins says why.
