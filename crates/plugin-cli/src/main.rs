@@ -301,6 +301,23 @@ fn verify(args: &[String]) -> Result<(), String> {
     println!("  capabilities {}", list(&capabilities));
     let owned: Vec<String> = manifest.owned_names().map(str::to_owned).collect();
     println!("  owned fields {}", list(&owned));
+    for facet in &manifest.contributions.facets {
+        let Some(fill) = &facet.fill else { continue };
+        // What the Companion extension would fill, and where: `Card number → cc-number`.
+        let fields: Vec<String> = facet
+            .fields
+            .iter()
+            .filter_map(|owned| {
+                let token = fill.fields.get(&owned.key)?;
+                Some(format!("{} → {}", owned.name, token.as_str()))
+            })
+            .collect();
+        println!(
+            "  fills        {} forms: {}",
+            fill.form.as_str(),
+            fields.join(", ")
+        );
+    }
     for line in shortcuts(&package) {
         println!("{line}");
     }

@@ -350,7 +350,8 @@ keefast-plugin verify <package.kfplugin> [--publisher-key <base64>]
   install it: the manifest reads, the component loads in keefast's sandbox, and the id isn't
   keefast's. In CI, pass the key in an environment variable with `--key-env`, from a secret.
 - `verify` checks a package as keefast does when installing it, and prints its id, version,
-  publisher, key fingerprint, digest, Plugin capabilities and Owned fields. With
+  publisher, key fingerprint, digest, Plugin capabilities, Owned fields and the fields it fills
+  into web forms, with their `autocomplete` tokens. With
   `--publisher-key`, it also checks the package is signed by that key.
 
 **Trust.** No authority vouches for publishers. When a user first installs your Plugin, keefast
