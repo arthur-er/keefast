@@ -127,8 +127,9 @@ rather than ignored, so keefast never runs a Plugin that asks for something it d
 
 ## Contributions
 
-API version 1 has one contribution kind: **facets**. Later versions add Entry list subtitles,
-command palette commands and browser fill, each as a new key under `contributions`.
+API version 1 has one contribution kind: **facets**. A facet brings its own sections, its Entry
+list subtitle and its command palette commands. Later versions add browser fill, as a new key
+under `contributions`.
 
 ### Facets
 
@@ -145,6 +146,8 @@ editor, which the user adds to an Entry and takes off it again.
 | `detect` | When an Entry has the facet: `{ "fields": [names…] }`, when it has a custom field of each of these names. They must be among the facet's own fields. |
 | `fields` | The facet's Owned fields, in the order the section shows them. At least one. |
 | `editor` | Optional. `{ "add": "Add card", "remove": "Remove card" }`: the facet has a section in the Entry editor, after Login, and these name the actions that add it beside "+ Field" and take it off, with its Owned fields. Without it, the Entry editor shows the facet's Owned fields as ordinary custom fields. |
+| `subtitle` | Optional, `false` by default. `true` shows the facet's label from `derive` under the Entry's title in the Entry list, such as "Visa •••• 1111", when the Entry has no username. A username always wins. With several such facets on an Entry, the first, in the order Plugins load, that has a label is shown. |
+| `commands` | Optional. [Commands](#commands) in the command palette's Entry section, for the selected Entry when it has the facet. |
 
 Each Owned field:
 
@@ -160,6 +163,44 @@ Each Owned field:
 In the Entry editor, a facet's section saves the fields it is detected by even while empty, so
 the facet stays on the Entry, and its other fields once they have a value. Protected values the
 user doesn't reveal never leave keefast's Rust side.
+
+### Commands
+
+Each command copies one of the facet's Owned fields from the selected Entry. keefast does the
+copying, Rust-to-clipboard, and clears the clipboard as it does for passwords, so a command needs
+the `copy` Plugin capability: a manifest with commands and without `copy` is refused.
+
+```json
+"commands": [
+  { "id": "copy-number", "title": "Copy card number", "copy": "number", "shortcut": "Ctrl Shift C" }
+]
+```
+
+| Key | What it is |
+|---|---|
+| `id` | Unique within the facet: lowercase letters, digits and `-`. |
+| `title` | As the command palette lists it, in sentence case: "Copy card number". |
+| `copy` | The `key` of the Owned field it copies. |
+| `shortcut` | Optional. The keys that run it, written as keefast writes them: `Ctrl Shift C`. |
+
+The command is listed only when the Entry has a value to copy, and its keys never fire while the
+user is typing in a field. keefast checks a shortcut when it loads the Plugin, and refuses **the
+shortcut, not the Plugin**, when:
+
+- it isn't **Ctrl with a letter**, **Ctrl Shift with a letter**, or **Ctrl with a digit**. Those
+  never type text and read the same on every keyboard layout; Alt, Meta, named keys and Shift
+  with a digit don't;
+- keefast has it (`crates/app/ui/src/lib/shortcuts.json`: Ctrl K, Ctrl B, Ctrl Shift N…), or text
+  fields do (Ctrl A, C, V, X, Y, Z, Ctrl Shift Z);
+- a Plugin loaded before yours has it, or another of your commands does. Bundled Plugins load
+  first, then installed ones in the order they were installed. A Plugin enabled again loads
+  last. When a Plugin is disabled or removed, the others get their shortcuts again, so one it
+  held is free.
+
+A command without its shortcut is still in the command palette. Settings → Plugins says, on the
+Plugin's row, which shortcuts it didn't get and why. `keefast-plugin pack` and `verify` warn
+about a shortcut keefast or its own Plugins would refuse. Pick keys that are likely free, and say
+in your Plugin's description what they are.
 
 **Owned fields are exclusive.** keefast refuses to install a Plugin owning a field another
 installed Plugin owns, enabled or not. Choose names that say what they hold, so they don't clash
@@ -227,7 +268,7 @@ asking for more than the user agreed to.
 |---|---|
 | *(its Owned fields)* | Keep its data in the custom fields its facets declare. Not listed under `capabilities`: the facets declare them. |
 | `readProtected` | Get the values of its protected Owned fields in `derive`, so it can label them ("Visa •••• 1111"). Without it, a protected field's value is `None`. |
-| `copy` | Have keefast offer to copy its Owned fields. keefast does the copying, and clears the clipboard as it does for passwords. |
+| `copy` | Have keefast offer to copy its Owned fields, from the facet's section and from its [commands](#commands). keefast does the copying, and clears the clipboard as it does for passwords. |
 
 Ask only for what the Plugin needs: users see the list.
 

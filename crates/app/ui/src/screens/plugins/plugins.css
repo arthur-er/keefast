@@ -21,6 +21,9 @@
   .pl-caps li svg.lucide { width: 12px; height: 12px; color: var(--fg-2); flex: none; }
   .pl-problem { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; font-size: var(--text-sm); color: var(--warn); }
   .pl-problem svg.lucide { width: 13px; height: 13px; margin-top: 2px; flex: none; }
+  .pl-shortcuts { margin-top: 8px; display: grid; gap: 4px; font-size: var(--text-sm); color: var(--fg-2); }
+  .pl-shortcuts li { display: flex; align-items: flex-start; gap: 6px; }
+  .pl-shortcuts svg.lucide { width: 13px; height: 13px; margin-top: 2px; flex: none; }
 
   /* Installing one */
   .pl-publisher { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border); font-size: var(--text-sm); color: var(--fg-1); line-height: 1.45; }

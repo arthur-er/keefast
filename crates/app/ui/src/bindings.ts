@@ -1073,6 +1073,12 @@ export type PluginView = {
 	icon: string | null,
 	/**  Why it doesn't run though enabled. */
 	problem: string | null,
+	/**
+	 *  The shortcuts its commands declared and didn't get, each a sentence saying why, such as
+	 *  "Copy card number has no shortcut: Ctrl Shift C is one of keefast's own shortcuts." The
+	 *  commands are still in the command palette, without keys.
+	 */
+	refusedShortcuts: string[],
 };
 
 /**  How an attachment can be shown. */

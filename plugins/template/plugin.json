@@ -17,7 +17,11 @@
           { "key": "bic", "name": "BIC", "label": "BIC", "kind": "text", "protected": false, "placeholder": "Optional" },
           { "key": "holder", "name": "Account holder", "label": "Account holder", "kind": "text", "protected": false }
         ],
-        "editor": { "add": "Add bank account", "remove": "Remove bank account" }
+        "editor": { "add": "Add bank account", "remove": "Remove bank account" },
+        "subtitle": true,
+        "commands": [
+          { "id": "copy-iban", "title": "Copy IBAN", "copy": "iban", "shortcut": "Ctrl Shift I" }
+        ]
       }
     ]
   }

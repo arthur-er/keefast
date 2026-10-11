@@ -109,29 +109,10 @@ struct Aftermath {
     clipboard_cleared: bool,
 }
 
-/// keefast's own shortcuts, the UI's `SHORTCUTS`, which no Plugin may take.
-pub(crate) fn keefast_shortcuts() -> Vec<String> {
-    let shortcuts: std::collections::BTreeMap<String, Vec<String>> =
-        serde_json::from_str(include_str!("../ui/src/lib/shortcuts.json"))
-            .expect("shortcuts.json lists keefast's shortcuts");
-    shortcuts.into_values().flatten().collect()
-}
-
-/// A host with no Plugins yet, which keeps keefast's shortcuts from every Plugin loaded into
-/// it, bundled or installed.
-fn plugin_host() -> PluginHost {
-    let reserved = keefast_shortcuts();
-    let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
-    let mut host = PluginHost::new();
-    host.reserve_shortcuts(&reserved);
-    host
-}
-
 /// keefast's own Plugins alone, until [`AppCore::use_plugin_store`] runs the installed ones too.
+/// Every host keeps keefast's shortcuts (`shortcuts.json`) from the Plugins it loads.
 fn bundled_plugin_host() -> PluginHost {
-    let reserved = keefast_shortcuts();
-    let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
-    let host = PluginHost::bundled_reserving(&reserved);
+    let host = PluginHost::bundled();
     say_refused_shortcuts(&host);
     host
 }
@@ -163,7 +144,7 @@ impl AppCore {
 
     /// Runs the Plugins installed in `store` from now on, in place of keefast's own alone.
     pub fn use_plugin_store(&self, mut store: PluginStore) {
-        let mut host = plugin_host();
+        let mut host = PluginHost::new();
         store.load(&mut host);
         say_refused_shortcuts(&host);
         let mut current = self.plugin_store();
@@ -447,23 +428,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn keefasts_shortcuts_are_kept_from_plugins() {
-        let shortcuts = keefast_shortcuts();
-        // `shortcuts.json` is the UI's `SHORTCUTS`.
-        for combo in [
-            "Ctrl K",
-            "Ctrl Shift P",
-            "Ctrl B",
-            "Ctrl Shift N",
-            "Ctrl ,",
-            "Escape",
-        ] {
-            assert!(shortcuts.iter().any(|s| s == combo), "{combo}");
-        }
-        for combo in &shortcuts {
-            assert!(keefast_plugins::Combo::parse(combo).is_some(), "{combo}");
-        }
-        // The Card Plugin takes none of them, so it gets every shortcut it asks for.
+    fn the_card_gets_every_shortcut_it_asks_for() {
         assert!(bundled_plugin_host().refused_shortcuts().is_empty());
     }
 

@@ -9,7 +9,7 @@ use std::path::Path;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use keefast_plugins::{
-    Capability, InstallError, InstalledPlugin, Offer, Publisher, package::MAX_PACKAGE,
+    Capability, InstallError, InstalledPlugin, Offer, PluginHost, Publisher, package::MAX_PACKAGE,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -86,6 +86,10 @@ pub struct PluginView {
     pub icon: Option<String>,
     /// Why it doesn't run though enabled.
     pub problem: Option<String>,
+    /// The shortcuts its commands declared and didn't get, each a sentence saying why, such as
+    /// "Copy card number has no shortcut: Ctrl Shift C is one of keefast's own shortcuts." The
+    /// commands are still in the command palette, without keys.
+    pub refused_shortcuts: Vec<String>,
 }
 
 impl From<InstalledPlugin> for PluginView {
@@ -102,6 +106,7 @@ impl From<InstalledPlugin> for PluginView {
             owned_fields: plugin.owned_fields,
             icon: plugin.icon.as_deref().map(data_url),
             problem: plugin.problem,
+            refused_shortcuts: Vec::new(),
         }
     }
 }
@@ -203,9 +208,33 @@ fn sentence(text: &str) -> String {
 #[specta::specta]
 pub async fn list_plugins(core: Core<'_>) -> ApiResult<PluginList> {
     Ok(core.read_plugins(|store, host| PluginList {
-        plugins: store.list(host).into_iter().map(Into::into).collect(),
+        plugins: store
+            .list(host)
+            .into_iter()
+            .map(|plugin| {
+                let mut view = PluginView::from(plugin);
+                view.refused_shortcuts = refused_shortcuts(host, &view.id);
+                view
+            })
+            .collect(),
         error: store.error().map(str::to_owned),
     }))
+}
+
+/// Why a running Plugin's commands didn't get the shortcuts they declared, by command title.
+fn refused_shortcuts(host: &PluginHost, plugin: &str) -> Vec<String> {
+    host.refused_shortcuts()
+        .iter()
+        .filter(|refused| refused.plugin == plugin)
+        .map(|refused| {
+            let title = host
+                .manifest(plugin)
+                .and_then(|manifest| manifest.facet(&refused.facet))
+                .and_then(|facet| facet.commands.iter().find(|c| c.id == refused.command))
+                .map_or(refused.command.as_str(), |command| command.title.as_str());
+            sentence(&format!("{title} has no shortcut: {}", refused.reason))
+        })
+        .collect()
 }
 
 /// Asks the user for a Plugin package and says what installing it would do; `None` if they
@@ -281,7 +310,7 @@ async fn read(path: &Path) -> ApiResult<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use keefast_core::CustomField;
-    use keefast_plugins::{InstallError, PluginStore};
+    use keefast_plugins::{InstallError, PluginHost, PluginStore};
     use secrecy::SecretString;
 
     use super::sentence;
@@ -319,6 +348,51 @@ mod tests {
         core.change_plugins(|store, host| store.set_enabled(host, "keefast.card", true))
             .unwrap();
         assert_eq!(facet_views(&core.plugins(), &card()).len(), 1);
+    }
+
+    #[test]
+    fn settings_say_why_a_command_has_no_shortcut() {
+        let host = PluginHost::bundled_reserving(&["Ctrl Shift C"]);
+        assert_eq!(
+            super::refused_shortcuts(&host, "keefast.card"),
+            ["Copy card number has no shortcut: Ctrl Shift C is one of keefast's own shortcuts."]
+        );
+        assert!(super::refused_shortcuts(&host, "acme.iban").is_empty());
+    }
+
+    #[test]
+    fn the_installed_plugins_are_kept_from_keefasts_shortcuts() {
+        let dir = tempfile::tempdir().unwrap();
+        let (core, _) = core();
+        core.use_plugin_store(PluginStore::open(dir.path()));
+        assert!(core.plugins().refused_shortcuts().is_empty());
+        // The store's host reserves keefast's keys, for any Plugin loaded into it.
+        let mut json: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../plugins/card/plugin.json")).unwrap();
+        json["id"] = "acme.cards".into();
+        json["contributions"]["facets"][0]["fields"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(|field| {
+                let name = format!("Acme {}", field["name"].as_str().unwrap());
+                field["name"] = name.into();
+            });
+        json["contributions"]["facets"][0]["detect"]["fields"] =
+            serde_json::json!(["Acme Card number"]);
+        json["contributions"]["facets"][0]["commands"][0]["shortcut"] = "Ctrl B".into();
+        core.change_plugins(|_, host| {
+            host.load(
+                &json.to_string(),
+                include_bytes!("../../../../plugins/card/card.wasm"),
+            )
+            .map(|_| ())
+        })
+        .unwrap();
+        assert_eq!(
+            core.plugins().refused_shortcuts()[0].reason.to_string(),
+            "Ctrl B is one of keefast's own shortcuts"
+        );
     }
 
     #[test]

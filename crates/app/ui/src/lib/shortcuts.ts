@@ -93,7 +93,7 @@ export interface ShortcutOptions {
 
 /** The app's global shortcuts. Ctrl K is the command palette, Ctrl Shift P its alias. They live
  * in `shortcuts.json` because the Rust side reads them too: the Plugin host refuses a Plugin's
- * command a shortcut keefast has (crates/app/src/core.rs). */
+ * command a shortcut keefast has (crates/plugins/src/shortcut.rs). */
 export const SHORTCUTS: { readonly [Name in keyof typeof shortcuts]: readonly string[] } = shortcuts;
 
 /** Runs `handler` on any of `combos`, window-wide, while mounted. */

@@ -4,7 +4,7 @@
 // data in the Vaults as ordinary custom fields.
 
 import { useMemo } from "react";
-import { BadgeCheck, CircleAlert, FileUp, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
+import { BadgeCheck, CircleAlert, FileUp, Keyboard, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
@@ -184,6 +184,16 @@ function PluginRow({ plugin, onEnabled, onRemove }: { plugin: PluginView; onEnab
           <div className="pl-problem" role="alert">
             <TriangleAlert /> It doesn't run: {plugin.problem}
           </div>
+        )}
+        {plugin.running && plugin.refusedShortcuts.length > 0 && (
+          // The commands still run from the command palette; only their keys were refused.
+          <ul className="pl-shortcuts" aria-label="Shortcuts it didn't get">
+            {plugin.refusedShortcuts.map((reason) => (
+              <li key={reason}>
+                <Keyboard /> {reason}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
       <div className="ctl">

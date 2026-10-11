@@ -240,6 +240,9 @@ fn pack(args: &[String]) -> Result<(), String> {
         public.to_base64(),
         public.fingerprint()
     );
+    for line in shortcuts(&checked) {
+        println!("{line}");
+    }
     if !named {
         println!(
             "note: {} names no publisherKey, so the package names the signing key. Add \
@@ -298,6 +301,9 @@ fn verify(args: &[String]) -> Result<(), String> {
     println!("  capabilities {}", list(&capabilities));
     let owned: Vec<String> = manifest.owned_names().map(str::to_owned).collect();
     println!("  owned fields {}", list(&owned));
+    for line in shortcuts(&package) {
+        println!("{line}");
+    }
     Ok(())
 }
 
@@ -307,6 +313,51 @@ fn list(items: &[String]) -> String {
     } else {
         items.join(", ")
     }
+}
+
+/// The shortcuts the package's commands would get beside keefast's own Plugins, and why any
+/// would be refused: keefast refuses the shortcut, not the Plugin, so this only warns.
+fn shortcuts(package: &Package) -> Vec<String> {
+    let commands: Vec<_> = package
+        .manifest
+        .contributions
+        .facets
+        .iter()
+        .flat_map(|facet| facet.commands.iter().map(move |command| (facet, command)))
+        .filter(|(_, command)| command.shortcut.is_some())
+        .collect();
+    if commands.is_empty() {
+        return Vec::new();
+    }
+    // Beside keefast's own Plugins, as when installed; alone if it can't load beside them.
+    let mut host = PluginHost::bundled();
+    if host
+        .load(&package.manifest_json, &package.component)
+        .is_err()
+    {
+        host = PluginHost::new();
+        let _ = host.load(&package.manifest_json, &package.component);
+    }
+    let id = &package.manifest.id;
+    commands
+        .into_iter()
+        .map(|(facet, command)| {
+            let refused = host.refused_shortcuts().iter().find(|refused| {
+                &refused.plugin == id && refused.facet == facet.id && refused.command == command.id
+            });
+            match refused {
+                Some(refused) => format!(
+                    "warning: \"{}\" won't have a shortcut: {}",
+                    command.title, refused.reason
+                ),
+                None => format!(
+                    "  shortcut     {}: {}",
+                    command.title,
+                    command.shortcut.as_deref().unwrap_or_default()
+                ),
+            }
+        })
+        .collect()
 }
 
 /// Checks a package as keefast does before installing it: its container and signature, its

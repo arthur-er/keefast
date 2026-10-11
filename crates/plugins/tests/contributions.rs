@@ -45,7 +45,7 @@ fn passport(shortcuts: &[&str]) -> String {
 
 #[test]
 fn the_card_has_copy_commands_with_shortcuts() {
-    let host = PluginHost::bundled_reserving(&["Ctrl K", "Ctrl Shift P", "Ctrl B"]);
+    let host = PluginHost::bundled();
     assert!(host.refused_shortcuts().is_empty());
     let found = host.facets(&[field("Card number", "4111 1111 1111 1111", true)]);
     let commands: Vec<_> = found[0]
@@ -99,6 +99,20 @@ fn a_shortcut_keefast_has_is_refused_and_the_plugin_still_loads() {
 }
 
 #[test]
+fn every_host_keeps_keefasts_own_shortcuts() {
+    // As the store and `keefast-plugin pack` make it: nothing reserved by hand.
+    let mut host = PluginHost::new();
+    let manifest = card_with(|json| {
+        json["contributions"]["facets"][0]["commands"][0]["shortcut"] = "Ctrl B".into();
+    });
+    host.load(&manifest, COMPONENT).unwrap();
+    assert_eq!(
+        host.refused_shortcuts()[0].reason,
+        ShortcutRefusal::Keefast("Ctrl B".into())
+    );
+}
+
+#[test]
 fn the_keys_text_fields_own_are_refused_without_being_reserved() {
     let mut host = PluginHost::new();
     let manifest = card_with(|json| {
@@ -114,7 +128,7 @@ fn the_keys_text_fields_own_are_refused_without_being_reserved() {
 #[test]
 fn a_shortcut_another_plugin_has_is_refused() {
     let mut host = PluginHost::bundled();
-    host.load(&passport(&["Ctrl Shift C", "Ctrl Shift P"]), COMPONENT)
+    host.load(&passport(&["Ctrl Shift C", "Ctrl Shift J"]), COMPONENT)
         .unwrap();
     let refused = host.refused_shortcuts();
     assert_eq!(refused.len(), 1);
@@ -128,10 +142,23 @@ fn a_shortcut_another_plugin_has_is_refused() {
     );
     let found = host.facets(&[field("Passport Card number", "1", true)]);
     let shortcuts: Vec<_> = found[0].commands.iter().map(|c| c.shortcut).collect();
-    assert_eq!(shortcuts, [None, Some("Ctrl Shift P")]);
+    assert_eq!(shortcuts, [None, Some("Ctrl Shift J")]);
     // The Card, loaded first, keeps its keys.
     let found = host.facets(&[field("Card number", "1", true)]);
     assert_eq!(found[0].commands[0].shortcut, Some("Ctrl Shift C"));
+}
+
+#[test]
+fn unloading_a_plugin_frees_its_shortcuts_for_the_others() {
+    let mut host = PluginHost::bundled();
+    host.load(&passport(&["Ctrl Shift C"]), COMPONENT).unwrap();
+    assert_eq!(host.refused_shortcuts().len(), 1);
+
+    assert!(host.unload("keefast.card"));
+    assert!(host.refused_shortcuts().is_empty());
+    let found = host.facets(&[field("Passport Card number", "1", true)]);
+    assert_eq!(found[0].commands[0].shortcut, Some("Ctrl Shift C"));
+    assert!(!host.unload("keefast.card"));
 }
 
 #[test]

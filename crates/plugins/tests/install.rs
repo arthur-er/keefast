@@ -412,3 +412,69 @@ fn a_damaged_state_file_changes_nothing() {
         "{ not json"
     );
 }
+
+/// An installed IBAN Plugin whose copy command asks for `shortcut`.
+fn iban_with_shortcut(shortcut: &str) -> Vec<u8> {
+    let key = key(1);
+    let mut manifest = manifest(&key, "1.0", &["IBAN", "BIC"], &["copy"]);
+    manifest["contributions"]["facets"][0]["commands"] = serde_json::json!([
+        { "id": "copy-iban", "title": "Copy IBAN", "copy": "f0", "shortcut": shortcut }
+    ]);
+    package_of(&manifest, &key)
+}
+
+fn shortcut_of(host: &PluginHost, field: &'static str) -> Option<String> {
+    let entry = [EntryField {
+        name: field,
+        value: "1",
+        protected: false,
+    }];
+    let found = host.facets(&entry);
+    found[0].commands[0].shortcut.map(str::to_owned)
+}
+
+#[test]
+fn an_installed_plugin_cant_take_a_shortcut_the_card_has_until_the_card_is_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PluginStore::open(dir.path());
+    let mut host = PluginHost::new();
+    host.reserve_shortcuts(&["Ctrl K"]);
+    store.load(&mut host);
+
+    // keefast's own keys hold for an installed Plugin as for a bundled one.
+    install(&mut store, &mut host, &iban_with_shortcut("Ctrl K")).unwrap();
+    assert_eq!(shortcut_of(&host, "IBAN"), None);
+    assert_eq!(host.refused_shortcuts().len(), 1);
+
+    // The Card's keys are taken: the Plugin installs, its command without keys.
+    install(&mut store, &mut host, &iban_with_shortcut("Ctrl Shift C")).unwrap();
+    assert_eq!(shortcut_of(&host, "IBAN"), None);
+    let refused = &host.refused_shortcuts()[0];
+    assert_eq!(refused.plugin, "acme.iban");
+    assert_eq!(
+        refused.reason.to_string(),
+        "Ctrl Shift C is taken by the Card Plugin"
+    );
+    assert_eq!(
+        shortcut_of(&host, "Card number").as_deref(),
+        Some("Ctrl Shift C")
+    );
+
+    // Disabling the Card frees them.
+    store.set_enabled(&mut host, "keefast.card", false).unwrap();
+    assert_eq!(shortcut_of(&host, "IBAN").as_deref(), Some("Ctrl Shift C"));
+    assert!(host.refused_shortcuts().is_empty());
+
+    // Enabled again, the Card loads after the IBAN Plugin, which keeps them.
+    store.set_enabled(&mut host, "keefast.card", true).unwrap();
+    assert_eq!(shortcut_of(&host, "Card number"), None);
+    assert_eq!(host.refused_shortcuts()[0].plugin, "keefast.card");
+
+    // Removing the IBAN Plugin gives them back to the Card.
+    store.remove(&mut host, "acme.iban").unwrap();
+    assert_eq!(
+        shortcut_of(&host, "Card number").as_deref(),
+        Some("Ctrl Shift C")
+    );
+    assert!(host.refused_shortcuts().is_empty());
+}

@@ -156,28 +156,29 @@ impl Default for PluginHost {
 }
 
 impl PluginHost {
-    /// A host with no Plugins.
+    /// A host with no Plugins, which keeps keefast's shortcuts and the keys text fields own from
+    /// every Plugin loaded into it.
     pub fn new() -> Self {
+        let keefast = shortcut::keefast();
         Self {
             engine: runtime::engine(),
             plugins: Vec::new(),
             reserved: shortcut::TEXT_KEYS
                 .iter()
-                .filter_map(|text| Combo::parse(text))
+                .copied()
+                .chain(keefast.iter().map(String::as_str))
+                .filter_map(Combo::parse)
                 .collect(),
             refused: Vec::new(),
         }
     }
 
-    /// A host with the Plugins bundled with keefast whose packages pass their checks, which
-    /// keeps none of keefast's shortcuts from them but the keys text fields own: see
-    /// [`Self::bundled_reserving`].
+    /// A host with the Plugins bundled with keefast whose packages pass their checks.
     pub fn bundled() -> Self {
         Self::bundled_reserving(&[])
     }
 
-    /// A host with the Plugins bundled with keefast, none of which may have one of `shortcuts`,
-    /// keefast's own (the UI's `SHORTCUTS`).
+    /// [`Self::bundled`], keeping these shortcuts from the Plugins too.
     pub fn bundled_reserving(shortcuts: &[&str]) -> Self {
         let mut host = Self::new();
         host.reserve_shortcuts(shortcuts);
@@ -190,7 +191,7 @@ impl PluginHost {
         host
     }
 
-    /// Keeps these shortcuts from Plugins loaded from now on.
+    /// Keeps these shortcuts from Plugins loaded from now on, as well as keefast's own.
     pub fn reserve_shortcuts(&mut self, shortcuts: &[&str]) {
         self.reserved
             .extend(shortcuts.iter().filter_map(|text| Combo::parse(text)));

@@ -159,6 +159,26 @@ describe("mock backend", () => {
   });
 });
 
+describe("Disabling a Plugin in Settings → Plugins", () => {
+  it("drops the Card's subtitle and commands, and frees its shortcuts", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    mock.simulate("plugins-installed");
+    const iban = async () => (await api.listPlugins()).plugins.find((plugin) => plugin.id === "acme.iban")!;
+    expect((await iban()).refusedShortcuts).toEqual(["Copy IBAN has no shortcut: Ctrl Shift C is taken by the Card Plugin."]);
+
+    await api.setPluginEnabled("keefast.card", false);
+    const [visa] = await api.listEntries({ scope: { kind: "allVaults" }, search: "Company Visa", sort: "title" });
+    expect(visa!.label).toBeNull();
+    expect((await api.getEntry(visa!.vault, visa!.id)).facets).toEqual([]);
+    expect((await iban()).refusedShortcuts).toEqual([]);
+
+    await api.setPluginEnabled("keefast.card", true);
+    const [again] = await api.listEntries({ scope: { kind: "allVaults" }, search: "Company Visa", sort: "title" });
+    expect(again!.label).toBe("Visa •••• 1111");
+  });
+});
+
 describe("Plugins' shortcuts, as the host gives them", () => {
   const manifest = card as PluginManifest;
   const withShortcuts = (id: string, name: string, shortcuts: string[]): PluginManifest => ({

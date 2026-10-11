@@ -5,7 +5,17 @@
 //!
 //! Combos are written as the UI's `lib/shortcuts.ts` writes them: "Ctrl Shift C".
 
+use std::collections::BTreeMap;
 use std::fmt;
+
+/// keefast's own shortcuts: the UI's `SHORTCUTS`, from the file it reads them from, so every host
+/// keeps them from Plugins, in the app as in `keefast-plugin pack` and `verify`.
+pub fn keefast() -> Vec<String> {
+    let shortcuts: BTreeMap<String, Vec<String>> =
+        serde_json::from_str(include_str!("../../app/ui/src/lib/shortcuts.json"))
+            .expect("shortcuts.json lists keefast's shortcuts");
+    shortcuts.into_values().flatten().collect()
+}
 
 /// Keys every text field in the webview owns, which no Plugin may take even though keefast's
 /// `SHORTCUTS` don't name them.
@@ -134,6 +144,24 @@ impl fmt::Display for RefusedShortcut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keefasts_own_shortcuts_are_the_uis() {
+        let shortcuts = keefast();
+        for combo in [
+            "Ctrl K",
+            "Ctrl Shift P",
+            "Ctrl B",
+            "Ctrl Shift N",
+            "Ctrl ,",
+            "Escape",
+        ] {
+            assert!(shortcuts.iter().any(|s| s == combo), "{combo}");
+        }
+        for combo in &shortcuts {
+            assert!(Combo::parse(combo).is_some(), "{combo}");
+        }
+    }
 
     #[test]
     fn keefasts_combos_read_as_the_ui_reads_them() {

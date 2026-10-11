@@ -12,11 +12,15 @@
 //   plugin-keefast            Wi-Fi network 1.0.0, signed by keefast's release key
 //   plugin-cancel             the dialog is cancelled
 //   plugins-installed         IBAN installed, Passport installed but disabled, and a Plugin whose
-//                             package failed its checks; the package is IBAN 2.0.0
+//                             package failed its checks; the package is IBAN 2.0.0. IBAN's
+//                             "Copy IBAN" asks for Ctrl Shift C, which it gets only while the Card
+//                             is disabled
 //   plugins-dev-build         keefast's Card signed by the key a development build made for itself,
 //                             not keefast's release key
 
 import { bundledPlugins } from "virtual:keefast/bundled-plugins";
+
+import { shortcutsOf } from "./plugins";
 
 import type { PluginCapability, PluginList, PluginOffer, PluginPublisher, PluginView } from "@/bindings";
 
@@ -82,6 +86,9 @@ interface Installed {
   ownedFields: string[];
   icon: string | null;
   problem: string | null;
+  /** Its commands' titles and the shortcuts they ask for. The fake packages have no component,
+   * so these stand in for the manifest's `commands`. */
+  shortcuts?: { title: string; shortcut: string }[];
 }
 
 /** A Plugin icon: a tinted tile with a letter, as a package's `icon.png` would be. */
@@ -227,7 +234,22 @@ export function createMockPluginStore(changed: () => void) {
       ownedFields: plugin.ownedFields,
       icon: plugin.icon,
       problem: plugin.enabled ? plugin.problem : null,
+      refusedShortcuts: plugin.enabled ? refusedOf(plugin) : [],
     };
+  }
+
+  /** Why an installed Plugin's commands lack the shortcuts they ask for, as the host says: the
+   * running bundled Plugins loaded first. */
+  function refusedOf(plugin: Installed): string[] {
+    const runs = (id: string) => !disabledBundled.has(id);
+    const given = shortcutsOf(runs).given;
+    const owner = (shortcut: string) =>
+      [...given.entries()].find(([, taken]) => taken === shortcut)?.[0].split("/")[0];
+    return (plugin.shortcuts ?? []).flatMap(({ title, shortcut }) => {
+      const id = owner(shortcut);
+      const name = bundledPlugins.find(({ manifest }) => manifest.id === id)?.manifest.name;
+      return name ? [`${title} has no shortcut: ${shortcut} is taken by the ${name} Plugin.`] : [];
+    });
   }
 
   function list(): PluginList {
@@ -245,6 +267,12 @@ export function createMockPluginStore(changed: () => void) {
         ownedFields: manifest.contributions.facets.flatMap((facet) => facet.fields.map((field) => field.name)),
         icon: null,
         problem: null,
+        refusedShortcuts: shortcutsOf((id) => !disabledBundled.has(id))
+          .refused.filter((refused) => refused.plugin === manifest.id)
+          .map((refused) => {
+            const command = manifest.contributions.facets.find((facet) => facet.id === refused.facet)?.commands?.find((c) => c.id === refused.command);
+            return `${command?.title ?? refused.command} has no shortcut: ${refused.reason}.`;
+          }),
       };
     });
     const others = [...installed].sort((a, b) => a.name.localeCompare(b.name)).map(view);
@@ -314,7 +342,7 @@ export function createMockPluginStore(changed: () => void) {
       installed = [...installed.filter((plugin) => plugin.id !== iban.id), iban];
     }
     if (scene === "plugins-installed") {
-      installed = [iban, { ...PASSPORT }, { ...BROKEN }];
+      installed = [{ ...iban, shortcuts: [{ title: "Copy IBAN", shortcut: "Ctrl Shift C" }] }, { ...PASSPORT }, { ...BROKEN }];
     }
   }
 
