@@ -1,7 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/workspace", "crates/plugins", "crates/app", "crates/native-host"]
-# Plugins are built to WebAssembly on their own (plugins/card/build.sh).
+members = [
+    "crates/core",
+    "crates/workspace",
+    "crates/plugins",
+    "crates/plugin-package",
+    "crates/plugin-sdk",
+    "crates/plugin-cli",
+    "crates/app",
+    "crates/native-host",
+]
+# Plugins are built to WebAssembly on their own, each its own Cargo workspace
+# (`keefast-plugin build`, docs/plugins/README.md).
 exclude = ["plugins"]
 
 [workspace.package]
@@ -14,7 +24,12 @@ repository = "https://github.com/arthur-er/keefast"
 keefast-core = { path = "crates/core" }
 keefast-workspace = { path = "crates/workspace" }
 keefast-native-host = { path = "crates/native-host" }
+# Plugins (ADR 0009, docs/plugins/README.md): the host keefast runs them in, the package format,
+# the SDK Plugin authors write against, and the `keefast-plugin` command that builds and signs
+# packages.
 keefast-plugins = { path = "crates/plugins" }
+keefast-plugin-package = { path = "crates/plugin-package" }
+keefast-plugin-sdk = { path = "crates/plugin-sdk" }
 aes = "0.9"
 base64 = "0.23"
 cbc = "0.2"
@@ -56,6 +71,9 @@ uuid = "1"
 # network or clock.
 wasmtime = { version = "49", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
 wat = "1"
+# Turns a Plugin's core WebAssembly module into a component (`keefast-plugin build`). The version
+# that matches the SDK's wit-bindgen, which writes the metadata it reads.
+wit-component = { version = "0.259", default-features = false }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

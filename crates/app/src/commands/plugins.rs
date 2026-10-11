@@ -41,8 +41,10 @@ impl From<Capability> for PluginCapability {
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum PluginPublisher {
-    /// keefast itself.
-    Keefast,
+    /// keefast itself, with its signing key's fingerprint. `release` is false only for the
+    /// Plugins bundled with a development or source build, signed by a key it made for itself
+    /// rather than keefast's release key.
+    Keefast { fingerprint: String, release: bool },
     /// The name the Plugin gives, which keefast can't check, and its key's fingerprint
     /// (`3F2A 91C0 7B1E 44D2`).
     Unverified { name: String, fingerprint: String },
@@ -51,7 +53,13 @@ pub enum PluginPublisher {
 impl From<Publisher> for PluginPublisher {
     fn from(publisher: Publisher) -> Self {
         match publisher {
-            Publisher::Keefast => Self::Keefast,
+            Publisher::Keefast {
+                fingerprint,
+                release,
+            } => Self::Keefast {
+                fingerprint,
+                release,
+            },
             Publisher::Unverified { name, fingerprint } => Self::Unverified { name, fingerprint },
         }
     }
@@ -170,6 +178,7 @@ impl From<InstallError> for ApiError {
             InstallError::Io(_) => ApiError::new(ErrorKind::Io, error.to_string()),
             InstallError::KeyChanged { .. }
             | InstallError::Reserved
+            | InstallError::BundledId(_)
             | InstallError::Clash { .. }
             | InstallError::Changed
             | InstallError::Bundled(_) => ApiError::invalid(error.to_string()),

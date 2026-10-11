@@ -7,17 +7,21 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-base64.workspace = true
 dirs.workspace = true
-ed25519-dalek.workspace = true
+keefast-plugin-package.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-tar.workspace = true
 thiserror.workspace = true
 wasmtime.workspace = true
 
-[dev-dependencies]
+# Signs the bundled Plugins into packages (build.rs).
+[build-dependencies]
 getrandom.workspace = true
+keefast-plugin-package.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
+sha2.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 wat.workspace = true

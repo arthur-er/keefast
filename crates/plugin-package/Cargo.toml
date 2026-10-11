@@ -1,0 +1,15 @@
+[package]
+name = "keefast-plugin-package"
+description = "The Plugin package format (.kfplugin): read, check the signature of, and sign keefast Plugins."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+thiserror.workspace = true

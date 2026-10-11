@@ -9,9 +9,12 @@
 //   plugin-clash              a Plugin owning `Card number`, which keefast's Card owns
 //   plugin-key-changed        IBAN installed; the package is signed by another key
 //   plugin-malformed          a package changed after it was signed
+//   plugin-keefast            Wi-Fi network 1.0.0, signed by keefast's release key
 //   plugin-cancel             the dialog is cancelled
 //   plugins-installed         IBAN installed, Passport installed but disabled, and a Plugin whose
 //                             package failed its checks; the package is IBAN 2.0.0
+//   plugins-dev-build         keefast's Card signed by the key a development build made for itself,
+//                             not keefast's release key
 
 import { bundledPlugins } from "virtual:keefast/bundled-plugins";
 
@@ -23,8 +26,10 @@ export type PluginScene =
   | "plugin-clash"
   | "plugin-key-changed"
   | "plugin-malformed"
+  | "plugin-keefast"
   | "plugin-cancel"
-  | "plugins-installed";
+  | "plugins-installed"
+  | "plugins-dev-build";
 
 export const PLUGIN_SCENES: readonly PluginScene[] = [
   "plugin-new",
@@ -32,8 +37,10 @@ export const PLUGIN_SCENES: readonly PluginScene[] = [
   "plugin-clash",
   "plugin-key-changed",
   "plugin-malformed",
+  "plugin-keefast",
   "plugin-cancel",
   "plugins-installed",
+  "plugins-dev-build",
 ];
 
 /** A refusal, as the app's `ApiError`. */
@@ -54,6 +61,8 @@ interface FakePackage {
   version: string;
   publisher: string;
   fingerprint: string;
+  /** Signed by keefast's release key. */
+  keefast?: boolean;
   capabilities: PluginCapability[];
   ownedFields: string[];
   icon: string | null;
@@ -67,6 +76,7 @@ interface Installed {
   version: string | null;
   publisher: string;
   fingerprint: string;
+  keefast?: boolean;
   enabled: boolean;
   capabilities: PluginCapability[];
   ownedFields: string[];
@@ -81,6 +91,9 @@ function tile(letter: string, color: string): string {
 }
 
 const ACME = "3F2A 91C0 7B1E 44D2";
+/** keefast's release key, and the key a development build makes for itself. */
+const KEEFAST_KEY = "7C1D 52E8 A06B 93F4";
+const DEV_BUILD_KEY = "E25B 0C94 6D17 A83E";
 const OTHER_KEY = "D41C 0E7A 22B9 F360";
 
 const IBAN_1: FakePackage = {
@@ -103,8 +116,20 @@ const IBAN_2: FakePackage = {
   ownedFields: ["IBAN", "BIC", "Account holder"],
 };
 
-const PACKAGES: Record<Exclude<PluginScene, "plugin-cancel" | "plugins-installed">, FakePackage> = {
+const PACKAGES: Record<Exclude<PluginScene, "plugin-cancel" | "plugins-installed" | "plugins-dev-build">, FakePackage> = {
   "plugin-new": IBAN_1,
+  "plugin-keefast": {
+    path: "~/Downloads/keefast-wifi-1.0.0.kfplugin",
+    id: "keefast.wifi",
+    name: "Wi-Fi network",
+    version: "1.0.0",
+    publisher: "keefast",
+    fingerprint: KEEFAST_KEY,
+    keefast: true,
+    capabilities: ["copy"],
+    ownedFields: ["SSID", "Wi-Fi password", "Security"],
+    icon: tile("W", "#2563eb"),
+  },
   "plugin-update": IBAN_2,
   "plugin-clash": {
     path: "~/Downloads/cardvault-pro.kfplugin",
@@ -145,6 +170,7 @@ function installedOf(pkg: FakePackage): Installed {
     version: pkg.version,
     publisher: pkg.publisher,
     fingerprint: pkg.fingerprint,
+    keefast: pkg.keefast,
     enabled: true,
     capabilities: [...pkg.capabilities],
     ownedFields: [...pkg.ownedFields],
@@ -183,12 +209,10 @@ export function createMockPluginStore(changed: () => void) {
   let installed: Installed[] = [];
   let disabledBundled = new Set<string>();
   let next: PluginScene = "plugin-new";
+  let devBuild = false;
 
-  const publisherOf = (plugin: { publisher: string; fingerprint: string }): PluginPublisher => ({
-    kind: "unverified",
-    name: plugin.publisher,
-    fingerprint: plugin.fingerprint,
-  });
+  const publisherOf = (plugin: { publisher: string; fingerprint: string; keefast?: boolean }): PluginPublisher =>
+    plugin.keefast ? { kind: "keefast", fingerprint: plugin.fingerprint, release: true } : { kind: "unverified", name: plugin.publisher, fingerprint: plugin.fingerprint };
 
   function view(plugin: Installed): PluginView {
     return {
@@ -213,7 +237,7 @@ export function createMockPluginStore(changed: () => void) {
         id: manifest.id,
         name: manifest.name,
         version: manifest.version,
-        publisher: { kind: "keefast" },
+        publisher: { kind: "keefast", fingerprint: devBuild ? DEV_BUILD_KEY : KEEFAST_KEY, release: !devBuild },
         bundled: true,
         enabled,
         running: enabled,
@@ -230,7 +254,7 @@ export function createMockPluginStore(changed: () => void) {
   /** What installing the scene's package would do, or why it is refused. */
   function choose(): PluginOffer | null {
     if (next === "plugin-cancel") return null;
-    const pkg = next === "plugins-installed" ? IBAN_2 : PACKAGES[next];
+    const pkg = next === "plugins-installed" || next === "plugins-dev-build" ? IBAN_2 : PACKAGES[next];
     if (pkg.refusal) throw pkg.refusal;
     const agreed = installed.find((plugin) => plugin.id === pkg.id);
     return {
@@ -240,7 +264,7 @@ export function createMockPluginStore(changed: () => void) {
       name: pkg.name,
       version: pkg.version,
       publisher: publisherOf(pkg),
-      newKey: !agreed,
+      newKey: !agreed && !pkg.keefast,
       installedVersion: agreed?.version ?? null,
       capabilities: pkg.capabilities,
       ownedFields: pkg.ownedFields,
@@ -284,6 +308,7 @@ export function createMockPluginStore(changed: () => void) {
 
   function simulate(scene: PluginScene) {
     next = scene;
+    devBuild = scene === "plugins-dev-build";
     const iban = installedOf(IBAN_1);
     if (scene === "plugin-update" || scene === "plugin-key-changed") {
       installed = [...installed.filter((plugin) => plugin.id !== iban.id), iban];

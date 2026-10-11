@@ -1,0 +1,22 @@
+[package]
+name = "keefast-plugin-cli"
+description = "The keefast-plugin command: build a keefast Plugin's component, make a signing key, and pack, sign and check .kfplugin packages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "keefast-plugin"
+path = "src/main.rs"
+
+[dependencies]
+getrandom.workspace = true
+# `verify` and `pack` check a package as keefast will when installing it.
+keefast-plugins.workspace = true
+keefast-plugin-package.workspace = true
+serde_json.workspace = true
+wit-component.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

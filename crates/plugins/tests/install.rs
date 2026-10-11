@@ -3,11 +3,23 @@
 mod common;
 
 use common::*;
-use keefast_plugins::{Capability, EntryField, InstallError, PluginHost, PluginStore, Publisher};
+use keefast_plugins::{
+    Capability, EntryField, InstallError, PluginHost, PluginStore, Publisher, PublisherKey,
+    bundled_by_release_key, bundled_key,
+};
 
 /// A store in a fresh directory, loaded into a fresh host.
 fn open(dir: &std::path::Path) -> (PluginStore, PluginHost) {
+    open_trusting(dir, None)
+}
+
+/// [`open`], trusting the keys of these seeds as keefast's release keys.
+fn open_trusting(dir: &std::path::Path, release: Option<&[u8]>) -> (PluginStore, PluginHost) {
     let mut store = PluginStore::open(dir);
+    if let Some(seeds) = release {
+        let keys = seeds.iter().map(|seed| PublisherKey::of(&key(*seed)));
+        store = store.with_release_keys(keys.collect());
+    }
     let mut host = PluginHost::new();
     store.load(&mut host);
     (store, host)
@@ -183,13 +195,6 @@ fn only_keefast_names_plugins_keefast() {
     let dir = tempfile::tempdir().unwrap();
     let (store, host) = open(dir.path());
     let mut fake = manifest(&key(1), "9.9", &["Passport"], &[]);
-    fake["id"] = "keefast.card".into();
-    assert_eq!(
-        store
-            .inspect(&host, &package_of(&fake, &key(1)))
-            .unwrap_err(),
-        InstallError::Reserved
-    );
     fake["id"] = "keefast.passport".into();
     assert_eq!(
         store
@@ -197,6 +202,73 @@ fn only_keefast_names_plugins_keefast() {
             .unwrap_err(),
         InstallError::Reserved
     );
+    // Not even with the key the bundled Plugins were signed with in this build: it is trusted for
+    // them alone.
+    fake["id"] = "keefast.card".into();
+    assert_eq!(
+        store
+            .inspect(&host, &package_of(&fake, &key(1)))
+            .unwrap_err(),
+        InstallError::BundledId("Card".into())
+    );
+}
+
+#[test]
+fn keefast_s_release_key_signs_keefast_s_plugins() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, mut host) = open_trusting(dir.path(), Some(&[9]));
+    let mut passport = manifest(&key(9), "1.0", &["Passport number"], &[]);
+    passport["id"] = "keefast.passport".into();
+    let package = package_of(&passport, &key(9));
+
+    let offer = store.inspect(&host, &package).unwrap();
+    assert!(matches!(
+        offer.publisher,
+        Publisher::Keefast { release: true, .. }
+    ));
+    assert!(!offer.new_key);
+    install(&mut store, &mut host, &package).unwrap();
+    let listed = store.list(&host);
+    let installed = listed.iter().find(|p| p.id == "keefast.passport").unwrap();
+    assert!(installed.running && !installed.bundled);
+    assert!(matches!(
+        installed.publisher,
+        Publisher::Keefast { release: true, .. }
+    ));
+
+    // A store that doesn't trust that key, as after keefast dropped it, doesn't load it.
+    let (store, host) = open(dir.path());
+    assert!(host.manifest("keefast.passport").is_none());
+    let problem = store
+        .list(&host)
+        .into_iter()
+        .find(|p| p.id == "keefast.passport")
+        .unwrap()
+        .problem;
+    assert!(problem.unwrap().contains("keefast's key"));
+}
+
+#[test]
+fn keefast_s_plugins_update_across_a_rotation_of_its_release_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, mut host) = open_trusting(dir.path(), Some(&[9]));
+    let mut passport = manifest(&key(9), "1.0", &["Passport number"], &[]);
+    passport["id"] = "keefast.passport".into();
+    install(&mut store, &mut host, &package_of(&passport, &key(9))).unwrap();
+
+    // The new key first, the old one still trusted.
+    let (mut store, mut host) = open_trusting(dir.path(), Some(&[10, 9]));
+    assert!(host.manifest("keefast.passport").is_some());
+    let mut update = manifest(&key(10), "2.0", &["Passport number"], &[]);
+    update["id"] = "keefast.passport".into();
+    install(&mut store, &mut host, &package_of(&update, &key(10))).unwrap();
+
+    // Another publisher's key still can't take over a third-party Plugin, release keys or not.
+    install(&mut store, &mut host, &iban(&key(1))).unwrap();
+    assert!(matches!(
+        store.inspect(&host, &iban(&key(10))).unwrap_err(),
+        InstallError::KeyChanged { .. }
+    ));
 }
 
 #[test]
@@ -284,7 +356,13 @@ fn keefast_s_card_can_be_disabled_not_removed() {
     let (mut store, mut host) = open(dir.path());
     let card = store.list(&host).into_iter().next().unwrap();
     assert_eq!(card.id, "keefast.card");
-    assert_eq!(card.publisher, Publisher::Keefast);
+    assert_eq!(
+        card.publisher,
+        Publisher::Keefast {
+            fingerprint: bundled_key().fingerprint(),
+            release: bundled_by_release_key(),
+        }
+    );
     assert!(card.bundled && card.running);
 
     assert_eq!(

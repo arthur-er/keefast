@@ -106,7 +106,7 @@ fn a_package_signed_by_another_key_than_its_manifest_names_is_refused() {
     );
 }
 
-/// The text a package's signature signs, as `PACKAGE.md` gives it.
+/// The text a package's signature signs, as docs/plugins/package.md gives it.
 fn signed_text(entries: &[(String, Vec<u8>)]) -> String {
     use sha2::{Digest, Sha256};
     let mut sorted = entries.to_vec();

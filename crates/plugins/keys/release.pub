@@ -1,0 +1,8 @@
+# keefast's release keys for Plugins: the ed25519 public keys, in base64, whose Plugin packages
+# keefast trusts as its own. The first is the key releases sign with; any after it are older keys
+# still trusted, so packages they signed keep loading while they are rotated out.
+#
+# The secret half is never in this repository: it is the CI secret KEEFAST_PLUGIN_SIGNING_KEY.
+# docs/plugins/signing.md says how to make, add and rotate one. Until a key is added here, release
+# builds refuse to build (KEEFAST_REQUIRE_RELEASE_SIGNING), and other builds sign the bundled
+# Plugins with a key of their own, made at build time and thrown away.

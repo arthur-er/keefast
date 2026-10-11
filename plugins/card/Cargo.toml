@@ -13,7 +13,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wit-bindgen = { version = "0.62", default-features = false, features = ["macros", "realloc"] }
+# Written with the SDK, as any third-party Plugin is (docs/plugins/README.md).
+keefast-plugin-sdk = { path = "../../crates/plugin-sdk" }
 
 [profile.release]
 opt-level = "s"

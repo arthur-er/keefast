@@ -7,9 +7,26 @@ describe("the mock's Plugins", () => {
   it("lists keefast's Card as keefast's, and not removable", async () => {
     const api = unwrap(createMockBackend().commands);
     const [card] = (await api.listPlugins()).plugins;
-    expect(card).toMatchObject({ id: "keefast.card", bundled: true, enabled: true, publisher: { kind: "keefast" } });
+    expect(card).toMatchObject({ id: "keefast.card", bundled: true, enabled: true, publisher: { kind: "keefast", release: true } });
     const refused = await api.removePlugin("keefast.card").catch((error) => error);
     expect(refused).toBeInstanceOf(ApiError);
+  });
+
+  it("says when keefast's Card is signed by a development build's own key", async () => {
+    const mock = createMockBackend();
+    mock.simulate("plugins-dev-build");
+    const [card] = (await unwrap(mock.commands).listPlugins()).plugins;
+    expect(card?.publisher).toMatchObject({ kind: "keefast", release: false });
+  });
+
+  it("installs a package signed by keefast's key as keefast's, without trusting a new key", async () => {
+    const mock = createMockBackend();
+    mock.simulate("plugin-keefast");
+    const api = unwrap(mock.commands);
+    const offer = (await api.choosePluginPackage())!;
+    expect(offer).toMatchObject({ id: "keefast.wifi", newKey: false, publisher: { kind: "keefast", release: true } });
+    await api.installPlugin(offer.path, offer.digest);
+    expect((await api.listPlugins()).plugins.find((plugin) => plugin.id === offer.id)).toMatchObject({ bundled: false, publisher: { kind: "keefast" } });
   });
 
   it("shows what a new Plugin asks for before installing it", async () => {

@@ -28,8 +28,8 @@ pub struct Manifest {
     #[serde(default)]
     pub publisher: Option<String>,
     /// The publisher's ed25519 public key, base64, which signs the Plugin's packages
-    /// (`PACKAGE.md`). A Plugin compiled into keefast has none yet: keefast signs its own with
-    /// #123.
+    /// (docs/plugins/package.md). The bundled Plugins' manifests leave it out: keefast's build
+    /// adds the key it signs them with.
     #[serde(default)]
     pub publisher_key: Option<String>,
     pub api_version: u32,

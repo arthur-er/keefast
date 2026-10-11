@@ -9,7 +9,7 @@
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
 //     | "browserError" | "browserNone" | "browserServed" | "configError"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
-//     | "plugin-cancel" | "plugins-installed")   (the Plugin scenes: ./plugin-store.ts)
+//     | "plugin-keefast" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build")   (the Plugin scenes: ./plugin-store.ts)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock

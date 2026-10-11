@@ -7,8 +7,9 @@
 //! key first seen for its id (trust on first use). Every load reads each package again and checks
 //! its signature, its key and its capabilities against what was agreed.
 //!
-//! The Plugins compiled into keefast are listed too, as keefast's. They can be disabled, not
-//! removed.
+//! The Plugins bundled with keefast are listed too, as keefast's. They can be disabled, not
+//! removed. Packages signed by keefast's release key are keefast's too, and are the only ones
+//! that may have a `keefast.` id (`bundled.rs`).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,23 +18,28 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::bundled::{
+    KEEFAST_PREFIX, bundled_by_release_key, bundled_key, bundled_plugins, release_keys,
+};
 use crate::manifest::{Capability, Manifest};
 use crate::package::{MAX_PACKAGE, Package, PackageError, PublisherKey};
-use crate::{PluginError, PluginHost, bundled_plugins};
+use crate::{PluginError, PluginHost};
 
 const STATE_FILE: &str = "plugins.json";
 const PACKAGE_EXTENSION: &str = "kfplugin";
 
-/// Plugin ids only keefast's own Plugins may have.
-// TODO(#123): once keefast signs its bundled Plugins, accept packages with these ids signed by
-// keefast's key, so they go through the same checks as everyone's.
-const KEEFAST_PREFIX: &str = "keefast.";
-
 /// Who made a Plugin, as far as keefast can tell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Publisher {
-    /// keefast itself: compiled into keefast.
-    Keefast,
+    /// keefast itself: signed by one of keefast's release keys, or bundled with this build and
+    /// signed by the key it was built with.
+    Keefast {
+        /// The signing key's fingerprint.
+        fingerprint: String,
+        /// Signed by keefast's release key. Only a Plugin bundled with a development or source
+        /// build isn't: it is signed by a key that build made for itself.
+        release: bool,
+    },
     /// Someone keefast can't vouch for: the name their manifest gives, and their key, trusted
     /// since the Plugin was first installed.
     Unverified { name: String, fingerprint: String },
@@ -99,6 +105,8 @@ pub enum InstallError {
     KeyChanged { name: String },
     #[error("Only keefast's own Plugins can be named {}…", KEEFAST_PREFIX)]
     Reserved,
+    #[error("{0} comes with keefast, and is updated with keefast rather than from a file.")]
+    BundledId(String),
     #[error(
         "\"{name}\" would keep its data in the field \"{field}\", which the installed Plugin \
          \"{other}\" owns. Two Plugins can't own the same field."
@@ -166,6 +174,8 @@ pub struct PluginStore {
     state_error: Option<String>,
     bundled: Vec<Manifest>,
     found: BTreeMap<String, Found>,
+    /// keefast's release keys: what they sign is keefast's.
+    release_keys: Vec<PublisherKey>,
 }
 
 impl PluginStore {
@@ -182,6 +192,7 @@ impl PluginStore {
             state_error,
             bundled: Vec::new(),
             found: BTreeMap::new(),
+            release_keys: release_keys(),
         }
     }
 
@@ -200,6 +211,31 @@ impl PluginStore {
             state_error: None,
             bundled: Vec::new(),
             found: BTreeMap::new(),
+            release_keys: release_keys(),
+        }
+    }
+
+    /// The store trusting these keys as keefast's release keys rather than those keefast was
+    /// built with, for tests: no test can sign with the real ones.
+    #[doc(hidden)]
+    pub fn with_release_keys(mut self, keys: Vec<PublisherKey>) -> Self {
+        self.release_keys = keys;
+        self
+    }
+
+    fn is_release_key(&self, key: &PublisherKey) -> bool {
+        self.release_keys.contains(key)
+    }
+
+    /// Whether a package's key may update a Plugin first installed with the `pinned` one: it is
+    /// the same key, or both are keefast's release keys, which keefast rotates from one to the
+    /// next.
+    fn same_publisher(&self, pinned: &str, key: &PublisherKey) -> bool {
+        match PublisherKey::parse(pinned) {
+            Ok(pinned) => {
+                pinned == *key || (self.is_release_key(&pinned) && self.is_release_key(key))
+            }
+            Err(_) => false,
         }
     }
 
@@ -212,16 +248,18 @@ impl PluginStore {
     pub fn load(&mut self, host: &mut PluginHost) {
         self.bundled.clear();
         self.found.clear();
-        for (manifest, component) in bundled_plugins() {
-            let id = manifest.id.clone();
-            let mut found = Found::default();
-            if !self.state.disabled_bundled.contains(&id)
-                && let Err(error) = host.add(manifest.clone(), component)
-            {
-                found.problem = Some(error.to_string());
-            }
+        for bundled in bundled_plugins() {
+            let id = bundled.manifest.id.clone();
+            let found = Found {
+                problem: if self.state.disabled_bundled.contains(&id) {
+                    None
+                } else {
+                    run_bundled(host, bundled.package)
+                },
+                ..Found::default()
+            };
             self.found.insert(id, found);
-            self.bundled.push(manifest);
+            self.bundled.push(bundled.manifest);
         }
         for agreed in self.state.plugins.clone() {
             let found = self.load_installed(host, &agreed);
@@ -264,8 +302,11 @@ impl PluginStore {
         if package.manifest.id != agreed.id {
             return Err(format!("its package is now {}", package.manifest.id));
         }
-        if package.key.to_base64() != agreed.publisher_key {
+        if !self.same_publisher(&agreed.publisher_key, &package.key) {
             return Err("its package is signed by another key than the one first trusted".into());
+        }
+        if package.manifest.id.starts_with(KEEFAST_PREFIX) && !self.is_release_key(&package.key) {
+            return Err("its package isn't signed by keefast's key".into());
         }
         let asks_more = package
             .manifest
@@ -294,7 +335,10 @@ impl PluginStore {
                     id: manifest.id.clone(),
                     name: manifest.name.clone(),
                     version: Some(manifest.version.clone()),
-                    publisher: Publisher::Keefast,
+                    publisher: Publisher::Keefast {
+                        fingerprint: bundled_key().fingerprint(),
+                        release: bundled_by_release_key(),
+                    },
                     bundled: true,
                     enabled: !self.state.disabled_bundled.contains(&manifest.id),
                     running: host.manifest(&manifest.id).is_some(),
@@ -312,18 +356,24 @@ impl PluginStore {
             .map(|agreed| {
                 let found = found(&agreed.id);
                 let manifest = found.manifest.as_ref();
-                let fingerprint = PublisherKey::parse(&agreed.publisher_key)
-                    .map(|key| key.fingerprint())
-                    .unwrap_or_default();
+                let key = PublisherKey::parse(&agreed.publisher_key).ok();
+                let fingerprint = key.map(|key| key.fingerprint()).unwrap_or_default();
                 InstalledPlugin {
                     id: agreed.id.clone(),
                     name: manifest.map_or_else(|| agreed.id.clone(), |m| m.name.clone()),
                     version: manifest.map(|m| m.version.clone()),
-                    publisher: Publisher::Unverified {
-                        name: manifest
-                            .and_then(|m| m.publisher.clone())
-                            .unwrap_or_default(),
-                        fingerprint,
+                    publisher: if key.is_some_and(|key| self.is_release_key(&key)) {
+                        Publisher::Keefast {
+                            fingerprint,
+                            release: true,
+                        }
+                    } else {
+                        Publisher::Unverified {
+                            name: manifest
+                                .and_then(|m| m.publisher.clone())
+                                .unwrap_or_default(),
+                            fingerprint,
+                        }
                     },
                     bundled: false,
                     enabled: agreed.enabled,
@@ -350,12 +400,16 @@ impl PluginStore {
         let package = Package::read(bytes)?;
         let manifest = &package.manifest;
         let id = &manifest.id;
-        if id.starts_with(KEEFAST_PREFIX) || self.bundled.iter().any(|b| &b.id == id) {
+        if let Some(bundled) = self.bundled.iter().find(|b| &b.id == id) {
+            return Err(InstallError::BundledId(bundled.name.clone()));
+        }
+        let keefasts = self.is_release_key(&package.key);
+        if id.starts_with(KEEFAST_PREFIX) && !keefasts {
             return Err(InstallError::Reserved);
         }
         let agreed = self.agreed(id);
         if let Some(agreed) = agreed
-            && package.key.to_base64() != agreed.publisher_key
+            && !self.same_publisher(&agreed.publisher_key, &package.key)
         {
             return Err(InstallError::KeyChanged {
                 name: manifest.name.clone(),
@@ -394,11 +448,18 @@ impl PluginStore {
             id: id.clone(),
             name: manifest.name.clone(),
             version: manifest.version.clone(),
-            publisher: Publisher::Unverified {
-                name: manifest.publisher.clone().unwrap_or_default(),
-                fingerprint: package.key.fingerprint(),
+            publisher: if keefasts {
+                Publisher::Keefast {
+                    fingerprint: package.key.fingerprint(),
+                    release: true,
+                }
+            } else {
+                Publisher::Unverified {
+                    name: manifest.publisher.clone().unwrap_or_default(),
+                    fingerprint: package.key.fingerprint(),
+                }
             },
-            new_key: agreed.is_none(),
+            new_key: agreed.is_none() && !keefasts,
             installed_version: agreed.map(|agreed| {
                 self.found
                     .get(&agreed.id)
@@ -464,13 +525,12 @@ impl PluginStore {
             self.save_state(&dir)?;
             host.unload(id);
             if enabled
-                && let Some((manifest, component)) = bundled_plugins().find(|(m, _)| m.id == id)
+                && let Some(bundled) = bundled_plugins()
+                    .into_iter()
+                    .find(|bundled| bundled.manifest.id == id)
             {
-                let problem = host
-                    .add(manifest, component)
-                    .err()
-                    .map(|error| error.to_string());
-                self.found.entry(id.to_owned()).or_default().problem = problem;
+                self.found.entry(id.to_owned()).or_default().problem =
+                    run_bundled(host, bundled.package);
             }
             return Ok(());
         }
@@ -551,6 +611,17 @@ impl PluginStore {
         write_atomically(&dir.join(STATE_FILE), &json)?;
         Ok(())
     }
+}
+
+/// Runs a bundled Plugin whose package passed its checks; why it doesn't run otherwise.
+fn run_bundled(host: &mut PluginHost, package: Result<Package, String>) -> Option<String> {
+    let package = match package {
+        Ok(package) => package,
+        Err(problem) => return Some(problem),
+    };
+    host.add(package.manifest, &package.component)
+        .err()
+        .map(|error| error.to_string())
 }
 
 fn package_path(dir: &Path, id: &str) -> PathBuf {

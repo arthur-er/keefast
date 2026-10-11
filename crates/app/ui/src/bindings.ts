@@ -947,8 +947,12 @@ export type PluginOffer = {
 
 /**  Who made a Plugin, as far as keefast can tell. */
 export type PluginPublisher = 
-/**  keefast itself. */
-{ kind: "keefast" } | 
+/**
+ *  keefast itself, with its signing key's fingerprint. `release` is false only for the
+ *  Plugins bundled with a development or source build, signed by a key it made for itself
+ *  rather than keefast's release key.
+ */
+{ kind: "keefast"; fingerprint: string; release: boolean } | 
 /**
  *  The name the Plugin gives, which keefast can't check, and its key's fingerprint
  *  (`3F2A 91C0 7B1E 44D2`).

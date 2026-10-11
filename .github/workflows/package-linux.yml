@@ -4,6 +4,14 @@ name: Package for Linux
 
 on:
   workflow_call:
+    inputs:
+      release:
+        description: Bundle Plugins signed with keefast's release key, failing without it.
+        type: boolean
+        default: false
+    secrets:
+      KEEFAST_PLUGIN_SIGNING_KEY:
+        required: false
   workflow_dispatch:
 
 env:
@@ -55,7 +63,24 @@ jobs:
       - name: Install Tauri's CLI, which makes the AppImage
         run: cargo install tauri-cli --version "^2.12" --locked
 
+      # A release signs keefast's bundled Plugins with its release key in a step of its own, the
+      # only one given the secret, with a keefast-plugin built before it. No build script sees it.
+      - name: Build keefast-plugin, to sign the bundled Plugins with
+        if: inputs.release
+        run: cargo build --release --locked -p keefast-plugin-cli
+
+      - name: Sign the bundled Plugins with keefast's release key
+        if: inputs.release
+        env:
+          KEEFAST_PLUGIN_SIGNING_KEY: ${{ secrets.KEEFAST_PLUGIN_SIGNING_KEY }}
+        run: scripts/sign-bundled-plugins.sh target/release/keefast-plugin target/signed-plugins
+
       - name: Build
+        # A release bundles the Plugins signed just above, and fails without them. Other runs sign
+        # them with a key the build makes for itself (docs/plugins/signing.md).
+        env:
+          KEEFAST_SIGNED_PLUGINS: ${{ inputs.release && format('{0}/target/signed-plugins', github.workspace) || '' }}
+          KEEFAST_REQUIRE_RELEASE_SIGNING: ${{ inputs.release && '1' || '' }}
         run: cargo build --release --locked -p keefast -p keefast-native-host --features keefast/custom-protocol
 
       - name: Package

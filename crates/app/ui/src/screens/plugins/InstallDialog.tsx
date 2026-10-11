@@ -56,6 +56,7 @@ export function InstallDialog({ offer, onClose }: { offer: PluginOffer; onClose:
   const lines = capabilityLines(offer, update ? { capabilities: offer.newCapabilities, ownedFields: offer.newOwnedFields } : undefined);
   const asksMore = offer.newCapabilities.length > 0 || offer.newOwnedFields.length > 0;
   const publisher = offer.publisher.kind === "unverified" ? offer.publisher : null;
+  const keefast = offer.publisher.kind === "keefast" ? offer.publisher : null;
   const file = offer.path.split(/[\\/]/).pop();
 
   const install = async () => {
@@ -110,6 +111,17 @@ export function InstallDialog({ offer, onClose }: { offer: PluginOffer; onClose:
         </>
       }
     >
+      {keefast && (
+        <div className="pl-publisher" role="note">
+          <ShieldCheck />
+          <div>
+            <div className="t">
+              Signed by <b>keefast</b>
+            </div>
+            <div className="fp">Key {keefast.fingerprint}</div>
+          </div>
+        </div>
+      )}
       {publisher &&
         (offer.newKey ? (
           <div className="pl-publisher warn" role="note">

@@ -2,62 +2,77 @@
 //! `Cardholder`, `Expiry`, `CVV`, `PIN`), as `plugin.json` declares. Its hooks give the number's
 //! label ("Visa •••• 1111"), format what the user types, and check it. It has no clock, so
 //! whether a card has expired is for the host to say, from the `monthYear` Owned field.
+//!
+//! It is written with keefast's Plugin SDK, as a third-party Plugin is.
 
 pub mod card;
 
-wit_bindgen::generate!({
-    path: "../../crates/plugins/wit",
-    world: "plugin",
-});
-
-use keefast::plugin::types::{FieldText, Severity};
+use keefast_plugin_sdk::{Derived, Fields, Input, Plugin, Problem};
 
 /// The only facet this Plugin contributes.
 const FACET: &str = "card";
 
 struct Card;
 
-impl Guest for Card {
-    fn format(facet: String, key: String, value: String) -> String {
-        if facet != FACET {
-            return value;
+impl Plugin for Card {
+    fn format(input: &Input) -> String {
+        if input.facet != FACET {
+            return input.value.to_owned();
         }
-        card::format(&key, &value)
+        card::format(input.key, input.value)
     }
 
-    fn validate(facet: String, key: String, value: String) -> Option<Problem> {
-        if facet != FACET {
+    fn validate(input: &Input) -> Option<Problem> {
+        if input.facet != FACET {
             return None;
         }
-        card::problem(&key, &value).map(|(error, message)| Problem {
-            severity: if error {
-                Severity::Error
+        card::problem(input.key, input.value).map(|(error, message)| {
+            if error {
+                Problem::error(message)
             } else {
-                Severity::Warning
-            },
-            message: message.to_owned(),
+                Problem::warning(message)
+            }
         })
     }
 
-    fn derive(facet: String, fields: Vec<Field>) -> Derived {
-        let number = fields
-            .iter()
-            .find(|field| field.key == "number")
-            .and_then(|field| field.value.as_deref());
+    fn derive(facet: &str, fields: &Fields) -> Derived {
         let label = (facet == FACET)
-            .then(|| number.and_then(card::label))
+            .then(|| fields.text("number").and_then(card::label))
             .flatten();
-        Derived {
-            fields: label
-                .iter()
-                .map(|text| FieldText {
-                    key: "number".to_owned(),
-                    text: text.clone(),
-                })
-                .collect(),
-            label,
+        match label {
+            Some(label) => Derived::new().text("number", label.clone()).label(label),
+            None => Derived::new(),
         }
     }
 }
 
-export!(Card);
+keefast_plugin_sdk::export!(Card);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_number_is_labelled_by_brand_and_last_digits() {
+        let fields = Fields::of([("number", Some("4111 1111 1111 1111")), ("cvv", None)]);
+        let derived = Card::derive(FACET, &fields);
+        assert_eq!(derived.label.as_deref(), Some("Visa •••• 1111"));
+        assert_eq!(derived.fields[0].key, "number");
+        assert_eq!(Card::derive("other", &fields), Derived::new());
+        assert_eq!(Card::derive(FACET, &Fields::of([])), Derived::new());
+    }
+
+    #[test]
+    fn hooks_answer_only_for_the_card_facet() {
+        assert_eq!(
+            Card::format(&Input::new(FACET, "number", "4111111111111111")),
+            "4111 1111 1111 1111"
+        );
+        assert_eq!(
+            Card::format(&Input::new("other", "number", "4111111111111111")),
+            "4111111111111111"
+        );
+        assert!(Card::validate(&Input::new(FACET, "number", "4111111111111112")).is_some());
+        assert!(Card::validate(&Input::new("other", "number", "1")).is_none());
+    }
+}

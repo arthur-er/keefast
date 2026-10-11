@@ -4,7 +4,7 @@
 // label or masked, and are revealed and copied as any custom field's, by index.
 
 import { useEffect, useState } from "react";
-import { CreditCard, Eye, EyeOff, type LucideIcon, Puzzle } from "lucide-react";
+import { CreditCard, Eye, EyeOff, Landmark, type LucideIcon, Puzzle } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { EntryDetail, FacetView, OwnedFieldView } from "@/bindings";
@@ -15,7 +15,7 @@ import { type CopyHandler, FieldRow } from "@/screens/vault-browser/FieldRow";
 import { monthYearState } from "./fields";
 
 /** The icons a facet may name in its manifest. */
-const ICONS: Record<string, LucideIcon> = { "credit-card": CreditCard };
+const ICONS: Record<string, LucideIcon> = { "credit-card": CreditCard, landmark: Landmark };
 
 export function FacetSection({
   entry,

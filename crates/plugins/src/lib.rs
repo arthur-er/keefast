@@ -3,10 +3,15 @@
 //! facets an Entry has from its custom fields' names, hands a hook the values of one facet's
 //! Owned fields, and gets back text to show or values to write.
 //!
-//! keefast's own Card Plugin is compiled in ([`PluginHost::bundled`]). Others are installed
-//! from signed package files ([`package`]) and kept on disk by the [`PluginStore`], which loads
-//! the enabled ones into the host.
+//! keefast's own Card Plugin is compiled in as a signed package ([`PluginHost::bundled`],
+//! `bundled.rs`). Others are installed from signed package files ([`package`]) and kept on disk by
+//! the [`PluginStore`], which loads the enabled ones into the host. Both are checked the same way
+//! at every load.
+//!
+//! Plugin authors don't use this crate: they write against the SDK, `keefast-plugin-sdk`, and
+//! package with the `keefast-plugin` command (docs/plugins/README.md).
 
+mod bundled;
 pub mod manifest;
 pub mod package;
 mod runtime;
@@ -16,29 +21,17 @@ use std::sync::{Mutex, PoisonError};
 
 use wasmtime::Engine;
 
+pub use bundled::{bundled_by_release_key, bundled_key, is_release_key};
 pub use manifest::{API_VERSION, Capability, Facet, FieldKind, Manifest, OwnedField};
 pub use package::{Package, PackageError, PublisherKey};
 pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, Problem, Severity};
 pub use store::{InstallError, InstalledPlugin, Offer, PluginStore, Publisher};
 
+use bundled::bundled_plugins;
 use runtime::{Field, Runtime};
 
 /// The longest label or field text a Plugin can have shown; longer ones are cut.
 pub const MAX_LABEL: usize = 64;
-
-/// Plugins compiled into keefast: their manifest and component.
-const BUNDLED: &[(&str, &[u8])] = &[(
-    include_str!("../../../plugins/card/plugin.json"),
-    include_bytes!("../../../plugins/card/card.wasm"),
-)];
-
-/// The Plugins compiled into keefast, read.
-pub(crate) fn bundled_plugins() -> impl Iterator<Item = (Manifest, &'static [u8])> {
-    BUNDLED.iter().map(|(manifest, component)| {
-        let manifest = Manifest::parse(manifest).expect("a bundled Plugin's manifest reads");
-        (manifest, *component)
-    })
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginError {
@@ -119,12 +112,14 @@ impl PluginHost {
         }
     }
 
-    /// A host with the Plugins compiled into keefast.
+    /// A host with the Plugins bundled with keefast whose packages pass their checks.
     pub fn bundled() -> Self {
         let mut host = Self::new();
-        for (manifest, component) in bundled_plugins() {
-            host.add(manifest, component)
-                .expect("a bundled Plugin loads");
+        for bundled in bundled_plugins() {
+            if let Ok(package) = bundled.package {
+                // Two bundled Plugins never clash: the bundled tests load them all.
+                let _ = host.add(package.manifest, &package.component);
+            }
         }
         host
     }

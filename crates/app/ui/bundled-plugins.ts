@@ -1,7 +1,7 @@
 // The Plugins compiled into keefast, for the mock backend: each one's WASM component, the same
 // `.wasm` the Rust host runs, transpiled to JavaScript by jco when the mock imports
 // `virtual:keefast/bundled-plugins` (ADR 0009). Production builds don't import the mock, so they
-// never run this. Keep the list in step with `BUNDLED` in crates/plugins/src/lib.rs.
+// never run this. Keep the list in step with `BUNDLED` in crates/plugins/build.rs.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";

@@ -2,6 +2,7 @@
   "id": "keefast.card",
   "name": "Card",
   "version": "0.1.0",
+  "publisher": "keefast",
   "apiVersion": 1,
   "capabilities": ["readProtected", "copy"],
   "contributions": {

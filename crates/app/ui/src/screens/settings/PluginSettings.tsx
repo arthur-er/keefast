@@ -140,9 +140,17 @@ function PluginRow({ plugin, onEnabled, onRemove }: { plugin: PluginView; onEnab
           <Hl>{plugin.name}</Hl>
           {plugin.version && <span className="ver">{plugin.version}</span>}
           {publisher.kind === "keefast" ? (
-            <Badge tone="accent">
-              <BadgeCheck /> keefast
-            </Badge>
+            <Tooltip
+              content={
+                publisher.release
+                  ? `Signed by keefast's release key, ${publisher.fingerprint}`
+                  : `Signed by a key this build of keefast made for itself, ${publisher.fingerprint}, which it trusts for its own Plugins only`
+              }
+            >
+              <Badge tone={publisher.release ? "accent" : "neutral"}>
+                <BadgeCheck /> {publisher.release ? "keefast" : "keefast dev build"}
+              </Badge>
+            </Tooltip>
           ) : (
             <Tooltip content={`Key ${publisher.fingerprint}, trusted since this Plugin was installed`}>
               <Badge tone="warn">Unverified</Badge>
@@ -151,7 +159,10 @@ function PluginRow({ plugin, onEnabled, onRemove }: { plugin: PluginView; onEnab
         </div>
         <div className="desc">
           {publisher.kind === "keefast" ? (
-            "Comes with keefast"
+            <>
+              {plugin.bundled ? (publisher.release ? "Comes with keefast" : "Comes with this development build") : "From keefast"} · {publisher.release ? "keefast's key" : "the build's own key"}{" "}
+              <span className="fp">{publisher.fingerprint}</span>
+            </>
           ) : (
             <>
               <Hl>{publisher.name || "Unknown publisher"}</Hl> · key <span className="fp">{publisher.fingerprint}</span>
