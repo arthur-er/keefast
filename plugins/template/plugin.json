@@ -13,10 +13,11 @@
         "icon": "landmark",
         "detect": { "fields": ["IBAN"] },
         "fields": [
-          { "key": "iban", "name": "IBAN", "label": "IBAN", "kind": "text", "protected": false },
-          { "key": "bic", "name": "BIC", "label": "BIC", "kind": "text", "protected": false },
+          { "key": "iban", "name": "IBAN", "label": "IBAN", "kind": "text", "protected": false, "placeholder": "DE89 3704 0044 0532 0130 00" },
+          { "key": "bic", "name": "BIC", "label": "BIC", "kind": "text", "protected": false, "placeholder": "Optional" },
           { "key": "holder", "name": "Account holder", "label": "Account holder", "kind": "text", "protected": false }
-        ]
+        ],
+        "editor": { "add": "Add bank account", "remove": "Remove bank account" }
       }
     ]
   }

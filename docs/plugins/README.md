@@ -134,7 +134,8 @@ command palette commands and browser fill, each as a new key under `contribution
 
 A facet is a kind of data an Entry can have, such as a Card. keefast finds it on an Entry from
 the Entry's custom fields, keeps it in the facet's Owned fields, and shows it as a section in the
-Entry detail, drawn with keefast's own kit.
+Entry detail, drawn with keefast's own kit. With an `editor`, it is also a section of the Entry
+editor, which the user adds to an Entry and takes off it again.
 
 | Key | What it is |
 |---|---|
@@ -143,6 +144,7 @@ Entry detail, drawn with keefast's own kit.
 | `icon` | Optional. One of the icons keefast draws: `credit-card`, `landmark`. Any other name shows a generic Plugin icon. |
 | `detect` | When an Entry has the facet: `{ "fields": [names…] }`, when it has a custom field of each of these names. They must be among the facet's own fields. |
 | `fields` | The facet's Owned fields, in the order the section shows them. At least one. |
+| `editor` | Optional. `{ "add": "Add card", "remove": "Remove card" }`: the facet has a section in the Entry editor, after Login, and these name the actions that add it beside "+ Field" and take it off, with its Owned fields. Without it, the Entry editor shows the facet's Owned fields as ordinary custom fields. |
 
 Each Owned field:
 
@@ -153,6 +155,11 @@ Each Owned field:
 | `label` | What the section calls it. |
 | `kind` | `text`; `digits` (typed on a number pad, shown in a monospace font); or `monthYear`, a month kept as `MM/YY`, such as a card's expiry, of which keefast says when it has passed or is near. |
 | `protected` | Optional, `false` by default. Whether the value is kept protected, like a password: masked until revealed, and not given to the Plugin's hooks unless it has the `readProtected` Plugin capability. |
+| `placeholder` | Optional. What the field's input shows while empty in the Entry editor, such as `MM/YY`. |
+
+In the Entry editor, a facet's section saves the fields it is detected by even while empty, so
+the facet stays on the Entry, and its other fields once they have a value. Protected values the
+user doesn't reveal never leave keefast's Rust side.
 
 **Owned fields are exclusive.** keefast refuses to install a Plugin owning a field another
 installed Plugin owns, enabled or not. Choose names that say what they hold, so they don't clash
@@ -179,13 +186,16 @@ keefast_plugin_sdk::export!(BankAccount);
 ```
 
 Each hook has a default that does nothing, so implement only the ones you need. `Input` tells a
-hook the `facet` id, the Owned field's `key` and the `value`; later API versions may tell it more,
-so build one with `Input::new` in tests.
+hook the `facet` id, the Owned field's `key` and the `value`, and `validate` also `today`: the
+month it is now, in UTC, as a `MonthYear` (`None` in `format`). A Plugin has no clock, so this is
+how it says a date has passed or is near. Later API versions may tell a hook more, so build an
+`Input` with `Input::new` in tests, and `.with_today(MonthYear { year: 2026, month: 10 })` to test
+`validate` on a given month.
 
 | Hook | keefast calls it | It returns | Default |
 |---|---|---|---|
-| `format(input)` | when the user types a value into an Owned field | the value as the field keeps it: digits in groups, a slash in a date | the value as typed |
-| `validate(input)` | when the user edits an Owned field | what's wrong with the value, if anything: `Problem::error(…)` keeps it from being saved, `Problem::warning(…)` doesn't | nothing wrong |
+| `format(input)` | in the Entry editor, as the user types into an Owned field | the value as the field keeps it: digits in groups, a slash in a date. keefast keeps the caret after the same letters and digits, so add only separators | the value as typed |
+| `validate(input)` | in the Entry editor, on each value the user types or reveals | what's wrong with the value, if anything: `Problem::warning(…)` is shown under the field and the Entry still saves; `Problem::error(…)` keeps it from being saved until the value changes. Prefer warnings: the user may know better | nothing wrong |
 | `derive(facet, fields)` | when an Entry with the facet is shown | `Derived::new().label(…)` for a short label of the facet on this Entry, such as "Visa •••• 1111"; `.text(key, …)` for text shown in place of a field's value | nothing |
 
 A problem's message is shown as is: write one sentence saying what to do, such as "This IBAN has
@@ -229,8 +239,8 @@ process, sandboxed:
 - **No network, no filesystem, no clock, no randomness.** The component may import nothing at
   all: one that imports anything, such as WASI, doesn't load. So build for
   `wasm32-unknown-unknown`, not `wasm32-wasip1` or `wasm32-wasip2`. In Rust's standard library on
-  that target, files, sockets and threads return errors, and `SystemTime::now()` panics. If a hook
-  needs to know what time it is, the host has to pass it in, as a later API version may.
+  that target, files, sockets and threads return errors, and `SystemTime::now()` panics. What a
+  hook needs to know of the time, keefast passes in: `validate`'s `input.today`.
 - **16 MiB of memory**, at most, per Plugin. Growing past it traps.
 - **Fuel per hook call**: 20 million units, roughly tens of millions of WebAssembly instructions,
   a few milliseconds' work. A hook that runs out traps. Formatting or labelling a few fields takes
