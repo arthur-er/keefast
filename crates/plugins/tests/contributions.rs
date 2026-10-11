@@ -1,9 +1,11 @@
-//! What Plugins add to the Entry list and the command palette: the Card's subtitle, its copy
-//! commands, and the shortcuts the host lets a Plugin have.
+//! What Plugins add to the Entry list, the command palette and the browser: the Card's subtitle,
+//! its copy commands, the shortcuts the host lets a Plugin have, and the forms it fills.
 
 use std::time::Instant;
 
-use keefast_plugins::{EntryField, PluginError, PluginHost, ShortcutRefusal};
+use keefast_plugins::{
+    Autocomplete, BrowserFill, EntryField, FormKind, PluginError, PluginHost, ShortcutRefusal,
+};
 
 const MANIFEST: &str = include_str!("../../../plugins/card/plugin.json");
 const COMPONENT: &[u8] = include_bytes!("../../../plugins/card/card.wasm");
@@ -196,10 +198,49 @@ fn copy_commands_need_the_copy_capability() {
     );
     // Without commands, it needs no such thing.
     let manifest = card_with(|json| {
-        json["capabilities"] = serde_json::json!(["readProtected"]);
+        json["capabilities"] = serde_json::json!(["readProtected", "browserFill"]);
         json["contributions"]["facets"][0]["commands"] = serde_json::json!([]);
     });
     assert!(PluginHost::new().load(&manifest, COMPONENT).is_ok());
+}
+
+#[test]
+fn the_card_fills_payment_forms_with_four_of_its_fields() {
+    let host = PluginHost::bundled();
+    let fills = host.browser_fills();
+    let field = |name: &str, token| (name.to_owned(), token);
+    assert_eq!(
+        fills,
+        [BrowserFill {
+            plugin: "keefast.card".into(),
+            form: FormKind::Payment,
+            detect: vec!["Card number".into()],
+            fields: vec![
+                field("Card number", Autocomplete::CcNumber),
+                field("Cardholder", Autocomplete::CcName),
+                field("Expiry", Autocomplete::CcExp),
+                field("CVV", Autocomplete::CcCsc),
+            ],
+        }]
+    );
+}
+
+#[test]
+fn a_plugin_without_browser_fill_fills_nothing() {
+    let mut host = PluginHost::new();
+    let manifest = card_with(|json| {
+        json["capabilities"] = serde_json::json!(["readProtected", "copy"]);
+        json["contributions"]["facets"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("fill");
+    });
+    host.load(&manifest, COMPONENT).unwrap();
+    assert_eq!(host.browser_fills(), []);
+    // Nor once unloaded.
+    let mut host = PluginHost::bundled();
+    assert!(host.unload("keefast.card"));
+    assert_eq!(host.browser_fills(), []);
 }
 
 #[test]

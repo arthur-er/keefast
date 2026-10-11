@@ -4,7 +4,7 @@
 // before.
 
 import { useState } from "react";
-import { ClipboardCopy, Eye, Puzzle, ShieldAlert, ShieldCheck, ShieldX, TextCursorInput, TriangleAlert, WifiOff } from "lucide-react";
+import { ClipboardCopy, Eye, MousePointerClick, Puzzle, ShieldAlert, ShieldCheck, ShieldX, TextCursorInput, TriangleAlert, WifiOff } from "lucide-react";
 
 import { api, ApiError, errorMessage } from "@/api";
 import type { PluginOffer } from "@/bindings";
@@ -37,6 +37,7 @@ export const CAPABILITY_ICONS: Record<CapabilityKind, typeof Eye> = {
   ownedFields: TextCursorInput,
   readProtected: Eye,
   copy: ClipboardCopy,
+  browserFill: MousePointerClick,
 };
 
 /** A Plugin's icon, or a puzzle piece. */
@@ -53,8 +54,11 @@ export function PluginIcon({ icon, size = 36 }: { icon: string | null; size?: nu
 export function InstallDialog({ offer, onClose }: { offer: PluginOffer; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const update = offer.installedVersion !== null;
-  const lines = capabilityLines(offer, update ? { capabilities: offer.newCapabilities, ownedFields: offer.newOwnedFields } : undefined);
-  const asksMore = offer.newCapabilities.length > 0 || offer.newOwnedFields.length > 0;
+  const lines = capabilityLines(
+    offer,
+    update ? { capabilities: offer.newCapabilities, ownedFields: offer.newOwnedFields, filledFields: offer.newFilledFields } : undefined,
+  );
+  const asksMore = offer.newCapabilities.length > 0 || offer.newOwnedFields.length > 0 || offer.newFilledFields.length > 0;
   const publisher = offer.publisher.kind === "unverified" ? offer.publisher : null;
   const keefast = offer.publisher.kind === "keefast" ? offer.publisher : null;
   const file = offer.path.split(/[\\/]/).pop();

@@ -11,7 +11,7 @@ use std::thread;
 
 use keefast_plugins::{PluginHost, PluginStore};
 use keefast_workspace::{
-    Clipboard, EditVaultError, Outgoing, PendingFavicon, PendingSave, VaultId, Workspace,
+    Clipboard, EditVaultError, FormFill, Outgoing, PendingFavicon, PendingSave, VaultId, Workspace,
 };
 
 use crate::browser::BrowserBridge;
@@ -125,8 +125,27 @@ fn say_refused_shortcuts(host: &PluginHost) {
     }
 }
 
+/// What the Companion extension may fill into forms other than logins: the facets of the running
+/// Plugins granted browser fill, as the Workspace's browser protocol reads them.
+fn form_fills(host: &PluginHost) -> Vec<FormFill> {
+    host.browser_fills()
+        .into_iter()
+        .map(|fill| FormFill {
+            form: fill.form.as_str().to_owned(),
+            detect: fill.detect,
+            fields: fill
+                .fields
+                .into_iter()
+                .map(|(name, token)| (name, token.as_str().to_owned()))
+                .collect(),
+        })
+        .collect()
+}
+
 impl AppCore {
-    pub fn new(workspace: Workspace, notifier: Box<dyn Notifier>, launch: Launch) -> Arc<Self> {
+    pub fn new(mut workspace: Workspace, notifier: Box<dyn Notifier>, launch: Launch) -> Arc<Self> {
+        let plugins = bundled_plugin_host();
+        workspace.set_form_fills(form_fills(&plugins));
         Arc::new(Self {
             workspace: Mutex::new(workspace),
             clipboard: Mutex::new(SystemClipboard::default()),
@@ -137,7 +156,7 @@ impl AppCore {
             shown_requests: Mutex::new(Requests::default()),
             copies: AtomicU64::new(0),
             launch,
-            plugins: RwLock::new(bundled_plugin_host()),
+            plugins: RwLock::new(plugins),
             plugin_store: Mutex::new(PluginStore::bundled_only()),
         })
     }
@@ -147,9 +166,14 @@ impl AppCore {
         let mut host = PluginHost::new();
         store.load(&mut host);
         say_refused_shortcuts(&host);
-        let mut current = self.plugin_store();
-        *current = store;
-        *self.plugins.write().unwrap_or_else(PoisonError::into_inner) = host;
+        let fills = form_fills(&host);
+        {
+            let mut current = self.plugin_store();
+            *current = store;
+            *self.plugins.write().unwrap_or_else(PoisonError::into_inner) = host;
+        }
+        // After letting the Plugins go, so no lock is held while waiting for the Workspace.
+        self.workspace().set_form_fills(fills);
     }
 
     fn plugin_store(&self) -> MutexGuard<'_, PluginStore> {
@@ -179,12 +203,13 @@ impl AppCore {
         &self,
         change: impl FnOnce(&mut PluginStore, &mut PluginHost) -> R,
     ) -> R {
-        let result = {
+        let (result, fills) = {
             let mut store = self.plugin_store();
             let mut host = self.plugins.write().unwrap_or_else(PoisonError::into_inner);
-            change(&mut store, &mut host)
+            let result = change(&mut store, &mut host);
+            (result, form_fills(&host))
         };
-        self.update(|_| ());
+        self.update(|workspace| workspace.set_form_fills(fills));
         result
     }
 

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "publisher": "keefast",
   "apiVersion": 1,
-  "capabilities": ["readProtected", "copy"],
+  "capabilities": ["readProtected", "copy", "browserFill"],
   "contributions": {
     "facets": [
       {
@@ -25,7 +25,11 @@
           { "id": "copy-number", "title": "Copy card number", "copy": "number", "shortcut": "Ctrl Shift C" },
           { "id": "copy-cvv", "title": "Copy CVV", "copy": "cvv", "shortcut": "Ctrl Shift V" },
           { "id": "copy-expiry", "title": "Copy expiry", "copy": "expiry", "shortcut": "Ctrl Shift E" }
-        ]
+        ],
+        "fill": {
+          "form": "payment",
+          "fields": { "number": "cc-number", "holder": "cc-name", "expiry": "cc-exp", "cvv": "cc-csc" }
+        }
       }
     ]
   }

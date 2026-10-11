@@ -9,7 +9,8 @@ use std::path::Path;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use keefast_plugins::{
-    Capability, InstallError, InstalledPlugin, Offer, PluginHost, Publisher, package::MAX_PACKAGE,
+    Capability, FormKind, InstallError, InstalledPlugin, Offer, PluginHost, Publisher,
+    package::MAX_PACKAGE,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -26,6 +27,9 @@ pub enum PluginCapability {
     ReadProtected,
     /// The user can copy its Owned fields.
     Copy,
+    /// The Companion extension can fill some of its Owned fields into web forms, for an Entry
+    /// the user picks there.
+    BrowserFill,
 }
 
 impl From<Capability> for PluginCapability {
@@ -33,6 +37,22 @@ impl From<Capability> for PluginCapability {
         match capability {
             Capability::ReadProtected => Self::ReadProtected,
             Capability::Copy => Self::Copy,
+            Capability::BrowserFill => Self::BrowserFill,
+        }
+    }
+}
+
+/// A kind of web form a Plugin's Owned fields fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum PluginFormKind {
+    Payment,
+}
+
+impl From<FormKind> for PluginFormKind {
+    fn from(form: FormKind) -> Self {
+        match form {
+            FormKind::Payment => Self::Payment,
         }
     }
 }
@@ -82,6 +102,10 @@ pub struct PluginView {
     pub capabilities: Vec<PluginCapability>,
     /// The custom fields it owns.
     pub owned_fields: Vec<String>,
+    /// The Owned fields the Companion extension may fill into web forms, as agreed.
+    pub filled_fields: Vec<String>,
+    /// The kinds of form it fills them into.
+    pub fill_forms: Vec<PluginFormKind>,
     /// Its icon, as a `data:` URL.
     pub icon: Option<String>,
     /// Why it doesn't run though enabled.
@@ -104,6 +128,8 @@ impl From<InstalledPlugin> for PluginView {
             running: plugin.running,
             capabilities: plugin.capabilities.into_iter().map(Into::into).collect(),
             owned_fields: plugin.owned_fields,
+            filled_fields: plugin.filled_fields,
+            fill_forms: plugin.fill_forms.into_iter().map(Into::into).collect(),
             icon: plugin.icon.as_deref().map(data_url),
             problem: plugin.problem,
             refused_shortcuts: Vec::new(),
@@ -139,9 +165,14 @@ pub struct PluginOffer {
     pub installed_version: Option<String>,
     pub capabilities: Vec<PluginCapability>,
     pub owned_fields: Vec<String>,
+    /// The Owned fields the Companion extension would fill into web forms.
+    pub filled_fields: Vec<String>,
+    /// The kinds of form it would fill them into.
+    pub fill_forms: Vec<PluginFormKind>,
     /// What it asks for that the user hasn't agreed to: everything, for a new Plugin.
     pub new_capabilities: Vec<PluginCapability>,
     pub new_owned_fields: Vec<String>,
+    pub new_filled_fields: Vec<String>,
     pub icon: Option<String>,
 }
 
@@ -158,8 +189,11 @@ impl PluginOffer {
             installed_version: offer.installed_version,
             capabilities: offer.capabilities.into_iter().map(Into::into).collect(),
             owned_fields: offer.owned_fields,
+            filled_fields: offer.filled_fields,
+            fill_forms: offer.fill_forms.into_iter().map(Into::into).collect(),
             new_capabilities: offer.new_capabilities.into_iter().map(Into::into).collect(),
             new_owned_fields: offer.new_owned_fields,
+            new_filled_fields: offer.new_filled_fields,
             icon: offer.icon.as_deref().map(data_url),
         }
     }
@@ -348,6 +382,48 @@ mod tests {
         core.change_plugins(|store, host| store.set_enabled(host, "keefast.card", true))
             .unwrap();
         assert_eq!(facet_views(&core.plugins(), &card()).len(), 1);
+    }
+
+    #[test]
+    fn the_companion_extension_fills_payment_forms_only_while_the_card_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (core, _) = core();
+        let card_fills = |core: &crate::core::AppCore| {
+            core.read(|workspace| {
+                workspace
+                    .form_fills()
+                    .iter()
+                    .map(|fill| {
+                        let fields: Vec<String> = fill
+                            .fields
+                            .iter()
+                            .map(|(name, token)| format!("{name}={token}"))
+                            .collect();
+                        format!(
+                            "{} by {}: {}",
+                            fill.form,
+                            fill.detect.join(", "),
+                            fields.join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        let filling = [
+            "payment by Card number: Card number=cc-number, Cardholder=cc-name, Expiry=cc-exp, \
+             CVV=cc-csc",
+        ];
+        // keefast's own Plugins, before the installed ones are read.
+        assert_eq!(card_fills(&core), filling);
+        core.use_plugin_store(PluginStore::open(dir.path()));
+        assert_eq!(card_fills(&core), filling);
+
+        core.change_plugins(|store, host| store.set_enabled(host, "keefast.card", false))
+            .unwrap();
+        assert!(card_fills(&core).is_empty());
+        core.change_plugins(|store, host| store.set_enabled(host, "keefast.card", true))
+            .unwrap();
+        assert_eq!(card_fills(&core), filling);
     }
 
     #[test]

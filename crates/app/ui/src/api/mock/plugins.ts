@@ -21,7 +21,7 @@ export interface PluginManifest {
   name: string;
   version: string;
   apiVersion: number;
-  capabilities: ("readProtected" | "copy")[];
+  capabilities: ("readProtected" | "copy" | "browserFill")[];
   contributions: {
     facets: {
       id: string;
@@ -32,8 +32,22 @@ export interface PluginManifest {
       editor?: { add: string; remove: string };
       subtitle?: boolean;
       commands?: { id: string; title: string; copy: string; shortcut?: string }[];
+      /** What the Companion extension fills from the facet: Owned field keys to `autocomplete`
+       * tokens. */
+      fill?: { form: "payment"; fields: Record<string, string> };
     }[];
   };
+}
+
+/** The Owned fields the Companion extension may fill into web forms, by name, as the host's
+ * `Manifest::filled_names`. */
+export function filledNames(manifest: PluginManifest): string[] {
+  return manifest.contributions.facets.flatMap((facet) => facet.fields.filter((field) => facet.fill?.fields[field.key] !== undefined).map((field) => field.name));
+}
+
+/** The kinds of form it fills, each once. */
+export function fillForms(manifest: PluginManifest): "payment"[] {
+  return [...new Set(manifest.contributions.facets.flatMap((facet) => (facet.fill ? [facet.fill.form] : [])))];
 }
 
 /** The hooks of the `plugin` world (crates/plugins/wit/plugin.wit), as jco exposes them. */

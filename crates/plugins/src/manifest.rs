@@ -3,7 +3,7 @@
 //! or capability is refused rather than ignored, so a Plugin can never be granted something
 //! keefast doesn't know it asked for.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -48,10 +48,13 @@ pub enum Capability {
     ReadProtected,
     /// The UI offers to copy its Owned fields (copied by the host, Rust-to-clipboard).
     Copy,
+    /// The Companion extension fills its facets' `fill` Owned fields into forms of the kinds
+    /// they name, for an Entry the user picks there, as Access decisions allow.
+    BrowserFill,
 }
 
-/// What a Plugin adds to keefast: facets, each with its sections, Entry list subtitle and command
-/// palette commands. Later API versions add browser fill; each is a key here.
+/// What a Plugin adds to keefast: facets, each with its sections, Entry list subtitle, command
+/// palette commands and browser fill.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Contributions {
@@ -86,6 +89,80 @@ pub struct Facet {
     /// Commands in the command palette's Entry section for an Entry with the facet.
     #[serde(default)]
     pub commands: Vec<Command>,
+    /// The forms the Companion extension fills from the facet, and with which Owned fields.
+    #[serde(default)]
+    pub fill: Option<Fill>,
+}
+
+/// A facet's browser fill: the kind of form the Companion extension fills from it, and the
+/// form field each Owned field goes into, named by its HTML `autocomplete` token. Needs the
+/// `browserFill` Plugin capability.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Fill {
+    pub form: FormKind,
+    /// By Owned field key. Owned fields left out are never filled.
+    pub fields: BTreeMap<String, Autocomplete>,
+}
+
+/// A kind of web form the Companion extension fills from a facet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FormKind {
+    /// A payment form: a card's number, cardholder, expiry and security code.
+    Payment,
+}
+
+impl FormKind {
+    /// As the protocol and the Companion extension name it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Payment => "payment",
+        }
+    }
+}
+
+/// An HTML `autocomplete` token naming a form field the Companion extension can fill. Each
+/// belongs to one [`FormKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Autocomplete {
+    /// The card number.
+    CcNumber,
+    /// The cardholder's name, as on the card.
+    CcName,
+    /// The expiry, month and year in one field. Its Owned field must be a `monthYear`.
+    CcExp,
+    CcExpMonth,
+    CcExpYear,
+    /// The security code (CVV). The Companion extension fills it only into a field marked
+    /// `cc-csc`, never into one it guessed.
+    CcCsc,
+}
+
+impl Autocomplete {
+    pub fn form(self) -> FormKind {
+        match self {
+            Self::CcNumber
+            | Self::CcName
+            | Self::CcExp
+            | Self::CcExpMonth
+            | Self::CcExpYear
+            | Self::CcCsc => FormKind::Payment,
+        }
+    }
+
+    /// The token, as HTML writes it: `cc-number`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CcNumber => "cc-number",
+            Self::CcName => "cc-name",
+            Self::CcExp => "cc-exp",
+            Self::CcExpMonth => "cc-exp-month",
+            Self::CcExpYear => "cc-exp-year",
+            Self::CcCsc => "cc-csc",
+        }
+    }
 }
 
 /// A command palette command acting on the selected Entry when it has the facet. v1 has one
@@ -182,6 +259,36 @@ impl Manifest {
             .flat_map(|facet| facet.fields.iter().map(|field| field.name.as_str()))
     }
 
+    /// The names of the Owned fields the Companion extension may fill into web forms, in the
+    /// manifest's order.
+    pub fn filled_names(&self) -> impl Iterator<Item = &str> {
+        self.contributions.facets.iter().flat_map(|facet| {
+            facet
+                .fields
+                .iter()
+                .filter(|field| {
+                    facet
+                        .fill
+                        .as_ref()
+                        .is_some_and(|fill| fill.fields.contains_key(&field.key))
+                })
+                .map(|field| field.name.as_str())
+        })
+    }
+
+    /// The kinds of form the Companion extension may fill from it, each once.
+    pub fn fill_forms(&self) -> Vec<FormKind> {
+        let mut forms: Vec<FormKind> = self
+            .contributions
+            .facets
+            .iter()
+            .filter_map(|facet| facet.fill.as_ref().map(|fill| fill.form))
+            .collect();
+        forms.sort();
+        forms.dedup();
+        forms
+    }
+
     fn check(&self) -> Result<(), PluginError> {
         let invalid = |message: String| Err(PluginError::Manifest(message));
         if self.api_version != API_VERSION {
@@ -255,6 +362,9 @@ impl Manifest {
                     ));
                 }
             }
+            if let Some(fill) = &facet.fill {
+                check_fill(self, facet, fill).or_else(invalid)?;
+            }
             let owned = |name: &String| facet.fields.iter().any(|field| &field.name == name);
             if facet.detect.fields.is_empty() || !facet.detect.fields.iter().all(owned) {
                 return invalid(format!(
@@ -265,6 +375,50 @@ impl Manifest {
         }
         Ok(())
     }
+}
+
+/// Why a facet's browser fill is invalid, if it is: it fills only the facet's own Owned
+/// fields, each into a form field of its form's kind that no other fills, and needs the
+/// `browserFill` Plugin capability.
+fn check_fill(manifest: &Manifest, facet: &Facet, fill: &Fill) -> Result<(), String> {
+    if !manifest.has(Capability::BrowserFill) {
+        return Err(format!(
+            "facet \"{}\" fills forms, which needs the browserFill Plugin capability",
+            facet.id
+        ));
+    }
+    if fill.fields.is_empty() {
+        return Err(format!("facet \"{}\" fills no fields", facet.id));
+    }
+    let mut tokens = HashSet::new();
+    for (key, token) in &fill.fields {
+        let Some(owned) = facet.fields.iter().find(|field| &field.key == key) else {
+            return Err(format!(
+                "facet \"{}\" fills \"{key}\", which isn't one of its Owned fields",
+                facet.id
+            ));
+        };
+        if token.form() != fill.form {
+            return Err(format!(
+                "{} isn't a field of a {} form",
+                token.as_str(),
+                fill.form.as_str()
+            ));
+        }
+        if !tokens.insert(*token) {
+            return Err(format!(
+                "facet \"{}\" fills {} with two fields",
+                facet.id,
+                token.as_str()
+            ));
+        }
+        if *token == Autocomplete::CcExp && owned.kind != FieldKind::MonthYear {
+            return Err(format!(
+                "cc-exp is filled from a monthYear field, and \"{key}\" isn't one"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Lowercase letters, digits and dashes; Plugin ids also have dots, as `keefast.card` does.
@@ -356,6 +510,54 @@ mod tests {
         let result =
             with(|json| json["contributions"]["facets"][0]["fields"][1]["key"] = "number".into());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn the_card_fills_payment_forms_without_its_pin() {
+        let manifest = Manifest::parse(CARD).unwrap();
+        assert!(manifest.has(Capability::BrowserFill));
+        let fill = manifest.facet("card").unwrap().fill.as_ref().unwrap();
+        assert_eq!(fill.form, FormKind::Payment);
+        assert_eq!(fill.fields["cvv"], Autocomplete::CcCsc);
+        assert_eq!(fill.fields["expiry"], Autocomplete::CcExp);
+        let filled: Vec<_> = manifest.filled_names().collect();
+        assert_eq!(filled, ["Card number", "Cardholder", "Expiry", "CVV"]);
+        assert_eq!(manifest.fill_forms(), [FormKind::Payment]);
+    }
+
+    #[test]
+    fn browser_fill_needs_its_capability() {
+        let result =
+            with(|json| json["capabilities"] = serde_json::json!(["readProtected", "copy"]));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("browserFill"), "{error}");
+    }
+
+    #[test]
+    fn only_known_tokens_fill_only_owned_fields() {
+        fn fill(json: &mut serde_json::Value) -> &mut serde_json::Value {
+            &mut json["contributions"]["facets"][0]["fill"]
+        }
+        // Not a token keefast fills, and not a payment form's.
+        assert!(with(|json| fill(json)["fields"]["pin"] = "cc-pin".into()).is_err());
+        assert!(with(|json| fill(json)["fields"]["holder"] = "username".into()).is_err());
+        assert!(with(|json| fill(json)["fields"]["holder"] = "current-password".into()).is_err());
+        // A field the facet doesn't own, such as the Entry's password.
+        assert!(with(|json| fill(json)["fields"]["password"] = "cc-name".into()).is_err());
+        // A form kind keefast doesn't know.
+        assert!(with(|json| fill(json)["form"] = "login".into()).is_err());
+        // Two fields into one form field.
+        assert!(with(|json| fill(json)["fields"]["pin"] = "cc-csc".into()).is_err());
+        // cc-exp from a field that isn't a month.
+        assert!(with(|json| fill(json)["fields"]["holder"] = "cc-exp".into()).is_err());
+        assert!(with(|json| fill(json)["fields"] = serde_json::json!({})).is_err());
+        assert!(with(|json| fill(json)["autofill"] = true.into()).is_err());
+        // Split expiry fields are tokens too.
+        let split = with(|json| {
+            fill(json)["fields"] =
+                serde_json::json!({ "number": "cc-number", "expiry": "cc-exp-month" })
+        });
+        assert!(split.is_ok());
     }
 
     #[test]

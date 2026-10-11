@@ -271,9 +271,14 @@ export const commands = {
 	installedVersion: string | null,
 	capabilities: PluginCapability[],
 	ownedFields: string[],
+	/**  The Owned fields the Companion extension would fill into web forms. */
+	filledFields: string[],
+	/**  The kinds of form it would fill them into. */
+	fillForms: PluginFormKind[],
 	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
 	newCapabilities: PluginCapability[],
 	newOwnedFields: string[],
+	newFilledFields: string[],
 	icon: string | null,
 } | null, ApiError>(__TAURI_INVOKE("choose_plugin_package")),
 	/**
@@ -1006,7 +1011,15 @@ export type PluginCapability =
 /**  Its hooks see the protected values of its Owned fields, to label them. */
 "readProtected" | 
 /**  The user can copy its Owned fields. */
-"copy";
+"copy" | 
+/**
+ *  The Companion extension can fill some of its Owned fields into web forms, for an Entry
+ *  the user picks there.
+ */
+"browserFill";
+
+/**  A kind of web form a Plugin's Owned fields fill. */
+export type PluginFormKind = "payment";
 
 export type PluginList = {
 	/**  keefast's own first, then the installed ones by name. */
@@ -1034,9 +1047,14 @@ export type PluginOffer = {
 	installedVersion: string | null,
 	capabilities: PluginCapability[],
 	ownedFields: string[],
+	/**  The Owned fields the Companion extension would fill into web forms. */
+	filledFields: string[],
+	/**  The kinds of form it would fill them into. */
+	fillForms: PluginFormKind[],
 	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
 	newCapabilities: PluginCapability[],
 	newOwnedFields: string[],
+	newFilledFields: string[],
 	icon: string | null,
 };
 
@@ -1069,6 +1087,10 @@ export type PluginView = {
 	capabilities: PluginCapability[],
 	/**  The custom fields it owns. */
 	ownedFields: string[],
+	/**  The Owned fields the Companion extension may fill into web forms, as agreed. */
+	filledFields: string[],
+	/**  The kinds of form it fills them into. */
+	fillForms: PluginFormKind[],
 	/**  Its icon, as a `data:` URL. */
 	icon: string | null,
 	/**  Why it doesn't run though enabled. */

@@ -74,7 +74,7 @@ fn an_entry_without_a_card_number_has_no_card() {
 #[test]
 fn without_the_capability_a_plugin_never_gets_protected_values() {
     let mut json: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
-    json["capabilities"] = serde_json::json!(["copy"]);
+    json["capabilities"] = serde_json::json!(["copy", "browserFill"]);
     let mut host = PluginHost::new();
     host.load(&json.to_string(), COMPONENT).unwrap();
 

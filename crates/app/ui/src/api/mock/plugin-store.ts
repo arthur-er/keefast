@@ -10,6 +10,7 @@
 //   plugin-key-changed        IBAN installed; the package is signed by another key
 //   plugin-malformed          a package changed after it was signed
 //   plugin-keefast            Wi-Fi network 1.0.0, signed by keefast's release key
+//   plugin-fill               Virtual card 1.0.0 by Acme Ltd, asking to fill payment forms
 //   plugin-cancel             the dialog is cancelled
 //   plugins-installed         IBAN installed, Passport installed but disabled, and a Plugin whose
 //                             package failed its checks; the package is IBAN 2.0.0. IBAN's
@@ -20,9 +21,9 @@
 
 import { bundledPlugins } from "virtual:keefast/bundled-plugins";
 
-import { shortcutsOf } from "./plugins";
+import { fillForms, filledNames, shortcutsOf } from "./plugins";
 
-import type { PluginCapability, PluginList, PluginOffer, PluginPublisher, PluginView } from "@/bindings";
+import type { PluginCapability, PluginFormKind, PluginList, PluginOffer, PluginPublisher, PluginView } from "@/bindings";
 
 export type PluginScene =
   | "plugin-new"
@@ -31,6 +32,7 @@ export type PluginScene =
   | "plugin-key-changed"
   | "plugin-malformed"
   | "plugin-keefast"
+  | "plugin-fill"
   | "plugin-cancel"
   | "plugins-installed"
   | "plugins-dev-build";
@@ -42,6 +44,7 @@ export const PLUGIN_SCENES: readonly PluginScene[] = [
   "plugin-key-changed",
   "plugin-malformed",
   "plugin-keefast",
+  "plugin-fill",
   "plugin-cancel",
   "plugins-installed",
   "plugins-dev-build",
@@ -69,6 +72,9 @@ interface FakePackage {
   keefast?: boolean;
   capabilities: PluginCapability[];
   ownedFields: string[];
+  /** The Owned fields it fills into web forms, and which kinds. */
+  filledFields?: string[];
+  fillForms?: PluginFormKind[];
   icon: string | null;
   /** Why the app would refuse it before saying what it asks for. */
   refusal?: PluginRefusal;
@@ -84,6 +90,8 @@ interface Installed {
   enabled: boolean;
   capabilities: PluginCapability[];
   ownedFields: string[];
+  filledFields?: string[];
+  fillForms?: PluginFormKind[];
   icon: string | null;
   problem: string | null;
   /** Its commands' titles and the shortcuts they ask for. The fake packages have no component,
@@ -138,6 +146,19 @@ const PACKAGES: Record<Exclude<PluginScene, "plugin-cancel" | "plugins-installed
     icon: tile("W", "#2563eb"),
   },
   "plugin-update": IBAN_2,
+  "plugin-fill": {
+    path: "~/Downloads/acme-virtual-card-1.0.0.kfplugin",
+    id: "acme.virtual-card",
+    name: "Virtual card",
+    version: "1.0.0",
+    publisher: "Acme Ltd",
+    fingerprint: ACME,
+    capabilities: ["readProtected", "copy", "browserFill"],
+    ownedFields: ["Virtual card number", "Virtual card expiry", "Virtual card CVC", "Spending limit"],
+    filledFields: ["Virtual card number", "Virtual card expiry", "Virtual card CVC"],
+    fillForms: ["payment"],
+    icon: tile("V", "#0e7490"),
+  },
   "plugin-clash": {
     path: "~/Downloads/cardvault-pro.kfplugin",
     id: "cardvault.pro",
@@ -181,6 +202,8 @@ function installedOf(pkg: FakePackage): Installed {
     enabled: true,
     capabilities: [...pkg.capabilities],
     ownedFields: [...pkg.ownedFields],
+    filledFields: [...(pkg.filledFields ?? [])],
+    fillForms: [...(pkg.fillForms ?? [])],
     icon: pkg.icon,
     problem: null,
   };
@@ -232,6 +255,8 @@ export function createMockPluginStore(changed: () => void) {
       running: plugin.enabled && plugin.problem === null,
       capabilities: plugin.capabilities,
       ownedFields: plugin.ownedFields,
+      filledFields: plugin.filledFields ?? [],
+      fillForms: plugin.fillForms ?? [],
       icon: plugin.icon,
       problem: plugin.enabled ? plugin.problem : null,
       refusedShortcuts: plugin.enabled ? refusedOf(plugin) : [],
@@ -265,6 +290,8 @@ export function createMockPluginStore(changed: () => void) {
         running: enabled,
         capabilities: manifest.capabilities,
         ownedFields: manifest.contributions.facets.flatMap((facet) => facet.fields.map((field) => field.name)),
+        filledFields: filledNames(manifest),
+        fillForms: fillForms(manifest),
         icon: null,
         problem: null,
         refusedShortcuts: shortcutsOf((id) => !disabledBundled.has(id))
@@ -296,8 +323,11 @@ export function createMockPluginStore(changed: () => void) {
       installedVersion: agreed?.version ?? null,
       capabilities: pkg.capabilities,
       ownedFields: pkg.ownedFields,
+      filledFields: pkg.filledFields ?? [],
+      fillForms: pkg.fillForms ?? [],
       newCapabilities: pkg.capabilities.filter((capability) => !agreed?.capabilities.includes(capability)),
       newOwnedFields: pkg.ownedFields.filter((field) => !agreed?.ownedFields.includes(field)),
+      newFilledFields: (pkg.filledFields ?? []).filter((field) => !agreed?.filledFields?.includes(field)),
       icon: pkg.icon,
     };
   }

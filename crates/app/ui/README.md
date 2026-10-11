@@ -85,6 +85,7 @@ no component, so they find no facets.
   __keefastMock.simulate("plugin-cancel") // the file dialog is cancelled
   __keefastMock.simulate("plugins-installed") // IBAN, Passport (disabled) and a Plugin failing its checks
   __keefastMock.simulate("plugin-keefast") // Wi-Fi network, signed by keefast's release key
+  __keefastMock.simulate("plugin-fill") // Virtual card, asking to fill payment forms in the browser
   __keefastMock.simulate("plugins-dev-build") // keefast's Card signed by a development build's own key
   __keefastMock.reset()
   ```

@@ -4,8 +4,8 @@ mod common;
 
 use common::*;
 use keefast_plugins::{
-    Capability, EntryField, InstallError, PluginHost, PluginStore, Publisher, PublisherKey,
-    bundled_by_release_key, bundled_key,
+    Capability, EntryField, FormKind, InstallError, PluginHost, PluginStore, Publisher,
+    PublisherKey, bundled_by_release_key, bundled_key,
 };
 
 /// A store in a fresh directory, loaded into a fresh host.
@@ -138,6 +138,53 @@ fn an_update_asking_for_more_says_what_is_new() {
         iban.capabilities,
         [Capability::Copy, Capability::ReadProtected]
     );
+}
+
+/// `acme.iban` asking to fill a payment form from these fields of `fields`, by index.
+fn filling(version: &str, fields: &[&str], filled: &[(usize, &str)]) -> Vec<u8> {
+    let mut manifest = manifest(&key(1), version, fields, &["browserFill"]);
+    let filled: serde_json::Map<String, serde_json::Value> = filled
+        .iter()
+        .map(|(index, token)| (format!("f{index}"), (*token).into()))
+        .collect();
+    manifest["contributions"]["facets"][0]["fill"] =
+        serde_json::json!({ "form": "payment", "fields": filled });
+    package_of(&manifest, &key(1))
+}
+
+#[test]
+fn an_update_filling_more_fields_asks_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, mut host) = open(dir.path());
+    let fields = ["Gift card", "Gift name", "Gift code"];
+    let first = filling("1.0", &fields, &[(0, "cc-number"), (1, "cc-name")]);
+    let offer = store.inspect(&host, &first).unwrap();
+    assert_eq!(offer.new_capabilities, [Capability::BrowserFill]);
+    assert_eq!(offer.filled_fields, ["Gift card", "Gift name"]);
+    assert_eq!(offer.new_filled_fields, offer.filled_fields);
+    assert_eq!(offer.fill_forms, [FormKind::Payment]);
+    store.install(&mut host, &first, &offer.digest).unwrap();
+    assert_eq!(host.browser_fills().len(), 2, "the Card's and this one's");
+
+    // The same capability, but one more field crossing to the browser: new.
+    let more = filling(
+        "1.1",
+        &fields,
+        &[(0, "cc-number"), (1, "cc-name"), (2, "cc-csc")],
+    );
+    let offer = store.inspect(&host, &more).unwrap();
+    assert!(offer.new_capabilities.is_empty() && offer.new_owned_fields.is_empty());
+    assert_eq!(offer.new_filled_fields, ["Gift code"]);
+
+    // Put on disk in place of the installed package, it doesn't run.
+    std::fs::write(dir.path().join("acme.iban.kfplugin"), &more).unwrap();
+    let (store, host) = open(dir.path());
+    let listed = store.list(&host);
+    let iban = listed.iter().find(|p| p.id == "acme.iban").unwrap();
+    assert!(!iban.running);
+    assert!(iban.problem.as_deref().unwrap().contains("didn't agree to"));
+    assert_eq!(iban.filled_fields, ["Gift card", "Gift name"]);
+    assert_eq!(host.browser_fills().len(), 1, "only the Card's");
 }
 
 #[test]

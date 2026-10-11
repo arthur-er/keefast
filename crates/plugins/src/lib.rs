@@ -13,6 +13,10 @@
 //! checks against keefast's own and other Plugins' whenever a Plugin loads or unloads
 //! ([`shortcut`]), bundled or installed alike.
 //!
+//! A facet may also be filled into web forms by the Companion extension: the host lists those of
+//! the running Plugins granted it ([`PluginHost::browser_fills`]), as custom field names for the
+//! browser protocol to read, without running the Plugin.
+//!
 //! Plugin authors don't use this crate: they write against the SDK, `keefast-plugin-sdk`, and
 //! package with the `keefast-plugin` command (docs/plugins/README.md).
 
@@ -30,7 +34,8 @@ use wasmtime::Engine;
 
 pub use bundled::{bundled_by_release_key, bundled_key, is_release_key};
 pub use manifest::{
-    API_VERSION, Capability, Command, Editor, Facet, FieldKind, Manifest, OwnedField,
+    API_VERSION, Autocomplete, Capability, Command, Editor, Facet, FieldKind, Fill, FormKind,
+    Manifest, OwnedField,
 };
 pub use package::{Package, PackageError, PublisherKey};
 pub use runtime::{FUEL_PER_CALL, MEMORY_CAP, MonthYear, Problem, Severity};
@@ -99,6 +104,20 @@ pub struct FoundField<'h> {
     pub index: Option<usize>,
     /// Text `derive` gave to show in place of its value.
     pub text: Option<String>,
+}
+
+/// A facet the Companion extension may fill web forms from, as the browser protocol needs it:
+/// custom field names only. It never runs the Plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserFill {
+    /// The Plugin's id.
+    pub plugin: String,
+    pub form: FormKind,
+    /// An Entry has the facet when it has a custom field of each of these names.
+    pub detect: Vec<String>,
+    /// Each filled Owned field's custom field name, and the form field it goes into, in the
+    /// manifest's order.
+    pub fields: Vec<(String, Autocomplete)>,
 }
 
 struct Plugin {
@@ -392,6 +411,31 @@ impl PluginHost {
             }
         }
         found
+    }
+
+    /// The facets of the running Plugins that the Companion extension may fill forms from: only
+    /// Plugins granted the `browserFill` Plugin capability have any.
+    pub fn browser_fills(&self) -> Vec<BrowserFill> {
+        self.manifests()
+            .filter(|manifest| manifest.has(Capability::BrowserFill))
+            .flat_map(|manifest| {
+                manifest.contributions.facets.iter().filter_map(|facet| {
+                    let fill = facet.fill.as_ref()?;
+                    Some(BrowserFill {
+                        plugin: manifest.id.clone(),
+                        form: fill.form,
+                        detect: facet.detect.fields.clone(),
+                        fields: facet
+                            .fields
+                            .iter()
+                            .filter_map(|owned| {
+                                Some((owned.name.clone(), *fill.fields.get(&owned.key)?))
+                            })
+                            .collect(),
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Whether a custom field of this name is one the Entry list's subtitles are derived from,

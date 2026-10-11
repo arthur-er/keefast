@@ -128,8 +128,8 @@ rather than ignored, so keefast never runs a Plugin that asks for something it d
 ## Contributions
 
 API version 1 has one contribution kind: **facets**. A facet brings its own sections, its Entry
-list subtitle and its command palette commands. Later versions add browser fill, as a new key
-under `contributions`.
+list subtitle, its command palette commands, and the web forms the Companion extension fills from
+it.
 
 ### Facets
 
@@ -148,6 +148,7 @@ editor, which the user adds to an Entry and takes off it again.
 | `editor` | Optional. `{ "add": "Add card", "remove": "Remove card" }`: the facet has a section in the Entry editor, after Login, and these name the actions that add it beside "+ Field" and take it off, with its Owned fields. Without it, the Entry editor shows the facet's Owned fields as ordinary custom fields. |
 | `subtitle` | Optional, `false` by default. `true` shows the facet's label from `derive` under the Entry's title in the Entry list, such as "Visa •••• 1111", when the Entry has no username. A username always wins. With several such facets on an Entry, the first, in the order Plugins load, that has a label is shown. |
 | `commands` | Optional. [Commands](#commands) in the command palette's Entry section, for the selected Entry when it has the facet. |
+| `fill` | Optional. The web forms the Companion extension fills from the facet: see [Browser fill](#browser-fill). |
 
 Each Owned field:
 
@@ -201,6 +202,34 @@ A command without its shortcut is still in the command palette. Settings → Plu
 Plugin's row, which shortcuts it didn't get and why. `keefast-plugin pack` and `verify` warn
 about a shortcut keefast or its own Plugins would refuse. Pick keys that are likely free, and say
 in your Plugin's description what they are.
+
+### Browser fill
+
+With `fill`, the Companion extension can fill some of the facet's Owned fields into a kind of web
+form, for an Entry the user picks there. It needs the `browserFill` Plugin capability: a manifest
+with `fill` and without it is refused. The Card fills payment forms:
+
+```json
+"fill": {
+  "form": "payment",
+  "fields": { "number": "cc-number", "holder": "cc-name", "expiry": "cc-exp", "cvv": "cc-csc" }
+}
+```
+
+| Key | What it is |
+|---|---|
+| `form` | The kind of form: `payment`, the only one in API version 1. |
+| `fields` | Each Owned field filled, by `key`, and the HTML [`autocomplete` token](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill-field) of the form field it goes into. A payment form's are `cc-number`, `cc-name`, `cc-exp`, `cc-exp-month`, `cc-exp-year` and `cc-csc`. Owned fields left out are never filled: the Card leaves out its PIN. |
+
+keefast refuses a manifest whose `fill` names a field the facet doesn't own, a token it doesn't
+know or that isn't the form's, or one token twice. `cc-exp` is filled from a `monthYear` field;
+the extension writes it as the page's field wants it (`08/31`, `08/2031`, a month and a year
+apart, or a `<select>`). The extension decides where each value goes, from the page's
+`autocomplete` attributes and, for some fields, their names and labels. A `cc-csc` value only ever
+goes into a field the page marked `cc-csc`.
+
+keefast never runs your Plugin to fill: the values go to the browser as the Vault keeps them.
+Which sites get them follows the user's Access decisions, as logins do.
 
 **Owned fields are exclusive.** keefast refuses to install a Plugin owning a field another
 installed Plugin owns, enabled or not. Choose names that say what they hold, so they don't clash
@@ -269,6 +298,7 @@ asking for more than the user agreed to.
 | *(its Owned fields)* | Keep its data in the custom fields its facets declare. Not listed under `capabilities`: the facets declare them. |
 | `readProtected` | Get the values of its protected Owned fields in `derive`, so it can label them ("Visa •••• 1111"). Without it, a protected field's value is `None`. |
 | `copy` | Have keefast offer to copy its Owned fields, from the facet's section and from its [commands](#commands). keefast does the copying, and clears the clipboard as it does for passwords. |
+| `browserFill` | Have the Companion extension fill the Owned fields a facet's [`fill`](#browser-fill) names into web forms of its kind. The user sees which fields, and an update that fills one more asks again, even with `browserFill` agreed to already. |
 
 Ask only for what the Plugin needs: users see the list.
 

@@ -12,6 +12,20 @@ describe("the mock's Plugins", () => {
     expect(refused).toBeInstanceOf(ApiError);
   });
 
+  it("says which of the Card's fields fill payment forms, and which a new Plugin would fill", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    const [card] = (await api.listPlugins()).plugins;
+    expect(card).toMatchObject({ filledFields: ["Card number", "Cardholder", "Expiry", "CVV"], fillForms: ["payment"] });
+    expect(card?.capabilities).toContain("browserFill");
+
+    mock.simulate("plugin-fill");
+    const offer = (await api.choosePluginPackage())!;
+    expect(offer.newCapabilities).toContain("browserFill");
+    expect(offer.newFilledFields).toEqual(offer.filledFields);
+    expect(offer.filledFields).not.toContain("Spending limit");
+  });
+
   it("says when keefast's Card is signed by a development build's own key", async () => {
     const mock = createMockBackend();
     mock.simulate("plugins-dev-build");

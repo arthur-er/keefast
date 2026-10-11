@@ -3,7 +3,8 @@
 //! Installed Plugins live in keefast's local data directory (`~/.local/share/keefast/plugins` on
 //! Linux, `%LOCALAPPDATA%\keefast\plugins` on Windows): each as the package file it was
 //! installed from, `<id>.kfplugin`, and beside them `plugins.json`, which keeps for each whether
-//! it is enabled, the Plugin capabilities and Owned fields the user agreed to, and the publisher
+//! it is enabled, the Plugin capabilities and Owned fields the user agreed to (and which Owned
+//! fields the Companion extension may fill into web forms), and the publisher
 //! key first seen for its id (trust on first use). Every load reads each package again and checks
 //! its signature, its key and its capabilities against what was agreed.
 //!
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::bundled::{
     KEEFAST_PREFIX, bundled_by_release_key, bundled_key, bundled_plugins, release_keys,
 };
-use crate::manifest::{Capability, Manifest};
+use crate::manifest::{Capability, FormKind, Manifest};
 use crate::package::{MAX_PACKAGE, Package, PackageError, PublisherKey};
 use crate::{PluginError, PluginHost};
 
@@ -61,6 +62,10 @@ pub struct InstalledPlugin {
     /// The Plugin capabilities the user agreed to.
     pub capabilities: Vec<Capability>,
     pub owned_fields: Vec<String>,
+    /// The Owned fields the user agreed the Companion extension may fill into web forms.
+    pub filled_fields: Vec<String>,
+    /// The kinds of form it fills them into.
+    pub fill_forms: Vec<FormKind>,
     pub icon: Option<Vec<u8>>,
     /// Why it doesn't run though enabled: its package failed its checks, or its component didn't
     /// load.
@@ -86,9 +91,15 @@ pub struct Offer {
     pub capabilities: Vec<Capability>,
     /// The custom fields it would own.
     pub owned_fields: Vec<String>,
+    /// The Owned fields the Companion extension would fill into web forms, with the
+    /// `browserFill` Plugin capability.
+    pub filled_fields: Vec<String>,
+    /// The kinds of form it would fill them into.
+    pub fill_forms: Vec<FormKind>,
     /// What it asks for that the user hasn't agreed to yet: everything, for a new Plugin.
     pub new_capabilities: Vec<Capability>,
     pub new_owned_fields: Vec<String>,
+    pub new_filled_fields: Vec<String>,
     pub icon: Option<Vec<u8>>,
 }
 
@@ -155,6 +166,10 @@ struct Agreed {
     publisher_key: String,
     capabilities: Vec<Capability>,
     owned_fields: Vec<String>,
+    /// The Owned fields the Companion extension may fill: an update filling another asks
+    /// again, even with `browserFill` agreed to already.
+    #[serde(default)]
+    filled_fields: Vec<String>,
 }
 
 /// What the last load found of an installed Plugin.
@@ -316,7 +331,11 @@ impl PluginStore {
             || package
                 .manifest
                 .owned_names()
-                .any(|name| !agreed.owned_fields.iter().any(|owned| owned == name));
+                .any(|name| !agreed.owned_fields.iter().any(|owned| owned == name))
+            || package
+                .manifest
+                .filled_names()
+                .any(|name| !agreed.filled_fields.iter().any(|filled| filled == name));
         if asks_more {
             return Err("its package asks for Plugin capabilities you didn't agree to".into());
         }
@@ -344,6 +363,8 @@ impl PluginStore {
                     running: host.manifest(&manifest.id).is_some(),
                     capabilities: manifest.capabilities.clone(),
                     owned_fields: manifest.owned_names().map(str::to_owned).collect(),
+                    filled_fields: manifest.filled_names().map(str::to_owned).collect(),
+                    fill_forms: manifest.fill_forms(),
                     icon: None,
                     problem: found.problem,
                 }
@@ -380,6 +401,8 @@ impl PluginStore {
                     running: host.manifest(&agreed.id).is_some(),
                     capabilities: agreed.capabilities.clone(),
                     owned_fields: agreed.owned_fields.clone(),
+                    filled_fields: agreed.filled_fields.clone(),
+                    fill_forms: manifest.map(Manifest::fill_forms).unwrap_or_default(),
                     icon: found.icon,
                     problem: found.problem,
                 }
@@ -428,19 +451,28 @@ impl PluginStore {
 
         let capabilities = manifest.capabilities.clone();
         let owned_fields: Vec<String> = manifest.owned_names().map(str::to_owned).collect();
-        let (new_capabilities, new_owned_fields) = match agreed {
-            None => (capabilities.clone(), owned_fields.clone()),
+        let filled_fields: Vec<String> = manifest.filled_names().map(str::to_owned).collect();
+        let not_in = |names: &[String], agreed: &[String]| -> Vec<String> {
+            names
+                .iter()
+                .filter(|name| !agreed.contains(name))
+                .cloned()
+                .collect()
+        };
+        let (new_capabilities, new_owned_fields, new_filled_fields) = match agreed {
+            None => (
+                capabilities.clone(),
+                owned_fields.clone(),
+                filled_fields.clone(),
+            ),
             Some(agreed) => (
                 capabilities
                     .iter()
                     .filter(|capability| !agreed.capabilities.contains(capability))
                     .copied()
                     .collect(),
-                owned_fields
-                    .iter()
-                    .filter(|name| !agreed.owned_fields.contains(name))
-                    .cloned()
-                    .collect(),
+                not_in(&owned_fields, &agreed.owned_fields),
+                not_in(&filled_fields, &agreed.filled_fields),
             ),
         };
         let offer = Offer {
@@ -468,8 +500,11 @@ impl PluginStore {
             }),
             capabilities,
             owned_fields,
+            filled_fields,
+            fill_forms: manifest.fill_forms(),
             new_capabilities,
             new_owned_fields,
+            new_filled_fields,
             icon: package.icon.clone(),
         };
         Ok((offer, package))
@@ -496,6 +531,7 @@ impl PluginStore {
             publisher_key: package.key.to_base64(),
             capabilities: offer.capabilities.clone(),
             owned_fields: offer.owned_fields.clone(),
+            filled_fields: offer.filled_fields.clone(),
         };
         match self.state.plugins.iter_mut().find(|a| a.id == offer.id) {
             Some(existing) => *existing = agreed.clone(),
