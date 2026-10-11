@@ -1,0 +1,23 @@
+{
+  "id": "example.iban",
+  "name": "Bank account",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "apiVersion": 1,
+  "capabilities": ["copy"],
+  "contributions": {
+    "facets": [
+      {
+        "id": "bank-account",
+        "title": "Bank account",
+        "icon": "landmark",
+        "detect": { "fields": ["IBAN"] },
+        "fields": [
+          { "key": "iban", "name": "IBAN", "label": "IBAN", "kind": "text", "protected": false },
+          { "key": "bic", "name": "BIC", "label": "BIC", "kind": "text", "protected": false },
+          { "key": "holder", "name": "Account holder", "label": "Account holder", "kind": "text", "protected": false }
+        ]
+      }
+    ]
+  }
+}
