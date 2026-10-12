@@ -3,6 +3,7 @@
 // a master password, and only asks keefast for an Entry when the user wants to fill it.
 import nacl from "tweetnacl";
 import { decodeBase64, encodeBase64, incrementNonce, randomNonce } from "./crypto";
+import { type CardValues, PAYMENT_TOKENS, type PaymentToken } from "./payment";
 
 /** The native-messaging host keefast registers, under KeePassXC-Browser's name. */
 export const HOST_NAME = "org.keepassxc.keepassxc_browser";
@@ -59,6 +60,16 @@ export interface FoundEntry {
   /** The Groups from the top of its Vault down to the Entry's, as in `Work / Email`. */
   group: string;
   hasTotp: boolean;
+}
+
+/** The kinds of form other than logins that keefast's Plugins fill (ADR 0010). */
+export type FormKind = "payment";
+
+/** An Entry the user picked to fill a form: its title, and its values by `autocomplete` token. */
+export interface FormEntry {
+  uuid: string;
+  name: string;
+  values: CardValues;
 }
 
 /** A login the user submitted, for keefast to save. */
@@ -199,6 +210,67 @@ export class KeefastClient {
       keys: pairings.map(({ id, key }) => ({ id, key })),
     });
     return Array.isArray(reply.entries) ? reply.entries.map(toFoundEntry) : [];
+  }
+
+  /**
+   * The Entries in the paired Vaults with data that fills a `form`, such as a Card for a payment
+   * form, matching `query`, for the user to pick one for the page at `url` in the command
+   * palette. keefast's own protocol extension (ADR 0010): it gives none of their values, and an
+   * empty query lists them all.
+   */
+  async searchForm(
+    form: FormKind,
+    url: string,
+    submitUrl: string | undefined,
+    query: string,
+  ): Promise<FoundEntry[]> {
+    const pairings = await this.store.load();
+    const reply = await this.sendEncrypted("keefast-search-entries", {
+      url,
+      submitUrl: submitUrl ?? url,
+      query,
+      form,
+      keys: pairings.map(({ id, key }) => ({ id, key })),
+    });
+    return Array.isArray(reply.entries) ? reply.entries.map(toFoundEntry) : [];
+  }
+
+  /**
+   * The values the Entry `uuid` the user picked in the command palette fills a `form` with, on
+   * the page at `url` whose form is in a frame at `frameUrl`. keefast remembers the pick as the
+   * Entry's Access decision for both. None if keefast won't give it: the Entry is denied either,
+   * or has nothing for the form.
+   */
+  async fillForm(
+    form: FormKind,
+    uuid: string,
+    url: string,
+    submitUrl: string | undefined,
+    frameUrl: string,
+  ): Promise<FormEntry | undefined> {
+    const pairings = await this.store.load();
+    try {
+      const reply = await this.sendEncrypted("keefast-fill-form", {
+        form,
+        uuid,
+        url,
+        submitUrl: submitUrl ?? url,
+        frameUrl,
+        id: "",
+        keys: pairings.map(({ id, key }) => ({ id, key })),
+      });
+      const values: CardValues = {};
+      for (const field of Array.isArray(reply.fields) ? (reply.fields as Message[]) : []) {
+        const token = String(field.autocomplete) as PaymentToken;
+        if (PAYMENT_TOKENS.includes(token) && typeof field.value === "string") {
+          values[token] = field.value;
+        }
+      }
+      return { uuid: String(reply.uuid ?? uuid), name: String(reply.name ?? ""), values };
+    } catch (error) {
+      if (error instanceof KeefastError && error.code === NO_LOGINS_FOUND) return undefined;
+      throw error;
+    }
   }
 
   /**

@@ -99,7 +99,10 @@ export const commands = {
 	deletesGroupForGood: (vault: VaultId, group: GroupId) => typedError<boolean, ApiError>(__TAURI_INVOKE("deletes_group_for_good", { vault, group })),
 	/**  Makes the Group the Vault's Browser group, where captured logins are saved. */
 	setBrowserGroup: (vault: VaultId, group: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("set_browser_group", { vault, group })),
-	/**  The Entry list. */
+	/**
+	 *  The Entry list. Plugins derive subtitles for Entries without a username after the Workspace
+	 *  is let go of, so a slow `derive` never holds it.
+	 */
 	listEntries: (query: EntryQuery) => typedError<EntrySummary[], ApiError>(__TAURI_INVOKE("list_entries", { query })),
 	/**  An Entry, without its password and protected custom fields. */
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
@@ -132,6 +135,25 @@ export const commands = {
 	 *  refused, so a Vault file can't make keefast run something.
 	 */
 	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
+	/**
+	 *  Every facet the Plugins contribute, in the order the Plugins were loaded: the editor offers
+	 *  to add the ones with a section of their own.
+	 */
+	listFacets: () => typedError<FacetTemplate[], ApiError>(__TAURI_INVOKE("list_facets")),
+	/**
+	 *  A value as the user typed it into an Owned field, formatted by its Plugin's `format` hook,
+	 *  such as a card number in groups of four.
+	 */
+	formatOwnedField: (plugin: string, facet: string, key: string, value: string) => typedError<string, ApiError>(__TAURI_INVOKE("format_owned_field", { plugin, facet, key, value })),
+	/**
+	 *  What the Plugin's `validate` hook says is wrong with a value for an Owned field, if anything.
+	 *  The hook gets the month it is now, since Plugins have no clock.
+	 */
+	validateOwnedField: (plugin: string, facet: string, key: string, value: string) => typedError<{
+	severity: ProblemSeverity,
+	/**  One sentence saying what to do, shown as is. */
+	message: string,
+} | null, ApiError>(__TAURI_INVOKE("validate_owned_field", { plugin, facet, key, value })),
 	/**  The Entry's earlier versions, oldest first. Each edit keeps the version it replaces here. */
 	getEntryHistory: (vault: VaultId, entry: EntryId) => typedError<EntryVersion[], ApiError>(__TAURI_INVOKE("get_entry_history", { vault, entry })),
 	/**  The password of a version of the Entry, for the user to see. */
@@ -226,6 +248,48 @@ export const commands = {
 	setDownloadFavicons: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_download_favicons", { enabled })),
 	/**  Remembers how wide the panes are. Changes nothing else, so the UI isn't told. */
 	setPaneWidths: (widths: PaneWidthsView) => typedError<null, ApiError>(__TAURI_INVOKE("set_pane_widths", { widths })),
+	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
+	/**
+	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
+	 *  chose none. Installs nothing. A package keefast would refuse fails here, with why.
+	 */
+	choosePluginPackage: () => typedError<{
+	/**  The package file, for `install_plugin`. */
+	path: string,
+	/**  Names exactly this package, for `install_plugin`. */
+	digest: string,
+	id: string,
+	name: string,
+	version: string,
+	publisher: PluginPublisher,
+	/**
+	 *  keefast hasn't seen this publisher key before, and will trust it from now on for this
+	 *  Plugin's updates.
+	 */
+	newKey: boolean,
+	/**  The version installed now, if this is an update. */
+	installedVersion: string | null,
+	capabilities: PluginCapability[],
+	ownedFields: string[],
+	/**  The Owned fields the Companion extension would fill into web forms. */
+	filledFields: string[],
+	/**  The kinds of form it would fill them into. */
+	fillForms: PluginFormKind[],
+	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
+	newCapabilities: PluginCapability[],
+	newOwnedFields: string[],
+	newFilledFields: string[],
+	icon: string | null,
+} | null, ApiError>(__TAURI_INVOKE("choose_plugin_package")),
+	/**
+	 *  Installs the package `choose_plugin_package` showed, or updates the installed Plugin to it,
+	 *  if it is still the package with `digest`.
+	 */
+	installPlugin: (path: string, digest: string) => typedError<null, ApiError>(__TAURI_INVOKE("install_plugin", { path, digest })),
+	/**  Enables or disables a Plugin. A disabled Plugin's data shows as ordinary custom fields. */
+	setPluginEnabled: (id: string, enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_plugin_enabled", { id, enabled })),
+	/**  Removes an installed Plugin. The data it kept stays in the Vaults as ordinary custom fields. */
+	removePlugin: (id: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_plugin", { id })),
 	getVaultSettings: (vault: VaultId) => typedError<VaultSettings, ApiError>(__TAURI_INVOKE("get_vault_settings", { vault })),
 	/**
 	 *  Gives the Vault a new master key, if one is given, and the encryption, and saves it now. The
@@ -489,6 +553,8 @@ export type EntryDetail = {
 	/**  Other URLs the Entry is for, as KeePassXC keeps them (`KP2A_URL…` fields). */
 	additionalUrls: string[],
 	customFields: CustomFieldView[],
+	/**  The facets Plugins found on it, in the order the Plugins were loaded. */
+	facets: FacetView[],
 	attachments: AttachmentView[],
 	totp: TotpView | null,
 	/**  How many earlier versions the Entry's history keeps. */
@@ -550,6 +616,12 @@ export type EntrySummary = {
 	/**  The title, or "(untitled)". */
 	title: string,
 	username: string,
+	/**
+	 *  What the list shows under the title in place of a username, when the Entry has none: the
+	 *  label a Plugin derived for one of its facets, such as "Visa •••• 1111" (ADR 0009). A
+	 *  username always wins, so this is `None` when there is one. Never a protected value.
+	 */
+	label: string | null,
 	url: string,
 	tags: string[],
 	color: Color | null,
@@ -626,6 +698,73 @@ export type ErrorKind =
 "unavailable" | 
 /**  The user stopped it. */
 "cancelled";
+
+/**  A facet's command palette command, copying one of its Owned fields with `copy_field`. */
+export type FacetCommandView = {
+	/**  Unique within the facet, such as `copy-number`. */
+	id: string,
+	/**  As the palette lists it: "Copy card number". */
+	title: string,
+	/**  The key of the Owned field it copies, as in `fields`. */
+	field: string,
+	/**
+	 *  The keys that run it, such as "Ctrl Shift C"; `None` when the Plugin declared none, or
+	 *  keefast or another Plugin has them.
+	 */
+	shortcut: string | null,
+};
+
+/**  A facet's section in the Entry editor: the actions adding it and taking it off an Entry. */
+export type FacetEditorView = {
+	/**  Such as "Add card". */
+	add: string,
+	/**  Such as "Remove card". */
+	remove: string,
+};
+
+/**  A facet a Plugin contributes, whether an Entry has it or not, such as the Card. */
+export type FacetTemplate = {
+	/**  The Plugin's id, such as `keefast.card`. */
+	plugin: string,
+	/**  The facet's id within the Plugin, such as `card`. */
+	facet: string,
+	/**  The section's title, such as "Card". */
+	title: string,
+	/**  One of the kit's icons, by name (`credit-card`). */
+	icon: string | null,
+	/**  The names of the fields an Entry has the facet by. */
+	detect: string[],
+	/**  Its section in the Entry editor; `None` when its Owned fields are edited as custom fields. */
+	editor: FacetEditorView | null,
+	/**  In the order the section shows them. */
+	fields: OwnedFieldTemplate[],
+};
+
+/**  A facet a Plugin found on an Entry, such as its Card: a section of the detail. */
+export type FacetView = {
+	/**  The Plugin's id, such as `keefast.card`. */
+	plugin: string,
+	/**  The facet's id within the Plugin, such as `card`. */
+	facet: string,
+	/**  The section's title, such as "Card". */
+	title: string,
+	/**  One of the kit's icons, by name (`credit-card`). */
+	icon: string | null,
+	/**  The label its Plugin derived, such as "Visa •••• 1111". */
+	label: string | null,
+	/**  Whether the Plugin has the Plugin capability to have its fields copied. */
+	canCopy: boolean,
+	/**  The names of the fields an Entry has the facet by. */
+	detect: string[],
+	/**  Its section in the Entry editor; `None` when its Owned fields are edited as custom fields. */
+	editor: FacetEditorView | null,
+	fields: OwnedFieldView[],
+	/**
+	 *  Its commands in the command palette's Entry section. Empty without the `copy` Plugin
+	 *  capability, which every v1 command needs.
+	 */
+	commands: FacetCommandView[],
+};
 
 /**  What the generator's controls may be set to. */
 export type GeneratorLimits = {
@@ -769,6 +908,56 @@ export type NewVaultInput = {
 	encryption: EncryptionSettings,
 };
 
+/**  What an Owned field holds, which says how the UI shows it. */
+export type OwnedFieldKind = "text" | 
+/**  Digits, shown in a monospace font. */
+"digits" | 
+/**  A month as `MM/YY`, such as a card's expiry; the UI says when it has passed or is near. */
+"monthYear";
+
+/**  One of a facet's Owned fields, as its Plugin declares it. */
+export type OwnedFieldTemplate = {
+	/**  How its Plugin names it. */
+	key: string,
+	/**  The custom field's name, such as `Card number`. */
+	name: string,
+	/**  What the section calls it, such as "Number". */
+	label: string,
+	kind: OwnedFieldKind,
+	/**  Whether a new value is kept protected. */
+	protected: boolean,
+	/**  What its input shows while empty, such as "MM/YY". */
+	placeholder: string | null,
+};
+
+/**
+ *  One of a facet's Owned fields on an Entry. A protected value is left out, as a custom field's
+ *  is: reveal and copy it by `index`, as any custom field.
+ */
+export type OwnedFieldView = {
+	/**  How its Plugin names it. */
+	key: string,
+	/**  The custom field's name, such as `Card number`. */
+	name: string,
+	/**  What the section calls it, such as "Number". */
+	label: string,
+	kind: OwnedFieldKind,
+	/**  Its index in the Entry's custom fields; `None` when the Entry hasn't got it. */
+	index: number | null,
+	/**  Whether the Entry keeps it protected (or, when missing, whether its Plugin would). */
+	protected: boolean,
+	/**  `None` when protected or missing. */
+	value: string | null,
+	isEmpty: boolean,
+	/**
+	 *  What its Plugin derived to show in place of the value, without a reveal, such as
+	 *  "Visa •••• 1111".
+	 */
+	text: string | null,
+	/**  What its input shows while empty in the Entry editor, such as "MM/YY". */
+	placeholder: string | null,
+};
+
 /**  How wide the Vault browser's sidebar and Entry list are, in logical pixels. */
 export type PaneWidthsView = {
 	sidebar: number,
@@ -817,8 +1006,119 @@ export type PendingPairing = {
 	vaultName: string,
 };
 
+/**  Something a Plugin may do, granted when it is installed. Its Owned fields are listed apart. */
+export type PluginCapability = 
+/**  Its hooks see the protected values of its Owned fields, to label them. */
+"readProtected" | 
+/**  The user can copy its Owned fields. */
+"copy" | 
+/**
+ *  The Companion extension can fill some of its Owned fields into web forms, for an Entry
+ *  the user picks there.
+ */
+"browserFill";
+
+/**  A kind of web form a Plugin's Owned fields fill. */
+export type PluginFormKind = "payment";
+
+export type PluginList = {
+	/**  keefast's own first, then the installed ones by name. */
+	plugins: PluginView[],
+	/**  Why the installed Plugins couldn't be read, if they couldn't. */
+	error: string | null,
+};
+
+/**  What installing a package would do, for the user to agree to. */
+export type PluginOffer = {
+	/**  The package file, for `install_plugin`. */
+	path: string,
+	/**  Names exactly this package, for `install_plugin`. */
+	digest: string,
+	id: string,
+	name: string,
+	version: string,
+	publisher: PluginPublisher,
+	/**
+	 *  keefast hasn't seen this publisher key before, and will trust it from now on for this
+	 *  Plugin's updates.
+	 */
+	newKey: boolean,
+	/**  The version installed now, if this is an update. */
+	installedVersion: string | null,
+	capabilities: PluginCapability[],
+	ownedFields: string[],
+	/**  The Owned fields the Companion extension would fill into web forms. */
+	filledFields: string[],
+	/**  The kinds of form it would fill them into. */
+	fillForms: PluginFormKind[],
+	/**  What it asks for that the user hasn't agreed to: everything, for a new Plugin. */
+	newCapabilities: PluginCapability[],
+	newOwnedFields: string[],
+	newFilledFields: string[],
+	icon: string | null,
+};
+
+/**  Who made a Plugin, as far as keefast can tell. */
+export type PluginPublisher = 
+/**
+ *  keefast itself, with its signing key's fingerprint. `release` is false only for the
+ *  Plugins bundled with a development or source build, signed by a key it made for itself
+ *  rather than keefast's release key.
+ */
+{ kind: "keefast"; fingerprint: string; release: boolean } | 
+/**
+ *  The name the Plugin gives, which keefast can't check, and its key's fingerprint
+ *  (`3F2A 91C0 7B1E 44D2`).
+ */
+{ kind: "unverified"; name: string; fingerprint: string };
+
+export type PluginView = {
+	id: string,
+	name: string,
+	/**  `None` when its package can't be read any more. */
+	version: string | null,
+	publisher: PluginPublisher,
+	/**  Comes with keefast: it can be disabled, not removed. */
+	bundled: boolean,
+	enabled: boolean,
+	/**  Enabled, and running. */
+	running: boolean,
+	/**  The Plugin capabilities the user agreed to. */
+	capabilities: PluginCapability[],
+	/**  The custom fields it owns. */
+	ownedFields: string[],
+	/**  The Owned fields the Companion extension may fill into web forms, as agreed. */
+	filledFields: string[],
+	/**  The kinds of form it fills them into. */
+	fillForms: PluginFormKind[],
+	/**  Its icon, as a `data:` URL. */
+	icon: string | null,
+	/**  Why it doesn't run though enabled. */
+	problem: string | null,
+	/**
+	 *  The shortcuts its commands declared and didn't get, each a sentence saying why, such as
+	 *  "Copy card number has no shortcut: Ctrl Shift C is one of keefast's own shortcuts." The
+	 *  commands are still in the command palette, without keys.
+	 */
+	refusedShortcuts: string[],
+};
+
 /**  How an attachment can be shown. */
 export type PreviewKind = "text" | "image" | "none";
+
+/**  How much a problem a Plugin found matters. */
+export type ProblemSeverity = 
+/**  Probably a mistake; the Entry still saves. */
+"warning" | 
+/**  The value can't be kept as it is: the Entry doesn't save until it changes. */
+"error";
+
+/**  What a Plugin says is wrong with a value. */
+export type ProblemView = {
+	severity: ProblemSeverity,
+	/**  One sentence saying what to do, shown as is. */
+	message: string,
+};
 
 /**  Which Storage provider holds a Vault file. */
 export type Provider = "local" | "dropbox";

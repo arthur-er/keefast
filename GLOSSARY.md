@@ -81,9 +81,27 @@ The Group in each Vault where logins captured by the Companion extension are sav
 _Avoid_: Inbox, new logins folder
 
 **Field icon**:
-keefast's icon in a page's login, 2FA and new password fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette.
+keefast's icon in a page's login, 2FA, new password and payment fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette; in a payment field, it always opens the Command palette.
 _Avoid_: Autofill button, inline menu
 
 **Command palette** (browser):
-The palette the Companion extension opens over a page to pick an Entry to fill, the site's or any found by searching the paired Vaults, or to fill a generated password. Not the desktop app's command palette.
+The palette the Companion extension opens over a page to pick an Entry to fill, the site's or any found by searching the paired Vaults, to fill a generated password, or to pick an Entry with a Card to fill a payment form. Not the desktop app's command palette.
 _Avoid_: Inline menu, overlay
+
+### Plugins
+
+**Plugin**:
+A package of code from keefast or a third party that teaches the desktop app a kind of data kept on Entries, such as payment cards, installed by the user. Not a KeePass2 plugin and not the Companion extension.
+_Avoid_: Extension, add-on, module
+
+**Plugin capability**:
+Something a Plugin may do, granted by the user when installing it: the fields it owns, revealing protected values, copying, filling in the browser. A Plugin can do nothing it wasn't granted.
+_Avoid_: Permission, grant, scope
+
+**Owned field**:
+A custom field a Plugin declared as its own. It is still an ordinary custom field in the Vault file, shown as one when the Plugin is missing.
+_Avoid_: Plugin field, plugin data
+
+**Card**:
+Payment card details kept on an Entry by the Card Plugin, beside anything else the Entry holds: number, cardholder, expiry, CVV and PIN.
+_Avoid_: Credit card, payment method

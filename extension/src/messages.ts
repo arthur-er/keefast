@@ -29,8 +29,8 @@ export interface Answers {
   "show-on-site": null;
 }
 
-/** What the command palette is open for. */
-export type PaletteMode = "entries" | "generate";
+/** What the command palette is open for: a login's Entries, a new password, or a Card. */
+export type PaletteMode = "entries" | "generate" | "payment";
 
 /** What the command palette asks, for the tab it was opened in. */
 export type PaletteRequest =
@@ -40,6 +40,10 @@ export type PaletteRequest =
   | { type: "fill"; uuid: string; found: boolean }
   | { type: "generate" }
   | { type: "fill-generated" }
+  /** The Entries with a Card matching `query`; all of them for an empty one. */
+  | { type: "cards"; query: string }
+  /** Fills the Card of the Entry `uuid` into the page's payment fields. */
+  | { type: "fill-card"; uuid: string }
   /** Stops showing keefast in the site's sign-in fields, and closes the palette. */
   | { type: "hide-site" }
   | { type: "close" };
@@ -51,6 +55,11 @@ export interface PaletteStart {
   site: string;
   /** The site's Entries, when open for them. */
   entries: EntrySummary[];
+  /**
+   * For a Card, the host of the frame the payment fields are in, when it isn't the site's: the
+   * Card's values go there too.
+   */
+  frame?: string;
 }
 
 export interface PaletteAnswers {
@@ -59,6 +68,8 @@ export interface PaletteAnswers {
   fill: boolean;
   generate: string;
   "fill-generated": boolean;
+  cards: FoundEntry[];
+  "fill-card": boolean;
   "hide-site": null;
   close: null;
 }
@@ -71,7 +82,7 @@ export interface PaletteMessage {
 }
 
 /** The kinds of field keefast shows its icon in. */
-export type FieldKind = "login" | "totp" | "new-password";
+export type FieldKind = "login" | "totp" | "new-password" | "payment";
 
 /** What clicking keefast's icon in a field did. */
 export type FieldClickAnswer =
@@ -82,7 +93,11 @@ export type FieldClickAnswer =
   /** Did nothing: keefast can't fill the page, or isn't ready, as `status` says. */
   | { kind: "unavailable"; status: Exclude<Status, "paired"> | "failed" };
 
-/** What the scripts in a page tell and ask the service worker. */
+/**
+ * What the scripts in a page tell and ask the service worker. Those in a page's frames only show
+ * keefast in payment fields: they ask whether to (`fields-start`), say a payment field's icon
+ * was clicked, and connect.
+ */
 export type PageMessage =
   /** A login the user submitted in a page the user filled. */
   | { type: "submitted"; login: SubmittedLogin; submitUrl?: string }

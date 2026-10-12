@@ -35,6 +35,8 @@ export const keys = {
   groupForNewItems: (scope: Scope) => ["groupForNewItems", scope] as const,
   generatorLimits: ["generatorLimits"] as const,
   dropbox: ["dropbox"] as const,
+  plugins: ["plugins"] as const,
+  facets: ["facets"] as const,
 };
 
 /** Refetches every query whenever the backend's Workspace changes. Mount once, at the root. */
@@ -57,12 +59,21 @@ export function useWorkspace() {
   return useQuery({ queryKey: keys.workspace, queryFn: api.getWorkspace });
 }
 
+/** The facets Plugins contribute, which Entry editor A can add to an Entry. */
+export function useFacets() {
+  return useQuery({ queryKey: keys.facets, queryFn: api.listFacets });
+}
+
 export function useLaunch() {
   return useQuery({ queryKey: keys.launch, queryFn: api.getLaunch });
 }
 
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: api.getSettings });
+}
+
+export function usePlugins() {
+  return useQuery({ queryKey: keys.plugins, queryFn: api.listPlugins });
 }
 
 export function useEntries(query: EntryQuery) {

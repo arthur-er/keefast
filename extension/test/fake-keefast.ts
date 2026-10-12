@@ -9,6 +9,15 @@ type Message = Record<string, unknown>;
 /** An Entry as keefast has it, with the current code of its TOTP if it has one. */
 export type FakeEntry = Omit<Entry, "hasTotp" | "group"> & { totp?: string; group?: string };
 
+/** An Entry with a Card: its values by `autocomplete` token, and the hosts it is denied. */
+export interface FakeCard {
+  uuid: string;
+  name: string;
+  group?: string;
+  values: Record<string, string>;
+  denied?: string[];
+}
+
 export class FakeKeefast {
   running = true;
   locked = false;
@@ -32,6 +41,10 @@ export class FakeKeefast {
   saved: Message[] = [];
   /** The Entries the user picked in the command palette, with whether to add the site. */
   picked: { uuid: string; url: string; addUrl: boolean }[] = [];
+  /** The Entries with a Card, which fill payment forms. */
+  cards: FakeCard[] = [];
+  /** The Cards given to fill a form, with the page and the frame they were given for. */
+  filledForms: { uuid: string; url: string; frameUrl: string }[] = [];
   connections = 0;
   received: Message[] = [];
   private held: (() => void)[] = [];
@@ -184,6 +197,30 @@ export class FakeKeefast {
           const keys = message.keys as { id: string; key: string }[];
           const paired = keys.some(({ id, key }) => this.pairings.get(id) === key);
           const query = String(message.query).trim().toLowerCase();
+          if (message.form !== undefined) {
+            const host = new URL(message.url as string).host;
+            const cards =
+              !paired || message.form !== "payment"
+                ? []
+                : this.cards.filter(
+                    ({ name, denied }) =>
+                      name.toLowerCase().includes(query) && !denied?.includes(host),
+                  );
+            reply(
+              encrypted(request, {
+                count: cards.length,
+                entries: cards.map(({ uuid, name, group }) => ({
+                  uuid,
+                  name,
+                  login: "",
+                  url: "",
+                  group: group ?? "",
+                  hasTotp: false,
+                })),
+              }),
+            );
+            return;
+          }
           const found =
             !paired || query === ""
               ? []
@@ -228,6 +265,38 @@ export class FakeKeefast {
                   ...(entry.totp === undefined ? {} : { totp: entry.totp }),
                 },
               ],
+              hash: "vault-hash",
+              id: "",
+            }),
+          );
+          return;
+        }
+        case "keefast-fill-form": {
+          const keys = message.keys as { id: string; key: string }[];
+          const paired = keys.some(({ id, key }) => this.pairings.get(id) === key);
+          const hosts = [message.url, message.frameUrl].map((url) => new URL(url as string).host);
+          const card = this.cards.find(
+            ({ uuid, denied }) =>
+              uuid === message.uuid && !hosts.some((host) => denied?.includes(host)),
+          );
+          if (!paired || message.form !== "payment" || !card) {
+            reply(error(request, 15));
+            return;
+          }
+          this.filledForms.push({
+            uuid: card.uuid,
+            url: message.url as string,
+            frameUrl: message.frameUrl as string,
+          });
+          reply(
+            encrypted(request, {
+              uuid: card.uuid,
+              name: card.name,
+              form: "payment",
+              fields: Object.entries(card.values).map(([autocomplete, value]) => ({
+                autocomplete,
+                value,
+              })),
               hash: "vault-hash",
               id: "",
             }),

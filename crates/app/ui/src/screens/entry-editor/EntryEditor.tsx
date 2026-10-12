@@ -1,6 +1,8 @@
 // Entry editor A: the selected Entry (or a new one) edited in place in Vault browser C's detail
 // area. "Done" (Ctrl S) saves every change at once; "Cancel" (Esc) drops them. Attachments,
 // custom icons and a saved Entry's TOTP apply as they are made: they have commands of their own.
+// Plugins' facets with an editor section (a Card) are sections after Login, added beside
+// "+ Field" and saved with the Entry.
 //
 // The editor stays on what it edits while the list's selection moves: moving away asks before
 // dropping unsaved changes, and otherwise just shows the newly selected Entry.
@@ -13,11 +15,15 @@ import {
 
 import { api, errorMessage } from "@/api";
 import type { EntryDetail, EntryKey, TotpSetup } from "@/bindings";
-import { keys, useEntry, useGroups, useWorkspace } from "@/api/queries";
+import { keys, useEntry, useFacets, useGroups, useWorkspace } from "@/api/queries";
 import { Badge, Button, IconButton, Kbd, Switch, toast } from "@/kit";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { GeneratorPopover, GeneratorTrigger } from "@/screens/password-generator/GeneratorPopover";
+import {
+  addableFacets, addFacet, type FacetDraft, type OwnedRow, sameFacet, withChange, withFormatted, withRevealed,
+} from "@/screens/plugins/editing";
+import { FacetEditor, rowsWithErrors, useFacetChecks } from "@/screens/plugins/FacetEditor";
 import { LiveTotp, TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { copyField, openUrl } from "@/screens/vault-browser/actions";
 import { useAppCommand } from "@/shell/commands";
@@ -166,6 +172,13 @@ function EditorForm({
   };
   const updateRow = (key: number, change: Partial<FieldRow>) =>
     setDraft((current) => ({ ...current, fields: current.fields.map((row) => (row.key === key ? { ...row, ...change } : row)) }));
+  const updateFacets = (change: (facets: FacetDraft[]) => FacetDraft[]) => {
+    setDraft((current) => ({ ...current, facets: change(current.facets) }));
+    setSaveError(null);
+  };
+  const templates = useFacets().data ?? [];
+  const checks = useFacetChecks(draft.facets);
+  const ownedErrors = rowsWithErrors(draft.facets, checks);
 
   useEffect(() => {
     // A new Entry starts at its title; an Entry being edited, where the user clicks.
@@ -203,10 +216,29 @@ function EditorForm({
     }
   };
 
+  /** Fills an Owned field in from the backend, the first time the user wants it. */
+  const revealOwned = async (row: OwnedRow) => {
+    const index = savedIndex(entry, row.original);
+    if (row.value !== null || !entry || index === null) return;
+    try {
+      const value = await api.revealCustomField(entry.vault, entry.id, index);
+      updateFacets((facets) => withRevealed(facets, row.key, value));
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  const showRow = (key: number, show: boolean) =>
+    setShownFields((current) => {
+      const next = new Set(current);
+      if (show) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+
   const save = async () => {
     setTried(true);
     const wrong = problems(draft, hidden);
-    if (wrong) {
+    if (wrong || ownedErrors.length > 0) {
       requestAnimationFrame(() => {
         const bad = doc.current?.querySelector<HTMLElement>(".invalid input, input.invalid, .is-invalid");
         bad?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -286,7 +318,11 @@ function EditorForm({
   }, [entry, groups, target]);
   const passwordKept = draft.password === null || draft.password === draft.savedPassword;
   const totpReady = entry?.totp?.status === "ready";
-  const errors = [...(found?.errors.map((error) => ERROR_TEXT[error]) ?? []), ...(saveError ? [saveError] : [])];
+  const errors = [
+    ...(found?.errors.map((error) => ERROR_TEXT[error]) ?? []),
+    ...(tried && ownedErrors.length > 0 ? ["Fix the fields marked in red to save."] : []),
+    ...(saveError ? [saveError] : []),
+  ];
 
   return (
     <div className="ee">
@@ -518,22 +554,61 @@ function EditorForm({
             </div>
           </div>
 
+          {draft.facets.map((facet) => (
+            <FacetEditor
+              key={`${facet.plugin}/${facet.facet}`}
+              facet={facet}
+              checks={checks}
+              shown={shownFields}
+              onShow={(row, show) => showRow(row.key, show)}
+              onRow={(key, change) => updateFacets((facets) => withChange(facets, key, change))}
+              onFormatted={(key, typed, formatted) => updateFacets((facets) => withFormatted(facets, key, typed, formatted))}
+              onReveal={revealOwned}
+              onRemove={() => update({ facets: draft.facets.filter((candidate) => !sameFacet(candidate, facet)) })}
+            />
+          ))}
+
           <div className="ee-sec">
             <div className="ee-sec-head">
               <h3>Custom fields</h3>
               <span className="n">{draft.fields.length}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const key = rowKey();
-                  update({ fields: [...draft.fields, { key, name: "", value: "", protected: false, original: null, savedValue: null }] });
-                  setShownFields((current) => new Set(current).add(key));
-                  requestAnimationFrame(() => doc.current?.querySelector<HTMLInputElement>(`[data-field-name="${key}"]`)?.focus());
-                }}
-              >
-                <Plus /> Field
-              </Button>
+              <div className="ml-auto flex items-center gap-1">
+                {addableFacets(templates, draft.facets).map((template) => (
+                  <Button
+                    key={`${template.plugin}/${template.facet}`}
+                    variant="ghost"
+                    size="sm"
+                    title={template.editor!.add}
+                    aria-label={template.editor!.add}
+                    onClick={() => {
+                      const added = addFacet(template, draft.fields, rowKey);
+                      update({ fields: added.fields, facets: [...draft.facets, added.facet] });
+                      // New values show as they are typed, as a new custom field's do.
+                      setShownFields((current) => {
+                        const next = new Set(current);
+                        for (const row of added.facet.rows) if (row.original === null) next.add(row.key);
+                        return next;
+                      });
+                      const first = added.facet.rows[0]?.key;
+                      requestAnimationFrame(() => doc.current?.querySelector<HTMLInputElement>(`[data-owned-field="${first}"]`)?.focus());
+                    }}
+                  >
+                    <Plus /> {template.title}
+                  </Button>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const key = rowKey();
+                    update({ fields: [...draft.fields, { key, name: "", value: "", protected: false, original: null, savedValue: null }] });
+                    setShownFields((current) => new Set(current).add(key));
+                    requestAnimationFrame(() => doc.current?.querySelector<HTMLInputElement>(`[data-field-name="${key}"]`)?.focus());
+                  }}
+                >
+                  <Plus /> Field
+                </Button>
+              </div>
             </div>
             <div className="vstack gap-1.5">
               {draft.fields.length === 0 ? (

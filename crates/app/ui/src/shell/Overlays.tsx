@@ -1,5 +1,6 @@
 // What floats over the shell, one at a time (`ShellState.overlay`): a confirmation, deleting for
-// good (Confirms A's dialog, `screens/dialogs`), an attachment's preview, and command palette A
+// good (Confirms A's dialog, `screens/dialogs`), installing a Plugin (`screens/plugins`), an
+// attachment's preview, and command palette A
 // (`screens/command-palette`), which lists the commands the screens register (`useAppCommands`).
 
 import { useState } from "react";
@@ -9,6 +10,7 @@ import { api, errorMessage } from "@/api";
 import { Button, Dialog } from "@/kit";
 import { CommandPalette } from "@/screens/command-palette/CommandPalette";
 import { DeleteDialog } from "@/screens/dialogs/DeleteDialog";
+import { InstallDialog, RefusedDialog } from "@/screens/plugins/InstallDialog";
 
 import { type AttachmentOverlay, type ConfirmOverlay, useShell } from "./state";
 
@@ -26,6 +28,10 @@ export function Overlays() {
       return <AttachmentPreview overlay={overlay} onOpenChange={close} />;
     case "palette":
       return <CommandPalette onClose={actions.closeOverlay} />;
+    case "installPlugin":
+      return <InstallDialog offer={overlay.offer} onClose={actions.closeOverlay} />;
+    case "pluginRefused":
+      return <RefusedDialog message={overlay.message} detail={overlay.detail} onClose={actions.closeOverlay} />;
   }
 }
 

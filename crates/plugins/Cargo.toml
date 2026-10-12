@@ -1,0 +1,27 @@
+[package]
+name = "keefast-plugins"
+description = "keefast's Plugin host: Plugins' manifests, and their WASM components run in wasmtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dirs.workspace = true
+keefast-plugin-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+wasmtime.workspace = true
+
+# Signs the bundled Plugins into packages (build.rs).
+[build-dependencies]
+getrandom.workspace = true
+keefast-plugin-package.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+wat.workspace = true

@@ -25,10 +25,18 @@ jobs:
   linux:
     needs: version
     uses: ./.github/workflows/package-linux.yml
+    with:
+      release: true
+    secrets:
+      KEEFAST_PLUGIN_SIGNING_KEY: ${{ secrets.KEEFAST_PLUGIN_SIGNING_KEY }}
 
   windows:
     needs: version
     uses: ./.github/workflows/package-windows.yml
+    with:
+      release: true
+    secrets:
+      KEEFAST_PLUGIN_SIGNING_KEY: ${{ secrets.KEEFAST_PLUGIN_SIGNING_KEY }}
 
   # The Companion extension is the same on every platform, so it ships once, as its own zip,
   # rather than inside each platform's package.

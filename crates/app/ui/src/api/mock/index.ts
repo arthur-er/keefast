@@ -7,7 +7,9 @@
 // Driving it from the console or agent-browser, for states a screen must show:
 //   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
-//     | "browserError" | "browserNone" | "browserServed" | "configError")
+//     | "browserError" | "browserNone" | "browserServed" | "configError"
+//     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
+//     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build")   (the Plugin scenes: ./plugin-store.ts)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
@@ -49,6 +51,8 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
+import { facetsOf, facetTemplates, formatOwned, listLabel, validateOwned } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -84,6 +88,9 @@ function command<Args extends unknown[], T>(
     } catch (error) {
       if (error instanceof MockError) {
         return { status: "error", error: { kind: error.kind, message: error.message, detail: null } };
+      }
+      if (error instanceof PluginRefusal) {
+        return { status: "error", error: { kind: "invalid", message: error.message, detail: error.detail } };
       }
       throw error;
     }
@@ -272,13 +279,15 @@ export type MockScene =
   | "browserError"
   | "browserNone"
   | "browserServed"
-  | "configError";
+  | "configError"
+  | PluginScene;
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
   reset(): void;
 } {
   let state = initialState();
+  let plugins = createMockPluginStore(changed);
   const listeners = new Map<keyof EventPayloads, Set<(event: { payload: never }) => void>>();
 
   function emit<Name extends keyof EventPayloads>(name: Name, payload: EventPayloads[Name]) {
@@ -396,6 +405,7 @@ export function createMockBackend(): Backend & {
       id: e.id,
       title: e.title.trim() || "(untitled)",
       username: e.username,
+      label: null,
       url: e.url,
       tags: e.tags,
       color: e.color,
@@ -413,6 +423,11 @@ export function createMockBackend(): Backend & {
       vaultName: v.name,
       inRecycleBin: inBin(v, e.group),
     };
+  }
+
+  /** The summary with the subtitle a Plugin derives when the Entry has no username. */
+  async function labelled(s: EntrySummary, e: MockEntry): Promise<EntrySummary> {
+    return s.username !== "" ? s : { ...s, label: await listLabel(e.fields, plugins.runs) };
   }
 
   function fieldViews(fields: MockEntry["fields"]): CustomFieldView[] {
@@ -723,6 +738,11 @@ export function createMockBackend(): Backend & {
       return { vault: v.id, group: g };
     }),
     defaultEncryption: command(() => structuredClone(DEFAULT_ENCRYPTION)),
+    listPlugins: command(() => plugins.list()),
+    choosePluginPackage: command(() => plugins.choose()),
+    installPlugin: command((path: string, digest: string) => plugins.install(path, digest)),
+    setPluginEnabled: command((id: string, enabled: boolean) => plugins.setEnabled(id, enabled)),
+    removePlugin: command((id: string) => plugins.remove(id)),
     chooseVaultFile: command(() => "~/Vaults/Picked.kdbx"),
     chooseKeyFile: command(() => "~/Vaults/Personal.keyx"),
     chooseNewVaultFile: command(() => "~/Vaults/New Vault.kdbx"),
@@ -886,9 +906,9 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
-    listEntries: command((query: EntryQuery) => {
+    listEntries: command(async (query: EntryQuery) => {
       const words = query.search.toLowerCase().split(/\s+/).filter(Boolean);
-      return scoped(query.scope)
+      const listed = scoped(query.scope)
         .map(([v, e]) => ({ v, e, score: matches(e, words) }))
         .filter((x): x is { v: MockVault; e: MockEntry; score: number } => x.score !== null)
         .sort((a, b) => {
@@ -896,16 +916,18 @@ export function createMockBackend(): Backend & {
           const [ka, kb] = [sortKey(a.e, query.sort), sortKey(b.e, query.sort)];
           return ka < kb ? -1 : ka > kb ? 1 : 0;
         })
-        .map(({ v, e }) => summary(v, e));
+        .map(({ v, e }) => labelled(summary(v, e), e));
+      return Promise.all(listed);
     }),
-    getEntry: command((id, entryId): EntryDetail => {
+    getEntry: command(async (id, entryId): Promise<EntryDetail> => {
       const [v, e] = entryOf(id, entryId);
       return {
-        ...summary(v, e),
+        ...(await labelled(summary(v, e), e)),
         rawTitle: e.title,
         notes: e.notes,
         additionalUrls: [],
         customFields: fieldViews(e.fields),
+        facets: await facetsOf(e.fields, plugins.runs),
         attachments: e.attachments.map((a, index) => ({
           index,
           name: a.name,
@@ -918,6 +940,17 @@ export function createMockBackend(): Backend & {
         groupPath: groupPath(v, e.group),
         deletesForGood: !v.recycleBin || inBin(v, e.group),
       };
+    }),
+    listFacets: command(() => facetTemplates(plugins.runs)),
+    formatOwnedField: command(async (plugin, facet, key, value) => {
+      const formatted = await formatOwned(plugin, facet, key, value, plugins.runs);
+      if (formatted === null) throw new MockError("notFound", "That Plugin isn't installed.");
+      return formatted;
+    }),
+    validateOwnedField: command(async (plugin, facet, key, value) => {
+      const problem = await validateOwned(plugin, facet, key, value, plugins.runs);
+      if (problem === undefined) throw new MockError("notFound", "That Plugin isn't installed.");
+      return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
     revealCustomField: command((id, entryId, index) => {
@@ -1359,6 +1392,11 @@ export function createMockBackend(): Backend & {
   ) as unknown as Events;
 
   function simulate(scene: MockScene) {
+    if ((PLUGIN_SCENES as readonly string[]).includes(scene)) {
+      plugins.simulate(scene as PluginScene);
+      changed();
+      return;
+    }
     const open = readable();
     const first = open[0];
     switch (scene) {
@@ -1448,6 +1486,7 @@ export function createMockBackend(): Backend & {
     simulate,
     reset() {
       state = initialState();
+      plugins = createMockPluginStore(changed);
       changed();
     },
   };

@@ -4,8 +4,12 @@
 // Secrets stay in the backend until the user wants them: the password and protected custom
 // fields start as `null` ("kept as they are") and are only revealed when the user shows or edits
 // them. A revealed value the user didn't change still saves as kept.
+//
+// Plugins' facets with an editor section (a Card) are edited in sections of their own: their
+// Owned fields are left out of `fields`, and saved after them as the custom fields they are.
 
 import type { Color, CustomFieldInput, EntryDetail, EntryInput, IconChoice } from "@/bindings";
+import { type FacetDraft, facetDrafts, rowSaves } from "@/screens/plugins/editing";
 
 /** The standard fields every Entry has, which no custom field may be named. */
 export const STANDARD_FIELDS: readonly string[] = ["Title", "UserName", "Password", "URL", "Notes"];
@@ -33,6 +37,8 @@ export interface Draft {
   url: string;
   notes: string;
   fields: FieldRow[];
+  /** Plugins' facets edited in sections of their own, such as a Card. */
+  facets: FacetDraft[];
   tags: string[];
   color: Color | null;
   icon: IconChoice;
@@ -49,6 +55,7 @@ export const rowKey = () => nextKey++;
  * are. */
 export function draftOf(entry: EntryDetail): Draft {
   const hideTotp = entry.totp !== null;
+  const facets = facetDrafts(entry.facets, rowKey);
   return {
     title: entry.rawTitle,
     username: entry.username,
@@ -57,7 +64,7 @@ export function draftOf(entry: EntryDetail): Draft {
     url: entry.url,
     notes: entry.notes,
     fields: entry.customFields
-      .filter((field) => !(hideTotp && field.totpStorage))
+      .filter((field, index) => !(hideTotp && field.totpStorage) && !facets.owned.has(index))
       .map((field) => ({
         key: rowKey(),
         name: field.name,
@@ -66,6 +73,7 @@ export function draftOf(entry: EntryDetail): Draft {
         original: field.name,
         savedValue: field.value ?? (field.isEmpty ? "" : null),
       })),
+    facets: facets.drafts,
     tags: [...entry.tags],
     color: entry.color,
     icon: entry.icon.kind === "custom" ? { kind: "custom", id: entry.icon.id } : { kind: "standard", number: entry.icon.number },
@@ -84,6 +92,7 @@ export function newDraft(defaults: { tags?: string[]; color?: Color | null } = {
     url: "",
     notes: "",
     fields: [],
+    facets: [],
     tags: defaults.tags ?? [],
     color: defaults.color ?? null,
     icon: { kind: "standard", number: 0 },
@@ -142,6 +151,15 @@ function comparable(draft: Draft) {
       protected: row.protected,
       original: row.original,
     })),
+    facets: draft.facets.map((facet) => ({
+      plugin: facet.plugin,
+      facet: facet.facet,
+      rows: facet.rows.map((row) => ({
+        value: row.value === null || row.value === row.savedValue ? null : row.value,
+        protected: row.protected,
+        original: row.original,
+      })),
+    })),
     tags: draft.tags,
     color: draft.color,
     icon: draft.icon,
@@ -174,7 +192,8 @@ export interface Problems {
 export function problems(draft: Draft, hidden: readonly string[] = []): Problems | null {
   const found: Problems = { errors: [], fields: new Set(), expiry: false };
   const add = (error: DraftError) => found.errors.includes(error) || found.errors.push(error);
-  const seen = new Set(hidden);
+  // Owned fields have their names whether they save or not.
+  const seen = new Set([...hidden, ...draft.facets.flatMap((facet) => facet.rows.map((row) => row.name))]);
   for (const row of draft.fields) {
     const name = row.name.trim();
     if (!name) {
@@ -198,7 +217,8 @@ export function problems(draft: Draft, hidden: readonly string[] = []): Problems
 /** The fields of `entry` the editor doesn't show (TOTP's), to save as they are. */
 export function hiddenFields(entry: EntryDetail | null, draft: Draft): { name: string; index: number; protected: boolean }[] {
   if (!entry) return [];
-  const shown = new Set(draft.fields.flatMap((row) => (row.original === null ? [] : [row.original])));
+  const rows = [...draft.fields, ...draft.facets.flatMap((facet) => facet.rows)];
+  const shown = new Set(rows.flatMap((row) => (row.original === null ? [] : [row.original])));
   return entry.customFields.flatMap((field, index) =>
     field.totpStorage && !shown.has(field.name) ? [{ name: field.name, index, protected: field.protected }] : [],
   );
@@ -215,11 +235,16 @@ export function savedIndex(entry: EntryDetail | null, name: string | null): numb
  * one): kept values are found in it by name, so its fields may have moved since editing began. */
 export function toInput(draft: Draft, entry: EntryDetail | null): EntryInput {
   const kept = (value: string | null, saved: string | null) => value === null || (saved !== null && value === saved);
-  const fields: CustomFieldInput[] = draft.fields.map((row) => {
+  const input = (row: Pick<FieldRow, "name" | "value" | "protected" | "original" | "savedValue">): CustomFieldInput => {
     const index = savedIndex(entry, row.original);
     const keep = index !== null && kept(row.value, row.savedValue);
     return { name: row.name.trim(), value: keep ? null : (row.value ?? ""), protected: row.protected, original: keep ? index : null };
-  });
+  };
+  const fields: CustomFieldInput[] = draft.fields.map(input);
+  // A facet's Owned fields, after the others; a removed facet's are left out, so they go.
+  for (const facet of draft.facets) {
+    for (const row of facet.rows) if (rowSaves(facet, row)) fields.push(input(row));
+  }
   for (const hidden of hiddenFields(entry, draft)) {
     fields.push({ name: hidden.name, value: null, protected: hidden.protected, original: hidden.index });
   }

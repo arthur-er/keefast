@@ -60,6 +60,8 @@
               gdk-pixbuf
               atk
               dbus
+              # Links Plugins' WebAssembly components (`keefast-plugin build`, plugins/card/build.sh).
+              lld
             ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
@@ -72,6 +74,18 @@
         in
         {
           inherit default;
+
+          # Just enough to build Plugins and keefast-plugin, with the same rustc as the default
+          # shell, so card.wasm builds byte for byte the same (`plugins/card/build.sh --check`).
+          plugins = pkgs.mkShell {
+            packages = with pkgs; [
+              cargo
+              rustc
+              clippy
+              rustfmt
+              lld
+            ];
+          };
 
           # The KeePass clients that write the round-trip corpus (scripts/make-fixtures.sh) and
           # check keefast's saves against it (scripts/check-interop.sh).

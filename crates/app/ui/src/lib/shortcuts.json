@@ -1,0 +1,21 @@
+{
+  "palette": ["Ctrl K", "Ctrl Shift P"],
+  "search": ["Ctrl F", "/"],
+  "newEntry": ["Ctrl N"],
+  "copyUsername": ["Ctrl B"],
+  "copyPassword": ["Ctrl C"],
+  "copyTotp": ["Ctrl T"],
+  "edit": ["E", "Enter"],
+  "nextEntry": ["ArrowDown"],
+  "previousEntry": ["ArrowUp"],
+  "firstEntry": ["Home"],
+  "lastEntry": ["End"],
+  "deleteEntry": ["Delete"],
+  "save": ["Ctrl S"],
+  "lockAll": ["Ctrl L"],
+  "settings": ["Ctrl ,"],
+  "newVault": ["Ctrl Shift N"],
+  "openVault": ["Ctrl O"],
+  "history": ["Ctrl H"],
+  "close": ["Escape"]
+}

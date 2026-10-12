@@ -179,6 +179,47 @@ impl FakeExtension {
         )
     }
 
+    /// Searches the paired Vaults from the command palette for Entries that fill a `form`, such
+    /// as `payment`, on the page at `url`.
+    pub fn search_form(&self, form: &str, query: &str, url: &str, keys: &[(&str, &str)]) -> Sent {
+        self.encrypted(
+            "keefast-search-entries",
+            json!({
+                "action": "keefast-search-entries",
+                "query": query,
+                "form": form,
+                "url": url,
+                "submitUrl": url,
+                "keys": key_list(keys),
+            }),
+        )
+    }
+
+    /// Picks the Entry `uuid` in the command palette to fill a `form` on the page at `url`,
+    /// the form being in a frame at `frame_url` if it is given.
+    pub fn fill_form(
+        &self,
+        form: &str,
+        uuid: &str,
+        url: &str,
+        frame_url: Option<&str>,
+        keys: &[(&str, &str)],
+    ) -> Sent {
+        self.encrypted(
+            "keefast-fill-form",
+            json!({
+                "action": "keefast-fill-form",
+                "id": "",
+                "form": form,
+                "uuid": uuid,
+                "url": url,
+                "submitUrl": url,
+                "frameUrl": frame_url.unwrap_or(url),
+                "keys": key_list(keys),
+            }),
+        )
+    }
+
     /// Opens an encrypted reply, checking it answers `sent`, and returns its message.
     pub fn open(&self, sent: &Sent, reply: &str) -> Value {
         let reply: Value = serde_json::from_str(reply).unwrap();

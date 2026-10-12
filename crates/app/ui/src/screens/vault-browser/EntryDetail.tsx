@@ -3,7 +3,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  ArrowUpRight, Check, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, KeyRound, Pencil, Plus,
+  ArrowUpRight, Copy, Ellipsis, Eye, EyeOff, FileKey, FileText, Folder, Globe, KeyRound, Pencil, Plus,
   Settings2, Timer, Trash2, User,
 } from "lucide-react";
 
@@ -19,6 +19,8 @@ import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { HistoryTab } from "@/screens/entry-history/HistoryTab";
 import { useShowHistoryCommand } from "@/screens/entry-history/open";
+import { FacetCommands } from "@/screens/plugins/commands";
+import { FacetSection } from "@/screens/plugins/FacetSection";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
@@ -27,6 +29,7 @@ import { useShell } from "@/shell/state";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import { EntryAvatar } from "./EntryList";
+import { type CopyHandler, FieldRow } from "./FieldRow";
 
 const MASK = "••••••••••••";
 /** How long a copied field shows "Copied". */
@@ -112,6 +115,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
 
   return (
     <div className="vb-detail-scroll">
+      <FacetCommands entry={entry} active={keysActive} onCopy={copy} />
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <div className="C-insp-top">
           <div className="C-hero">
@@ -363,48 +367,13 @@ function TotpCode({ code, remaining, period }: { code: string; remaining: number
   );
 }
 
-type CopyHandler = (field: CopyTarget, what: string, key: string) => Promise<void>;
-
-/** A row of `.vb-fields`: label, value, and its copy button, flashing "Copied". */
-function FieldRow({
-  label,
-  copied,
-  onCopy,
-  actions,
-  children,
-}: {
-  label: string;
-  copied?: boolean;
-  onCopy?: () => void;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn("vb-f", copied && "is-copied")}>
-      <span className="k" title={label}>
-        {label}
-      </span>
-      <span className="v">{children}</span>
-      <span className="acts">
-        {actions}
-        {onCopy && (
-          <button type="button" className="btn ghost sm icon" aria-label={`Copy ${label}`} title="Copy" onClick={onCopy}>
-            <Copy />
-          </button>
-        )}
-      </span>
-      <span className="flash">
-        <Check />
-        Copied
-      </span>
-    </div>
-  );
-}
-
 function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const expiry = describeExpiry(entry.expires, entry.expired);
   return (
     <>
+      {entry.facets.map((facet) => (
+        <FacetSection key={`${facet.plugin}:${facet.facet}`} entry={entry} facet={facet} copied={copied} onCopy={onCopy} />
+      ))}
       <div className="vb-fields">
         <FieldRow label="URL" copied={copied === "url"} onCopy={entry.url ? () => void onCopy({ kind: "url" }, "URL", "url") : undefined}>
           {entry.url ? (

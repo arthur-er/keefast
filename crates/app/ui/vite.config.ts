@@ -4,10 +4,12 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { bundledPlugins } from "./bundled-plugins";
+
 // The web UI of keefast's Tauri app. `pnpm dev` serves it to the Tauri window (devUrl in
 // ../tauri.conf.json); `pnpm dev:mock` serves it to a normal browser over the mock backend.
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), bundledPlugins()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   // Tauri expects a fixed port, and shows Rust's errors rather than having them cleared.
   clearScreen: false,

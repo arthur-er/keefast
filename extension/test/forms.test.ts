@@ -428,9 +428,22 @@ describe("fillNewPassword", () => {
 describe("pageFields", () => {
   it("says what the page has to fill", () => {
     page(`<form><input type="text" autocomplete="one-time-code"></form>`);
-    expect(pageFields(document)).toEqual({ login: false, totp: true, newPassword: false });
+    expect(pageFields(document)).toEqual({
+      login: false,
+      totp: true,
+      newPassword: false,
+      payment: false,
+    });
 
     page(`<form><input type="email"><input type="password" autocomplete="new-password"></form>`);
-    expect(pageFields(document)).toEqual({ login: true, totp: false, newPassword: true });
+    expect(pageFields(document)).toEqual({
+      login: true,
+      totp: false,
+      newPassword: true,
+      payment: false,
+    });
+
+    page(`<form><input autocomplete="cc-number"><input autocomplete="cc-csc"></form>`);
+    expect(pageFields(document).payment).toBe(true);
   });
 });

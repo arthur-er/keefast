@@ -11,6 +11,7 @@ const entry = (overrides: Partial<EntryDetail> = {}): EntryDetail => ({
   title: "GitHub",
   rawTitle: "GitHub",
   username: "arthur-er",
+  label: null,
   url: "https://github.com",
   tags: ["dev"],
   color: "violet",
@@ -34,6 +35,7 @@ const entry = (overrides: Partial<EntryDetail> = {}): EntryDetail => ({
     { name: "otp", protected: true, value: null, isEmpty: false, totpStorage: true },
     { name: "Account", protected: false, value: "42", isEmpty: false, totpStorage: false },
   ],
+  facets: [],
   attachments: [],
   totp: { status: "ready", digits: 6, period: 30, algorithm: "sha1", steam: false },
   historyCount: 0,
@@ -172,5 +174,95 @@ describe("standard icons", () => {
     expect(STANDARD_ICON_NAMES).toHaveLength(69);
     expect(filterStandardIcons("")).toHaveLength(69);
     expect(filterStandardIcons("folder")).toEqual([48, 49, 50]);
+  });
+});
+
+describe("a Plugin's facet in the draft", () => {
+  /** An Entry with a Card: the number and CVV protected, at indexes 1 and 3. */
+  const withCard = () =>
+    entry({
+      totp: null,
+      customFields: [
+        { name: "Account", protected: false, value: "42", isEmpty: false, totpStorage: false },
+        { name: "Card number", protected: true, value: null, isEmpty: false, totpStorage: false },
+        { name: "Expiry", protected: false, value: "08/31", isEmpty: false, totpStorage: false },
+        { name: "CVV", protected: true, value: null, isEmpty: false, totpStorage: false },
+      ],
+      facets: [
+        {
+          plugin: "keefast.card",
+          facet: "card",
+          title: "Card",
+          icon: "credit-card",
+          commands: [],
+          label: "Visa •••• 1111",
+          canCopy: true,
+          detect: ["Card number"],
+          editor: { add: "Add card", remove: "Remove card" },
+          fields: [
+            { key: "number", name: "Card number", label: "Number", kind: "digits", index: 1, protected: true, value: null, isEmpty: false, text: "Visa •••• 1111", placeholder: null },
+            { key: "expiry", name: "Expiry", label: "Expiry", kind: "monthYear", index: 2, protected: false, value: "08/31", isEmpty: false, text: null, placeholder: "MM/YY" },
+            { key: "cvv", name: "CVV", label: "CVV", kind: "digits", index: 3, protected: true, value: null, isEmpty: false, text: null, placeholder: null },
+            { key: "pin", name: "PIN", label: "PIN", kind: "digits", index: null, protected: true, value: null, isEmpty: true, text: null, placeholder: null },
+          ],
+        },
+      ],
+    });
+
+  it("leaves its Owned fields out of the custom fields", () => {
+    const draft = draftOf(withCard());
+    expect(draft.fields.map((row) => row.name)).toEqual(["Account"]);
+    expect(draft.facets[0]!.rows.map((row) => row.name)).toEqual(["Card number", "Expiry", "CVV", "PIN"]);
+  });
+
+  it("saves an untouched Card as kept, protected values never revealed, and changes nothing", () => {
+    const saved = draftOf(withCard());
+    const draft = { ...saved, title: "Company Visa" };
+    expect(isDirty(saved, saved)).toBe(false);
+    expect(toInput(draft, withCard()).customFields).toEqual([
+      { name: "Account", value: null, protected: false, original: 0 },
+      { name: "Card number", value: null, protected: true, original: 1 },
+      { name: "Expiry", value: null, protected: false, original: 2 },
+      { name: "CVV", value: null, protected: true, original: 3 },
+    ]);
+  });
+
+  it("saves what changed, and a revealed value left as it was as kept", () => {
+    const saved = draftOf(withCard());
+    const [number, expiry, cvv, pin] = saved.facets[0]!.rows;
+    const draft = {
+      ...saved,
+      facets: [
+        {
+          ...saved.facets[0]!,
+          rows: [
+            { ...number!, value: "4111 1111 1111 1111", savedValue: "4111 1111 1111 1111" },
+            { ...expiry!, value: "09/31" },
+            cvv!,
+            { ...pin!, value: "8271" },
+          ],
+        },
+      ],
+    };
+    expect(isDirty(saved, draft)).toBe(true);
+    expect(toInput(draft, withCard()).customFields.slice(1)).toEqual([
+      { name: "Card number", value: null, protected: true, original: 1 },
+      { name: "Expiry", value: "09/31", protected: false, original: null },
+      { name: "CVV", value: null, protected: true, original: 3 },
+      { name: "PIN", value: "8271", protected: true, original: null },
+    ]);
+  });
+
+  it("drops a removed Card's Owned fields from the Entry", () => {
+    const saved = draftOf(withCard());
+    const draft = { ...saved, facets: [] };
+    expect(isDirty(saved, draft)).toBe(true);
+    expect(toInput(draft, withCard()).customFields.map((field) => field.name)).toEqual(["Account"]);
+  });
+
+  it("refuses a custom field named as an Owned field", () => {
+    const draft = draftOf(withCard());
+    draft.fields.push({ key: 99, name: "PIN", value: "1", protected: false, original: null, savedValue: null });
+    expect(problems(draft)?.errors).toEqual(["fieldNameTaken"]);
   });
 });

@@ -99,6 +99,41 @@ jobs:
       - name: Build the package
         run: nix build .#keefast --print-build-logs
 
+  # The Card Plugin's committed card.wasm must be what its source builds, byte for byte. It is
+  # committed rather than built by keefast's own build, so CI, the Nix package and Windows need
+  # no WebAssembly toolchain; this checks it with the toolchain it was built with, the dev shell's.
+  plugins:
+    name: Plugins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: The Card Plugin's tests
+        working-directory: plugins/card
+        run: nix develop ../..#plugins -c cargo test --locked
+
+      - name: card.wasm is what its source builds
+        run: nix develop .#plugins -c plugins/card/build.sh --check
+
+      - name: The template Plugin's tests
+        working-directory: plugins/template
+        run: nix develop ../..#plugins -c cargo test --locked
+
+      # As a Plugin author would: a key, the component, a signed package, and keefast's checks.
+      - name: The template Plugin builds, packs and verifies
+        run: |
+          nix develop .#plugins -c bash -euo pipefail -c '
+            cargo build --locked -p keefast-plugin-cli
+            cli=target/debug/keefast-plugin
+            "$cli" keygen "$RUNNER_TEMP/template.key"
+            "$cli" build plugins/template
+            "$cli" pack --key "$RUNNER_TEMP/template.key" --manifest plugins/template/plugin.json \
+              -o "$RUNNER_TEMP/template.kfplugin"
+            "$cli" verify "$RUNNER_TEMP/template.kfplugin"
+          '
+
   extension:
     name: Companion extension
     runs-on: ubuntu-latest

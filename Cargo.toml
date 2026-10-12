@@ -1,6 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/workspace", "crates/app", "crates/native-host"]
+members = [
+    "crates/core",
+    "crates/workspace",
+    "crates/plugins",
+    "crates/plugin-package",
+    "crates/plugin-sdk",
+    "crates/plugin-cli",
+    "crates/app",
+    "crates/native-host",
+]
+# Plugins are built to WebAssembly on their own, each its own Cargo workspace
+# (`keefast-plugin build`, docs/plugins/README.md).
+exclude = ["plugins"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +24,12 @@ repository = "https://github.com/arthur-er/keefast"
 keefast-core = { path = "crates/core" }
 keefast-workspace = { path = "crates/workspace" }
 keefast-native-host = { path = "crates/native-host" }
+# Plugins (ADR 0009, docs/plugins/README.md): the host keefast runs them in, the package format,
+# the SDK Plugin authors write against, and the `keefast-plugin` command that builds and signs
+# packages.
+keefast-plugins = { path = "crates/plugins" }
+keefast-plugin-package = { path = "crates/plugin-package" }
+keefast-plugin-sdk = { path = "crates/plugin-sdk" }
 aes = "0.9"
 base64 = "0.23"
 cbc = "0.2"
@@ -19,6 +37,8 @@ chacha20 = "0.10"
 crypto_box = { version = "0.9", features = ["std"] }
 cipher = { version = "0.5", features = ["alloc", "block-padding"] }
 dirs = "5"
+# Signs and checks Plugin packages (.kfplugin, crates/plugins/PACKAGE.md).
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "std", "zeroize"] }
 flate2 = "1"
 getrandom = "0.4"
 hmac = "0.13"
@@ -39,6 +59,7 @@ serde_json = "1"
 sha1 = "0.11"
 sha2 = "0.11"
 tempfile = "3"
+tar = { version = "0.4", default-features = false }
 thiserror = "2"
 tiny_http = "0.12"
 toml = "1"
@@ -46,6 +67,13 @@ twofish = "0.8"
 ureq = "3"
 url = "2"
 uuid = "1"
+# Runs Plugins (ADR 0009): components only, compiled by Cranelift; no WASI, so no filesystem,
+# network or clock.
+wasmtime = { version = "49", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wat = "1"
+# Turns a Plugin's core WebAssembly module into a component (`keefast-plugin build`). The version
+# that matches the SDK's wit-bindgen, which writes the metadata it reads.
+wit-component = { version = "0.259", default-features = false }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -76,3 +104,10 @@ sha2 = { opt-level = 3 }
 chacha20 = { opt-level = 3 }
 salsa20 = { opt-level = 3 }
 twofish = { opt-level = 3 }
+# So is compiling a Plugin's component (Cranelift): seconds unoptimised, milliseconds optimised.
+cranelift-codegen = { opt-level = 3 }
+cranelift-frontend = { opt-level = 3 }
+regalloc2 = { opt-level = 3 }
+wasmparser = { opt-level = 3 }
+wasmtime-environ = { opt-level = 3 }
+wasmtime-internal-cranelift = { opt-level = 3 }

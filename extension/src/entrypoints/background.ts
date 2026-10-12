@@ -1,12 +1,13 @@
 // The service worker: it holds the connection to keefast, answers the popup, the command
-// palette, keefast's icons in sign-in fields and the shortcut, and offers keefast the logins
-// submitted in pages. Pages get keefast's icons only once the user turns them on (ADR 0007);
+// palette, keefast's icons in sign-in and payment fields and the shortcut, and offers keefast the
+// logins submitted in pages. Pages get keefast's icons only once the user turns them on (ADR 0007);
 // otherwise nothing runs in pages until the user asks to fill one.
 import { browser, type Browser } from "wxt/browser";
 import { defineBackground } from "wxt/utils/define-background";
-import { Companion, type Tabs } from "../companion";
+import { type ChosenFrame, Companion, type PaymentFrame, type Tabs } from "../companion";
 import type { Credentials } from "../forms";
 import { KeefastClient, KeefastError, HOST_NAME, type NativePort } from "../keefast";
+import type { CardValues } from "../payment";
 import type {
   Answer,
   Answers,
@@ -27,6 +28,8 @@ type MessageSender = Browser.runtime.MessageSender;
 
 /** The page script, which finds and fills a page's fields, and frames the command palette. */
 const PAGE_SCRIPT = "/page.js";
+/** The script that finds and fills payment fields, in the page and its frames. */
+const PAYMENT_SCRIPT = "/payment.js";
 const PALETTE_PAGE = "palette.html";
 
 function connectNative(): NativePort {
@@ -96,6 +99,35 @@ const tabs: Tabs = {
       [origin, password] as [string, string],
     );
   },
+  async paymentFrames(tab) {
+    // Every frame the extension may read: with keefast in fields on, the frames of every origin;
+    // otherwise, the page alone, as the user opened it.
+    const inject = async (allFrames: boolean) => {
+      await browser.scripting.executeScript({ target: { tabId: tab, allFrames }, files: [PAYMENT_SCRIPT] });
+      return browser.scripting.executeScript({
+        target: { tabId: tab, allFrames },
+        func: () => globalThis.keefastPayment?.inspect(),
+      });
+    };
+    const results = await inject(true).catch(() => inject(false).catch(() => []));
+    return results.flatMap(({ documentId, frameId, result }): PaymentFrame[] =>
+      result && documentId ? [{ documentId, frameId, ...result }] : [],
+    );
+  },
+  async fillPayment(tab, frame, values) {
+    try {
+      // Only the document found: a frame that navigated since is another document.
+      const [result] = await browser.scripting.executeScript({
+        target: { tabId: tab, documentIds: [frame.documentId] },
+        func: (origin: string, values: CardValues) =>
+          globalThis.keefastPayment?.fill(origin, values) ?? false,
+        args: [frame.origin, values],
+      });
+      return result?.result === true;
+    } catch {
+      return false;
+    }
+  },
 };
 
 const client = new KeefastClient(connectNative, pairingStore);
@@ -106,25 +138,33 @@ interface OpenPalette {
   token: string;
   mode: PaletteMode;
   origin: string;
+  /** For a Card, the frame the user clicked keefast's icon in, when it isn't the page. */
+  frame?: ChosenFrame;
 }
 
 /** The palette open in each tab: one at most. */
 const palettes = new Map<number, OpenPalette>();
 
+/** Tells the tab's page; hiding keefast's icons, its frames too. */
 function tell(tab: number, message: TabMessage): Promise<void> {
+  const options = message.type === "hide-fields" ? {} : { frameId: 0 };
   return browser.tabs
-    .sendMessage(tab, message, { frameId: 0 })
+    .sendMessage(tab, message, options)
     .then(() => {})
     .catch(() => {});
 }
 
-/** Opens the command palette over the page in `tab`; says whether it could. */
-async function openPalette(tab: number, mode: PaletteMode): Promise<boolean> {
+/**
+ * Opens the command palette over the page in `tab`; says whether it could. For a Card, `frame`
+ * is the frame of another origin the user clicked keefast's icon in.
+ */
+async function openPalette(tab: number, mode: PaletteMode, frame?: ChosenFrame): Promise<boolean> {
   const page = await tabs.inspect(tab);
   if (!page) return false;
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  palettes.set(tab, { token, mode, origin: page.origin });
+  const other = frame && frame.origin !== page.origin ? frame : undefined;
+  palettes.set(tab, { token, mode, origin: page.origin, frame: other });
   const url = `${browser.runtime.getURL(`/${PALETTE_PAGE}`)}#${token}`;
   await tell(tab, { type: "open-palette", url });
   return true;
@@ -180,7 +220,16 @@ async function answerPalette(
         mode: palette.mode,
         site: new URL(palette.origin).host,
         entries: listed?.entries ?? [],
+        frame: palette.frame && new URL(palette.frame.origin).host,
       };
+    }
+    case "cards":
+      return (await companion.cards(tab, request.query)) ?? [];
+    case "fill-card": {
+      if (palette.mode !== "payment") return false;
+      const filled = await companion.fillCard(tab, request.uuid, palette.frame);
+      if (filled) await closePalette(tab);
+      return filled;
     }
     case "search":
       return (await companion.search(tab, request.query)) ?? [];
@@ -217,11 +266,16 @@ async function answerPalette(
 /**
  * What clicking keefast's icon in a field does: fills the site's only Entry, or opens the
  * palette to pick one, or to generate a new password; or, when keefast isn't ready, nothing,
- * for the field to say why.
+ * for the field to say why. A payment field's always opens the palette, never filling a Card
+ * the user didn't pick: `frame` is the one it was clicked in.
  */
-async function fieldClick(tab: number, field: FieldKind): Promise<FieldClickAnswer> {
+async function fieldClick(tab: number, field: FieldKind, frame: ChosenFrame): Promise<FieldClickAnswer> {
   const status = await client.status().catch(() => "failed" as const);
   if (status !== "paired") return { kind: "unavailable", status };
+  if (field === "payment") {
+    const opened = await openPalette(tab, "payment", frame);
+    return opened ? { kind: "palette" } : { kind: "unavailable", status: "failed" };
+  }
   if (field !== "new-password" && (await companion.shortcut(tab)) === "filled") {
     return { kind: "filled" };
   }
@@ -229,10 +283,15 @@ async function fieldClick(tab: number, field: FieldKind): Promise<FieldClickAnsw
   return opened ? { kind: "palette" } : { kind: "unavailable", status: "failed" };
 }
 
+/**
+ * Answers a page's script: `url` is the document it runs in, the page's or a frame's, and `top`
+ * the page's.
+ */
 async function answerPage(
   message: PageMessage,
   tab: number,
   url: URL,
+  top: string | undefined,
 ): Promise<PageAnswers[PageMessage["type"]]> {
   switch (message.type) {
     case "submitted": {
@@ -242,10 +301,13 @@ async function answerPage(
       companion.submitted(tab, page, message.login).catch(() => {});
       return null;
     }
-    case "fields-start":
-      return !(await hiddenSites.getValue()).includes(url.origin);
+    case "fields-start": {
+      // Hidden on the site, keefast is hidden in its frames too.
+      const hidden = await hiddenSites.getValue();
+      return !hidden.includes(url.origin) && (top === undefined || !hidden.includes(top));
+    }
     case "field-click":
-      return fieldClick(tab, message.field);
+      return fieldClick(tab, message.field, { url: url.href, origin: url.origin });
     case "connect":
       try {
         await client.pair();
@@ -273,7 +335,7 @@ function isPageMessage(message: unknown): message is PageMessage {
     }
     case "field-click": {
       const { field } = message as { field?: unknown };
-      return field === "login" || field === "totp" || field === "new-password";
+      return field === "login" || field === "totp" || field === "new-password" || field === "payment";
     }
     case "fields-start":
     case "connect":
@@ -281,6 +343,15 @@ function isPageMessage(message: unknown): message is PageMessage {
     default:
       return false;
   }
+}
+
+/** Whether a page's frame may say this: only what keefast's icons in payment fields say. */
+function fromFrame(message: PageMessage): boolean {
+  return (
+    message.type === "fields-start" ||
+    message.type === "connect" ||
+    (message.type === "field-click" && message.field === "payment")
+  );
 }
 
 function isPaletteMessage(message: unknown): message is PaletteMessage {
@@ -322,11 +393,13 @@ function onMessage(
     respondWith(answerPalette(tab, palette, message.request), respond);
     return true;
   }
-  // Pages' scripts run in the top frame only.
-  if (sender.frameId !== 0 || !sender.url || !isPageMessage(message)) return false;
+  if (!sender.url || !isPageMessage(message)) return false;
+  // In frames, only keefast's icons in payment fields run.
+  if (sender.frameId !== 0 && !fromFrame(message)) return false;
   const url = new URL(sender.url);
   if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-  answerPage(message, tab, url).then(respond, () => respond(null));
+  const top = sender.tab?.url ? new URL(sender.tab.url).origin : undefined;
+  answerPage(message, tab, url, top).then(respond, () => respond(null));
   return true;
 }
 
@@ -339,17 +412,21 @@ async function syncFieldsScript(): Promise<void> {
   const registered = await browser.scripting.getRegisteredContentScripts({
     ids: [FIELDS_SCRIPT.id],
   });
+  const script = {
+    id: FIELDS_SCRIPT.id,
+    // Relative to the extension root, as the manifest lists content scripts.
+    js: [FIELDS_SCRIPT.file.slice(1)],
+    matches: ALL_SITES.origins,
+    // Payment fields are often in a payment provider's frame (ADR 0010).
+    allFrames: true,
+    runAt: "document_idle" as const,
+    persistAcrossSessions: true,
+  };
   if (granted && registered.length === 0) {
-    await browser.scripting.registerContentScripts([
-      {
-        id: FIELDS_SCRIPT.id,
-        // Relative to the extension root, as the manifest lists content scripts.
-        js: [FIELDS_SCRIPT.file.slice(1)],
-        matches: ALL_SITES.origins,
-        runAt: "document_idle",
-        persistAcrossSessions: true,
-      },
-    ]);
+    await browser.scripting.registerContentScripts([script]);
+  } else if (granted && registered[0]?.allFrames !== true) {
+    // Registered by a version that showed the icons in pages alone.
+    await browser.scripting.updateContentScripts([script]);
   } else if (!granted && registered.length > 0) {
     await browser.scripting.unregisterContentScripts({ ids: [FIELDS_SCRIPT.id] });
   }
@@ -370,11 +447,18 @@ export default defineBackground(() => {
 
   browser.commands.onCommand.addListener(async (command, tab) => {
     if (command !== "fill" || tab?.id === undefined) return;
-    const outcome = await companion.shortcut(tab.id).catch(() => "choose" as const);
+    // A payment form gets the palette to pick a Card: a Card is never filled unpicked.
+    const page = await tabs.inspect(tab.id);
+    const payment = page?.fields.payment === true && !page.fields.login && !page.fields.totp;
+    const outcome = payment
+      ? "choose"
+      : await companion.shortcut(tab.id).catch(() => "choose" as const);
     if (outcome === "filled") return;
     // The palette lists the Entries to choose from; the popup says what's wrong.
     const status = await client.status().catch(() => "failed" as const);
-    if (status === "paired" && (await openPalette(tab.id, "entries"))) return;
+    if (status === "paired" && (await openPalette(tab.id, payment ? "payment" : "entries"))) {
+      return;
+    }
     await browser.action.openPopup().catch(() => {});
   });
 });

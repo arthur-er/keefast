@@ -1,0 +1,36 @@
+{
+  "id": "keefast.card",
+  "name": "Card",
+  "version": "0.1.0",
+  "publisher": "keefast",
+  "apiVersion": 1,
+  "capabilities": ["readProtected", "copy", "browserFill"],
+  "contributions": {
+    "facets": [
+      {
+        "id": "card",
+        "title": "Card",
+        "icon": "credit-card",
+        "detect": { "fields": ["Card number"] },
+        "fields": [
+          { "key": "number", "name": "Card number", "label": "Number", "kind": "digits", "protected": true, "placeholder": "1234 5678 9012 3456" },
+          { "key": "holder", "name": "Cardholder", "label": "Cardholder", "kind": "text", "protected": false, "placeholder": "Name as on the card" },
+          { "key": "expiry", "name": "Expiry", "label": "Expiry", "kind": "monthYear", "protected": false, "placeholder": "MM/YY" },
+          { "key": "cvv", "name": "CVV", "label": "CVV", "kind": "digits", "protected": true, "placeholder": "3 or 4 digits" },
+          { "key": "pin", "name": "PIN", "label": "PIN", "kind": "digits", "protected": true, "placeholder": "Optional" }
+        ],
+        "editor": { "add": "Add card", "remove": "Remove card" },
+        "subtitle": true,
+        "commands": [
+          { "id": "copy-number", "title": "Copy card number", "copy": "number", "shortcut": "Ctrl Shift C" },
+          { "id": "copy-cvv", "title": "Copy CVV", "copy": "cvv", "shortcut": "Ctrl Shift V" },
+          { "id": "copy-expiry", "title": "Copy expiry", "copy": "expiry", "shortcut": "Ctrl Shift E" }
+        ],
+        "fill": {
+          "form": "payment",
+          "fields": { "number": "cc-number", "holder": "cc-name", "expiry": "cc-exp", "cvv": "cc-csc" }
+        }
+      }
+    ]
+  }
+}

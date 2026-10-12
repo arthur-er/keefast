@@ -2,7 +2,9 @@
 //!
 //! Passwords and protected custom fields never leave in an Entry's DTO: the UI asks for one with
 //! `reveal_password` or `reveal_custom_field` when the user shows it, and edits send only what
-//! the user changed, so an untouched secret never crosses the boundary.
+//! the user changed, so an untouched secret never crosses the boundary. Plugins' facets come with
+//! the labels their Plugins derived, which are the one thing shown about a protected value
+//! without a reveal (ADR 0009).
 
 use std::collections::HashMap;
 
@@ -10,6 +12,7 @@ use keefast_core::{
     self as core, AccessDecision, AttachmentPreview, CustomField, Entry, EntryFields, EntrySearch,
     EntrySort, Group, Site, Timestamp, Totp, parse_tags,
 };
+use keefast_plugins::{Capability, EntryField, FieldKind, FoundFacet, PluginHost};
 use keefast_workspace::{self as ws, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -18,6 +21,8 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use super::Core;
+use super::facets::FacetEditorView;
+use crate::core::AppCore;
 use crate::dto::{
     Color, EntryId, GroupId, IconChoice, IconView, Scope, VaultId, icon_view, seconds, title_of,
 };
@@ -69,6 +74,10 @@ pub struct EntrySummary {
     /// The title, or "(untitled)".
     pub title: String,
     pub username: String,
+    /// What the list shows under the title in place of a username, when the Entry has none: the
+    /// label a Plugin derived for one of its facets, such as "Visa •••• 1111" (ADR 0009). A
+    /// username always wins, so this is `None` when there is one. Never a protected value.
+    pub label: Option<String>,
     pub url: String,
     pub tags: Vec<String>,
     pub color: Option<Color>,
@@ -152,6 +161,94 @@ pub struct RememberedAccessView {
     pub allowed: bool,
 }
 
+/// What an Owned field holds, which says how the UI shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum OwnedFieldKind {
+    Text,
+    /// Digits, shown in a monospace font.
+    Digits,
+    /// A month as `MM/YY`, such as a card's expiry; the UI says when it has passed or is near.
+    MonthYear,
+}
+
+impl From<FieldKind> for OwnedFieldKind {
+    fn from(kind: FieldKind) -> Self {
+        match kind {
+            FieldKind::Text => Self::Text,
+            FieldKind::Digits => Self::Digits,
+            FieldKind::MonthYear => Self::MonthYear,
+        }
+    }
+}
+
+/// One of a facet's Owned fields on an Entry. A protected value is left out, as a custom field's
+/// is: reveal and copy it by `index`, as any custom field.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedFieldView {
+    /// How its Plugin names it.
+    pub key: String,
+    /// The custom field's name, such as `Card number`.
+    pub name: String,
+    /// What the section calls it, such as "Number".
+    pub label: String,
+    pub kind: OwnedFieldKind,
+    /// Its index in the Entry's custom fields; `None` when the Entry hasn't got it.
+    pub index: Option<u32>,
+    /// Whether the Entry keeps it protected (or, when missing, whether its Plugin would).
+    pub protected: bool,
+    /// `None` when protected or missing.
+    pub value: Option<String>,
+    pub is_empty: bool,
+    /// What its Plugin derived to show in place of the value, without a reveal, such as
+    /// "Visa •••• 1111".
+    pub text: Option<String>,
+    /// What its input shows while empty in the Entry editor, such as "MM/YY".
+    pub placeholder: Option<String>,
+}
+
+/// A facet a Plugin found on an Entry, such as its Card: a section of the detail.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FacetView {
+    /// The Plugin's id, such as `keefast.card`.
+    pub plugin: String,
+    /// The facet's id within the Plugin, such as `card`.
+    pub facet: String,
+    /// The section's title, such as "Card".
+    pub title: String,
+    /// One of the kit's icons, by name (`credit-card`).
+    pub icon: Option<String>,
+    /// The label its Plugin derived, such as "Visa •••• 1111".
+    pub label: Option<String>,
+    /// Whether the Plugin has the Plugin capability to have its fields copied.
+    pub can_copy: bool,
+    /// The names of the fields an Entry has the facet by.
+    pub detect: Vec<String>,
+    /// Its section in the Entry editor; `None` when its Owned fields are edited as custom fields.
+    pub editor: Option<FacetEditorView>,
+    pub fields: Vec<OwnedFieldView>,
+    /// Its commands in the command palette's Entry section. Empty without the `copy` Plugin
+    /// capability, which every v1 command needs.
+    pub commands: Vec<FacetCommandView>,
+}
+
+/// A facet's command palette command, copying one of its Owned fields with `copy_field`.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FacetCommandView {
+    /// Unique within the facet, such as `copy-number`.
+    pub id: String,
+    /// As the palette lists it: "Copy card number".
+    pub title: String,
+    /// The key of the Owned field it copies, as in `fields`.
+    pub field: String,
+    /// The keys that run it, such as "Ctrl Shift C"; `None` when the Plugin declared none, or
+    /// keefast or another Plugin has them.
+    pub shortcut: Option<String>,
+}
+
 /// Everything about an Entry the detail shows, except its secrets.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +261,8 @@ pub struct EntryDetail {
     /// Other URLs the Entry is for, as KeePassXC keeps them (`KP2A_URL…` fields).
     pub additional_urls: Vec<String>,
     pub custom_fields: Vec<CustomFieldView>,
+    /// The facets Plugins found on it, in the order the Plugins were loaded.
+    pub facets: Vec<FacetView>,
     pub attachments: Vec<AttachmentView>,
     pub totp: Option<TotpView>,
     /// How many earlier versions the Entry's history keeps.
@@ -315,6 +414,7 @@ pub(crate) fn summary(
         id: entry.id().into(),
         title: title_of(entry),
         username: entry.username().to_owned(),
+        label: None,
         url: entry.url().to_owned(),
         tags: entry.tags().to_vec(),
         color: entry.color().map(Into::into),
@@ -371,6 +471,70 @@ fn custom_field_view(field: &CustomField) -> CustomFieldView {
     }
 }
 
+/// The facets Plugins find on an Entry. Their hooks run under fuel and memory limits, so this is
+/// quick even with the Workspace held.
+pub(crate) fn facet_views(plugins: &PluginHost, custom_fields: &[CustomField]) -> Vec<FacetView> {
+    let fields: Vec<_> = custom_fields
+        .iter()
+        .map(|field| EntryField {
+            name: &field.name,
+            value: field.value.expose_secret(),
+            protected: field.protected,
+        })
+        .collect();
+    plugins
+        .facets(&fields)
+        .into_iter()
+        .map(|found| facet_view(found, custom_fields))
+        .collect()
+}
+
+fn facet_view(found: FoundFacet, custom_fields: &[CustomField]) -> FacetView {
+    FacetView {
+        plugin: found.plugin.id.clone(),
+        facet: found.facet.id.clone(),
+        title: found.facet.title.clone(),
+        icon: found.facet.icon.clone(),
+        label: found.label,
+        can_copy: found.plugin.has(Capability::Copy),
+        detect: found.facet.detect.fields.clone(),
+        editor: found.facet.editor.as_ref().map(FacetEditorView::from),
+        commands: found
+            .commands
+            .iter()
+            .filter(|_| found.plugin.has(Capability::Copy))
+            .map(|found| FacetCommandView {
+                id: found.command.id.clone(),
+                title: found.command.title.clone(),
+                field: found.owned.key.clone(),
+                shortcut: found.shortcut.map(str::to_owned),
+            })
+            .collect(),
+        fields: found
+            .fields
+            .into_iter()
+            .map(|field| {
+                let kept = field.index.and_then(|index| custom_fields.get(index));
+                let protected = kept.map_or(field.owned.protected, |kept| kept.protected);
+                OwnedFieldView {
+                    key: field.owned.key.clone(),
+                    name: field.owned.name.clone(),
+                    label: field.owned.label.clone(),
+                    kind: field.owned.kind.into(),
+                    index: field.index.map(|index| index as u32),
+                    protected,
+                    value: kept
+                        .filter(|_| !protected)
+                        .map(|kept| kept.value.expose_secret().to_owned()),
+                    is_empty: kept.is_none_or(|kept| kept.value.expose_secret().is_empty()),
+                    text: field.text,
+                    placeholder: field.owned.placeholder.clone(),
+                }
+            })
+            .collect(),
+    }
+}
+
 /// An Entry of an unlocked Vault that isn't waiting to lock.
 pub(crate) fn find<'a>(
     workspace: &'a Workspace,
@@ -388,41 +552,106 @@ pub(crate) fn find<'a>(
     Ok((open, entry))
 }
 
-/// The Entry list.
+/// The custom fields of an Entry with no username that a Plugin may derive its list subtitle
+/// from, copied out so the Workspace can be let go of before the Plugin runs.
+struct ListedFields(Vec<(String, SecretString, bool)>);
+
+impl ListedFields {
+    /// `None` when the list shows the Entry's username, or none of its fields is one a subtitle
+    /// is derived from.
+    fn of(plugins: &PluginHost, entry: &Entry) -> Option<Self> {
+        if !entry.username().is_empty() {
+            return None;
+        }
+        let fields: Vec<_> = entry
+            .custom_fields()
+            .iter()
+            .filter(|field| plugins.lists_by(&field.name))
+            .map(|field| (field.name.clone(), field.value.clone(), field.protected))
+            .collect();
+        (!fields.is_empty()).then_some(Self(fields))
+    }
+
+    fn label(&self, plugins: &PluginHost) -> Option<String> {
+        let fields: Vec<_> = self
+            .0
+            .iter()
+            .map(|(name, value, protected)| EntryField {
+                name,
+                value: value.expose_secret(),
+                protected: *protected,
+            })
+            .collect();
+        plugins.list_label(&fields)
+    }
+}
+
+/// The Entry list. Plugins derive subtitles for Entries without a username after the Workspace
+/// is let go of, so a slow `derive` never holds it.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_entries(core: Core<'_>, query: EntryQuery) -> ApiResult<Vec<EntrySummary>> {
-    core.read(|workspace| {
+    entry_list(&core, &query)
+}
+
+fn entry_list(core: &AppCore, query: &EntryQuery) -> ApiResult<Vec<EntrySummary>> {
+    let plugins = core.plugins();
+    let listed = core.read(|workspace| {
         let scope = query.scope.to_workspace(workspace)?;
         let search = EntrySearch::new(&query.search);
         let listed = workspace.find_entries(scope, &search, query.sort.into());
         let mut places: HashMap<ws::VaultId, Places> = HashMap::new();
-        Ok(listed
-            .iter()
-            .filter_map(|listed| {
-                let open = workspace.vault(listed.vault)?;
-                let places = places
-                    .entry(listed.vault)
-                    .or_insert_with(|| Places::of(open.vault()));
-                Some(summary(workspace, open, places, listed.entry))
-            })
-            .collect())
-    })
+        ApiResult::Ok(
+            listed
+                .iter()
+                .filter_map(|listed| {
+                    let open = workspace.vault(listed.vault)?;
+                    let places = places
+                        .entry(listed.vault)
+                        .or_insert_with(|| Places::of(open.vault()));
+                    Some((
+                        summary(workspace, open, places, listed.entry),
+                        ListedFields::of(&plugins, listed.entry),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+    })?;
+    Ok(with_labels(&plugins, listed))
+}
+
+/// The summaries with the subtitles Plugins derive from their fields.
+fn with_labels(
+    plugins: &PluginHost,
+    listed: Vec<(EntrySummary, Option<ListedFields>)>,
+) -> Vec<EntrySummary> {
+    listed
+        .into_iter()
+        .map(|(mut summary, fields)| {
+            summary.label = fields.and_then(|fields| fields.label(plugins));
+            summary
+        })
+        .collect()
 }
 
 /// An Entry, without its password and protected custom fields.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiResult<EntryDetail> {
+    let plugins = core.plugins();
     core.read(|workspace| {
         let (open, found) = find(workspace, vault, &entry)?;
         let places = Places::of(open.vault());
+        let mut summary = summary(workspace, open, &places, found);
+        // As the list shows it, from the same Plugins.
+        summary.label = ListedFields::of(&plugins, found).and_then(|fields| fields.label(&plugins));
         Ok(EntryDetail {
-            summary: summary(workspace, open, &places, found),
+            summary,
             raw_title: found.title().to_owned(),
             notes: found.notes().to_owned(),
             additional_urls: found.additional_urls().to_vec(),
             custom_fields: custom_field_views(found),
+            facets: facet_views(&plugins, found.custom_fields()),
             attachments: found
                 .attachments()
                 .iter()
@@ -612,9 +841,15 @@ fn web_address(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use keefast_core::CustomField;
-    use secrecy::SecretString;
+    use secrecy::{ExposeSecret, SecretString};
 
-    use super::{custom_field_view, web_address};
+    use keefast_plugins::PluginHost;
+
+    use super::{
+        CustomFieldInput, EntryInput, EntryQuery, OwnedFieldKind, SortOrder, custom_field_view,
+        entry_list, facet_views, web_address,
+    };
+    use crate::dto::IconChoice;
 
     #[test]
     fn fields_keeping_totp_settings_are_marked() {
@@ -638,6 +873,220 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// The Entry list over a copy of the KeePassXC fixture with three Entries added: a Card with
+    /// no username, a Card with one, and a Card the Plugin can't label (no number).
+    #[test]
+    fn the_list_shows_a_cards_label_when_there_is_no_username() {
+        use keefast_core::{EntryFields, GroupId};
+        use keefast_workspace::{UnlockSecrets, VaultLocation};
+
+        use crate::core::tests::core;
+        use crate::dto::Scope;
+
+        let field = |name: &str, value: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        };
+        let card = |title: &str, username: &str, number: &str| EntryFields {
+            title: title.into(),
+            username: username.into(),
+            custom_fields: vec![
+                field("Card number", number, true),
+                field("Expiry", "08/31", false),
+                field("CVV", "737", true),
+                field("PIN", "8271", true),
+            ],
+            ..EntryFields::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cards.kdbx");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/keepassxc-kdbx4.kdbx"
+            ),
+            &path,
+        )
+        .unwrap();
+        let (core, _) = core();
+        core.update(|workspace| {
+            let vault = workspace
+                .open_vault(
+                    &VaultLocation::Local(path.clone()),
+                    &UnlockSecrets::password("fixture-password"),
+                )
+                .unwrap();
+            let root: GroupId = workspace.vault(vault).unwrap().vault().root().id();
+            for fields in [
+                card("Company Visa", "", "4111 1111 1111 1111"),
+                card("Nubank Ultravioleta", "arthur", "5162 9200 1234 5676"),
+                card("Blank card", "", ""),
+            ] {
+                workspace.create_entry(vault, root, &fields).unwrap();
+            }
+        });
+
+        let list = entry_list(
+            &core,
+            &EntryQuery {
+                scope: Scope::AllVaults,
+                search: String::new(),
+                sort: SortOrder::Title,
+            },
+        )
+        .unwrap();
+        let shown = |title: &str| {
+            let entry = list.iter().find(|entry| entry.title == title).unwrap();
+            (entry.username.as_str(), entry.label.as_deref())
+        };
+        assert_eq!(shown("Company Visa"), ("", Some("Visa •••• 1111")));
+        // A username wins: the Plugin isn't even asked.
+        assert_eq!(shown("Nubank Ultravioleta"), ("arthur", None));
+        assert_eq!(shown("Blank card"), ("", None));
+        // Entries without a Card have no label.
+        assert!(
+            list.iter()
+                .filter(|entry| !["Company Visa"].contains(&entry.title.as_str()))
+                .all(|entry| entry.label.is_none())
+        );
+
+        // No protected value reaches the list, whole or in part beyond the label's last four.
+        let json = serde_json::to_string(&list).unwrap();
+        for secret in ["4111 1111", "5162 9200", "\"737\"", "\"8271\""] {
+            assert!(!json.contains(secret), "{secret} is in the list");
+        }
+    }
+
+    #[test]
+    fn a_card_comes_with_its_label_and_without_its_protected_values() {
+        let field = |name: &str, value: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        };
+        let fields = [
+            field("Note", "hi", false),
+            field("Card number", "4111 1111 1111 1111", true),
+            field("Cardholder", "ARTHUR REZENDE", false),
+            field("Expiry", "08/31", false),
+            field("CVV", "", true),
+        ];
+        let facets = facet_views(&PluginHost::bundled(), &fields);
+        assert_eq!(facets.len(), 1);
+        let card = &facets[0];
+        assert_eq!(
+            (card.plugin.as_str(), card.facet.as_str()),
+            ("keefast.card", "card")
+        );
+        assert_eq!(card.label.as_deref(), Some("Visa •••• 1111"));
+        assert!(card.can_copy);
+        let commands: Vec<_> = card
+            .commands
+            .iter()
+            .map(|c| (c.title.as_str(), c.field.as_str(), c.shortcut.as_deref()))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                ("Copy card number", "number", Some("Ctrl Shift C")),
+                ("Copy CVV", "cvv", Some("Ctrl Shift V")),
+                ("Copy expiry", "expiry", Some("Ctrl Shift E")),
+            ]
+        );
+
+        let [number, holder, expiry, cvv, pin] = &card.fields[..] else {
+            panic!("the Card has five fields");
+        };
+        assert_eq!(number.index, Some(1));
+        assert_eq!(number.value, None, "protected");
+        assert_eq!(number.text.as_deref(), Some("Visa •••• 1111"));
+        assert_eq!(holder.value.as_deref(), Some("ARTHUR REZENDE"));
+        assert_eq!(expiry.kind, OwnedFieldKind::MonthYear);
+        assert!(cvv.protected && cvv.is_empty && cvv.value.is_none());
+        assert_eq!((pin.index, pin.protected, pin.is_empty), (None, true, true));
+        // Nothing in the DTO is a protected value.
+        let json = serde_json::to_string(&facets).unwrap();
+        assert!(!json.contains("4111 1111 1111 1111"));
+    }
+
+    /// Entry editor A saves a Card the user didn't touch as kept: `value: None` with its index,
+    /// so its protected values never cross to the UI, and come back as they were.
+    #[test]
+    fn card_fields_kept_by_index_come_back_as_they_were() {
+        use keefast_core::{CompositeKey, Encryption, EntryFields, Timestamp, Vault};
+
+        let field = |name: &str, value: &str, protected| CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        };
+        let now = Timestamp::from_unix_seconds(1_800_000_000);
+        let mut vault = Vault::create(
+            "Test",
+            &CompositeKey::password("x"),
+            &Encryption::default(),
+            now,
+        )
+        .unwrap();
+        let fields = EntryFields {
+            title: "Company Visa".into(),
+            custom_fields: vec![
+                field("Note", "hi", false),
+                field("Card number", "4111 1111 1111 1111", true),
+                field("Expiry", "08/31", false),
+                field("CVV", "123", true),
+            ],
+            ..EntryFields::default()
+        };
+        let id = vault.create_entry(vault.root().id(), &fields, now).unwrap();
+        let entry = vault.entry(id).unwrap();
+
+        let kept = |name: &str, original, protected| CustomFieldInput {
+            name: name.to_owned(),
+            value: None,
+            protected,
+            original: Some(original),
+        };
+        let input = EntryInput {
+            title: "Company Visa (work)".into(),
+            username: String::new(),
+            password: None,
+            url: String::new(),
+            notes: String::new(),
+            custom_fields: vec![
+                kept("Note", 0, false),
+                kept("Card number", 1, true),
+                CustomFieldInput {
+                    name: "Expiry".into(),
+                    value: Some("09/31".into()),
+                    protected: false,
+                    original: None,
+                },
+                kept("CVV", 3, true),
+            ],
+            tags: Vec::new(),
+            color: None,
+            icon: IconChoice::Standard { number: 0 },
+            expires: None,
+        };
+        let edited = input.to_fields(Some(entry)).unwrap();
+        let shown: Vec<_> = edited
+            .custom_fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.value.expose_secret(), f.protected))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Note", "hi", false),
+                ("Card number", "4111 1111 1111 1111", true),
+                ("Expiry", "09/31", false),
+                ("CVV", "123", true),
+            ]
+        );
     }
 
     #[test]

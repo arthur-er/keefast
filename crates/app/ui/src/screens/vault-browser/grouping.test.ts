@@ -6,7 +6,7 @@ import { entryKey, groupEntries, moveSelection, visibleEntries } from "./groupin
 
 function entry(vault: number, id: string, group: string, groupName: string, vaultName = vault === 0 ? "Personal" : "Work"): EntrySummary {
   return {
-    vault, id, title: id, username: "", url: "", tags: [], color: null, icon: { kind: "standard", number: 0 },
+    vault, id, title: id, username: "", label: null, url: "", tags: [], color: null, icon: { kind: "standard", number: 0 },
     faviconUrl: null, expires: null, expired: false, created: null, modified: null, hasPassword: true, hasTotp: false,
     attachmentCount: 0, group, groupName, vaultName, inRecycleBin: false,
   };

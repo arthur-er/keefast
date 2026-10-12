@@ -65,6 +65,33 @@ describe("fieldsToMark", () => {
 
     expect(fieldsToMark(document)).toEqual([]);
   });
+
+  it("marks a payment form's text fields, not its selects", () => {
+    page(`
+      <form>
+        <input id="email" type="email" autocomplete="email">
+        <input id="holder" name="account-holder" autocomplete="cc-name">
+        <input id="number" autocomplete="cc-number">
+        <select id="month" autocomplete="cc-exp-month"><option>08</option></select>
+        <input id="cvc" autocomplete="cc-csc">
+      </form>`);
+
+    const marked = fieldsToMark(document);
+
+    expect(marked).toContainEqual({ input: byId("email"), kind: "login", icon: "logo" });
+    for (const id of ["holder", "number", "cvc"]) {
+      expect(marked).toContainEqual({ input: byId(id), kind: "payment", icon: "logo" });
+    }
+    expect(marked.some(({ input }) => input.id === "month")).toBe(false);
+  });
+
+  it("marks only payment fields in a page's frames", () => {
+    page(`${signIn}<input id="number" autocomplete="cc-number">`);
+
+    expect(fieldsToMark(document, { paymentOnly: true })).toEqual([
+      { input: byId("number"), kind: "payment", icon: "logo" },
+    ]);
+  });
 });
 
 describe("FieldIcons", () => {
@@ -106,6 +133,17 @@ describe("FieldIcons", () => {
       "Fill with keefast",
       "Fill with keefast",
     ]);
+  });
+
+  it("asks for the palette to pick a Card from a payment field's icon", async () => {
+    page(`<input id="number" autocomplete="cc-number">`);
+    handlers.click.mockResolvedValue({ kind: "palette" });
+    icons.start();
+
+    expect(buttons().map((button) => button.title)).toEqual(["Fill a card with keefast"]);
+    await click(buttons()[0]!);
+
+    expect(handlers.click).toHaveBeenCalledWith("payment");
   });
 
   it("asks the service worker to fill when its icon is clicked", async () => {
