@@ -19,7 +19,7 @@ import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
-import { startNewEntry } from "@/screens/entry-editor/session";
+import { startNewEntry, useEntryWithChanges } from "@/screens/entry-editor/session";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
@@ -62,6 +62,7 @@ export function EntryList() {
   );
   const shown = useMemo(() => visibleEntries(groups, collapsed), [groups, collapsed]);
   const selected = view?.entry ?? null;
+  const withChanges = useEntryWithChanges();
 
   // A list with nothing selected (or the selection gone) selects its first Entry.
   useEffect(() => {
@@ -168,6 +169,7 @@ export function EntryList() {
                       key={entryKey(entry)}
                       entry={entry}
                       selected={sameEntry(selected, entry)}
+                      unsaved={sameEntry(withChanges, entry)}
                       search={state.search}
                       onSelect={() => select(entry)}
                     />
@@ -184,11 +186,14 @@ export function EntryList() {
 function EntryRow({
   entry,
   selected,
+  unsaved,
   search,
   onSelect,
 }: {
   entry: EntrySummary;
   selected: boolean;
+  /** Whether the editor has unsaved changes to the Entry. */
+  unsaved: boolean;
   search: string;
   onSelect: () => void;
 }) {
@@ -208,6 +213,11 @@ function EntryRow({
           <span className="t truncate">
             <Marked text={entry.title} query={search} />
           </span>
+          {unsaved && (
+            <span className="C-unsaved" role="img" aria-label="Unsaved changes" title="Unsaved changes">
+              •
+            </span>
+          )}
           <span className="u truncate">
             {/* A username wins; without one, the label a Plugin derived ("Visa •••• 1111"). */}
             {entry.username || entry.label === null ? <Marked text={entry.username} query={search} /> : entry.label}
