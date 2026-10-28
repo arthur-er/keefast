@@ -250,7 +250,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
           )}
           <TabsList className="C-tabs mt-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
+            <TabsTrigger value="fields" count={shownCustomFields(entry).length}>Fields</TabsTrigger>
             <TabsTrigger value="files" count={entry.attachments.length}>Files</TabsTrigger>
             <TabsTrigger value="history" count={entry.historyCount}>History</TabsTrigger>
             <TabsTrigger value="access" count={entry.rememberedAccess.length}>Access</TabsTrigger>
@@ -470,6 +470,12 @@ function SectionHead({ title, count, children }: { title: string; count: number;
   );
 }
 
+/** The custom fields the Fields tab lists, by their index in the Entry: those TOTP settings are
+ * kept in are the TOTP tile's while the Entry has TOTP. */
+function shownCustomFields(entry: Entry) {
+  return entry.customFields.flatMap((field, index) => (entry.totp && field.totpStorage ? [] : [{ field, index }]));
+}
+
 function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const [revealed, setRevealed] = useState<Record<number, string>>({});
   useEffect(() => {
@@ -490,14 +496,15 @@ function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null
       toast(errorMessage(error), { icon: "error" });
     }
   };
+  const fields = shownCustomFields(entry);
   return (
     <>
-      <SectionHead title="Custom fields" count={entry.customFields.length} />
-      {entry.customFields.length === 0 ? (
+      <SectionHead title="Custom fields" count={fields.length} />
+      {fields.length === 0 ? (
         <div className="vb-notes empty">No custom fields.</div>
       ) : (
         <div className="vb-fields">
-          {entry.customFields.map((field, index) => {
+          {fields.map(({ field, index }) => {
             const value = field.value ?? revealed[index];
             const key = `field:${index}`;
             return (
