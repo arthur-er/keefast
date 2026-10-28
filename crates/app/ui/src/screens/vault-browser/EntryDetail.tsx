@@ -34,6 +34,7 @@ import { type CopyHandler, FieldRow } from "./FieldRow";
 const MASK = "••••••••••••";
 /** How long a copied field shows "Copied". */
 const FLASH_MS = 1200;
+const UNREADABLE_TOTP = "Can't be read · Set up again";
 
 type Tab = "overview" | "fields" | "files" | "history" | "access";
 
@@ -207,7 +208,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 type="button"
                 className={cn("C-qt is-setup is-action", totpSetup && "is-open")}
                 aria-expanded={totpSetup}
-                title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}
+                title={entry.totp?.status === "unreadable" ? `${UNREADABLE_TOTP}\n${entry.totp.reason}` : undefined}
                 onClick={() => setTotpSetup(!totpSetup)}
               >
                 <span className="k">
@@ -215,7 +216,8 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 </span>
                 <span className="v subtle">
                   {entry.totp?.status === "unreadable" ? (
-                    "Can't be read · Set up again"
+                    // In a span of its own: the tile's ellipsis doesn't show on bare text in a flex box.
+                    <span className="truncate">{UNREADABLE_TOTP}</span>
                   ) : (
                     <>
                       <Plus className="ico-sm" /> Set up TOTP
