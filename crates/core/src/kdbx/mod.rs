@@ -189,7 +189,7 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<VaultFile
     let header_hmac = data
         .get(header_end + 32..header_end + 64)
         .ok_or_else(truncated)?;
-    if header_hash != crypto::sha256(&[header_bytes]) {
+    if !crypto::matches(header_hash, &crypto::sha256(&[header_bytes])) {
         return Err(OpenError::Corrupt(
             "the header fails its integrity check".into(),
         ));
@@ -223,7 +223,7 @@ fn read_kdbx4(data: &[u8], composite: &[u8; 32], minor: u16) -> Result<VaultFile
 
     let transformed = crypto::transform_key(&kdf, composite)?;
     let hmac_key = crypto::hmac_key(&master_seed, &transformed);
-    if header_hmac != crypto::header_hmac(header_bytes, &hmac_key) {
+    if !crypto::matches(header_hmac, &crypto::header_hmac(header_bytes, &hmac_key)) {
         return Err(OpenError::WrongKey);
     }
 
@@ -333,7 +333,8 @@ fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<VaultFile, OpenError>
     let key = crypto::cipher_key(&master_seed, &transformed);
     let mut payload = cipher.decrypt_raw(&key, &iv, &data[header_end..])?;
     // The first bytes of the payload repeat a header field: the only key check KDBX 3.1 has.
-    if payload.get(..start_bytes.len()) != Some(start_bytes.as_slice()) {
+    let start = payload.get(..start_bytes.len()).unwrap_or_default();
+    if !crypto::matches(start, &start_bytes) {
         return Err(OpenError::WrongKey);
     }
     if cipher.is_block_cipher() {
@@ -355,7 +356,8 @@ fn read_kdbx3(data: &[u8], composite: &[u8; 32]) -> Result<VaultFile, OpenError>
         .and_then(|meta| meta.child("HeaderHash"))
     {
         let expected = crypto::sha256(&[&data[..header_end]]);
-        if BASE64.decode(hash.text().trim()).ok().as_deref() != Some(&expected[..]) {
+        let found = BASE64.decode(hash.text().trim()).unwrap_or_default();
+        if !crypto::matches(&found, &expected) {
             return Err(OpenError::Corrupt(
                 "the header fails its integrity check".into(),
             ));
