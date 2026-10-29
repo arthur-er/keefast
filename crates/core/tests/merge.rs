@@ -559,6 +559,22 @@ fn the_default_access_policy_set_last_wins_on_both_sides() {
 }
 
 #[test]
+fn the_vault_name_and_recycle_bin_set_last_win_on_both_sides() {
+    let (mut ours, mut theirs) = two_copies();
+    ours.rename("Ours", at(1));
+    theirs.rename("Theirs", at(2));
+    ours.set_recycle_bin_enabled(false, at(2));
+    theirs.set_recycle_bin_enabled(true, at(1));
+
+    merge_both_ways(&mut ours, &mut theirs);
+
+    for vault in [&ours, &theirs] {
+        assert_eq!(vault.name(), "Theirs");
+        assert!(!vault.recycle_bin_enabled());
+    }
+}
+
+#[test]
 fn a_pairing_revoked_on_one_side_stays_revoked_on_both() {
     let (mut ours, mut theirs) = two_copies();
     ours.add_pairing("Home", "aG9tZQ==", at(1)).unwrap();

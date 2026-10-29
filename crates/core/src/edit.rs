@@ -207,6 +207,57 @@ pub(crate) fn is_standard_field(name: &str) -> bool {
 }
 
 impl Vault {
+    /// The Vault's name, as KeePass clients keep it (`DatabaseName`); empty if it has none.
+    pub fn name(&self) -> String {
+        self.meta_text("DatabaseName").unwrap_or_default()
+    }
+
+    /// Renames the Vault, with when, so a Merge keeps the newest name.
+    pub fn rename(&mut self, name: &str, now: Timestamp) {
+        let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
+        set_value(
+            child_or_insert(meta, "DatabaseName", &["Generator"]),
+            name.trim(),
+            false,
+        );
+        set_value(
+            child_or_insert(meta, "DatabaseNameChanged", &["DatabaseName"]),
+            &now.encode(),
+            false,
+        );
+    }
+
+    /// Whether deleting moves Entries and Groups to the Recycle Bin, rather than deleting them
+    /// for good. KeePass turns it on when the Vault file doesn't say.
+    pub fn recycle_bin_enabled(&self) -> bool {
+        self.meta_text("RecycleBinEnabled")
+            .is_none_or(|text| is_true(&text))
+    }
+
+    /// Turns the Recycle Bin on or off, with when, so a Merge keeps the newest choice. Turning
+    /// it off keeps the Recycle Bin and what is in it.
+    pub fn set_recycle_bin_enabled(&mut self, enabled: bool, now: Timestamp) {
+        let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
+        set_value(
+            child_or_insert(
+                meta,
+                "RecycleBinEnabled",
+                &["CustomIcons", "MemoryProtection"],
+            ),
+            if enabled { "True" } else { "False" },
+            false,
+        );
+        set_value(
+            child_or_insert(
+                meta,
+                "RecycleBinChanged",
+                &["RecycleBinUUID", "RecycleBinEnabled"],
+            ),
+            &now.encode(),
+            false,
+        );
+    }
+
     /// The Group deleted Entries and Groups go to, if the Vault has one.
     pub fn recycle_bin(&self) -> Option<GroupId> {
         let id = self.recycle_bin_uuid()?;
@@ -616,11 +667,6 @@ impl Vault {
                 .map(|binary| binary.data.bytes().len() as u64)
                 .collect(),
         }
-    }
-
-    fn recycle_bin_enabled(&self) -> bool {
-        self.meta_text("RecycleBinEnabled")
-            .is_none_or(|text| is_true(&text))
     }
 
     pub(crate) fn recycle_bin_uuid(&self) -> Option<Uuid> {

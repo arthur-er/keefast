@@ -15,6 +15,8 @@ use crate::{EntryScope, PendingSave, VaultId, VaultLocation, View, Workspace};
 pub struct LockedVault {
     id: VaultId,
     location: VaultLocation,
+    /// What the Vault was called when it locked.
+    name: String,
     /// Where the user was in the Vault when it locked, to return them there.
     view: Option<View>,
 }
@@ -29,7 +31,7 @@ impl LockedVault {
     }
 
     pub fn display_name(&self) -> String {
-        self.location.display_name()
+        self.name.clone()
     }
 }
 
@@ -254,6 +256,7 @@ impl Workspace {
         };
         self.cut_off_browser_requests(id);
         let open = self.vaults.remove(at);
+        let name = open.display_name();
         let view = self.leave_vault(id);
         let at = self.locked.partition_point(|locked| locked.id < id);
         self.locked.insert(
@@ -261,6 +264,7 @@ impl Workspace {
             LockedVault {
                 id,
                 location: open.location,
+                name,
                 view,
             },
         );

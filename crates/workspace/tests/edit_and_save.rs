@@ -112,6 +112,46 @@ fn a_created_entry_is_in_the_vault_file_after_saving_and_reopening() {
 }
 
 #[test]
+fn a_renamed_vault_goes_by_its_new_name_and_by_its_vault_file_when_it_has_none() {
+    let mut h = harness();
+
+    h.workspace.rename_vault(h.vault, "Home").unwrap();
+
+    assert!(h.unsaved());
+    assert_eq!(h.workspace.vault(h.vault).unwrap().display_name(), "Home");
+    h.workspace.save_vault(h.vault).unwrap();
+    assert_eq!(h.reopen().name(), "Home");
+    h.workspace.rename_vault(h.vault, "  ").unwrap();
+    assert_eq!(
+        h.workspace.vault(h.vault).unwrap().display_name(),
+        "personal"
+    );
+}
+
+#[test]
+fn turning_the_recycle_bin_off_is_saved_and_deletes_for_good() {
+    let mut h = harness();
+    let root = h.root();
+    let id = h
+        .workspace
+        .create_entry(h.vault, root, &fields("Bank", "pw"))
+        .unwrap();
+    h.workspace.save_vault(h.vault).unwrap();
+
+    // Already on, it changes nothing.
+    h.workspace.set_recycle_bin_enabled(h.vault, true).unwrap();
+    assert!(!h.unsaved());
+    h.workspace.set_recycle_bin_enabled(h.vault, false).unwrap();
+    h.workspace.delete_entry(h.vault, id).unwrap();
+    h.workspace.save_vault(h.vault).unwrap();
+
+    let reopened = h.reopen();
+    assert!(!reopened.recycle_bin_enabled());
+    assert!(reopened.entry(id).is_none());
+    assert_eq!(reopened.recycle_bin(), None);
+}
+
+#[test]
 fn edits_are_not_in_the_vault_file_until_saved() {
     let mut h = harness();
     let root = h.root();
