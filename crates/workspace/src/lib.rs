@@ -3,6 +3,7 @@
 
 mod atomic_file;
 mod attachments;
+mod background;
 mod browser;
 mod browser_hosts;
 mod cache;
@@ -35,6 +36,7 @@ use keefast_core::{
 use secrecy::SecretString;
 
 pub use attachments::{read_attachment, write_attachment};
+pub use background::settled_vault_file_changes;
 pub use browser::{
     AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId, FormFill,
     FormPick, KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId,
