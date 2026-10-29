@@ -10,6 +10,8 @@ import { api, errorMessage } from "@/api";
 import type { SyncState, VaultSummary } from "@/bindings";
 import { keys } from "@/api/queries";
 import { Button, toast } from "@/kit";
+import { timeAgo } from "@/lib/format";
+import { useNow } from "@/lib/now";
 import { cn } from "@/lib/utils";
 
 import "./dropbox.css";
@@ -23,6 +25,7 @@ const SYNC: Record<SyncState, { word: string; body: string }> = {
 
 export function SyncDetail({ vault }: { vault: VaultSummary }) {
   const account = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data?.account;
+  const now = useNow();
   const sync = vault.syncStatus;
   if (!sync) return null;
   const { word, body } = SYNC[sync];
@@ -40,7 +43,10 @@ export function SyncDetail({ vault }: { vault: VaultSummary }) {
         )}
         {word}
       </div>
-      <p>{body}</p>
+      <p>
+        {body}
+        {vault.lastSynced !== null && ` Last synced ${timeAgo(vault.lastSynced, now)}.`}
+      </p>
       {(sync === "error" || sync === "offline") && (
         <div className="hstack mt-2.5">
           <Button

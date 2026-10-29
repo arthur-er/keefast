@@ -230,6 +230,8 @@ interface MockState {
   dropboxAccount: { name: string; email: string } | null;
   /** Connecting Dropbox "in the browser": stops it as cancelled. */
   dropboxConnecting: (() => void) | null;
+  /** When each Dropbox Vault last synced, in seconds since 1970; a while ago until it syncs here. */
+  syncedAt: Map<number, number>;
   /** Vaults' encryption, once changed from the default. */
   encryption: Map<number, EncryptionSettings>;
   /** How registering the browsers' native host went, while browser integration is on. */
@@ -263,6 +265,7 @@ function initialState(): MockState {
     clipboardClearsAt: null,
     dropboxAccount: { name: "Arthur Rezende", email: "arthur-er@protonmail.com" },
     dropboxConnecting: null,
+    syncedAt: new Map(),
     encryption: new Map(),
     browserHosts: "ok",
     configError: null,
@@ -272,6 +275,9 @@ function initialState(): MockState {
 
 /** Who the mock's browser requests come from: the Pairing's name. */
 const MOCK_BROWSER = "Chrome on my laptop";
+
+/** When the mock started, in seconds since 1970. */
+const MOCK_START = Date.now() / 1000;
 
 /** The scenes `?mock=` and `__keefastMock.simulate` set up. */
 export type MockScene =
@@ -370,7 +376,10 @@ export function createMockBackend(): Backend & {
       v.saving = false;
       v.unsaved = false;
       v.saveFailed = false;
-      if (v.sync) v.sync = "synced";
+      if (v.sync) {
+        v.sync = "synced";
+        state.syncedAt.set(v.id, Date.now() / 1000);
+      }
       if (state.pendingLock?.vault === v.id) {
         state.pendingLock = null;
         v.locked = true;
@@ -619,6 +628,7 @@ export function createMockBackend(): Backend & {
           saving: !v.locked && v.saving,
           saveFailed: !v.locked && v.saveFailed,
           syncStatus: v.locked ? null : v.sync,
+          lastSynced: v.locked || v.sync === null ? null : (state.syncedAt.get(v.id) ?? MOCK_START - 2 * 60),
           entryCount: hidden ? 0 : v.entries.length,
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,

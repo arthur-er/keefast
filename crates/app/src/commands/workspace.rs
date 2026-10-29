@@ -108,6 +108,9 @@ pub struct VaultSummary {
     pub save_failed: bool,
     /// `None` for a local Vault file.
     pub sync_status: Option<SyncState>,
+    /// When the Vault last synced with its Vault file in Dropbox, in seconds since 1970 UTC.
+    /// `None` for a local Vault file, a locked Vault, and until a sync goes through.
+    pub last_synced: Option<f64>,
     /// Entries in the Vault, outside the Recycle Bin too; 0 unless unlocked.
     pub entry_count: u32,
     pub root_group: Option<GroupId>,
@@ -289,6 +292,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
                 saving: open.is_saving(),
                 save_failed: open.save_failed(),
                 sync_status: open.sync_status().map(Into::into),
+                last_synced: open.last_synced().map(seconds),
                 entry_count: match locking {
                     true => 0,
                     false => vault.root().all_entries().count() as u32,
@@ -307,6 +311,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             saving: false,
             save_failed: false,
             sync_status: None,
+            last_synced: None,
             entry_count: 0,
             root_group: None,
             recycle_bin: None,

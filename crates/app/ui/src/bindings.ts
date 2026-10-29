@@ -1242,6 +1242,11 @@ export type VaultSummary = {
 	saveFailed: boolean,
 	/**  `None` for a local Vault file. */
 	syncStatus: SyncState | null,
+	/**
+	 *  When the Vault last synced with its Vault file in Dropbox, in seconds since 1970 UTC.
+	 *  `None` for a local Vault file, a locked Vault, and until a sync goes through.
+	 */
+	lastSynced: number | null,
 	/**  Entries in the Vault, outside the Recycle Bin too; 0 unless unlocked. */
 	entryCount: number,
 	rootGroup: GroupId | null,

@@ -7,7 +7,7 @@ import { storageLine, toolbarStatus, vaultStatus } from "./vaultStatus";
 function vault(changes: Partial<VaultSummary> = {}): VaultSummary {
   return {
     id: 0, name: "Personal", location: { provider: "local", path: "/v/Personal.kdbx", name: "Personal", description: "/v/Personal.kdbx" },
-    state: "unlocked", unsavedChanges: false, saving: false, saveFailed: false, syncStatus: null, entryCount: 1,
+    state: "unlocked", unsavedChanges: false, saving: false, saveFailed: false, syncStatus: null, lastSynced: null, entryCount: 1,
     rootGroup: "r", recycleBin: null, browserGroup: null, ...changes,
   };
 }
