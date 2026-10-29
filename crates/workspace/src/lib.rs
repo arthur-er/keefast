@@ -355,6 +355,8 @@ pub struct PendingOpen {
     cache: Option<Arc<dyn VaultCache>>,
     location: VaultLocation,
     secrets: UnlockSecrets,
+    /// How many OS locks and suspends there had been when the open began.
+    os_locks: u64,
 }
 
 /// Where an opened Vault file was read from.
@@ -384,6 +386,7 @@ impl PendingOpen {
             vault,
             revision,
             fetched,
+            os_locks: Some(self.os_locks),
         })
     }
 
@@ -425,6 +428,9 @@ pub struct UnlockedVault {
     vault: Vault,
     revision: Option<Revision>,
     fetched: Fetched,
+    /// For a Vault unlocked with its key, how many OS locks and suspends there had been when
+    /// the unlock began; `None` for a Vault just created.
+    os_locks: Option<u64>,
 }
 
 /// A save that has not run yet: a snapshot of the Vault, so the slow part (key derivation,
@@ -604,6 +610,9 @@ pub struct Workspace {
     next_id: u64,
     /// Counts unlockings, to tell each from the ones before.
     unlockings: u64,
+    /// Counts the OS locks and suspends that locked the Vaults, so an unlock begun before one
+    /// is discarded.
+    os_locks: u64,
     config: AppConfig,
     /// Where the config is kept between runs; `None` keeps it in memory only.
     config_store: Option<Arc<dyn ConfigStore>>,
@@ -649,6 +658,7 @@ impl Workspace {
             locked: Vec::new(),
             next_id: 0,
             unlockings: 0,
+            os_locks: 0,
             config: AppConfig::default(),
             config_store: None,
             config_error: None,
@@ -945,7 +955,8 @@ impl Workspace {
         secrets: &UnlockSecrets,
     ) -> Result<VaultId, OpenVaultError> {
         let pending = self.begin_open(location.clone(), secrets.clone())?;
-        Ok(self.add_unlocked(pending.unlock()?))
+        // Nothing can lock the Vaults while this call holds the Workspace.
+        Ok(self.add(pending.unlock()?))
     }
 
     /// Starts opening a Vault file, or unlocking it if its Vault is locked. Run the returned
@@ -966,6 +977,7 @@ impl Workspace {
             cache: self.cache_for(&location),
             location,
             secrets,
+            os_locks: self.os_locks,
         })
     }
 
@@ -973,7 +985,21 @@ impl Workspace {
     /// the same Vault file was opened meanwhile, that Vault is kept and this one dropped. A
     /// locked Vault unlocked this way keeps its id, and returns the user to where they were in
     /// it, if they were in it when it locked.
-    pub fn add_unlocked(&mut self, unlocked: UnlockedVault) -> VaultId {
+    ///
+    /// An unlock begun before the OS locked or suspended is discarded, returning `None`: the
+    /// Vault stays as it was, locked or not open, for the user to unlock again once back. A
+    /// Vault just created is always added.
+    pub fn add_unlocked(&mut self, unlocked: UnlockedVault) -> Option<VaultId> {
+        if unlocked
+            .os_locks
+            .is_some_and(|began| began != self.os_locks)
+        {
+            return None;
+        }
+        Some(self.add(unlocked))
+    }
+
+    fn add(&mut self, unlocked: UnlockedVault) -> VaultId {
         self.remember_recent(&unlocked.location);
         if let Some(open) = self.open_vault_at(&unlocked.location) {
             return open;

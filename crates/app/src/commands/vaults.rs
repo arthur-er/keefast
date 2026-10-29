@@ -249,10 +249,16 @@ fn directory_of(near: Option<&str>) -> Option<PathBuf> {
 }
 
 /// Opens a Vault file, or unlocks its Vault if it is locked, deriving the key off the main
-/// thread. A Vault file whose Vault is open already is just shown.
+/// thread. A Vault file whose Vault is open already is just shown. `None` when the OS locked or
+/// suspended while the key was derived: the Vault stays as it was, for the user to unlock
+/// again.
 #[tauri::command]
 #[specta::specta]
-pub async fn unlock_vault(core: Core<'_>, location: Location, key: KeyInput) -> ApiResult<VaultId> {
+pub async fn unlock_vault(
+    core: Core<'_>,
+    location: Location,
+    key: KeyInput,
+) -> ApiResult<Option<VaultId>> {
     let secrets = key.into_secrets();
     let location = location.to_workspace();
     let pending = core.read(|workspace| workspace.begin_open(location, secrets));
@@ -260,14 +266,14 @@ pub async fn unlock_vault(core: Core<'_>, location: Location, key: KeyInput) -> 
         Ok(pending) => pending,
         Err(OpenVaultError::AlreadyOpen(vault)) => {
             core.update(|workspace| workspace.show(View::from(EntryScope::Vault(vault))));
-            return Ok(vault.into());
+            return Ok(Some(vault.into()));
         }
         Err(error) => return Err(error.into()),
     };
     let unlocked = blocking(move || pending.unlock()).await??;
     Ok(core
         .update(|workspace| workspace.add_unlocked(unlocked))
-        .into())
+        .map(Into::into))
 }
 
 /// Writes a new Vault file, never over an existing file, deriving the key off the main thread,
@@ -294,6 +300,7 @@ pub async fn create_vault(core: Core<'_>, input: NewVaultInput) -> ApiResult<Vau
     let created = blocking(move || pending.create()).await??;
     Ok(core
         .update(|workspace| workspace.add_unlocked(created))
+        .expect("a Vault just created is always added")
         .into())
 }
 

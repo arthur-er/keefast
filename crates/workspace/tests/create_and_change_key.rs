@@ -46,7 +46,7 @@ fn new_vault(name: &str, secrets: UnlockSecrets) -> NewVault {
 
 fn create(workspace: &mut Workspace, location: &VaultLocation, new: NewVault) -> VaultId {
     let pending = workspace.begin_create(location.clone(), new).unwrap();
-    workspace.add_unlocked(pending.create().unwrap())
+    workspace.add_unlocked(pending.create().unwrap()).unwrap()
 }
 
 fn fields(title: &str) -> EntryFields {

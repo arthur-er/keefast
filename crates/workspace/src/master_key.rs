@@ -92,6 +92,7 @@ impl PendingCreate {
             vault,
             revision: Some(revision),
             fetched: Fetched::FromProvider,
+            os_locks: None,
         })
     }
 }
