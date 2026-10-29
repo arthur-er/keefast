@@ -14,6 +14,15 @@ use crate::xml;
 pub struct CompositeKey {
     /// The 32-byte key of each component, password first, as KeePass combines them.
     components: Vec<Zeroizing<Vec<u8>>>,
+    parts: KeyParts,
+}
+
+/// What a master key is made of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyParts {
+    Password,
+    KeyFile,
+    PasswordAndKeyFile,
 }
 
 /// Why a key file cannot be used.
@@ -29,6 +38,7 @@ impl CompositeKey {
     pub fn password(password: impl Into<String>) -> Self {
         Self {
             components: vec![password_component(&SecretString::from(password.into()))],
+            parts: KeyParts::Password,
         }
     }
 
@@ -37,6 +47,7 @@ impl CompositeKey {
     pub fn key_file(contents: &[u8]) -> Result<Self, KeyFileError> {
         Ok(Self {
             components: vec![key_file_component(contents)?],
+            parts: KeyParts::KeyFile,
         })
     }
 
@@ -46,7 +57,12 @@ impl CompositeKey {
     ) -> Result<Self, KeyFileError> {
         let mut key = Self::password(password);
         key.components.push(key_file_component(key_file)?);
+        key.parts = KeyParts::PasswordAndKeyFile;
         Ok(key)
+    }
+
+    pub fn parts(&self) -> KeyParts {
+        self.parts
     }
 
     /// KeePass's composite key: SHA-256 over each component's key.

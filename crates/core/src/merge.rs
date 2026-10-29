@@ -71,7 +71,7 @@ impl Vault {
             }
             read = kdbx::read(bytes, previous);
         }
-        Vault::from_file(read?, self.key.clone())
+        Vault::from_file(read?, self.key.clone(), self.key_parts)
     }
 
     /// Merges `other`, another version of this Vault, into this one with KeePass's rules (see

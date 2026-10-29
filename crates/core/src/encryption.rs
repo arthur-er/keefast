@@ -3,7 +3,7 @@
 
 use crate::edit::{child_or_insert, set_value};
 use crate::kdbx;
-use crate::{CompositeKey, Timestamp, Vault};
+use crate::{CompositeKey, KeyParts, Timestamp, Vault};
 
 /// The cipher that encrypts a Vault file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +125,11 @@ impl Vault {
         Ok(())
     }
 
+    /// What the Vault's master key is made of.
+    pub fn key_parts(&self) -> KeyParts {
+        self.key_parts
+    }
+
     /// Saves the Vault with this master key from now on.
     ///
     /// The keys the Vault had before stay known, so that versions of the Vault file saved with
@@ -134,6 +139,7 @@ impl Vault {
         let new = key.hash();
         let old = std::mem::replace(&mut self.key, new);
         self.previous_keys.push(old);
+        self.key_parts = key.parts();
         let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
         let changed = child_or_insert(meta, "MasterKeyChanged", &["Color", "DatabaseName"]);
         set_value(changed, &now.encode(), false);

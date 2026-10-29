@@ -14,8 +14,8 @@ pub enum OpenError {
 impl Vault {
     /// Decrypts KDBX 3.1 or 4.x Vault file bytes. Runs key derivation, so keep it off the UI thread.
     pub fn open(bytes: &[u8], key: &CompositeKey) -> Result<Vault, OpenError> {
-        let key = key.hash();
-        let file = kdbx::read(bytes, &key)?;
-        Vault::from_file(file, key)
+        let hash = key.hash();
+        let file = kdbx::read(bytes, &hash)?;
+        Vault::from_file(file, hash, key.parts())
     }
 }
