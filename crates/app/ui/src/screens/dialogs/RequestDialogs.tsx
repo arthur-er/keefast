@@ -50,6 +50,21 @@ function RequestDialog({ request, vaults }: { request: FrontRequest; vaults: Vau
 
 const fail = (error: unknown) => toast(errorMessage(error), { icon: "error" });
 
+/** How long Allow and Pair wait after their dialog shows before they can be pressed, so a click
+ * or keystroke meant for another window can't answer a request that just appeared. */
+export const ARM_DELAY_MS = 700;
+
+/** Whether the dialog has shown for `ARM_DELAY_MS`. Each request gets a fresh dialog, so a new
+ * request waits again. */
+function useArmed(): boolean {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setArmed(true), ARM_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  return armed;
+}
+
 /** Who asks and when, above the title: "Chrome on my laptop · Browser request · just now". The
  * browser is named by its Pairings, as the user named it when pairing. */
 function RequestKicker({ pairings, what, asked }: { pairings: string[]; what: string; asked: number | null }) {
@@ -124,7 +139,9 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
   const [busy, setBusy] = useState(false);
   const known = useVaultSettings(pairing.vault).data?.pairings ?? [];
   const field = useRef<HTMLInputElement>(null);
+  const armed = useArmed();
   const approve = async () => {
+    if (!armed) return;
     setBusy(true);
     try {
       await api.approvePairing(pairing.id, name);
@@ -168,7 +185,7 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
       actions={
         <>
           <Button onClick={deny}>Deny</Button>
-          <Button variant="primary" disabled={busy} onClick={() => void approve()} shortcut="↵">
+          <Button variant="primary" disabled={busy || !armed} onClick={() => void approve()} shortcut="↵">
             Pair
           </Button>
         </>
@@ -225,7 +242,9 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
  * keyboard allows, so a keystroke meant for something else never gives a site access. */
 function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendingAccess"]> }) {
   const [remember, setRemember] = useState(false);
+  const armed = useArmed();
   const answer = (allow: boolean) => {
+    if (allow && !armed) return;
     void api
       .answerAccess(access.id, allow, remember)
       .then(() =>
@@ -259,7 +278,7 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
           <Button onClick={() => answer(false)} shortcut="Esc">
             Deny
           </Button>
-          <Button variant="primary" onClick={() => answer(true)}>
+          <Button variant="primary" disabled={!armed} onClick={() => answer(true)}>
             Allow
           </Button>
         </>
