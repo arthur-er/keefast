@@ -10,6 +10,7 @@ export * from "./Kbd";
 export * from "./Menu";
 export * from "./Popover";
 export * from "./Segmented";
+export * from "./Strength";
 export * from "./Select";
 export * from "./Switch";
 export * from "./Tabs";

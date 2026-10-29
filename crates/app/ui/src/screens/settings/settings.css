@@ -98,6 +98,7 @@
   .gen-preview .pw { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 16px; letter-spacing: 0.03em; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
   .gen-preview .pw .d { color: var(--info); }
   .gen-preview .pw .s { color: var(--accent-fg); }
+  .gen-meter { display: flex; padding: 0 16px 14px; margin-top: -4px; }
   .gen-grid { display: grid; grid-template-columns: 112px 1fr; align-items: center; row-gap: 14px; column-gap: 16px; padding: 16px; }
   .gen-grid > .k { font-size: var(--text-sm); color: var(--fg-1); font-weight: 500; }
   .slider { display: flex; align-items: center; gap: 12px; }
