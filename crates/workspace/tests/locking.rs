@@ -291,6 +291,39 @@ fn locking_one_vault_leaves_its_view_without_its_contents() {
 }
 
 #[test]
+fn unlocking_after_the_group_shown_went_elsewhere_shows_its_nearest_surviving_parent() {
+    let mut h = harness();
+    let work = h.group(h.personal, "Work");
+    let servers = h
+        .workspace
+        .create_group(h.personal, work, "Servers")
+        .unwrap();
+    let old = h
+        .workspace
+        .create_group(h.personal, servers, "Old")
+        .unwrap();
+    h.workspace.save_vault(h.personal).unwrap();
+    h.workspace
+        .show(View::from(EntryScope::Group(h.personal, old)));
+    h.lock(h.personal);
+
+    let key = keefast_core::CompositeKey::password(PASSWORD);
+    let mut theirs = Vault::open(&h.storage.file(&personal_vault()).unwrap(), &key).unwrap();
+    let later = keefast_core::Timestamp::from_unix_seconds(1_800_000_600);
+    while theirs.group(servers).is_some() {
+        theirs.delete_group(servers, later).unwrap();
+    }
+    h.storage
+        .change_elsewhere(&personal_vault(), &theirs.save().unwrap());
+    h.unlock(&personal_vault()).unwrap();
+
+    assert_eq!(
+        h.workspace.view(),
+        View::from(EntryScope::Group(h.personal, work))
+    );
+}
+
+#[test]
 fn locking_a_vault_the_user_is_not_looking_at_leaves_the_view_alone() {
     let mut h = harness();
     let github = h.entry(h.personal, "GitHub");

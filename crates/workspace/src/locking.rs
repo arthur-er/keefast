@@ -8,6 +8,8 @@
 
 use std::time::Duration;
 
+use keefast_core::GroupId;
+
 use crate::clipboard::Clipboard;
 use crate::{EntryScope, PendingSave, VaultId, VaultLocation, View, Workspace};
 
@@ -17,6 +19,9 @@ pub struct LockedVault {
     location: VaultLocation,
     /// Where the user was in the Vault when it locked, to return them there.
     view: Option<View>,
+    /// The Groups the Group shown was in when it locked, nearest first, to return the user to
+    /// if that Group is gone when it is unlocked.
+    shown_in: Vec<GroupId>,
 }
 
 impl LockedVault {
@@ -253,6 +258,7 @@ impl Workspace {
             return;
         };
         self.cut_off_browser_requests(id);
+        let shown_in = self.groups_shown_in(id);
         let open = self.vaults.remove(at);
         let view = self.leave_vault(id);
         let at = self.locked.partition_point(|locked| locked.id < id);
@@ -262,6 +268,7 @@ impl Workspace {
                 id,
                 location: open.location,
                 view,
+                shown_in,
             },
         );
     }
@@ -283,25 +290,17 @@ impl Workspace {
     }
 
     /// Takes a locked Vault out of the locked ones, to be unlocked, with where the user was
-    /// in it.
-    pub(crate) fn take_locked(&mut self, id: VaultId) -> Option<View> {
+    /// in it and the Groups the Group shown was in.
+    pub(crate) fn take_locked(&mut self, id: VaultId) -> Option<(View, Vec<GroupId>)> {
         let at = self.locked.iter().position(|locked| locked.id == id)?;
-        self.locked.remove(at).view
+        let locked = self.locked.remove(at);
+        Some((locked.view?, locked.shown_in))
     }
 
-    /// Returns the user to where they were, as far as it is still there: a Group or Entry gone
-    /// meanwhile, or in a Vault still locked, is left out.
-    pub(crate) fn restore_view(&mut self, mut view: View) {
-        if let EntryScope::Group(vault, group) = view.scope
-            && self.group(vault, group).is_none()
-        {
-            view.scope = EntryScope::Vault(vault);
-        }
-        if let Some((vault, entry)) = view.entry
-            && self.entry(vault, entry).is_none()
-        {
-            view.entry = None;
-        }
+    /// Returns the user to where they were, as far as it is still there (see
+    /// [`Workspace::keep_view_to_what_exists`]).
+    pub(crate) fn restore_view(&mut self, view: View, shown_in: &[GroupId]) {
         self.view = view;
+        self.keep_view_to_what_exists(shown_in);
     }
 }
