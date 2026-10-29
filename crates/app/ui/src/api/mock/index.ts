@@ -1253,6 +1253,9 @@ export function createMockBackend(): Backend & {
         };
       }).finally(() => (state.dropboxConnecting = null));
       state.dropboxAccount = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
+      // Saves kept on this machine meanwhile upload at once.
+      for (const v of state.vaults) if (v.sync) v.sync = "synced";
+      changed();
       return state.dropboxAccount;
     }),
     dropboxReopenConnectPage: command(() => null),
@@ -1262,6 +1265,9 @@ export function createMockBackend(): Backend & {
     }),
     dropboxDisconnect: command(() => {
       state.dropboxAccount = null;
+      // Dropbox Vaults stay open, saving to the local cache until Dropbox is connected again.
+      for (const v of state.vaults) if (v.sync) v.sync = "offline";
+      changed();
       return null;
     }),
     dropboxListFolder: command(async (path: string) => {
