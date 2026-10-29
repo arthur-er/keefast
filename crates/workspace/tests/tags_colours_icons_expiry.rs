@@ -233,6 +233,32 @@ fn an_entry_is_flagged_expired_once_its_expiry_time_passes() {
 }
 
 #[test]
+fn a_tags_colour_is_chosen_per_vault_and_saved_with_it() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    h.workspace
+        .set_tag_color(personal, "dev", Some(EntryColor::Green))
+        .unwrap();
+    assert!(h.workspace.vault(personal).unwrap().has_unsaved_changes());
+    assert!(!h.workspace.vault(work).unwrap().has_unsaved_changes());
+    h.workspace.save_vault(personal).unwrap();
+    assert_eq!(
+        h.reopen(personal).tag_colors().get("dev"),
+        Some(&EntryColor::Green)
+    );
+    assert!(h.reopen(work).tag_colors().is_empty());
+
+    // Choosing it again changes nothing; undoing it is an edit.
+    h.workspace
+        .set_tag_color(personal, "dev", Some(EntryColor::Green))
+        .unwrap();
+    assert!(!h.workspace.vault(personal).unwrap().has_unsaved_changes());
+    h.workspace.set_tag_color(personal, "dev", None).unwrap();
+    h.workspace.save_vault(personal).unwrap();
+    assert!(h.reopen(personal).tag_colors().is_empty());
+}
+
+#[test]
 fn with_totp_lists_the_vaults_entries_with_totp_set_up() {
     let mut h = harness();
     let (personal, work) = (h.personal, h.work);

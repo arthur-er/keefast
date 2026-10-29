@@ -21,6 +21,7 @@ import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
 import { startNewEntry } from "@/screens/entry-editor/session";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 import { showView, useView } from "@/shell/view";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
@@ -28,6 +29,9 @@ import {
   entryKey, FLAT, groupEntries, hidesRecycleBin, isFlat, moveSelection, type Move, sameEntry, spansVaults,
   visibleEntries,
 } from "./grouping";
+
+/** How many of an Entry's tags its row shows before "+n". */
+const TAGS_IN_ROW = 2;
 
 const SORTS: { value: SortOrder; label: string }[] = [
   { value: "title", label: "Title" },
@@ -209,6 +213,7 @@ function EntryRow({
   onSelect: () => void;
 }) {
   const { actions } = useShell();
+  const colorOf = useTagColor();
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -229,6 +234,13 @@ function EntryRow({
             {entry.username || entry.label === null ? <Marked text={entry.username} query={search} /> : entry.label}
           </span>
           <span className="m">
+            {entry.tags.slice(0, TAGS_IN_ROW).map((tag) => (
+              <span key={tag} className="tag">
+                <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
+                {tag}
+              </span>
+            ))}
+            {entry.tags.length > TAGS_IN_ROW && <span className="more">+{entry.tags.length - TAGS_IN_ROW}</span>}
             {entry.expired && <Badge tone="danger" className="vb-badge-exp">Expired</Badge>}
             {entry.attachmentCount > 0 && <Paperclip aria-label="Has attachments" />}
             {entry.hasTotp && <Timer aria-label="Has TOTP" />}

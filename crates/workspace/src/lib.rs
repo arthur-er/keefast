@@ -1341,6 +1341,23 @@ impl Workspace {
         tags
     }
 
+    /// Chooses the colour a tag is drawn in, in this Vault, or with `None` undoes the choice.
+    pub fn set_tag_color(
+        &mut self,
+        vault: VaultId,
+        tag: &str,
+        color: Option<EntryColor>,
+    ) -> Result<(), EditVaultError> {
+        let open = self.vault(vault).ok_or(EditVaultError::VaultNotOpen)?;
+        if open.vault.tag_colors().get(tag).copied() == color {
+            return Ok(());
+        }
+        self.edit(vault, |vault, now| {
+            vault.set_tag_color(tag, color, now);
+            Ok(())
+        })
+    }
+
     /// Whether the Entry's expiry time has come.
     pub fn is_expired(&self, entry: &Entry) -> bool {
         entry.is_expired(self.now())

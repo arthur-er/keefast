@@ -86,6 +86,8 @@ export interface MockVault {
   pairings: string[];
   policy: "ask" | "alwaysAllow" | "alwaysDeny";
   customIcons: { id: string; png: string }[];
+  /** The colours chosen for tags, by tag. */
+  tagColors?: Record<string, Color>;
 }
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
@@ -231,6 +233,7 @@ export function fakeVaults(): MockVault[] {
       pairings: ["Chrome on my laptop", "Brave (work profile)"],
       policy: "ask",
       customIcons: [],
+      tagColors: { "2fa": "violet", email: "green", shared: "orange" },
       entries: [
         entry({ id: "e1", title: "GitHub", brand: "github", username: "arthur-er", password: "x7#Lq9!vR2mZ@pW4", url: "https://github.com", tags: ["dev", "2fa"], color: "violet", totp: "JBSWY3DPEHPK3PXP", notes: "Recovery codes in attachment.", attachments: [{ name: "github-recovery-codes.txt", text: RECOVERY_CODES, size: 1229 }], fields: [{ name: "PAT (ci)", value: "ghp_4fT9xQ2mZr8LbN0vKc7WdY1sHe3JpA6uGi5o", protected: true }], versions: GITHUB_VERSIONS, created: "2024-03-02T10:04:00", modified: "2026-10-07T14:32:00", access: [{ host: "github.com", allowed: true }] }),
         entry({ id: "e2", title: "Proton Mail", brand: "proton", username: "arthur-er@protonmail.com", password: "correct-horse-battery-staple-91", url: "https://account.proton.me", group: "email", tags: ["email", "2fa"], color: "blue", totp: "KRSXG5CTMVRXEZLU", history: 3, modified: "2026-09-30" }),

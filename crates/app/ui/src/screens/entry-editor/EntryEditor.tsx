@@ -29,6 +29,7 @@ import { copyField, openUrl } from "@/screens/vault-browser/actions";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
 import { findGroup, groupPath } from "@/shell/Sidebar";
+import { useTagColor } from "@/shell/tagColors";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
@@ -148,6 +149,7 @@ function EditorForm({
   const snapshot = useWorkspace().data;
   const vault = entry?.vault ?? target!.vault;
   const groups = useGroups(vault).data;
+  const colorOf = useTagColor();
   const [saved] = useState<Draft>(() => (entry ? draftOf(entry) : newDraft({ tags: target?.tags, color: target?.color })));
   const [draft, setDraft] = useState<Draft>(saved);
   const [stagedTotp, setStagedTotp] = useState<TotpSetup | null>(null);
@@ -389,7 +391,12 @@ function EditorForm({
               onChange={(change) => update(change)}
             />
             <span className="vdivider mx-1 h-4 self-center" />
-            <TagInput tags={draft.tags} known={snapshot?.tags ?? []} onChange={(tags) => update({ tags })} />
+            <TagInput
+              tags={draft.tags}
+              known={snapshot?.tags ?? []}
+              colorOf={(tag) => colorOf(vault, tag)}
+              onChange={(tags) => update({ tags })}
+            />
           </div>
           {errors.length > 0 && (
             <div className="ee-errors" role="alert">

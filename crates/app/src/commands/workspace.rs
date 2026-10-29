@@ -10,8 +10,8 @@ use specta::Type;
 use super::Core;
 use crate::core::AppCore;
 use crate::dto::{
-    EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View, group_icon_view,
-    title_of,
+    Color, EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View,
+    group_icon_view, title_of,
 };
 use crate::error::ApiResult;
 
@@ -116,6 +116,17 @@ pub struct VaultSummary {
     pub browser_group: Option<GroupId>,
     /// How many Entries each of its Smart lists has; 0 unless unlocked.
     pub smart_lists: SmartListCounts,
+    /// The colours chosen for its tags, by tag; empty unless unlocked. A tag without one is drawn
+    /// in a colour picked from its name.
+    pub tag_colors: Vec<TagColor>,
+}
+
+/// The colour chosen for a tag in a Vault.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TagColor {
+    pub tag: String,
+    pub color: Color,
 }
 
 /// How many Entries a Vault's Smart lists have, as the sidebar shows them.
@@ -307,6 +318,17 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
                 recycle_bin: vault.recycle_bin().filter(|_| !locking).map(Into::into),
                 browser_group: vault.browser_group().filter(|_| !locking).map(Into::into),
                 smart_lists: SmartListCounts::of(workspace, open.id()),
+                tag_colors: match locking {
+                    true => Vec::new(),
+                    false => vault
+                        .tag_colors()
+                        .into_iter()
+                        .map(|(tag, color)| TagColor {
+                            tag,
+                            color: color.into(),
+                        })
+                        .collect(),
+                },
             }
         })
         .chain(workspace.locked_vaults().map(|locked| VaultSummary {
@@ -323,6 +345,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             recycle_bin: None,
             browser_group: None,
             smart_lists: SmartListCounts::default(),
+            tag_colors: Vec::new(),
         }))
         .collect();
     vaults.sort_by_key(|vault| vault.id.0);

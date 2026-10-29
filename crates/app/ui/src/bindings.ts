@@ -136,6 +136,11 @@ export const commands = {
 	 */
 	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
 	/**
+	 *  Chooses the colour a tag is drawn in, in the Vault, kept in its custom data; `None` goes back
+	 *  to the colour the UI picks for the tag's name.
+	 */
+	setTagColor: (vault: VaultId, tag: string, color: "red" | "orange" | "yellow" | "green" | "blue" | "violet" | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_tag_color", { vault, tag, color })),
+	/**
 	 *  Every facet the Plugins contribute, in the order the Plugins were loaded: the editor offers
 	 *  to add the ones with a section of their own.
 	 */
@@ -1174,6 +1179,12 @@ export type SortOrder = "title" | "username" | "url" | "created" | "modified";
 /**  Where a Dropbox Vault stands with its Vault file in Dropbox. */
 export type SyncState = "synced" | "syncing" | "offline" | "error";
 
+/**  The colour chosen for a tag in a Vault. */
+export type TagColor = {
+	tag: string,
+	color: Color,
+};
+
 export type Theme = 
 /**  Follow the OS light/dark setting. */
 "system" | "dark" | "light";
@@ -1249,6 +1260,11 @@ export type VaultSummary = {
 	browserGroup: GroupId | null,
 	/**  How many Entries each of its Smart lists has; 0 unless unlocked. */
 	smartLists: SmartListCounts,
+	/**
+	 *  The colours chosen for its tags, by tag; empty unless unlocked. A tag without one is drawn
+	 *  in a colour picked from its name.
+	 */
+	tagColors: TagColor[],
 };
 
 /**

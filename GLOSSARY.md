@@ -46,6 +46,10 @@ _Avoid_: Trash, deleted items
 A list in the sidebar of a Vault's Entries outside the Recycle Bin, picked by what they have rather than where they are: With TOTP, Recently modified (changed in the last 30 days, newest first) and Expired.
 _Avoid_: Filter, saved search, view
 
+**Tag colour**:
+The colour a tag is drawn in. The user can choose one per Vault, kept in the Vault file's custom data; a tag without one gets a colour picked from its name.
+_Avoid_: Label colour, tag style
+
 **Storage provider**:
 Where a Vault file lives: the local filesystem or a remote service such as Dropbox.
 _Avoid_: Backend, remote, cloud

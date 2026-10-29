@@ -639,6 +639,7 @@ export function createMockBackend(): Backend & {
           recycleBin: hidden ? null : v.recycleBin,
           browserGroup: hidden ? null : v.browserGroup,
           smartLists: hidden ? { withTotp: 0, recentlyModified: 0, expired: 0 } : smartListCounts(v),
+          tagColors: hidden ? [] : Object.entries(v.tagColors ?? {}).map(([tag, color]) => ({ tag, color })),
         };
       }),
       view: state.view,
@@ -1020,6 +1021,16 @@ export function createMockBackend(): Backend & {
       if (v.recycleBin && !inBin(v, e.group)) e.group = v.recycleBin;
       else v.entries = v.entries.filter((x) => x !== e);
       if (state.view.entry?.entry === entryId) state.view = { ...state.view, entry: null };
+      edited(v);
+      return null;
+    }),
+    setTagColor: command((id, tag, color) => {
+      const v = vault(id);
+      const colors = { ...v.tagColors };
+      if (colors[tag] === (color ?? undefined)) return null;
+      if (color) colors[tag] = color;
+      else delete colors[tag];
+      v.tagColors = colors;
       edited(v);
       return null;
     }),

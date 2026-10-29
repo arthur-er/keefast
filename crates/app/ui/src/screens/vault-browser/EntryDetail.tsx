@@ -26,6 +26,7 @@ import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
 import { COLOR_NAMES, findGroup } from "@/shell/Sidebar";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import { EntryAvatar } from "./EntryList";
@@ -369,6 +370,7 @@ function TotpCode({ code, remaining, period }: { code: string; remaining: number
 
 function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const expiry = describeExpiry(entry.expires, entry.expired);
+  const colorOf = useTagColor();
   return (
     <>
       {entry.facets.map((facet) => (
@@ -408,7 +410,7 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
             {entry.tags.length ? (
               entry.tags.map((tag) => (
                 <span key={tag} className="tag">
-                  <span className="dot" />
+                  <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
                   {tag}
                 </span>
               ))
