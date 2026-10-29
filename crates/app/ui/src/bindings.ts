@@ -973,12 +973,20 @@ export type PendingAccess = {
 	id: RequestId,
 	/**  The host of the site asking. */
 	site: string,
+	/**  The site's full address: scheme, host, and port when it isn't the scheme's own. */
+	origin: string,
 	/**
 	 *  The host the site's form sends the Entries to, when it is another than `site`. The
 	 *  decision is for both, so the prompt shows both.
 	 */
 	formSite: string | null,
+	/**  `form_site`'s full address. */
+	formOrigin: string | null,
 	entries: AskedEntry[],
+	/**  The browser that asked: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the site asked, in seconds since 1970 UTC. */
+	asked: number | null,
 };
 
 export type PendingLock = {
@@ -996,6 +1004,10 @@ export type PendingLogin = {
 	/**  The host of the site the login was submitted on. */
 	site: string,
 	username: string,
+	/**  The browser that captured it: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the browser captured it, in seconds since 1970 UTC. */
+	asked: number | null,
 	/**
 	 *  The places it can go, as a list: headings (without a target), the Entries it could
 	 *  update, then every Group of each Vault it may go to.
