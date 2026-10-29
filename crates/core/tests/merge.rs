@@ -674,8 +674,11 @@ fn kdbx3_with_a_dangling_attachment() -> Vec<u8> {
     header
 }
 
+/// An attachment's name and contents.
+type File = (String, Vec<u8>);
+
 /// Every Entry's attachments, by title.
-fn attachments_by_title(vault: &Vault) -> Vec<(String, Vec<(String, Vec<u8>)>)> {
+fn attachments_by_title(vault: &Vault) -> Vec<(String, Vec<File>)> {
     let mut all: Vec<_> = vault
         .root()
         .all_entries()
