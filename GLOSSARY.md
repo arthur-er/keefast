@@ -77,11 +77,11 @@ A per-Vault setting (ask, always allow, or always deny) applied when an Entry ha
 _Avoid_: Global permission, auto-allow
 
 **Browser group**:
-The Group in each Vault where logins captured by the Companion extension are saved by default.
+The Group in each Vault where sign-ins captured by the Companion extension are saved as Entries by default.
 _Avoid_: Inbox, new logins folder
 
 **Field icon**:
-keefast's icon in a page's login, 2FA, new password and payment fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette; in a payment field, it always opens the Command palette.
+keefast's icon in a page's sign-in, 2FA, new password and payment fields, shown by the Companion extension once the user turns it on. Clicking it fills the site's only Entry, or opens the Command palette; in a payment field, it always opens the Command palette.
 _Avoid_: Autofill button, inline menu
 
 **Command palette** (browser):

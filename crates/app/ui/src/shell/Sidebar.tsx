@@ -226,7 +226,7 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
     );
   }
   const mark = group.isBrowserGroup ? (
-    <Tooltip content="Browser group: logins from the Companion extension are saved here">
+    <Tooltip content="Browser group: sign-ins captured by the Companion extension are saved here">
       <span className="vb-bmark">
         <MousePointerClick />
       </span>

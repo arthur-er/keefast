@@ -399,7 +399,7 @@ function EditorForm({
 
           <div className="ee-sec">
             <div className="ee-sec-head">
-              <h3>Login</h3>
+              <h3>Sign-in</h3>
             </div>
             <div className="ee-kv">
               <span className="k">Username</span>

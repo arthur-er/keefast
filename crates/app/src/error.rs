@@ -105,7 +105,7 @@ impl From<EditVaultError> for ApiError {
             }
             EditVaultError::NotPaired => "The browser is not paired with this Vault.",
             EditVaultError::Edit(EditError::InRecycleBin) => {
-                "Logins can't be saved in the Recycle Bin."
+                "Entries from the browser can't be saved in the Recycle Bin."
             }
             EditVaultError::Edit(EditError::FieldNameEmpty) => "Give every custom field a name.",
             EditVaultError::Edit(EditError::FieldNameTaken) => {

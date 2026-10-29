@@ -84,9 +84,9 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
           },
           {
             id: "browserGroup",
-            search: "Browser group Where logins captured in the browser are saved by default save logins group companion",
+            search: "Browser group Where sign-ins captured in the browser are saved as Entries by default save logins sign-ins group companion",
             render: () => (
-              <SettingRow label="Browser group" desc="Where logins captured in the browser are saved by default.">
+              <SettingRow label="Browser group" desc="Where sign-ins captured in the browser are saved as Entries by default.">
                 <BrowserGroupPicker vault={vault} settings={settings} />
               </SettingRow>
             ),
@@ -97,7 +97,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
         id: "pairings",
         name: "Paired browsers",
         count: settings.pairings.length,
-        desc: "These browsers can ask this Vault for logins while it is open.",
+        desc: "These browsers can ask this Vault for Entries while it is open.",
         cards: [
           settings.pairings.length > 0
             ? settings.pairings.map((name) => ({
@@ -211,7 +211,7 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
         </button>
       </MenuTrigger>
       <MenuContent align="end" className="max-h-[360px] w-[240px] overflow-y-auto">
-        <MenuLabel>Save browser logins here</MenuLabel>
+        <MenuLabel>Save browser sign-ins here</MenuLabel>
         <MenuPrimitive.RadioGroup
           value={settings.browserGroup ?? ""}
           onValueChange={(group) => void api.setBrowserGroup(vault, group).catch(fail)}
@@ -237,7 +237,7 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
             <MenuPrimitive.Item disabled className="menu-item outline-none data-[disabled]:text-fg-2">
               <Trash2 /> Recycle Bin
             </MenuPrimitive.Item>
-            <div className="menu-note">Logins can't be saved in the Recycle Bin.</div>
+            <div className="menu-note">Entries from the browser can't be saved in the Recycle Bin.</div>
           </>
         )}
       </MenuContent>
@@ -287,7 +287,7 @@ function ConfirmRevoke({ name, onCancel, onRevoke }: { name: string; onCancel: (
   return (
     <>
       <h4>Revoke the Pairing “{name}”?</h4>
-      <p>It must pair again to fill logins.</p>
+      <p>It must pair again to fill Entries.</p>
       <div className="hstack justify-end">
         <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel
