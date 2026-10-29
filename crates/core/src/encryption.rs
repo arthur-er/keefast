@@ -42,16 +42,21 @@ pub struct Encryption {
     pub kdf: Kdf,
 }
 
-/// Why encryption settings can't be used: key derivation could not run with them.
+/// Why encryption settings can't be used: key derivation could not run with them, or would
+/// cost more than keefast runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EncryptionError {
-    #[error("Argon2 needs at least one iteration")]
+    #[error("Argon2 needs 1 to 4294967295 iterations")]
     Iterations,
     #[error("Argon2 needs 1 to 16777215 lanes")]
     Parallelism,
-    #[error("Argon2 needs a whole number of KiB of memory, at least 8 KiB per lane")]
+    #[error(
+        "Argon2 needs a whole number of KiB of memory, at least 8 KiB per lane and at most 4 GiB"
+    )]
     Memory,
-    #[error("AES-KDF needs at least one round")]
+    #[error("Argon2's memory times its iterations can't be more than 128 GiB")]
+    Cost,
+    #[error("AES-KDF needs 1 to 10000000000 rounds")]
     Rounds,
 }
 
@@ -59,22 +64,65 @@ impl Argon2 {
     /// Argon2's own limits: the most lanes it allows, and the least memory per lane.
     const MAX_LANES: u32 = 0xFF_FFFF;
     const MIN_KIB_PER_LANE: u64 = 8;
+    /// The most memory keefast gives Argon2: more than KeePass 2 (2 GiB) and KeeWeb (4 GiB)
+    /// can give it, so Vault files those clients open stay under it. Over it, a crafted Vault
+    /// file could make keefast run out of memory.
+    pub const MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
+    /// The most work keefast does for Argon2, as memory times iterations: many times what
+    /// KeePassXC's longest benchmark (5 seconds) picks on a fast PC, and minutes of key
+    /// derivation at most. Over it, a crafted Vault file could keep keefast busy for days.
+    pub const MAX_COST: u64 = 128 * 1024 * 1024 * 1024;
 
-    fn check(&self) -> Result<(), EncryptionError> {
-        if self.iterations == 0 || u32::try_from(self.iterations).is_err() {
+    /// Whether key derivation costs no more than keefast runs. A Vault file is checked with
+    /// this before its key derivation starts.
+    pub(crate) fn check_limits(&self) -> Result<(), EncryptionError> {
+        if u32::try_from(self.iterations).is_err() {
             return Err(EncryptionError::Iterations);
         }
-        if !(1..=Self::MAX_LANES).contains(&self.parallelism) {
+        if self.parallelism > Self::MAX_LANES {
             return Err(EncryptionError::Parallelism);
         }
-        let kib = self.memory / 1024;
+        if self.memory > Self::MAX_MEMORY {
+            return Err(EncryptionError::Memory);
+        }
+        if (self.memory / 1024).saturating_mul(self.iterations) > Self::MAX_COST / 1024 {
+            return Err(EncryptionError::Cost);
+        }
+        Ok(())
+    }
+
+    fn check(&self) -> Result<(), EncryptionError> {
+        if self.iterations == 0 {
+            return Err(EncryptionError::Iterations);
+        }
+        if self.parallelism == 0 {
+            return Err(EncryptionError::Parallelism);
+        }
         if !self.memory.is_multiple_of(1024)
-            || kib < Self::MIN_KIB_PER_LANE * u64::from(self.parallelism)
-            || u32::try_from(kib).is_err()
+            || self.memory / 1024 < Self::MIN_KIB_PER_LANE * u64::from(self.parallelism)
         {
             return Err(EncryptionError::Memory);
         }
-        Ok(())
+        self.check_limits()
+    }
+}
+
+impl Kdf {
+    /// The most AES-KDF rounds keefast runs: as many as KeeWeb lets users type, ten times
+    /// KeePassXC's most, and a minute or two of key derivation. Over it, a crafted Vault file
+    /// could keep keefast busy for years.
+    pub const MAX_AES_ROUNDS: u64 = 10_000_000_000;
+
+    /// Whether key derivation costs no more than keefast runs. A Vault file is checked with
+    /// this before its key derivation starts.
+    pub(crate) fn check_limits(&self) -> Result<(), EncryptionError> {
+        match self {
+            Kdf::Argon2id(argon2) | Kdf::Argon2d(argon2) => argon2.check_limits(),
+            Kdf::AesKdf { rounds } if *rounds > Self::MAX_AES_ROUNDS => {
+                Err(EncryptionError::Rounds)
+            }
+            Kdf::AesKdf { .. } => Ok(()),
+        }
     }
 }
 
@@ -101,12 +149,12 @@ impl Default for Encryption {
 }
 
 impl Encryption {
-    /// Whether key derivation can run with these settings.
+    /// Whether key derivation can run with these settings, at a cost keefast runs.
     pub fn check(&self) -> Result<(), EncryptionError> {
         match self.kdf {
             Kdf::Argon2id(argon2) | Kdf::Argon2d(argon2) => argon2.check(),
             Kdf::AesKdf { rounds: 0 } => Err(EncryptionError::Rounds),
-            Kdf::AesKdf { .. } => Ok(()),
+            kdf => kdf.check_limits(),
         }
     }
 }

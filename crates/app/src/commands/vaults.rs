@@ -389,7 +389,7 @@ mod tests {
         };
         assert_eq!(
             no_iterations.to_core().unwrap_err().message,
-            "Argon2 needs at least 1 iteration."
+            "Argon2 needs 1 to 4294967295 iterations."
         );
 
         let no_rounds = EncryptionSettings {

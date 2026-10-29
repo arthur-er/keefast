@@ -14,7 +14,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::header::VariantDictionary;
-use crate::OpenError;
+use crate::{Argon2, Kdf, OpenError};
 
 pub(crate) const AES256: Uuid = Uuid::from_u128(0x31c1f2e6_bf71_4350_be58_05216afc5aff);
 pub(crate) const CHACHA20: Uuid = Uuid::from_u128(0xd6038a2b_8b6f_4cb5_a524_339a31dbb59a);
@@ -188,7 +188,8 @@ pub(crate) fn hmac_key(master_seed: &[u8], transformed: &Key) -> Zeroizing<[u8; 
 }
 
 /// Turns the composite key into the key that, with the master seed, encrypts the payload.
-/// This is the deliberately slow step.
+/// This is the deliberately slow step; settings that would make it slower than keefast runs
+/// fail with [`OpenError::KdfOverLimit`] before it starts.
 pub(crate) fn transform_key(
     kdf: &VariantDictionary,
     composite: &[u8; 32],
@@ -203,6 +204,9 @@ pub(crate) fn transform_key(
     match uuid {
         AES_KDF | AES_KDF_KDBX4 => {
             let rounds = kdf.u64("R").ok_or_else(|| missing("R"))?;
+            Kdf::AesKdf { rounds }
+                .check_limits()
+                .map_err(OpenError::KdfOverLimit)?;
             aes_kdf(composite, salt, rounds)
         }
         ARGON2D | ARGON2ID => {
@@ -219,6 +223,12 @@ pub(crate) fn transform_key(
             let memory = kdf.u64("M").ok_or_else(|| missing("M"))?;
             let iterations = kdf.u64("I").ok_or_else(|| missing("I"))?;
             let lanes = kdf.u32("P").ok_or_else(|| missing("P"))?;
+            let cost = Argon2 {
+                memory,
+                iterations,
+                parallelism: lanes,
+            };
+            cost.check_limits().map_err(OpenError::KdfOverLimit)?;
             let out_of_range =
                 |name: &str| OpenError::Unsupported(format!("Argon2 {name} out of range"));
             let config = argon2::Config {

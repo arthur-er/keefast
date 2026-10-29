@@ -37,7 +37,9 @@ describe("the encryption form", () => {
     expect(checkEncryption({ ...form, parallelism: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.parallelism });
     expect(checkEncryption({ ...form, parallelism: "16777216" }, DEFAULT)).toMatchObject({ message: MESSAGES.parallelism });
     expect(checkEncryption({ ...form, memoryMib: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory, field: "memoryMib" });
-    expect(checkEncryption({ ...form, memoryMib: "4194304" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory });
+    expect(checkEncryption({ ...form, memoryMib: "4097", iterations: "1" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory });
+    expect(checkEncryption({ ...form, memoryMib: "4096", iterations: "32" }, DEFAULT)).toMatchObject({ ok: true });
+    expect(checkEncryption({ ...form, memoryMib: "4096", iterations: "33" }, DEFAULT)).toMatchObject({ message: MESSAGES.cost, field: "iterations" });
     expect(checkEncryption({ ...form, kdf: "aesKdf", rounds: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.rounds, field: "rounds" });
     expect(checkEncryption({ ...form, kdf: "aesKdf", rounds: "4294967296" }, DEFAULT)).toMatchObject({ message: MESSAGES.roundsMax });
     // Fields the chosen KDF doesn't use don't matter.
