@@ -5,7 +5,9 @@
   .tt-live { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .tt-code { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; display: inline-flex; gap: 0.45em; color: var(--fg-0); font-size: 14px; }
   .tt-secs { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-2); font-variant-numeric: tabular-nums; min-width: 28px; }
-  .tt-live.is-low .tt-code, .tt-live.is-low .tt-secs, .tt-prev.is-low .tt-secs { color: var(--warn); }
+  .tt-next { font-size: var(--text-sm); color: var(--fg-2); white-space: nowrap; }
+  .tt-next .mono { color: var(--fg-1); }
+  .tt-live.is-low .tt-code,.tt-live.is-low .tt-secs, .tt-prev.is-low .tt-secs { color: var(--warn); }
   .tt-live.is-low .ring, .tt-prev.is-low .ring { background: conic-gradient(var(--warn) calc(var(--p) * 360deg), var(--border-strong) 0); }
   .tt-row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 3px 0 9px; border-radius: var(--r-sm); }
   .tt-row.is-open { background: var(--bg-hover); }
