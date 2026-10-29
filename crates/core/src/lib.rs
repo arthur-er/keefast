@@ -35,7 +35,6 @@ pub use browser::{
 };
 pub use edit::{EditError, EntryFields};
 pub use encryption::{Argon2, Cipher, Encryption, EncryptionError, Kdf};
-pub use fuzzy::{FuzzyMatch, fuzzy_match};
 pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
 };
@@ -43,7 +42,7 @@ pub use key::{CompositeKey, KeyFileError, new_key_file};
 pub use merge::MergeSummary;
 pub use open::OpenError;
 pub use save::SaveError;
-pub use search::{EntrySearch, EntrySort};
+pub use search::{EntrySearch, EntrySort, NameMatch};
 pub use site::Site;
 pub use time::Timestamp;
 pub use totp::{Totp, TotpAlgorithm, TotpCode, TotpError, is_totp_field};
