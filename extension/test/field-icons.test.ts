@@ -177,14 +177,14 @@ describe("FieldIcons", () => {
     expect(tooltip()?.querySelector("button")).toBeNull();
   });
 
-  it("offers to connect when the browser isn't paired, then carries on", async () => {
+  it("offers to pair when the browser isn't paired, then carries on", async () => {
     handlers.click.mockResolvedValueOnce({ kind: "unavailable", status: "unpaired" });
     page(signIn);
     icons.start();
     await click(buttons()[0]!);
 
     const connect = tooltip()!.querySelector("button")!;
-    expect(connect.textContent).toBe("Connect");
+    expect(connect.textContent).toBe("Pair");
     connect.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: USER }));
 
     await vi.waitFor(() => expect(handlers.click).toHaveBeenCalledTimes(2));
