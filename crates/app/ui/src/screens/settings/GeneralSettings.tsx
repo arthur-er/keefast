@@ -520,6 +520,7 @@ const KEYS: readonly [string, readonly [string, readonly string[], ("or" | "pair
     ["Copy password", SHORTCUTS.copyPassword],
     ["Copy TOTP code", SHORTCUTS.copyTotp],
     ["Entry history", SHORTCUTS.history],
+    ["Generate a password", SHORTCUTS.generatePassword],
   ]],
 ];
 
