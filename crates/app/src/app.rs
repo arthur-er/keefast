@@ -104,6 +104,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::vault_settings::revoke_pairing,
             commands::dropbox::dropbox_status,
             commands::dropbox::dropbox_connect,
+            commands::dropbox::dropbox_connect_another,
             commands::dropbox::dropbox_reopen_connect_page,
             commands::dropbox::dropbox_cancel_connect,
             commands::dropbox::dropbox_disconnect,

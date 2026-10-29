@@ -199,7 +199,18 @@ impl Dropbox {
         if self.config.app_key.is_empty() {
             return Err(DropboxError::NotConfigured);
         }
-        Authorization::begin(&self.config)
+        Authorization::begin(&self.config, false)
+    }
+
+    /// Starts connecting another Dropbox account than the one connected, as
+    /// [`Self::begin_connect`] does, except that Dropbox's page asks the user to sign in rather
+    /// than letting in the account the browser is signed in to. The account connected stays
+    /// until [`Self::finish_connect`] replaces it.
+    pub fn begin_connect_another(&self) -> Result<Authorization, DropboxError> {
+        if self.config.app_key.is_empty() {
+            return Err(DropboxError::NotConfigured);
+        }
+        Authorization::begin(&self.config, true)
     }
 
     /// Waits for the user to let keefast in, then keeps the account's tokens in the secret

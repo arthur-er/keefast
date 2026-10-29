@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use keefast_core::Timestamp;
-use keefast_workspace::{ConnectCanceller, Dropbox, DropboxAccount, DropboxItem};
+use keefast_workspace::{Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxItem};
 use serde::Serialize;
 use specta::Type;
 use tauri::{AppHandle, State};
@@ -147,6 +147,31 @@ pub async fn dropbox_connect(
 ) -> ApiResult<DropboxAccountView> {
     let dropbox = dropbox(&core)?;
     let authorization = dropbox.begin_connect()?;
+    connect(app, dropbox, authorization, &connecting).await
+}
+
+/// Connects another Dropbox account in place of the one connected: as `dropbox_connect`, but
+/// Dropbox asks the user to sign in rather than letting in the account the browser is signed in
+/// to. The account connected stays if the user stops or Dropbox refuses.
+#[tauri::command]
+#[specta::specta]
+pub async fn dropbox_connect_another(
+    app: AppHandle,
+    core: Core<'_>,
+    connecting: State<'_, Connecting>,
+) -> ApiResult<DropboxAccountView> {
+    let dropbox = dropbox(&core)?;
+    let authorization = dropbox.begin_connect_another()?;
+    connect(app, dropbox, authorization, &connecting).await
+}
+
+/// Opens Dropbox's page in the user's browser, and waits until Dropbox sends the browser back.
+async fn connect(
+    app: AppHandle,
+    dropbox: Arc<Dropbox>,
+    authorization: Authorization,
+    connecting: &Connecting,
+) -> ApiResult<DropboxAccountView> {
     let url = authorization.url().to_owned();
     *connecting.0.lock().unwrap_or_else(PoisonError::into_inner) =
         Some((url.clone(), authorization.canceller()));

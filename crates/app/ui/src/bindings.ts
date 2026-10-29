@@ -311,6 +311,12 @@ export const commands = {
 	 *  Dropbox sends the browser back. keefast never sees the Dropbox password.
 	 */
 	dropboxConnect: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect")),
+	/**
+	 *  Connects another Dropbox account in place of the one connected: as `dropbox_connect`, but
+	 *  Dropbox asks the user to sign in rather than letting in the account the browser is signed in
+	 *  to. The account connected stays if the user stops or Dropbox refuses.
+	 */
+	dropboxConnectAnother: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect_another")),
 	/**  Opens Dropbox's page again, while connecting. */
 	dropboxReopenConnectPage: () => typedError<null, ApiError>(__TAURI_INVOKE("dropbox_reopen_connect_page")),
 	/**  Stops waiting for the browser; `dropbox_connect` then fails as cancelled. */

@@ -1283,6 +1283,18 @@ export function createMockBackend(): Backend & {
       state.dropboxAccount = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
       return state.dropboxAccount;
     }),
+    dropboxConnectAnother: command(async () => {
+      // Signed in as someone else "in the browser"; the account from before stays if stopped.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 4000);
+        state.dropboxConnecting = () => {
+          clearTimeout(timer);
+          reject(new MockError("cancelled", "Connecting Dropbox was stopped."));
+        };
+      }).finally(() => (state.dropboxConnecting = null));
+      state.dropboxAccount = { name: "Rezende Family", email: "family@rezende.dev" };
+      return state.dropboxAccount;
+    }),
     dropboxReopenConnectPage: command(() => null),
     dropboxCancelConnect: command(() => {
       state.dropboxConnecting?.();

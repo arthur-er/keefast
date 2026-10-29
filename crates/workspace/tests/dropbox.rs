@@ -88,6 +88,48 @@ fn connecting_uses_pkce_without_a_client_secret_and_keeps_tokens_in_the_secret_s
 }
 
 #[test]
+fn another_account_is_connected_after_dropbox_asks_to_sign_in_and_the_first_stays_till_then() {
+    let fake = FakeDropbox::start();
+    let (dropbox, _) = connected(&fake);
+    let first = dropbox.account().unwrap();
+    assert!(first.is_some());
+
+    let authorization = dropbox.begin_connect_another().unwrap();
+    assert!(authorization.url().contains("force_reauthentication=true"));
+    assert_eq!(
+        dropbox.account().unwrap(),
+        first,
+        "connected while the user signs in"
+    );
+    authorization.canceller().cancel();
+    assert!(matches!(
+        dropbox.finish_connect(authorization),
+        Err(DropboxError::Cancelled)
+    ));
+    assert_eq!(
+        dropbox.account().unwrap(),
+        first,
+        "stopping keeps the account"
+    );
+
+    let authorization = dropbox.begin_connect_another().unwrap();
+    let browser = FakeDropbox::visit_in_browser(authorization.url());
+    let account = dropbox.finish_connect(authorization).unwrap();
+    browser.join().unwrap();
+    assert_eq!(dropbox.account().unwrap(), Some(account));
+}
+
+#[test]
+fn connecting_lets_in_the_account_the_browser_is_signed_in_to() {
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+
+    let authorization = dropbox(&fake, &secrets).begin_connect().unwrap();
+
+    assert!(!authorization.url().contains("force_reauthentication"));
+}
+
+#[test]
 fn tokens_never_reach_the_app_config() {
     let fake = FakeDropbox::start();
     fake.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
