@@ -297,6 +297,12 @@ export const commands = {
 	 *  user typed the password the same twice before calling.
 	 */
 	changeVaultKey: (vault: VaultId, input: ChangeKeyInput) => typedError<null, ApiError>(__TAURI_INVOKE("change_vault_key", { vault, input })),
+	/**  Renames the Vault. An empty name names it after its Vault file again. */
+	renameVault: (vault: VaultId, name: string) => typedError<null, ApiError>(__TAURI_INVOKE("rename_vault", { vault, name })),
+	/**  Turns the Vault's Recycle Bin on or off: off, deleting deletes for good. */
+	setRecycleBinEnabled: (vault: VaultId, enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_recycle_bin_enabled", { vault, enabled })),
+	/**  Shows the Vault file in the system's file manager. Only a Vault file on this machine can be. */
+	showVaultFileInFolder: (vault: VaultId) => typedError<null, ApiError>(__TAURI_INVOKE("show_vault_file_in_folder", { vault })),
 	/**  Sets the Vault's Default access policy, answering the browser requests it settles. */
 	setDefaultAccessPolicy: (vault: VaultId, policy: AccessPolicy) => typedError<null, ApiError>(__TAURI_INVOKE("set_default_access_policy", { vault, policy })),
 	/**
@@ -887,6 +893,9 @@ export type LoginOption = {
  */
 export type LoginTarget = { kind: "newEntry"; vault: VaultId; group: GroupId | null } | { kind: "update"; vault: VaultId; entry: EntryId };
 
+/**  What a Vault's master key is made of. */
+export type MasterKeyParts = "password" | "keyFile" | "passwordAndKeyFile";
+
 /**  Changes made to a Vault file elsewhere were Merged into its Vault. */
 export type MergeNotice = {
 	vault: VaultId,
@@ -956,6 +965,18 @@ export type OwnedFieldView = {
 	text: string | null,
 	/**  What its input shows while empty in the Entry editor, such as "MM/YY". */
 	placeholder: string | null,
+};
+
+/**  A browser paired with a Vault. */
+export type PairingView = {
+	name: string,
+	/**  When it was paired, in seconds since 1970, if the Vault knows. */
+	created: number | null,
+	/**
+	 *  When the browser last asked the Vault for anything, in seconds since 1970, if it has
+	 *  since keefast started recording it.
+	 */
+	lastUsed: number | null,
 };
 
 /**  How wide the Vault browser's sidebar and Entry list are, in logical pixels. */
@@ -1199,14 +1220,18 @@ export type VaultId = number;
 
 export type VaultSettings = {
 	vault: VaultId,
+	/**  The Vault's name, or its Vault file's when it has none. */
 	name: string,
 	location: LocationView,
 	saveStatus: SaveState,
 	syncStatus: SyncState | null,
+	masterKey: MasterKeyParts,
 	encryption: EncryptionSettings,
+	/**  Whether deleting moves Entries and Groups to the Recycle Bin. */
+	recycleBinEnabled: boolean,
 	defaultAccessPolicy: AccessPolicy,
-	/**  The names of the browsers paired with the Vault, in Vault file order. */
-	pairings: string[],
+	/**  The browsers paired with the Vault, in Vault file order. */
+	pairings: PairingView[],
 	browserGroup: GroupId | null,
 	browserGroupName: string | null,
 };

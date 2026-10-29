@@ -1,7 +1,7 @@
 // The master key part of the master key forms: a master password typed twice, a Key file, or
 // both.
 
-import type { KeyInput } from "@/bindings";
+import type { KeyInput, MasterKeyParts } from "@/bindings";
 
 export const KEY_MESSAGES = {
   mismatch: "The two master passwords are different.",
@@ -11,6 +11,18 @@ export const KEY_MESSAGES = {
 export type KeyField = "password" | "confirm";
 
 export type CheckedKey = { ok: true; key: KeyInput } | { ok: false; message: string; field: KeyField };
+
+/** What a Vault's master key is made of, as Vault settings says it. */
+export function masterKeyName(parts: MasterKeyParts): string {
+  switch (parts) {
+    case "password":
+      return "Master password";
+    case "keyFile":
+      return "Key file";
+    case "passwordAndKeyFile":
+      return "Master password + Key file";
+  }
+}
 
 /** The master key typed, or why it can't be used. */
 export function checkKey(password: string, confirm: string, keyFile: string | null): CheckedKey {

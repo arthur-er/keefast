@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
 
 import { GeneratorSettings } from "./GeneratorSettings";
+import { lastUsed, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection, useSearchQuery } from "./SettingsLayout";
 import { CLIPBOARD_WAITS, describeWait, IDLE_LOCK_WAITS, type Wait, waitsWith } from "./waits";
 
@@ -393,16 +394,18 @@ function BrowserStatusNote({ status }: { status: AppSettings["browser"] }) {
   );
 }
 
-/** One unlocked Vault's Pairings, and the way to its Vault settings. */
+/** One unlocked Vault's Pairings, when one was last used, and the way to its Vault settings. */
 function VaultPairings({ vault, onManage }: { vault: VaultSummary; onManage: () => void }) {
-  const count = useVaultSettings(vault.id).data?.pairings.length;
+  const pairings = useVaultSettings(vault.id).data?.pairings;
+  const count = pairings?.length;
+  const used = pairings && pairings.length > 0 ? ` · ${usedText(lastUsed(pairings)).text.toLowerCase()}` : "";
   return (
     <div className="pair-row">
       {vault.location.provider === "dropbox" ? <Cloud className="ico-sm" /> : <LockOpen className="ico-sm" />}
       <span className="font-medium">
         <Hl>{vault.name}</Hl>
       </span>
-      <span className="muted">{count === undefined ? "" : count === 0 ? "No Pairings" : count === 1 ? "1 paired browser" : `${count} paired browsers`}</span>
+      <span className="muted">{count === undefined ? "" : count === 0 ? "No Pairings" : count === 1 ? "1 paired browser" : `${count} paired browsers`}{used}</span>
       <Button variant="ghost" size="sm" onClick={onManage}>
         Manage <ArrowUpRight />
       </Button>

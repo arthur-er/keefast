@@ -158,6 +158,9 @@
   .vs-status.busy .status-dot { background: var(--fg-2); animation: set-blink 900ms ease-in-out infinite; }
   @keyframes set-blink { 50% { opacity: 0.3; } }
   .set-row.pair { gap: 12px; min-height: 56px; }
+  .pair-meta { display: flex; align-items: center; gap: 6px; }
+  .pair-meta .live { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); }
+  .name-input { width: 240px; }
   .pair-ico { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-1); flex: none; }
   .pick { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; min-width: 180px; max-width: 260px; background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-sm); font-weight: 500; color: var(--fg-0); cursor: default; }
   .pick:hover { background: var(--bg-2); }

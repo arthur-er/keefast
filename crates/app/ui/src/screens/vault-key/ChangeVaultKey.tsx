@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { CircleAlert, Eye, EyeOff, FileKey2, Gauge, Info, KeyRound, Plus, ShieldCheck, TriangleAlert, X } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { EncryptionSettings, VaultId } from "@/bindings";
+import type { EncryptionSettings, MasterKeyParts, VaultId } from "@/bindings";
 import { useVaultSettings } from "@/api/queries";
 import { Button, Kbd, Switch, toast } from "@/kit";
 import { useShortcut } from "@/lib/shortcuts";
@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 
 import { Choice } from "./EncryptionFields";
 import { CIPHERS, checkEncryption, type EncryptionField, encryptionForm, type EncryptionForm, encryptionSummary, KDFS } from "./encryption";
-import { checkKey, KEY_MESSAGES, matchState } from "./masterKey";
+import { checkKey, KEY_MESSAGES, masterKeyName, matchState } from "./masterKey";
 import { useKeyFile } from "./useKeyFile";
 import "./vault-key.css";
 
@@ -31,18 +31,22 @@ export function ChangeVaultKey({ vault, onClose }: { vault: VaultId; onClose: ()
   if (!settings) return null;
   // New Key files go by the Vault file, when it is on this machine.
   const near = settings.location.provider === "local" ? settings.location.path : null;
-  return <ChangeKeyCard key={vault} vault={vault} name={settings.name} current={settings.encryption} near={near} onClose={onClose} />;
+  return (
+    <ChangeKeyCard key={vault} vault={vault} name={settings.name} masterKey={settings.masterKey} current={settings.encryption} near={near} onClose={onClose} />
+  );
 }
 
 function ChangeKeyCard({
   vault,
   name,
+  masterKey,
   current,
   near,
   onClose,
 }: {
   vault: VaultId;
   name: string;
+  masterKey: MasterKeyParts;
   current: EncryptionSettings;
   near: string | null;
   onClose: () => void;
@@ -54,6 +58,7 @@ function ChangeKeyCard({
   const keyFile = useKeyFile();
   // The form starts from the Vault's encryption as it was when the card opened.
   const [initial] = useState(current);
+  const [initialKey] = useState(masterKey);
   const [encryption, setEncryption] = useState<EncryptionForm>(() => encryptionForm(current));
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -140,7 +145,7 @@ function ChangeKeyCard({
         </span>
         <div className="txt">
           <div className="lbl">Master key and encryption of “{name}”</div>
-          <div className="desc">Now: {encryptionSummary(initial).slice(0, 3).join(" · ")}</div>
+          <div className="desc">Now: {[masterKeyName(initialKey), ...encryptionSummary(initial).slice(0, 3)].join(" · ")}</div>
         </div>
         <div className="ctl">
           <button type="button" className="btn sm ghost icon" aria-label="Cancel" title="Cancel (Esc)" onClick={onClose}>
