@@ -15,13 +15,11 @@ import {
   ArrowDownAZ, ArrowRight, ArrowUpDown, CalendarPlus, Check, ChevronRight, Clock, CornerDownLeft, ExternalLink, History,
   KeyRound, Link, type LucideIcon, Pencil, RefreshCw, SearchX, Settings2, TextCursorInput, Timer, UserRound, Vault, X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
 import type { EntryDetail, EntrySummary, Scope, SortOrder } from "@/bindings";
-import { useEntry, useTotpCode, useWorkspace } from "@/api/queries";
+import { useEntry, usePaletteSearch, useTotpCode, useWorkspace } from "@/api/queries";
 import { Kbd, toast } from "@/kit";
-import { highlightRuns } from "@/lib/fuzzy";
 import { hostOf } from "@/lib/format";
 import { matchesCombo, parseCombo } from "@/lib/shortcuts";
 import { facetCopies } from "@/screens/plugins/commands";
@@ -33,7 +31,7 @@ import { type AppCommand, useAppCommands } from "@/shell/commands";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
-import { isConfident, orderSections, rankByTitle, rankEntries } from "./rank";
+import { foundEntries, highlightRuns, isConfident, orderSections, rankByTitle } from "./rank";
 
 import "./palette.css";
 
@@ -99,13 +97,6 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [page, setPage] = useState<Page | null>(null);
   const [highlighted, setHighlighted] = useState("");
   const input = useRef<HTMLInputElement>(null);
-
-  // Every Entry of the unlocked Vaults, for Entries to come up as the user types.
-  const entries = useQuery({
-    queryKey: ["entries", "palette"],
-    queryFn: () => api.listEntries({ scope: { kind: "allVaults" }, search: "", sort: "title" }),
-    staleTime: 0,
-  }).data;
 
   const pageEntry = page && page.kind !== "sort" ? page.entry : null;
   const pageDetail = useEntry(pageEntry?.vault, pageEntry?.id).data;
@@ -182,29 +173,34 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     .filter((command) => !command.hidden)
     .map((command) => fromCommand(command, searching && selected && command.section === "Entry" ? selected.title : undefined));
 
+  /** The actions the page lists, which a query ranks. */
+  function listed(): Action[] {
+    if (page?.kind === "sort") return SORTS.map((sort) => sortAction(sort, "", true));
+    if (page) {
+      const all = entryActions(page.entry, pageDetail, "");
+      return page.kind === "fields" ? all.filter((action) => action.value.includes(":field:")) : all;
+    }
+    return [...commandActions, ...builtIns(searching)];
+  }
+  const all = listed();
+  // The backend matches the actions' titles and finds the Entries, as the Entry list's search.
+  const matched = usePaletteSearch(query, [...new Set(all.map((action) => action.title))]);
+  const rankActions = (actions: readonly Action[]): Action[] =>
+    matched.data ? rankByTitle(actions, matched.data.names).map(({ item, score, positions }) => ({ ...item, score, positions })) : [];
+
   const sections = buildSections();
 
   function buildSections(): Section[] {
-    if (page?.kind === "sort") {
-      const sorts = SORTS.map((sort) => sortAction(sort, "", true));
-      return [{ key: "sort", heading: null, items: searching ? rankActions(query, sorts) : sorts }];
-    }
-    if (page) {
-      const all = entryActions(page.entry, pageDetail, "");
-      const shown = page.kind === "fields" ? all.filter((action) => action.value.includes(":field:")) : all;
-      return [{ key: "page", heading: null, items: searching ? rankActions(query, shown) : shown }];
-    }
-    const own = builtIns(searching);
+    if (page) return [{ key: page.kind === "sort" ? "sort" : "page", heading: null, items: searching ? rankActions(all) : all }];
     if (!searching) {
-      const all = [...commandActions, ...own];
       return orderSections(all.map((action) => action.section)).map((section) => ({
         key: section,
         heading: section === "Entry" && selected ? <EntryHeading entry={selected} /> : section,
         items: inOrder(all.filter((action) => action.section === section)),
       }));
     }
-    const ranked = rankActions(query, [...commandActions, ...own]);
-    const found = rankEntries(query, (entries ?? []).filter((entry) => !entry.inRecycleBin)).slice(0, 5);
+    const ranked = rankActions(all);
+    const found = matched.data ? foundEntries(matched.data.entries) : [];
     const entrySection: Section | null = found.length
       ? { key: "entries", heading: "Entries", items: found.map(({ item, score, positions }) => ({ kind: "entry", value: `entry:${item.vault}:${item.id}`, entry: item, positions, score })) }
       : null;
@@ -226,8 +222,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const items = sections.flatMap((section) => section.items);
   const firstEnabled = items.find((item) => item.kind === "entry" || item.enabled)?.value ?? "";
   const highlightedItem = items.find((item) => item.value === highlighted);
-  // A new query or page highlights its first item.
-  const shown = `${page?.kind ?? ""}:${query}`;
+  // A new query or page highlights its first item, again once the query's matches come.
+  const shown = `${page?.kind ?? ""}:${query}:${matched.isPlaceholderData}`;
   useEffect(() => setHighlighted(firstEnabled), [shown]);
   useEffect(() => {
     if (!highlightedItem && firstEnabled) setHighlighted(firstEnabled);
@@ -316,7 +312,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
                 <Command.Input ref={input} value={query} onValueChange={setQuery} placeholder={placeholder} autoComplete="off" spellCheck={false} />
               </div>
               <Command.List className="pal-list" label="Commands and Entries">
-                {items.length === 0 && (
+                {items.length === 0 && !(searching && matched.isPending) && (
                   <div className="pal-empty">
                     <SearchX />
                     <div>{page ? "No matching actions" : "No matching commands"}</div>
@@ -426,10 +422,6 @@ function inOrder(actions: Action[]): Action[] {
     return LAST.includes(action.value) ? 1 : 0;
   };
   return actions.map((action, index) => ({ action, index })).sort((a, b) => rank(a.action) - rank(b.action) || a.index - b.index).map(({ action }) => action);
-}
-
-function rankActions(query: string, actions: readonly Action[]): Action[] {
-  return rankByTitle(query, actions).map(({ item, score, positions }) => ({ ...item, score, positions }));
 }
 
 /** Whether the list showing `scope` shows the Entry. */

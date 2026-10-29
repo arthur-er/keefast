@@ -26,6 +26,7 @@ export const keys = {
   launch: ["launch"] as const,
   settings: ["settings"] as const,
   entries: (query: EntryQuery) => ["entries", query] as const,
+  palette: (search: string, names: string[]) => ["palette", search, names] as const,
   entry: (vault: VaultId, entry: EntryId) => ["entry", vault, entry] as const,
   groups: (vault: VaultId) => ["groups", vault] as const,
   history: (vault: VaultId, entry: EntryId) => ["history", vault, entry] as const,
@@ -80,6 +81,20 @@ export function useEntries(query: EntryQuery) {
   return useQuery({
     queryKey: keys.entries(query),
     queryFn: () => api.listEntries(query),
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** The command palette's search while one is typed: how each of `names` (its commands' titles)
+ * matches, by name, and the Entries found. The last search's matches show until the next's come. */
+export function usePaletteSearch(search: string, names: string[]) {
+  return useQuery({
+    queryKey: keys.palette(search, names),
+    queryFn: async () => {
+      const found = await api.searchPalette(search, names);
+      return { names: new Map(names.map((name, index) => [name, found.names[index] ?? null])), entries: found.entries };
+    },
+    enabled: search.trim() !== "",
     placeholderData: (previous) => previous,
   });
 }

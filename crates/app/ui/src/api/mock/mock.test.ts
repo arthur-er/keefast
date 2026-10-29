@@ -34,6 +34,15 @@ describe("mock backend", () => {
     expect(await api.revealPassword(github.vault, github.id)).toBe("x7#Lq9!vR2mZ@pW4");
   });
 
+  it("matches the command palette's commands and finds its Entries", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const found = await api.searchPalette("git", ["Copy password", "Go to GitHub"]);
+    expect(found.names).toEqual([null, { score: 32, positions: [6, 7, 8] }]);
+    expect(found.entries[0]!.entry.title).toBe("GitHub");
+    expect(found.entries[0]!.found.positions).toEqual([0, 1, 2]);
+    expect(found.entries.length).toBeLessThanOrEqual(5);
+  });
+
   it("tells the UI about every change with a higher revision", async () => {
     const mock = createMockBackend();
     const api = unwrap(mock.commands);

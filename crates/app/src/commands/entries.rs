@@ -634,6 +634,106 @@ fn with_labels(
         .collect()
 }
 
+/// The most Entries the command palette lists for a search.
+const PALETTE_ENTRIES: usize = 5;
+
+/// What the command palette lists for a search: how each of its commands' names matches, and
+/// the best Entries outside the Recycle Bin of every unlocked Vault. The Entry search matches
+/// both and scores them alike, so commands and Entries rank together.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteMatches {
+    /// For each name asked about, in order, how it matches, or `None` if it doesn't.
+    pub names: Vec<Option<PaletteMatch>>,
+    /// Best first, and equally good ones by title.
+    pub entries: Vec<PaletteEntry>,
+}
+
+/// How a name, or an Entry, matched.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteMatch {
+    /// Higher is better.
+    pub score: u32,
+    /// The indexes, in UTF-16 code units, of the name's or title's characters matched, to
+    /// highlight them.
+    pub positions: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteEntry {
+    pub entry: EntrySummary,
+    /// Its `positions` are empty when the search matched none of the title.
+    pub found: PaletteMatch,
+}
+
+/// The command palette's search: the names of its commands, and the Entries.
+#[tauri::command]
+#[specta::specta]
+pub async fn search_palette(
+    core: Core<'_>,
+    search: String,
+    names: Vec<String>,
+) -> ApiResult<PaletteMatches> {
+    Ok(palette_matches(&core, &EntrySearch::new(&search), &names))
+}
+
+fn palette_matches(core: &AppCore, search: &EntrySearch, names: &[String]) -> PaletteMatches {
+    let names = names
+        .iter()
+        .map(|name| {
+            search.match_name(name).map(|found| PaletteMatch {
+                score: found.score,
+                positions: utf16_positions(name, &found.positions),
+            })
+        })
+        .collect();
+    let plugins = core.plugins();
+    let listed = core.read(|workspace| {
+        let mut places: HashMap<ws::VaultId, Places> = HashMap::new();
+        workspace
+            .find_entries(ws::EntryScope::AllVaults, search, EntrySort::Title)
+            .iter()
+            .filter_map(|listed| {
+                let open = workspace.vault(listed.vault)?;
+                let places = places
+                    .entry(listed.vault)
+                    .or_insert_with(|| Places::of(open.vault()));
+                let summary = summary(workspace, open, places, listed.entry);
+                (!summary.in_recycle_bin).then_some((summary, listed.entry))
+            })
+            .take(PALETTE_ENTRIES)
+            .map(|(summary, entry)| {
+                // The title shown is trimmed, or "(untitled)": only the Entry's own lines up.
+                let positions = if summary.title == entry.title() {
+                    utf16_positions(entry.title(), &search.highlights(entry.title()))
+                } else {
+                    Vec::new()
+                };
+                let score = search.relevance(entry).unwrap_or_default();
+                let fields = ListedFields::of(&plugins, entry);
+                ((summary, fields), PaletteMatch { score, positions })
+            })
+            .collect::<Vec<_>>()
+    });
+    let (listed, found): (Vec<_>, Vec<_>) = listed.into_iter().unzip();
+    let entries = with_labels(&plugins, listed)
+        .into_iter()
+        .zip(found)
+        .map(|(entry, found)| PaletteEntry { entry, found })
+        .collect();
+    PaletteMatches { names, entries }
+}
+
+/// Byte offsets in `text` as indexes in UTF-16 code units, as the UI slices strings.
+fn utf16_positions(text: &str, offsets: &[usize]) -> Vec<u32> {
+    offsets
+        .iter()
+        .map(|&offset| text[..offset].encode_utf16().count() as u32)
+        .collect()
+}
+
 /// An Entry, without its password and protected custom fields.
 #[tauri::command]
 #[specta::specta]
@@ -1127,5 +1227,93 @@ mod tests {
         ] {
             assert_eq!(web_address(url), None, "{url}");
         }
+    }
+
+    /// The command palette's search over a copy of the KeePassXC fixture with a few Entries
+    /// added, one of them deleted to the Recycle Bin.
+    #[test]
+    fn the_palette_matches_commands_and_entries_alike() {
+        use keefast_core::{EntryFields, EntrySearch, GroupId};
+        use keefast_workspace::{UnlockSecrets, VaultLocation};
+
+        use crate::core::tests::core;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("palette.kdbx");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/keepassxc-kdbx4.kdbx"
+            ),
+            &path,
+        )
+        .unwrap();
+        let entry = |title: &str, username: &str| EntryFields {
+            title: title.into(),
+            username: username.into(),
+            ..EntryFields::default()
+        };
+        let (core, _) = core();
+        core.update(|workspace| {
+            let vault = workspace
+                .open_vault(
+                    &VaultLocation::Local(path.clone()),
+                    &UnlockSecrets::password("fixture-password"),
+                )
+                .unwrap();
+            let root: GroupId = workspace.vault(vault).unwrap().vault().root().id();
+            for fields in [entry("Zcopy pass", ""), entry("Zebra", "zcopy-pass")] {
+                workspace.create_entry(vault, root, &fields).unwrap();
+            }
+            let gone = workspace
+                .create_entry(vault, root, &entry("Zcopy pass old", ""))
+                .unwrap();
+            workspace.delete_entry(vault, gone).unwrap();
+        });
+        let search = |query: &str, names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|name| (*name).to_owned()).collect();
+            super::palette_matches(&core, &EntrySearch::new(query), &names)
+        };
+
+        // A command's name and an Entry's title score alike; positions count UTF-16 units.
+        let found = search(
+            "zcopy pass",
+            &["Zcopy password", "🔑 Zcopy password", "Copy"],
+        );
+        let names: Vec<_> = found
+            .names
+            .iter()
+            .map(|name| {
+                name.as_ref()
+                    .map(|name| (name.score, name.positions.clone()))
+            })
+            .collect();
+        let title = &found.entries[0];
+        assert_eq!(title.entry.title, "Zcopy pass");
+        assert_eq!(title.found.positions, [0, 1, 2, 3, 4, 6, 7, 8, 9]);
+        assert_eq!(
+            names,
+            [
+                Some((title.found.score, vec![0, 1, 2, 3, 4, 6, 7, 8, 9])),
+                Some((title.found.score - 1, vec![3, 4, 5, 6, 7, 9, 10, 11, 12])),
+                None,
+            ]
+        );
+        // An Entry found by its username only has no title to highlight, and scores lower; one
+        // in the Recycle Bin isn't listed.
+        let titles: Vec<_> = found
+            .entries
+            .iter()
+            .map(|e| e.entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Zcopy pass", "Zebra"]);
+        assert!(found.entries[1].found.positions.is_empty());
+        assert!(found.entries[1].found.score < title.found.score);
+
+        // The starts of words, and small typos, match as they do in the Entry list.
+        let found = search("zcp", &["Zcopy password"]);
+        assert_eq!(found.names[0].as_ref().unwrap().positions, [0, 1, 6]);
+        assert_eq!(found.entries[0].entry.title, "Zcopy pass");
+        assert_eq!(search("zcopi", &[]).entries[0].entry.title, "Zcopy pass");
     }
 }
