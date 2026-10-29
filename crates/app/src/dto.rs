@@ -338,7 +338,25 @@ impl IconChoice {
 /// The standard icon of a key, KeePass's first, which a custom icon the Vault hasn't got shows as.
 const KEY_ICON: u32 = 0;
 
+/// The standard icon of a folder, which a Group's custom icon the Vault hasn't got shows as.
+const FOLDER_ICON: u32 = 48;
+
 pub fn icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) -> IconView {
+    icon_view_or(vault, icon, in_vault, KEY_ICON)
+}
+
+/// A Group's icon, as [`icon_view`] gives an Entry's.
+pub fn group_icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) -> IconView {
+    icon_view_or(vault, icon, in_vault, FOLDER_ICON)
+}
+
+/// The icon, served through `kficon:` when custom, or `missing` when the Vault hasn't got it.
+fn icon_view_or(
+    vault: ws::VaultId,
+    icon: EntryIcon,
+    in_vault: &core::Vault,
+    missing: u32,
+) -> IconView {
     match icon {
         EntryIcon::Standard(number) => IconView::Standard {
             number: number.min(core::STANDARD_ICON_COUNT - 1),
@@ -347,7 +365,7 @@ pub fn icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) ->
             id: id.into(),
             url: crate::icon_protocol::custom_icon_url(vault, id),
         },
-        EntryIcon::Custom(_) => IconView::Standard { number: KEY_ICON },
+        EntryIcon::Custom(_) => IconView::Standard { number: missing },
     }
 }
 

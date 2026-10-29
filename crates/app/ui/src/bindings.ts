@@ -802,6 +802,8 @@ export type GroupNode = {
 	id: GroupId,
 	/**  The top Group's name is the Vault's. */
 	name: string,
+	/**  Its standard icon (a folder unless given another) or custom icon, drawn as an Entry's. */
+	icon: IconView,
 	/**  The Entries right in this Group. */
 	entryCount: number,
 	/**  The Entries in this Group and every Group below it. */
@@ -878,6 +880,8 @@ export type LoginOption = {
 	label: string,
 	/**  Shown muted after the label: a Vault's name, or that it is the Browser group. */
 	detail: string | null,
+	/**  A Group's icon; `None` for headings, Entries, Vaults and a Group still to be made. */
+	icon: IconView | null,
 	depth: number,
 };
 

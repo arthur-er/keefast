@@ -4,14 +4,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Check, ChevronsUpDown, ChevronUp, CircleHelp, Ellipsis, Folder, FolderOpen, Hash, LayoutGrid, LayoutList, Lock,
+  Check, ChevronsUpDown, ChevronUp, CircleHelp, Ellipsis, FolderOpen, Hash, LayoutGrid, LayoutList, Lock,
   MousePointerClick, Plus, Settings, Settings2, Trash2,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { Color, GroupNode, Scope, VaultSummary } from "@/bindings";
 import { useEntries, useGroups, useWorkspace } from "@/api/queries";
-import { colorVar, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast, Tooltip } from "@/kit";
+import { colorVar, GroupIcon, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast, Tooltip } from "@/kit";
 import { cn } from "@/lib/utils";
 import { GroupContextMenu, useDeleteGroupCommand } from "@/screens/dialogs/GroupActions";
 
@@ -217,7 +217,7 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
   if (renaming) {
     return (
       <div className="nav-item is-selected" style={{ paddingLeft: 8 + depth * 16 }}>
-        <Folder />
+        <GroupIcon icon={group.icon} />
         <RenameField
           initial={group.name}
           onDone={(name) => {
@@ -240,7 +240,7 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
       <div onDoubleClick={() => actions.renameGroup(`${vault}:${group.id}`)}>
         <NavItem
           scope={{ kind: "group", vault, group: group.id }}
-          icon={<Folder />}
+          icon={<GroupIcon icon={group.icon} />}
           label={group.name}
           count={group.totalEntries || ""}
           depth={depth}

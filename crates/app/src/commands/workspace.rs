@@ -9,7 +9,10 @@ use specta::Type;
 
 use super::Core;
 use crate::core::AppCore;
-use crate::dto::{EntryId, GroupId, Location, LocationView, Scope, VaultId, View, title_of};
+use crate::dto::{
+    EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View, group_icon_view,
+    title_of,
+};
 use crate::error::ApiResult;
 
 /// Everything the shell shows, in one answer: the Vaults, where the user is, the save status,
@@ -235,6 +238,8 @@ pub struct LoginOption {
     pub label: String,
     /// Shown muted after the label: a Vault's name, or that it is the Browser group.
     pub detail: Option<String>,
+    /// A Group's icon; `None` for headings, Entries, Vaults and a Group still to be made.
+    pub icon: Option<IconView>,
     pub depth: u32,
 }
 
@@ -362,6 +367,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
         target: None,
         label: label.to_owned(),
         detail: None,
+        icon: None,
         depth: 0,
     };
     let mut options = Vec::new();
@@ -382,6 +388,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
             }),
             label: format!("{} · {}", title_of(found), found.username()),
             detail: Some(open.display_name()),
+            icon: None,
             depth: 1,
         });
     }
@@ -402,6 +409,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
             target: new_entry(Some(root.id())),
             label: open.display_name(),
             detail: None,
+            icon: None,
             depth: 1,
         });
         if browser_group.is_none() {
@@ -409,6 +417,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
                 target: new_entry(None),
                 label: format!("{DEFAULT_BROWSER_GROUP} (new Group)"),
                 detail: Some("Browser group".to_owned()),
+                icon: None,
                 depth: 2,
             });
         }
@@ -422,6 +431,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
                 target: new_entry(Some(group.id())),
                 label: group.name().to_owned(),
                 detail: (browser_group == Some(group.id())).then(|| "Browser group".to_owned()),
+                icon: Some(group_icon_view(vault, group.icon(), open.vault())),
                 depth,
             });
         }

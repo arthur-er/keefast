@@ -66,6 +66,8 @@ export interface MockGroup {
   id: string;
   name: string;
   parent: string | null;
+  /** Its standard icon; a folder when unset. */
+  icon?: number;
 }
 
 export interface MockVault {
@@ -212,13 +214,13 @@ export function fakeVaults(): MockVault[] {
       location: { provider: "local", path: "~/Vaults/Personal.kdbx" },
       locked: false,
       groups: [
-        { id: "root", name: "Personal", parent: null },
-        { id: "email", name: "Email", parent: "root" },
-        { id: "finance", name: "Finance", parent: "root" },
-        { id: "social", name: "Social", parent: "root" },
-        { id: "home", name: "Home", parent: "root" },
-        { id: "browser", name: "Browser logins", parent: "root" },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "root", name: "Personal", parent: null, icon: 49 },
+        { id: "email", name: "Email", parent: "root", icon: 19 },
+        { id: "finance", name: "Finance", parent: "root", icon: 37 },
+        { id: "social", name: "Social", parent: "root", icon: 5 },
+        { id: "home", name: "Home", parent: "root", icon: 60 },
+        { id: "browser", name: "Browser logins", parent: "root", icon: 1 },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       browserGroup: "browser",
@@ -254,11 +256,11 @@ export function fakeVaults(): MockVault[] {
       location: { provider: "dropbox", path: "/Apps/keefast/Work.kdbx" },
       locked: false,
       groups: [
-        { id: "root", name: "Work", parent: null },
-        { id: "infra", name: "Infrastructure", parent: "root" },
-        { id: "servers", name: "Servers", parent: "infra" },
-        { id: "saas", name: "SaaS", parent: "root" },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "root", name: "Work", parent: null, icon: 49 },
+        { id: "infra", name: "Infrastructure", parent: "root", icon: 35 },
+        { id: "servers", name: "Servers", parent: "infra", icon: 3 },
+        { id: "saas", name: "SaaS", parent: "root", icon: 38 },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       browserGroup: null,
@@ -288,7 +290,7 @@ export function fakeVaults(): MockVault[] {
       locked: true,
       groups: [
         { id: "root", name: "Family", parent: null },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       browserGroup: null,

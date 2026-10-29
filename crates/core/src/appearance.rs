@@ -112,6 +112,9 @@ pub const STANDARD_ICON_COUNT: u32 = 69;
 /// The icon KeePass gives new Entries: a key.
 const DEFAULT_ICON: u32 = 0;
 
+/// The icon KeePass gives new Groups, and a Group without one shows: a folder.
+pub(crate) const FOLDER_ICON: u32 = 48;
+
 /// The largest custom icon keefast imports. KeePass scales icons down to 128 pixels, so an
 /// icon this big is far more than any client needs.
 pub const MAX_CUSTOM_ICON_BYTES: usize = 256 * 1024;
@@ -167,8 +170,14 @@ impl CustomIcon {
 }
 
 impl EntryIcon {
-    /// An Entry's or Group's icon: its custom icon if it has one, or its standard icon.
+    /// An Entry's icon: its custom icon if it has one, or its standard icon.
     pub(crate) fn read(element: &Element) -> Self {
+        Self::read_or(element, DEFAULT_ICON)
+    }
+
+    /// An Entry's or Group's icon: its custom icon if it has one, or its standard icon, or else
+    /// `default`.
+    pub(crate) fn read_or(element: &Element, default: u32) -> Self {
         let custom = element
             .child("CustomIconUUID")
             .and_then(|uuid| decode_uuid(&uuid.text()))
@@ -180,7 +189,7 @@ impl EntryIcon {
             .child("IconID")
             .and_then(|id| id.text().trim().parse().ok())
             .filter(|id| *id < STANDARD_ICON_COUNT)
-            .unwrap_or(DEFAULT_ICON);
+            .unwrap_or(default);
         EntryIcon::Standard(standard)
     }
 

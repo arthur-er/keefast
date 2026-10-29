@@ -449,12 +449,17 @@ export function createMockBackend(): Backend & {
     return path;
   }
 
+  function groupIcon(g: MockGroup): IconView {
+    return { kind: "standard", number: g.icon ?? 48 };
+  }
+
   function groupNode(v: MockVault, g: MockGroup, bin: boolean): GroupNode {
     const isBin = g.id === v.recycleBin;
     const below = descendants(v, g.id);
     return {
       id: g.id,
       name: g.name,
+      icon: groupIcon(g),
       entryCount: v.entries.filter((e) => e.group === g.id).length,
       totalEntries: v.entries.filter((e) => below.has(e.group)).length,
       isRecycleBin: isBin,
@@ -555,21 +560,22 @@ export function createMockBackend(): Backend & {
       const e = v?.entries.find((x) => x.id === entryId);
       return v && e ? [{ v, e }] : [];
     });
-    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, depth: 0 });
+    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, icon: null, depth: 0 });
     for (const { v, e } of updates) {
       options.push({
         target: { kind: "update", vault: v.id, entry: e.id },
         label: `${e.title || "(untitled)"} · ${e.username}`,
         detail: v.name,
+        icon: null,
         depth: 1,
       });
     }
-    options.push({ target: null, label: "Save as a new Entry in", detail: null, depth: 0 });
+    options.push({ target: null, label: "Save as a new Entry in", detail: null, icon: null, depth: 0 });
     for (const v of readable()) {
       const root = v.groups.find((g) => g.parent === null)!;
-      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, depth: 1 });
+      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, icon: null, depth: 1 });
       if (!v.browserGroup) {
-        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", depth: 2 });
+        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", icon: null, depth: 2 });
       }
       const walk = (parent: string, depth: number) => {
         for (const g of v.groups.filter((x) => x.parent === parent)) {
@@ -578,6 +584,7 @@ export function createMockBackend(): Backend & {
             target: { kind: "newEntry", vault: v.id, group: g.id },
             label: g.name,
             detail: v.browserGroup === g.id ? "Browser group" : null,
+            icon: groupIcon(g),
             depth,
           });
           walk(g.id, depth + 1);
