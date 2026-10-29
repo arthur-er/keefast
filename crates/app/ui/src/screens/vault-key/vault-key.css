@@ -26,6 +26,13 @@
   .vk .kc .kc-sub + .set-row, .vk .kc .kc-sub + [data-part] > :first-child { border-top: 0; }
   .vk .kc .kin { width: 280px; }
   .vk .kc .set-row.tight { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
+  /* Vault settings B's `.est`: the unlock time, with a bar that fills at 2.5 s. */
+  .vk .kc-est { display: flex; align-items: center; gap: 10px; margin-top: 6px; transition: opacity var(--dur) var(--ease); }
+  .vk .kc-est.is-stale { opacity: 0.6; }
+  .vk .kc-est .k { color: var(--fg-2); }
+  .vk .kc-est .v { color: var(--fg-0); }
+  .vk .kc-est .bar { width: 120px; height: 4px; border-radius: 4px; background: var(--border-strong); overflow: hidden; }
+  .vk .kc-est .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width var(--dur) var(--ease); }
   .vk .kc .knum { width: 132px; }
   .vk .kc .error-msg svg.lucide { width: 13px; height: 13px; }
   .vk .kc .seg > button { padding: 0 10px; }

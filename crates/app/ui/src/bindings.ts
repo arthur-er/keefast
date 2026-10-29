@@ -37,6 +37,12 @@ export const commands = {
 } | null, ApiError>(__TAURI_INVOKE("group_for_new_items", { scope })),
 	/**  The encryption keefast gives new Vaults: AES-256 with Argon2id at its default cost. */
 	defaultEncryption: () => typedError<EncryptionSettings, ApiError>(__TAURI_INVOKE("default_encryption")),
+	/**
+	 *  About how many seconds unlocking a Vault file encrypted with these settings takes on this
+	 *  machine, from a short run of their key derivation. One runs at a time, so that two don't slow
+	 *  each other down.
+	 */
+	estimateUnlockTime: (encryption: EncryptionSettings) => typedError<number | null, ApiError>(__TAURI_INVOKE("estimate_unlock_time", { encryption })),
 	/**  Asks the user for a Vault file to open. */
 	chooseVaultFile: () => typedError<string | null, ApiError>(__TAURI_INVOKE("choose_vault_file")),
 	/**  Asks the user for a Key file. */

@@ -738,6 +738,10 @@ export function createMockBackend(): Backend & {
       return { vault: v.id, group: g };
     }),
     defaultEncryption: command(() => structuredClone(DEFAULT_ENCRYPTION)),
+    // The prototype's rates: no key derivation runs in the browser.
+    estimateUnlockTime: command(({ kdf }: EncryptionSettings) =>
+      kdf.kind === "aesKdf" ? kdf.rounds / 2.4e6 : (kdf.memoryKib / 1024) * kdf.iterations / Math.max(kdf.parallelism, 1) / 420,
+    ),
     listPlugins: command(() => plugins.list()),
     choosePluginPackage: command(() => plugins.choose()),
     installPlugin: command((path: string, digest: string) => plugins.install(path, digest)),

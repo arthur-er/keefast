@@ -32,6 +32,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::workspace::note_activity,
             commands::workspace::group_for_new_items,
             commands::vaults::default_encryption,
+            commands::vaults::estimate_unlock_time,
             commands::vaults::choose_vault_file,
             commands::vaults::choose_key_file,
             commands::vaults::choose_new_vault_file,

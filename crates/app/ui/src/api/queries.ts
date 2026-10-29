@@ -4,7 +4,7 @@
 import { useEffect } from "react";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { EntryId, EntryQuery, Scope, VaultId } from "@/bindings";
+import type { EntryId, EntryQuery, KdfChoice, Scope, VaultId } from "@/bindings";
 
 import { api, onEvent } from "./index";
 
@@ -34,6 +34,7 @@ export const keys = {
   vaultSettings: (vault: VaultId) => ["vaultSettings", vault] as const,
   groupForNewItems: (scope: Scope) => ["groupForNewItems", scope] as const,
   generatorLimits: ["generatorLimits"] as const,
+  unlockTime: (kdf: KdfChoice) => ["unlockTime", kdf] as const,
   dropbox: ["dropbox"] as const,
   plugins: ["plugins"] as const,
   facets: ["facets"] as const,
@@ -45,10 +46,9 @@ export function useBackendEvents() {
   useEffect(
     () =>
       onEvent("workspaceChanged", () => {
-        // Queries that only read once (launch args, limits) are left alone.
+        // Queries that only read once (launch args, limits, timings) are left alone.
         void client.invalidateQueries({
-          predicate: (query) =>
-            query.queryKey[0] !== "launch" && query.queryKey[0] !== "generatorLimits",
+          predicate: (query) => !["launch", "generatorLimits", "unlockTime"].includes(query.queryKey[0] as string),
         });
       }),
     [client],
