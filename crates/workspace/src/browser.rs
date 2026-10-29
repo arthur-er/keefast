@@ -133,6 +133,12 @@ impl AccessRequest {
         &self.query.site_host
     }
 
+    /// The host the site's form sends the Entries to, if it is another than the site's: the
+    /// decision is for it too, so the user must be shown it.
+    pub fn form_site(&self) -> Option<&str> {
+        self.query.form_host.as_deref()
+    }
+
     /// The Entries to decide on.
     pub fn entries(&self) -> &[(VaultId, EntryId)] {
         &self.undecided
@@ -328,6 +334,7 @@ impl BrowserSession {
         answer: AccessAnswer,
     ) -> String {
         if answer.remember {
+            // The hosts the user was shown: the site's, and its form's if another.
             let hosts = access.query.hosts();
             // Only Entries the site may still be offered: not those of a Vault whose Pairing
             // was revoked meanwhile.
@@ -753,6 +760,9 @@ pub struct PendingAccess {
     pub id: AccessId,
     /// The host of the site asking.
     pub site: String,
+    /// The host the site's form sends the Entries to, if it is another than `site`. The
+    /// decision, remembered or not, is for both, so show both.
+    pub form_site: Option<String>,
     /// The Entries to decide on.
     pub entries: Vec<(VaultId, EntryId)>,
 }
@@ -894,6 +904,7 @@ impl Workspace {
             .map(|(id, _, request)| PendingAccess {
                 id: *id,
                 site: request.site().to_owned(),
+                form_site: request.form_site().map(str::to_owned),
                 entries: request.entries().to_vec(),
             })
     }

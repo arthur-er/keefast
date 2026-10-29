@@ -152,6 +152,9 @@ pub struct PendingAccess {
     pub id: RequestId,
     /// The host of the site asking.
     pub site: String,
+    /// The host the site's form sends the Entries to, when it is another than `site`. The
+    /// decision is for both, so the prompt shows both.
+    pub form_site: Option<String>,
     pub entries: Vec<AskedEntry>,
 }
 
@@ -318,6 +321,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
         pending_access: workspace.pending_access().map(|pending| PendingAccess {
             id: RequestId::of(pending.id.as_u64()),
             site: pending.site,
+            form_site: pending.form_site,
             entries: asked_entries(workspace, &pending.entries),
         }),
         pending_login: workspace.pending_login().map(|pending| PendingLogin {
