@@ -5,13 +5,16 @@ mod support;
 
 use std::sync::Arc;
 
+use keefast_core::{Argon2, Cipher, Encryption, Kdf};
 use keefast_workspace::{
-    Dropbox, DropboxAccount, DropboxConfig, DropboxError, DropboxItem, EntryScope, OpenVaultError,
-    StorageError, StorageProvider, SyncStatus, UnlockSecrets, VaultId, VaultLocation, Workspace,
+    CreateVaultError, Dropbox, DropboxAccount, DropboxConfig, DropboxError, DropboxItem,
+    EntryScope, NewVault, OpenVaultError, StorageError, StorageProvider, SyncStatus, UnlockSecrets,
+    VaultId, VaultLocation, Workspace,
 };
 use support::fake_dropbox::{ACCOUNT_EMAIL, ACCOUNT_NAME, APP_KEY, FakeDropbox};
 use support::{
-    FakeConfigStore, FakeSecretStore, FakeStorage, FakeVaultCache, KEEPASSXC_KDBX4, PASSWORD,
+    AppearsAfterCheck, FakeConfigStore, FakeSecretStore, FakeStorage, FakeVaultCache,
+    KEEPASSXC_KDBX4, PASSWORD,
 };
 
 fn config(fake: &FakeDropbox) -> DropboxConfig {
@@ -408,6 +411,61 @@ fn a_change_saved_from_another_device_is_merged_not_overwritten() {
     let groups = group_names(&reopened, vault);
     assert!(groups.contains(&"From the phone".to_owned()), "{groups:?}");
     assert!(groups.contains(&"From the laptop".to_owned()), "{groups:?}");
+}
+
+fn new_vault() -> NewVault {
+    NewVault {
+        name: "Personal".into(),
+        secrets: UnlockSecrets::password(PASSWORD),
+        encryption: Encryption {
+            cipher: Cipher::ChaCha20,
+            kdf: Kdf::Argon2id(Argon2 {
+                memory: 1024 * 1024,
+                iterations: 2,
+                parallelism: 2,
+            }),
+        },
+    }
+}
+
+#[test]
+fn a_vault_created_in_dropbox_is_added_never_overwriting() {
+    let fake = FakeDropbox::start();
+    fake.add_folder("/Vaults");
+    let (dropbox, _) = connected(&fake);
+    let mut workspace =
+        Workspace::new(Arc::new(FakeStorage::default())).with_dropbox(dropbox.clone());
+
+    let pending = workspace.begin_create(personal(), new_vault()).unwrap();
+    let vault = workspace.add_unlocked(pending.create().unwrap()).unwrap();
+
+    assert!(workspace.vault(vault).is_some());
+    let written = fake.file("/Vaults/Personal.kdbx").unwrap();
+    assert!(matches!(
+        dropbox.create(&personal(), b"another"),
+        Err(StorageError::Exists(_))
+    ));
+    assert_eq!(fake.file("/Vaults/Personal.kdbx").unwrap(), written);
+}
+
+#[test]
+fn a_file_appearing_in_dropbox_while_a_vault_is_created_is_never_overwritten() {
+    let fake = Arc::new(FakeDropbox::start());
+    fake.add_folder("/Vaults");
+    let (dropbox, _) = connected(&fake);
+    // Another device uploads a file there just after keefast checked that none was.
+    let elsewhere = fake.clone();
+    let storage = AppearsAfterCheck::new(dropbox, move || {
+        elsewhere.add_file("/Vaults/Personal.kdbx", KEEPASSXC_KDBX4);
+    });
+    let workspace =
+        Workspace::new(Arc::new(FakeStorage::default())).with_dropbox_storage(Arc::new(storage));
+    let pending = workspace.begin_create(personal(), new_vault()).unwrap();
+
+    let result = pending.create();
+
+    assert!(matches!(result, Err(CreateVaultError::FileExists)));
+    assert_eq!(fake.file("/Vaults/Personal.kdbx").unwrap(), KEEPASSXC_KDBX4);
 }
 
 #[test]
