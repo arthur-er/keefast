@@ -16,11 +16,12 @@ use keefast_core::{
     TotpAlgorithm,
 };
 use keefast_workspace::{
-    AccessAnswer, ConnectionId, GeneratorMode, GeneratorSettings, UnlockSecrets, VaultId, Workspace,
+    AccessAnswer, ConnectionId, GeneratorMode, GeneratorSettings, PendingSave, UnlockSecrets,
+    VaultId, Workspace,
 };
 use serde_json::{Value, json};
 use support::extension::{FakeExtension, Sent};
-use support::{BROWSER_KDBX, FakeClock, FakeStorage, PASSWORD, personal_vault};
+use support::{BROWSER_KDBX, FakeClipboard, FakeClock, FakeStorage, PASSWORD, personal_vault};
 
 const FIRST: ConnectionId = ConnectionId(1);
 const SECOND: ConnectionId = ConnectionId(2);
@@ -127,6 +128,19 @@ impl Browser {
             .handle_browser_request(FIRST, &sent.json)
             .expect("answered at once");
         self.extension.open(&sent, &reply)
+    }
+
+    /// Saves the Vault, whose Pairing and TOTP are unsaved changes, and locks it with `lock`,
+    /// then unlocks it again.
+    fn lock_and_unlock(&mut self, lock: impl FnOnce(&mut Workspace) -> Vec<PendingSave>) {
+        self.workspace.save_vault(self.vault).unwrap();
+        assert!(lock(&mut self.workspace).is_empty());
+        assert!(self.workspace.locked_vault(self.vault).is_some());
+        let unlocked = self
+            .workspace
+            .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+        assert_eq!(unlocked, self.vault);
     }
 
     fn generate_password(&mut self) -> Value {
@@ -367,6 +381,52 @@ fn get_totp_gives_no_code_once_the_default_access_policy_that_gave_it_changes() 
         .unwrap();
 
     assert_eq!(browser.get_totp(&example.to_hex())["totp"], "");
+}
+
+#[test]
+fn get_totp_gives_no_code_once_the_vault_locks_after_a_one_time_allow() {
+    let mut browser = Browser::paired();
+    let example = browser.with_totp("Example");
+    browser.get_logins(EXAMPLE, ALLOW);
+    assert_eq!(browser.get_totp(&example.to_hex())["totp"], RFC_CODE);
+
+    let vault = browser.vault;
+    browser.lock_and_unlock(|workspace| workspace.lock_vault(vault, &mut FakeClipboard::default()));
+
+    assert_eq!(browser.get_totp(&example.to_hex())["totp"], "");
+    // The site is asked about the Entry again.
+    let sent = browser
+        .extension
+        .get_logins(EXAMPLE, None, &[("Home", &browser.id_key)]);
+    assert_eq!(
+        browser.workspace.handle_browser_request(FIRST, &sent.json),
+        None
+    );
+    let pending = browser.workspace.pending_access().unwrap();
+    assert!(pending.entries.contains(&(browser.vault, example)));
+}
+
+#[test]
+fn get_totp_gives_no_code_once_the_os_locks_the_vault_after_a_one_time_allow() {
+    let mut browser = Browser::paired();
+    let example = browser.with_totp("Example");
+    browser.get_logins(EXAMPLE, ALLOW);
+
+    browser.lock_and_unlock(|workspace| workspace.os_locked(&mut FakeClipboard::default()));
+
+    assert_eq!(browser.get_totp(&example.to_hex())["totp"], "");
+}
+
+#[test]
+fn get_totp_still_answers_after_the_vault_locks_for_a_remembered_allow() {
+    let mut browser = Browser::paired();
+    let remembered = browser.with_totp("Remembered");
+    // "Remembered" already allows example.com, so it is given without asking.
+    browser.get_logins(EXAMPLE, DENY);
+
+    browser.lock_and_unlock(|workspace| workspace.lock_all(&mut FakeClipboard::default()));
+
+    assert_eq!(browser.get_totp(&remembered.to_hex())["totp"], RFC_CODE);
 }
 
 #[test]

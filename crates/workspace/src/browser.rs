@@ -241,7 +241,7 @@ pub struct BrowserSession {
     /// The Pairings the extension proved it holds, as name and key.
     proven: Vec<(String, String)>,
     /// The Entries the extension was last given for a site, each with that site. A site
-    /// turning an Entry down takes it back.
+    /// turning an Entry down takes it back, and a one-time Allow ends when its Vault locks.
     allowed: HashMap<(VaultId, EntryId), SiteQuery>,
 }
 
@@ -1227,8 +1227,10 @@ impl Workspace {
     }
 
     /// Answers the pending Pairing, Access and login requests that involve a Vault about to
-    /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked.
+    /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked. The one-time
+    /// Allows given for its Entries end too.
     pub(crate) fn cut_off_browser_requests(&mut self, vault: VaultId) {
+        self.end_one_time_allows(vault);
         let browser = &mut self.browser;
         let pairings = take_where(&mut browser.pairings, |request| request.vault == vault);
         let accesses = take_where(&mut browser.accesses, |request| {
@@ -1262,6 +1264,25 @@ impl Workspace {
                     message,
                 });
             }
+        }
+    }
+
+    /// Takes back from every extension the Entries of `vault` it was given by a one-time Allow,
+    /// which lasts only until the Vault locks. Those allowed by a remembered decision or the
+    /// Vault's Default access policy are kept: the Vault keeps those decisions.
+    fn end_one_time_allows(&mut self, vault: VaultId) {
+        // Found among every open Vault: the Vault is marked as waiting to lock before this runs.
+        let open = self.vaults.iter().find(|open| open.id == vault);
+        let still_allowed = |entry: EntryId, query: &SiteQuery| {
+            open.and_then(|open| {
+                let entry = open.vault.entry(entry)?;
+                open.vault.access_decision(entry, &query.hosts())
+            }) == Some(AccessDecision::Allow)
+        };
+        for session in self.browser.sessions.values_mut() {
+            session
+                .allowed
+                .retain(|&(of, entry), query| of != vault || still_allowed(entry, query));
         }
     }
 
