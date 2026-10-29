@@ -19,9 +19,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "get-totp" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let uuid = text(&message, "uuid");
         if uuid.len() != UUID_HEX_LEN || !uuid.chars().all(|digit| digit.is_ascii_hexdigit()) {
             return Err(ProtocolError::NoValidUuidProvided);
