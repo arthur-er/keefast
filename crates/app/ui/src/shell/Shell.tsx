@@ -3,7 +3,7 @@
 
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Settings2 } from "lucide-react";
 
 import { api } from "@/api";
 import type { AppSettings, PaneWidthsView } from "@/bindings";
@@ -29,7 +29,7 @@ const LIMITS = { sidebar: [180, 360], entryList: [260, 560] } as const;
 export function Shell() {
   const widths = usePaneWidths();
   const { state } = useShell();
-  useChangeKeyCommand();
+  useVaultSettingsCommands();
   return (
     <div className="vb" style={{ "--sidebar-w": `${widths.current.sidebar}px`, "--list-w": `${widths.current.entryList}px` } as CSSProperties}>
       <Sidebar />
@@ -54,23 +54,36 @@ export function Shell() {
   );
 }
 
-/** "Change master key and encryption…" for the Vault shown: Vault settings C, at the card. */
-function useChangeKeyCommand() {
+/** "Open Vault settings" and "Change master key and encryption…" for the Vault shown: Vault
+ * settings C, whole or at the change-key card. */
+function useVaultSettingsCommands() {
   const { actions } = useShell();
   const view = useView();
   const snapshot = useWorkspace().data;
   const shown = view ? scopeVault(view.scope) : null;
-  const unlocked = snapshot?.vaults.some((vault) => vault.id === shown && vault.state === "unlocked") ?? false;
+  const vault = snapshot?.vaults.find((v) => v.id === shown && v.state === "unlocked");
+  const active = useKeysActive();
+  useAppCommand(
+    {
+      id: "openVaultSettings",
+      title: "Open Vault settings",
+      section: "Vaults",
+      icon: Settings2,
+      enabled: vault !== undefined,
+      run: () => shown !== null && actions.openVaultSettings(shown),
+    },
+    active,
+  );
   useAppCommand(
     {
       id: "changeVaultKey",
       title: "Change master key and encryption…",
       section: "Vaults",
       icon: KeyRound,
-      enabled: unlocked,
+      enabled: vault !== undefined,
       run: () => shown !== null && actions.openVaultSettings(shown, "key"),
     },
-    useKeysActive(),
+    active,
   );
 }
 

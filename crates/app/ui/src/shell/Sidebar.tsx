@@ -1,11 +1,11 @@
-// Vault browser C's sidebar: the Vault switcher, the shown Vault's Entries, Groups, tags and
-// colours, the other Vaults, the Recycle Bin, and the footer's Open / New, commands, settings
+// Vault browser C's sidebar: the Vault switcher, the shown Vault's Entries and Vault settings, its
+// Groups, tags and colours, the other Vaults, the Recycle Bin, and the footer's Open / New, commands, settings
 // and lock.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check, ChevronsUpDown, ChevronUp, CircleHelp, Ellipsis, Folder, FolderOpen, Hash, LayoutGrid, LayoutList, Lock,
-  MousePointerClick, Plus, Settings, Settings2, Trash2,
+  MousePointerClick, Plus, Settings, Settings2, SlidersHorizontal, Trash2,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
@@ -169,6 +169,7 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
     <>
       <div className="nav-section">
         <NavItem scope={{ kind: "vault", vault: vault.id }} icon={<LayoutList />} label="All Entries" count={allCount} />
+        <VaultSettingsItem vault={vault} />
       </div>
       <div className="nav-section">
         <div className="nav-head">
@@ -193,6 +194,23 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
       )}
       <ColorSection />
     </>
+  );
+}
+
+/** The row that opens the Vault's own settings, selected while they show. */
+function VaultSettingsItem({ vault }: { vault: VaultSummary }) {
+  const { state, actions } = useShell();
+  const selected = state.page.kind === "vaultSettings" && state.page.vault === vault.id;
+  return (
+    <button
+      type="button"
+      className={cn("nav-item w-full text-left", selected && "is-selected")}
+      aria-current={selected ? "page" : undefined}
+      onClick={() => actions.openVaultSettings(vault.id)}
+    >
+      <SlidersHorizontal />
+      <span className="truncate">Vault settings</span>
+    </button>
   );
 }
 
