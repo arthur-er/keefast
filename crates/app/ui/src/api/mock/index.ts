@@ -971,8 +971,11 @@ export function createMockBackend(): Backend & {
       edited(v);
       return made.id;
     }),
-    updateEntry: command((id, entryId, input) => {
+    updateEntry: command((id, entryId, input, seenModified) => {
       const [v, e] = entryOf(id, entryId);
+      if (seenModified !== null && e.modified !== seenModified) {
+        throw new MockError("entryChanged", "This Entry changed while you were editing it: changes made elsewhere were Merged into it.");
+      }
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
@@ -1426,14 +1429,23 @@ export function createMockBackend(): Backend & {
         first.unsaved = true;
         state.pendingLock = { vault: first.id, canCancel: true };
         break;
-      case "merge":
+      case "merge": {
         if (!first) return;
+        // Changes the Entry selected (else the first), as a change made elsewhere would.
+        const selected = state.view.entry;
+        const merged = (selected && vault(selected.vault).entries.find((e) => e.id === selected.entry)) ?? first.entries[0];
+        if (merged) {
+          keepHistory(merged);
+          merged.username = `${merged.username || "someone"}.elsewhere`;
+          merged.modified += 60;
+        }
         emit("mergeNotice", {
           vault: first.id,
           vaultName: first.name,
           message: `Merged changes made elsewhere into ${first.name}: 1 Entry updated, 2 Entries added`,
         });
         break;
+      }
       case "saveFailed":
         if (!first) return;
         first.saveFailed = true;

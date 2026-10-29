@@ -118,8 +118,13 @@ export const commands = {
 	/**
 	 *  Sets an Entry's fields, keeping the version it replaces in the Entry's history. Fields left
 	 *  as they were record no history.
+	 * 
+	 *  `seenModified` is the Entry's `modified` as the editor had it. If the Entry changed since,
+	 *  as when a Merge brought in a change made elsewhere, nothing is saved and the error's kind is
+	 *  `entryChanged`, so the editor never silently overwrites it. Without it the edit is saved over
+	 *  whatever the Entry is now, and that version goes to the history.
 	 */
-	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input })),
+	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput, seenModified: number | null) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input, seenModified })),
 	/**  Moves an Entry into another Group of its Vault. */
 	moveEntry: (vault: VaultId, entry: EntryId, to: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("move_entry", { vault, entry, to })),
 	/**
@@ -700,6 +705,8 @@ export type ErrorKind =
 "dropbox" | 
 /**  The Vault file changed elsewhere in a way that can't be Merged, or is being saved. */
 "conflict" | 
+/**  The Entry changed since the editor read it: a Merge brought in a change made elsewhere. */
+"entryChanged" | 
 /**  Something keefast can't do in this build or on this machine. */
 "unavailable" | 
 /**  The user stopped it. */
