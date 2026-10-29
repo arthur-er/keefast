@@ -8,11 +8,11 @@ import {
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { CopyTarget, EntryDetail as Entry } from "@/bindings";
+import type { CopyTarget, EntryDetail as Entry, TotpCodeView } from "@/bindings";
 import { useTotpCode } from "@/api/queries";
 import {
-  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
-  TabsTrigger, toast,
+  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StrengthMeter, Tabs, TabsContent,
+  TabsList, TabsTrigger, toast,
 } from "@/kit";
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
 import { SHORTCUTS } from "@/lib/shortcuts";
@@ -21,6 +21,7 @@ import { HistoryTab } from "@/screens/entry-history/HistoryTab";
 import { useShowHistoryCommand } from "@/screens/entry-history/open";
 import { FacetCommands } from "@/screens/plugins/commands";
 import { FacetSection } from "@/screens/plugins/FacetSection";
+import { splitCode } from "@/screens/totp/totp";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
@@ -187,6 +188,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 copied={copied === "totp"}
                 onCopy={() => void copy({ kind: "totp" }, "TOTP code", "totp")}
                 open={totpSetup}
+                aside={totp.data && <NextTotpCode code={totp.data.next} />}
                 extra={
                   <button
                     type="button"
@@ -307,6 +309,7 @@ function QuickTile({
   copied,
   onCopy,
   extra,
+  aside,
   open,
   children,
 }: {
@@ -316,6 +319,8 @@ function QuickTile({
   copied: boolean;
   onCopy?: () => void;
   extra?: ReactNode;
+  /** At the end of the label's line: the TOTP's next code. */
+  aside?: ReactNode;
   /** Its setup is expanded under the tiles. */
   open?: boolean;
   children: ReactNode;
@@ -341,6 +346,7 @@ function QuickTile({
     >
       <span className="k">
         {icon} {label} {onCopy && <Kbd combo={shortcut} />}
+        {aside}
       </span>
       <span className="v">{children}</span>
       {extra}
@@ -363,6 +369,16 @@ function TotpCode({ code, remaining, period }: { code: string; remaining: number
         {code.slice(0, half)} {code.slice(half)}
       </span>
       <span className="left">{left}s</span>
+    </span>
+  );
+}
+
+/** The code after the one shown (TOTP B's "Next 771 204"), on the tile's label line: beside the
+ * countdown it would crowd the tile's settings button. */
+function NextTotpCode({ code }: Pick<TotpCodeView, "code">) {
+  return (
+    <span className="vb-totp-next" title="The code after this one">
+      Next <span className="mono">{splitCode(code).join(" ")}</span>
     </span>
   );
 }
@@ -405,16 +421,13 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
             </span>
           </Prop>
           <Prop label="Tags">
-            {entry.tags.length ? (
-              entry.tags.map((tag) => (
-                <span key={tag} className="tag">
-                  <span className="dot" />
-                  {tag}
-                </span>
-              ))
-            ) : (
-              <span className="subtle">None</span>
-            )}
+            {entry.tags.map((tag) => (
+              <span key={tag} className="tag">
+                <span className="dot" />
+                {tag}
+              </span>
+            ))}
+            <AddTag entry={entry} />
           </Prop>
           <Prop label="Colour">
             {entry.color ? (
@@ -442,11 +455,70 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
             )}
             {expiry.kind === "later" && expiry.date}
           </Prop>
+          <Prop label="Strength">
+            {entry.strength ? <StrengthMeter strength={entry.strength} className="vb-strength" /> : <span className="subtle">No password</span>}
+          </Prop>
           <Prop label="Modified">{entry.modified !== null ? formatDate(entry.modified) : <span className="subtle">Unknown</span>}</Prop>
           <Prop label="Created">{entry.created !== null ? formatDate(entry.created) : <span className="subtle">Unknown</span>}</Prop>
         </div>
       </div>
     </>
+  );
+}
+
+/** The `+` after the tags: a small field that adds what is typed to the Entry's tags on Enter,
+ * without opening the editor. Commas separate several. */
+function AddTag({ entry }: { entry: Entry }) {
+  const [adding, setAdding] = useState(false);
+  const [text, setText] = useState("");
+  // Enter closes the field, which may blur it too: the tags are added once.
+  const open = useRef(false);
+  open.current = adding;
+  const close = () => {
+    open.current = false;
+    setAdding(false);
+    setText("");
+  };
+  const add = async () => {
+    const typed = text.trim();
+    if (!open.current) return;
+    close();
+    if (!typed) return;
+    try {
+      await api.addTags(entry.vault, entry.id, typed);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  if (!adding) {
+    return (
+      <button type="button" className="btn ghost sm icon vb-tag-add" aria-label="Add tag" title="Add tag" onClick={() => setAdding(true)}>
+        <Plus />
+      </button>
+    );
+  }
+  return (
+    <label className="input vb-tag-input">
+      <input
+        autoFocus
+        aria-label="New tag"
+        placeholder="Tag"
+        value={text}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void add();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            close();
+          }
+        }}
+        onBlur={() => void add()}
+      />
+    </label>
   );
 }
 

@@ -64,6 +64,16 @@
   .vb-totp .left { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; width: 22px; }
   .vb-totp.is-low .code { color: var(--warn); }
   .vb-totp.is-low .ring { background: conic-gradient(var(--warn) calc(var(--p) * 360deg), var(--border-strong) 0); }
+  /* After the shortcut, which shows on hover: the next code stays at the end of the line. */
+  .vb-totp-next { margin-left: 2px; white-space: nowrap; }
+  .vb-totp-next .mono { color: var(--fg-1); letter-spacing: 0.04em; }
+  .C-qt.is-copied .vb-totp-next { display: none; }
+  /* The Details card's Strength row, and the + after its tags. */
+  .vb-strength { font-size: var(--text-sm); }
+  .vb-strength .strength { width: 36px; }
+  .vb-strength .lbl { color: var(--fg-0); font-weight: 400; }
+  .vb-tag-add { width: 22px; height: 22px; }
+  .vb-tag-input { width: 112px; height: 22px; padding: 0 8px; font-size: var(--text-xs); border-radius: var(--r-sm); }
   .vb-link { all: unset; color: var(--fg-0); display: inline-flex; align-items: center; gap: 6px; min-width: 0; cursor: default; }
   .vb-link svg.lucide { width: 12px; height: 12px; color: var(--fg-2); }
   .vb-link:hover { color: var(--accent-fg); }
