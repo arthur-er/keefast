@@ -68,6 +68,8 @@ fn a_pairing_survives_a_save_under_keepassxcs_custom_data_keys() {
         [Pairing {
             name: "Work laptop".into(),
             key: ID_KEY.into(),
+            created: Some(now()),
+            last_used: None,
         }]
     );
     assert!(reopened.is_paired_with("Work laptop", ID_KEY));
@@ -84,6 +86,44 @@ fn a_pairing_survives_a_save_under_keepassxcs_custom_data_keys() {
         "<Item><Key>_CREATED_Work laptop</Key><Value>2026-10-07T23:15:22Z</Value>\
          <LastModificationTime>"
     ));
+}
+
+#[test]
+fn a_pairing_with_no_times_has_no_dates() {
+    // The corpus script stores it without `_CREATED_`, and untimed, as KDBX 4.0 has it.
+    let pairing = &open(KEEPASSXC_KDBX4).pairings()[0];
+
+    assert_eq!((pairing.created, pairing.last_used), (None, None));
+}
+
+#[test]
+fn when_a_pairing_was_last_used_is_kept_in_the_vault_to_the_hour() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    vault.add_pairing("Work laptop", ID_KEY, now()).unwrap();
+    let later = |seconds| Timestamp::from_unix_seconds(now().unix_seconds() + seconds);
+    let last_used = |vault: &Vault| {
+        vault
+            .pairings()
+            .into_iter()
+            .find(|pairing| pairing.name == "Work laptop")
+            .unwrap()
+            .last_used
+    };
+
+    assert!(vault.note_pairing_used("Work laptop", later(60)));
+    // Within the hour, the Vault doesn't change for it.
+    assert!(!vault.note_pairing_used("Work laptop", later(30 * 60)));
+    assert_eq!(last_used(&reopen(&vault)), Some(later(60)));
+    assert!(vault.note_pairing_used("Work laptop", later(2 * 60 * 60)));
+    assert_eq!(last_used(&reopen(&vault)), Some(later(2 * 60 * 60)));
+    assert!(!vault.note_pairing_used("Nobody", later(60)));
+    let xml = independent_xml(&vault);
+    assert!(xml.contains("keefast_PAIRING_USED_Work laptop"), "{xml}");
+
+    vault
+        .revoke_pairing("Work laptop", later(3 * 60 * 60))
+        .unwrap();
+    assert!(!independent_xml(&vault).contains("keefast_PAIRING_USED_Work laptop"));
 }
 
 #[test]
