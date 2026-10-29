@@ -97,7 +97,9 @@ impl Word {
     /// as few runs as can be: "cpass" as "C" and "Pass" in "Copy Password", "gh" in "GitHub".
     fn at_word_starts(&self, text: &Text) -> Option<WordMatch> {
         let (n, m) = (self.chars.len(), text.chars.len());
-        if n > m {
+        // Most texts, such as long notes, don't hold the word's characters in order at all.
+        let mut lower = text.chars.iter().map(|ch| ch.lower);
+        if !self.chars.iter().all(|&ch| lower.any(|lower| lower == ch)) {
             return None;
         }
         // runs[i][j]: the fewest runs matching the word up to its character i, with that
