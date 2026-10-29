@@ -62,6 +62,7 @@ pub struct Totp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TotpCode {
     code: String,
+    next: String,
     remaining: u32,
     period: u32,
 }
@@ -69,6 +70,11 @@ pub struct TotpCode {
 impl TotpCode {
     pub fn code(&self) -> &str {
         &self.code
+    }
+
+    /// The code after this one, which takes over when `remaining` runs out.
+    pub fn next(&self) -> &str {
+        &self.next
     }
 
     /// Seconds until the next code, from 1 to the period.
@@ -250,11 +256,22 @@ impl Totp {
         SecretString::from(uri)
     }
 
-    /// The code at `time`.
+    /// The code at `time`, and the one after it.
     pub fn code(&self, time: Timestamp) -> TotpCode {
         let seconds = u64::try_from(time.unix_seconds()).unwrap_or(0);
         let period = u64::from(self.period);
-        let counter = (seconds / period).to_be_bytes();
+        let counter = seconds / period;
+        TotpCode {
+            code: self.code_for(counter),
+            next: self.code_for(counter + 1),
+            remaining: (period - seconds % period) as u32,
+            period: self.period,
+        }
+    }
+
+    /// The code for RFC 6238's time step `counter`.
+    fn code_for(&self, counter: u64) -> String {
+        let counter = counter.to_be_bytes();
         let hash = match self.algorithm {
             TotpAlgorithm::Sha1 => hmac::<Hmac<Sha1>>(&self.secret, &counter),
             TotpAlgorithm::Sha256 => hmac::<Hmac<Sha256>>(&self.secret, &counter),
@@ -265,7 +282,7 @@ impl Totp {
         let bytes = hash[offset..offset + 4].try_into().expect("four bytes");
         let mut value = u64::from(u32::from_be_bytes(bytes) & 0x7fff_ffff);
 
-        let code = if self.steam {
+        if self.steam {
             // KeePassXC's Steam encoder: least significant character first.
             (0..self.digits)
                 .map(|_| {
@@ -277,11 +294,6 @@ impl Totp {
         } else {
             let digits = self.digits as usize;
             format!("{:0digits$}", value % 10u64.pow(self.digits))
-        };
-        TotpCode {
-            code,
-            remaining: (period - seconds % period) as u32,
-            period: self.period,
         }
     }
 }
