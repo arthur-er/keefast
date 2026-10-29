@@ -254,6 +254,12 @@ export const commands = {
 	setDownloadFavicons: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_download_favicons", { enabled })),
 	/**  Remembers how wide the panes are. Changes nothing else, so the UI isn't told. */
 	setPaneWidths: (widths: PaneWidthsView) => typedError<null, ApiError>(__TAURI_INVOKE("set_pane_widths", { widths })),
+	/**
+	 *  Gives keefast's shortcut `name` these keys ("Ctrl J"), or its default keys back with `None`.
+	 *  Keys another of keefast's shortcuts, a running Plugin's command or text fields have are
+	 *  refused. Plugins loaded from now on can't have them either.
+	 */
+	setShortcut: (name: string, keys: string | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_shortcut", { name, keys })),
 	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
 	/**
 	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
@@ -391,6 +397,11 @@ export type AppSettings = {
 	downloadFavicons: boolean,
 	generator: GeneratorOptions,
 	paneWidths: PaneWidthsView,
+	/**
+	 *  The keys the user gave keefast's shortcuts, by name (`shortcuts.json`'s), in place of
+	 *  their defaults. Only those the user changed.
+	 */
+	shortcuts: { [key in string]: string[] },
 	/**  Why the app config couldn't be read or saved, if it couldn't. */
 	configError: string | null,
 };

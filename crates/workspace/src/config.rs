@@ -1,6 +1,7 @@
 //! The app config: machine-local preferences, kept as TOML in the OS config directory. It never
 //! holds secrets (ADR 0005).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,9 @@ pub struct AppConfig {
     /// on, as keefast makes no network requests they haven't agreed to.
     pub download_favicons: bool,
     pub pane_widths: PaneWidths,
+    /// The keys the user gave keefast's shortcuts in Settings, by the shortcut's name in the UI's
+    /// `shortcuts.json` ("search"), in place of its default keys.
+    pub shortcuts: BTreeMap<String, Vec<String>>,
 }
 
 /// How wide the Vault browser's sidebar and Entry list are, in logical pixels, as the user
@@ -112,6 +116,7 @@ impl Default for AppConfig {
             theme: ThemeSetting::System,
             download_favicons: false,
             pane_widths: PaneWidths::default(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -203,6 +208,8 @@ struct ConfigFile {
     generator: Option<toml::Value>,
     last_login_vault: Option<toml::Value>,
     dropbox_app_key: Option<String>,
+    /// `[shortcuts]`, `search = ["Ctrl J"]`: only those the user changed.
+    shortcuts: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for ConfigFile {
@@ -247,6 +254,7 @@ impl From<ConfigFile> for AppConfig {
                 sidebar: read_width(file.sidebar_width, PaneWidths::default().sidebar),
                 entry_list: read_width(file.entry_list_width, PaneWidths::default().entry_list),
             },
+            shortcuts: file.shortcuts,
         }
     }
 }
@@ -271,6 +279,7 @@ impl From<&AppConfig> for ConfigFile {
             generator: toml::Value::try_from(GeneratorFile::from(&config.generator)).ok(),
             last_login_vault: config.last_login_vault.as_ref().and_then(write_location),
             dropbox_app_key: config.dropbox_app_key.clone(),
+            shortcuts: config.shortcuts.clone(),
         }
     }
 }

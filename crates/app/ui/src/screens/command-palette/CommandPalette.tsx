@@ -25,7 +25,7 @@ import { useEntry, useGroups, useTotpCode, useWorkspace } from "@/api/queries";
 import { Kbd, toast } from "@/kit";
 import { highlightRuns } from "@/lib/fuzzy";
 import { hostOf } from "@/lib/format";
-import { matchesCombo, parseCombo } from "@/lib/shortcuts";
+import { matchesCombo, parseCombo, SHORTCUTS, useShortcuts } from "@/lib/shortcuts";
 import { facetCopies } from "@/screens/plugins/commands";
 import { facetIcon } from "@/screens/plugins/FacetSection";
 import { openHistory } from "@/screens/entry-history/open";
@@ -107,6 +107,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const selectedKey = view?.entry ?? null;
   const selected = useEntry(selectedKey?.vault, selectedKey?.entry).data;
   const registered = useAppCommands();
+  // Its own keys for an Entry's copies are the user's too.
+  useShortcuts();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<Page | null>(null);
   const [highlighted, setHighlighted] = useState("");
@@ -142,11 +144,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const entryActions = (entry: EntrySummary, detail: EntryDetail | undefined, section: string): Action[] => {
     const id = `${entry.vault}:${entry.id}`;
     const list: Action[] = [
-      { kind: "action", value: `act:${id}:password`, section, title: "Copy password", icon: KeyRound, shortcut: "Ctrl C", enabled: entry.hasPassword, trail: <span className="pal-mono">{MASK}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "password" }, "Password") },
-      { kind: "action", value: `act:${id}:username`, section, title: "Copy username", icon: UserRound, shortcut: "Ctrl B", enabled: entry.username !== "", trail: entry.username && <span className="ctx">{entry.username}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "username" }, "Username") },
+      { kind: "action", value: `act:${id}:password`, section, title: "Copy password", icon: KeyRound, shortcut: SHORTCUTS.copyPassword[0], enabled: entry.hasPassword, trail: <span className="pal-mono">{MASK}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "password" }, "Password") },
+      { kind: "action", value: `act:${id}:username`, section, title: "Copy username", icon: UserRound, shortcut: SHORTCUTS.copyUsername[0], enabled: entry.username !== "", trail: entry.username && <span className="ctx">{entry.username}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "username" }, "Username") },
     ];
     if (entry.hasTotp) {
-      list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: "Ctrl T", enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
+      list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: SHORTCUTS.copyTotp[0], enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
     }
     facetCopies(detail).forEach(({ facet, command, field, enabled }) => {
       // The Plugin's text ("Visa •••• 1111"), a value, or a mask: never a protected value.
@@ -166,9 +168,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     list.push(
       { kind: "action", value: `act:${id}:goto`, section, title: "Show in the Entry list", icon: ArrowRight, enabled: true, run: () => goTo(entry) },
-      { kind: "action", value: `act:${id}:edit`, section, title: "Edit Entry", icon: Pencil, shortcut: "Enter", enabled: true, run: () => (goTo(entry), actions.editEntry()) },
+      { kind: "action", value: `act:${id}:edit`, section, title: "Edit Entry", icon: Pencil, shortcut: SHORTCUTS.edit.at(-1), enabled: true, run: () => (goTo(entry), actions.editEntry()) },
       {
-        kind: "action", value: `act:${id}:history`, section, title: "Show Entry history", icon: History, shortcut: "Ctrl H", enabled: true,
+        kind: "action", value: `act:${id}:history`, section, title: "Show Entry history", icon: History, shortcut: SHORTCUTS.history[0], enabled: true,
         trail: detail && detail.historyCount > 0 && <span className="ctx">{detail.historyCount} versions</span>,
         run: () => (goTo(entry), openHistory(actions)),
       },
@@ -324,12 +326,18 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         return;
       }
     }
-    // Ctrl C / B / T copy from the highlighted Entry, or the one whose actions show, unless
-    // text is selected in the query.
+    // Ctrl C / B / T (or the keys the user gave them, with Ctrl, the query taking others) copy
+    // from the highlighted Entry, or the one whose actions show, unless text is selected in the
+    // query.
     const target = highlightedItem?.kind === "entry" ? highlightedItem.entry : page?.kind === "entry" ? page.entry : null;
-    if ((event.ctrlKey || event.metaKey) && target && input.current?.selectionStart === input.current?.selectionEnd) {
-      const what = { c: "password", b: "username", t: "totp" } as const;
-      const field = what[event.key.toLowerCase() as keyof typeof what];
+    if (target && input.current?.selectionStart === input.current?.selectionEnd) {
+      const copies = [["password", SHORTCUTS.copyPassword], ["username", SHORTCUTS.copyUsername], ["totp", SHORTCUTS.copyTotp]] as const;
+      const pressed = (combos: readonly string[]) =>
+        combos.some((text) => {
+          const combo = parseCombo(text);
+          return (combo.ctrl || combo.meta) && matchesCombo(event, combo);
+        });
+      const field = copies.find(([, combos]) => pressed(combos))?.[0];
       if (field && (field !== "totp" || target.hasTotp)) {
         event.preventDefault();
         runOnEntry(target, field);
@@ -411,8 +419,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           <span className="trail">
             {isHighlighted ? (
               <>
-                {entry.hasPassword && <QuickAction label="Copy password (Ctrl C)" icon={KeyRound} onClick={() => runOnEntry(entry, "password")} />}
-                {entry.hasTotp && <QuickAction label="Copy TOTP code (Ctrl T)" icon={Timer} onClick={() => runOnEntry(entry, "totp")} />}
+                {entry.hasPassword && <QuickAction label={`Copy password (${SHORTCUTS.copyPassword[0]})`} icon={KeyRound} onClick={() => runOnEntry(entry, "password")} />}
+                {entry.hasTotp && <QuickAction label={`Copy TOTP code (${SHORTCUTS.copyTotp[0]})`} icon={Timer} onClick={() => runOnEntry(entry, "totp")} />}
                 <QuickAction label="Actions (Enter)" icon={CornerDownLeft} onClick={() => openPage({ kind: "entry", entry })} />
               </>
             ) : (
@@ -671,8 +679,8 @@ function Footer({ item, inPage, moving }: { item: Item | undefined; inPage: bool
       {item?.kind === "entry" ? (
         <>
           {hint(keys("↵"), "Actions")}
-          {item.entry.hasPassword && hint(keys("Ctrl", "C"), "Copy password")}
-          {item.entry.hasTotp && hint(keys("Ctrl", "T"), "Copy TOTP")}
+          {item.entry.hasPassword && hint(<Kbd combo={SHORTCUTS.copyPassword[0]!} />, "Copy password")}
+          {item.entry.hasTotp && hint(<Kbd combo={SHORTCUTS.copyTotp[0]!} />, "Copy TOTP")}
         </>
       ) : item ? (
         <>

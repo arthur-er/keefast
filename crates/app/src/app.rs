@@ -94,6 +94,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::settings::set_browser_integration,
             commands::settings::set_download_favicons,
             commands::settings::set_pane_widths,
+            commands::settings::set_shortcut,
             commands::plugins::list_plugins,
             commands::plugins::choose_plugin_package,
             commands::plugins::install_plugin,
