@@ -34,6 +34,7 @@ pub struct FakeStorage {
     files: Mutex<HashMap<VaultLocation, (Vec<u8>, u64)>>,
     next_revision: Mutex<u64>,
     failing_writes: Mutex<bool>,
+    failing_reads: Mutex<bool>,
     writes: Mutex<usize>,
     watchers: Arc<Mutex<Vec<(VaultLocation, OnChange)>>>,
     /// Changes made elsewhere, landing just before the next write each.
@@ -110,6 +111,11 @@ impl FakeStorage {
         *self.failing_writes.lock().unwrap() = fail;
     }
 
+    /// Makes every read fail, like a file keefast may not read, until turned off again.
+    pub fn fail_reads(&self, fail: bool) {
+        *self.failing_reads.lock().unwrap() = fail;
+    }
+
     pub fn writes(&self) -> usize {
         *self.writes.lock().unwrap()
     }
@@ -147,11 +153,19 @@ impl FakeStorage {
             false => Ok(()),
         }
     }
+
+    fn check_readable(&self) -> Result<(), StorageError> {
+        self.check_online()?;
+        match *self.failing_reads.lock().unwrap() {
+            true => Err(StorageError::Io(io::Error::other("permission denied"))),
+            false => Ok(()),
+        }
+    }
 }
 
 impl StorageProvider for FakeStorage {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
-        self.check_online()?;
+        self.check_readable()?;
         *self.reads.lock().unwrap() += 1;
         let files = self.files.lock().unwrap();
         let (bytes, revision) = files

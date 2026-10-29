@@ -105,6 +105,19 @@ pub enum StorageError {
     Dropbox(#[from] DropboxError),
 }
 
+impl StorageError {
+    /// Whether the Storage provider can't be reached for now, but may be later: without a
+    /// network, or with the Dropbox account disconnected, or no longer letting keefast in,
+    /// until the user connects it again. Saves wait in the local cache meanwhile.
+    pub fn is_out_of_reach(&self) -> bool {
+        matches!(
+            self,
+            StorageError::Offline(_)
+                | StorageError::Dropbox(DropboxError::NotConnected | DropboxError::AccessRevoked)
+        )
+    }
+}
+
 /// Reads and writes Vault files wherever they live. Injected into the Workspace.
 pub trait StorageProvider: Send + Sync {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError>;

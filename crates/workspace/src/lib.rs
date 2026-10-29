@@ -200,7 +200,8 @@ pub enum SyncStatus {
     Synced,
     /// Checking the Vault file there for changes, or uploading to it.
     Syncing,
-    /// The service can't be reached. Saves are kept on this machine meanwhile.
+    /// The service can't be reached, as without a network or with its account disconnected.
+    /// Saves are kept on this machine meanwhile.
     Offline,
     /// The last sync failed for another reason.
     Error,
@@ -442,7 +443,8 @@ pub struct UnlockedVault {
 /// changes writes only after a Merge, and only if the Vault had no unsaved edits and the Vault
 /// file lacks something: unsaved edits wait for the user, or autosave, to save them.
 ///
-/// An online Vault file out of reach is saved to the local cache instead, and uploaded later.
+/// An online Vault file out of reach, as without a network or with its account disconnected, is
+/// saved to the local cache instead, and uploaded later.
 pub struct PendingSave {
     id: VaultId,
     unlocking: u64,
@@ -489,13 +491,15 @@ impl PendingSave {
                     match self.storage.read(&self.location) {
                         Ok(stored) => Some(stored),
                         Err(StorageError::NotFound(_)) => None,
-                        Err(StorageError::Offline(_)) if write => return self.keep_offline(),
+                        Err(error) if write && error.is_out_of_reach() => {
+                            return self.keep_offline();
+                        }
                         Err(error) => return Err(error.into()),
                     }
                 }
                 Ok(_) if !write => return Ok(Synced::Behind(None)),
                 Ok(_) | Err(StorageError::NotFound(_)) => None,
-                Err(StorageError::Offline(_)) if write => return self.keep_offline(),
+                Err(error) if write && error.is_out_of_reach() => return self.keep_offline(),
                 Err(error) => return Err(error.into()),
             };
             match stored {
@@ -531,7 +535,7 @@ impl PendingSave {
                 }
                 // Changed meanwhile: Merge it in, and try again.
                 Err(StorageError::Conflict) => {}
-                Err(StorageError::Offline(_)) => return self.keep_offline(),
+                Err(error) if error.is_out_of_reach() => return self.keep_offline(),
                 Err(error) => return Err(error.into()),
             }
         }
@@ -1447,9 +1451,11 @@ impl Workspace {
                 (Ok(()), problem)
             }
             Err(error) => {
-                let offline = matches!(error, SaveVaultError::Storage(StorageError::Offline(_)));
-                // Out of reach is no failed save when there was nothing to save.
-                if finished.write || !offline {
+                let offline =
+                    matches!(&error, SaveVaultError::Storage(error) if error.is_out_of_reach());
+                // A check of an online Vault file that fails, with nothing to save, is no failed
+                // save: its Sync status tells of it.
+                if finished.write || (!offline && open.online.is_none()) {
                     open.failed_save_at = Some(finished.edits);
                 }
                 let problem = match offline {
