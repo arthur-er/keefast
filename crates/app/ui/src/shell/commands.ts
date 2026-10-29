@@ -9,11 +9,39 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { LucideIcon } from "lucide-react";
 
-import { useShortcut } from "@/lib/shortcuts";
+import { type ShortcutName, useShortcut } from "@/lib/shortcuts";
+
+/** Shortcuts in `shortcuts.json` that aren't the key of a command named like them: the
+ * palette's, Escape's, and those of commands named otherwise ("edit" is `editEntry`'s). */
+const SHARED_SHORTCUTS = ["palette", "close", "edit", "save", "history"] as const satisfies readonly ShortcutName[];
+
+/** Every command's id: a shortcut's name from `shortcuts.json` for the command it runs, one of
+ * the app's other commands, or a Plugin's (`plugin:keefast.card:card:copy-number`). An id that
+ * is none of these doesn't compile; add a new command's here. */
+export type AppCommandId =
+  | Exclude<ShortcutName, (typeof SHARED_SHORTCUTS)[number]>
+  | "changeVaultKey"
+  | "closeHistory"
+  | "compareVersion"
+  | "deleteGroup"
+  | "editEntry"
+  | "entryEditorCancel"
+  | "entryEditorDone"
+  | "installPlugin"
+  | "newerVersion"
+  | "olderVersion"
+  | "openUrl"
+  | "plugins"
+  | "restoreVersion"
+  | "revealVersion"
+  | "saveAll"
+  | "searchSettings"
+  | "showHistory"
+  | `plugin:${string}`;
 
 export interface AppCommand {
   /** Unique: a later registration with the same id replaces the earlier. */
-  id: string;
+  id: AppCommandId;
   /** As the palette lists it: "Copy password", "Lock all Vaults". */
   title: string;
   /** The palette's section: "Entry", "Vaults", "Go to"… */
@@ -32,7 +60,7 @@ export interface AppCommand {
   run: () => void;
 }
 
-const registered = new Map<string, AppCommand>();
+const registered = new Map<AppCommandId, AppCommand>();
 let snapshot: AppCommand[] = [];
 const subscribers = new Set<() => void>();
 
