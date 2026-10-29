@@ -696,23 +696,32 @@ pub async fn reveal_password(core: Core<'_>, vault: VaultId, entry: EntryId) -> 
     })
 }
 
-/// A custom field's value, protected or not, for the user to see.
+/// A custom field's value, protected or not, for the user to see. The field is asked for by
+/// name, so a Merge that adds or reorders fields can't reveal another one.
 #[tauri::command]
 #[specta::specta]
 pub async fn reveal_custom_field(
     core: Core<'_>,
     vault: VaultId,
     entry: EntryId,
-    index: u32,
+    name: String,
 ) -> ApiResult<String> {
-    core.read(|workspace| {
-        let (_, found) = find(workspace, vault, &entry)?;
-        found
-            .custom_fields()
-            .get(index as usize)
-            .map(|field| field.value.expose_secret().to_owned())
-            .ok_or_else(ApiError::not_found)
-    })
+    core.read(|workspace| custom_field_value(workspace, vault, &entry, &name))
+}
+
+fn custom_field_value(
+    workspace: &Workspace,
+    vault: VaultId,
+    entry: &EntryId,
+    name: &str,
+) -> ApiResult<String> {
+    let (_, found) = find(workspace, vault, entry)?;
+    found
+        .custom_fields()
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| field.value.expose_secret().to_owned())
+        .ok_or_else(ApiError::not_found)
 }
 
 /// Makes a new Entry in `group`, and returns it.

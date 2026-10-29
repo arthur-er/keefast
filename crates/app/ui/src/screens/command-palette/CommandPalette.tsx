@@ -133,11 +133,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         kind: "action", value: `act:${id}:plugin:${facet.plugin}:${facet.facet}:${command.id}`, section, title: command.title, icon: facetIcon(facet.icon),
         shortcut: command.shortcut ?? undefined, enabled,
         trail: enabled && (shown !== null ? <span className={field.kind === "text" ? "ctx" : "pal-mono"}>{shown}</span> : <span className="pal-mono">{MASK}</span>),
-        run: () => field.index !== null && void copyField(entry.vault, entry.id, { kind: "customField", index: field.index }, field.name),
+        run: () => field.index !== null && void copyField(entry.vault, entry.id, { kind: "customField", name: field.name }, field.name),
       });
     });
     customFieldsOf(detail).forEach(({ field, index }) =>
-      list.push({ kind: "action", value: `act:${id}:field:${index}`, section, title: `Copy ${field.name}`, icon: TextCursorInput, enabled: !field.isEmpty, trail: <span className="ctx">Custom field</span>, run: () => void copyField(entry.vault, entry.id, { kind: "customField", index }, field.name) }),
+      list.push({ kind: "action", value: `act:${id}:field:${index}`, section, title: `Copy ${field.name}`, icon: TextCursorInput, enabled: !field.isEmpty, trail: <span className="ctx">Custom field</span>, run: () => void copyField(entry.vault, entry.id, { kind: "customField", name: field.name }, field.name) }),
     );
     if (entry.url) {
       list.push({ kind: "action", value: `act:${id}:url`, section, title: `Open ${hostOf(entry.url)}`, icon: ExternalLink, enabled: true, run: () => openUrl(entry.vault, entry.id) });
@@ -270,7 +270,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       if (copy && copy.field.index !== null) {
         event.preventDefault();
         onClose();
-        void copyField(page.entry.vault, page.entry.id, { kind: "customField", index: copy.field.index }, copy.field.name);
+        void copyField(page.entry.vault, page.entry.id, { kind: "customField", name: copy.field.name }, copy.field.name);
         return;
       }
     }

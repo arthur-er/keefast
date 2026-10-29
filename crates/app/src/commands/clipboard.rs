@@ -7,10 +7,10 @@ use specta::Type;
 
 use super::Core;
 use crate::dto::{EntryId, VaultId};
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 
 /// The field of an Entry to copy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -22,9 +22,10 @@ pub enum CopyTarget {
     Url,
     /// The Entry's TOTP code now.
     Totp,
-    /// A custom field, by its index in the Entry's custom fields.
+    /// A custom field, by its name, so a Merge that adds or reorders fields can't copy another
+    /// one.
     CustomField {
-        index: u32,
+        name: String,
     },
 }
 
@@ -46,16 +47,25 @@ pub async fn copy_field(
     entry: EntryId,
     field: CopyTarget,
 ) -> ApiResult<Copied> {
-    let field = match field {
-        CopyTarget::Username => CopyField::Username,
-        CopyTarget::Password => CopyField::Password,
-        CopyTarget::Url => CopyField::Url,
-        CopyTarget::Totp => CopyField::TotpCode,
-        CopyTarget::CustomField { index } => CopyField::CustomField(index as usize),
-    };
     let clears_in = core.update_with_clipboard(|workspace, clipboard| {
         let vault = vault.resolve_open(workspace)?;
         let entry = entry.resolve()?;
+        let field = match field {
+            CopyTarget::Username => CopyField::Username,
+            CopyTarget::Password => CopyField::Password,
+            CopyTarget::Url => CopyField::Url,
+            CopyTarget::Totp => CopyField::TotpCode,
+            CopyTarget::CustomField { name } => workspace
+                .entry(vault, entry)
+                .and_then(|found| {
+                    found
+                        .custom_fields()
+                        .iter()
+                        .position(|field| field.name == name)
+                })
+                .map(CopyField::CustomField)
+                .ok_or_else(ApiError::not_found)?,
+        };
         workspace.copy_field(clipboard, vault, entry, field)?;
         ApiResult::Ok(workspace.clipboard_clears_in())
     })?;

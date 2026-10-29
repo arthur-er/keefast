@@ -105,7 +105,7 @@ describe("mock backend", () => {
     ]);
     expect(JSON.stringify(entry.facets)).not.toMatch(/5162|481|8271/);
     const cvv = card.fields[3]!;
-    expect(await api.revealCustomField(entry.vault, entry.id, cvv.index!)).toBe("481");
+    expect(await api.revealCustomField(entry.vault, entry.id, cvv.name)).toBe("481");
 
     const github = (await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" }))[0]!;
     expect((await api.getEntry(github.vault, github.id)).facets).toEqual([]);

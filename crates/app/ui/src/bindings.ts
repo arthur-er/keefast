@@ -108,8 +108,11 @@ export const commands = {
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
 	/**  An Entry's password, for the user to see. Copying doesn't need it: use `copy_field`. */
 	revealPassword: (vault: VaultId, entry: EntryId) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_password", { vault, entry })),
-	/**  A custom field's value, protected or not, for the user to see. */
-	revealCustomField: (vault: VaultId, entry: EntryId, index: number) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, index })),
+	/**
+	 *  A custom field's value, protected or not, for the user to see. The field is asked for by
+	 *  name, so a Merge that adds or reorders fields can't reveal another one.
+	 */
+	revealCustomField: (vault: VaultId, entry: EntryId, name: string) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, name })),
 	/**  Makes a new Entry in `group`, and returns it. */
 	createEntry: (vault: VaultId, group: GroupId, input: EntryInput) => typedError<EntryId, ApiError>(__TAURI_INVOKE("create_entry", { vault, group, input })),
 	/**
@@ -475,8 +478,11 @@ export type Copied = {
 export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "url" } | 
 /**  The Entry's TOTP code now. */
 { kind: "totp" } | 
-/**  A custom field, by its index in the Entry's custom fields. */
-{ kind: "customField"; index: number };
+/**
+ *  A custom field, by its name, so a Merge that adds or reorders fields can't copy another
+ *  one.
+ */
+{ kind: "customField"; name: string };
 
 /**
  *  A custom field to give an Entry. A `value` of `None` keeps the value the field had at

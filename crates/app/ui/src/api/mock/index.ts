@@ -953,8 +953,8 @@ export function createMockBackend(): Backend & {
       return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
-    revealCustomField: command((id, entryId, index) => {
-      const field = entryOf(id, entryId)[1].fields[index];
+    revealCustomField: command((id, entryId, name) => {
+      const field = entryOf(id, entryId)[1].fields.find((f) => f.name === name);
       if (!field) throw notFound();
       return field.value;
     }),
@@ -1128,7 +1128,7 @@ export function createMockBackend(): Backend & {
         : field.kind === "password" ? e.password
         : field.kind === "url" ? e.url
         : field.kind === "totp" ? (e.totp ? totpCode(e.totp).code : "")
-        : (e.fields[field.index]?.value ?? "");
+        : (e.fields.find((f) => f.name === field.name)?.value ?? "");
       if (!text) throw new MockError("empty", "That field is empty, so nothing was copied.");
       void navigator.clipboard?.writeText(text).catch(() => {});
       const seconds = state.settings.clipboardClearSeconds;

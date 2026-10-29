@@ -203,10 +203,9 @@ function EditorForm({
     }
   };
   const revealField = async (row: FieldRow) => {
-    const index = savedIndex(entry, row.original);
-    if (row.value !== null || !entry || index === null) return;
+    if (row.value !== null || !entry || row.original === null || savedIndex(entry, row.original) === null) return;
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, index);
+      const value = await api.revealCustomField(entry.vault, entry.id, row.original);
       setDraft((current) => ({
         ...current,
         fields: current.fields.map((r) => (r.key === row.key && r.value === null ? { ...r, value, savedValue: value } : r)),
@@ -235,7 +234,8 @@ function EditorForm({
       return next;
     });
 
-  const save = async () => {
+  /** Saves the draft. `keep`: the user chose to keep their edits over a change Merged in. */
+  const save = async (keep = false) => {
     setTried(true);
     const wrong = problems(draft, hidden);
     if (wrong || ownedErrors.length > 0) {
@@ -662,7 +662,7 @@ function EditorForm({
                           size="sm"
                           label={kept ? "Copy" : "Copy the saved value: save first"}
                           disabled={!kept || !entry}
-                          onClick={() => entry && index !== null && void copyField(entry.vault, entry.id, { kind: "customField", index }, row.name)}
+                          onClick={() => entry && row.original !== null && void copyField(entry.vault, entry.id, { kind: "customField", name: row.original }, row.name)}
                         >
                           <Copy />
                         </IconButton>

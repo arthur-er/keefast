@@ -469,21 +469,22 @@ function SectionHead({ title, count, children }: { title: string; count: number;
 }
 
 function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
-  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  // By field name: a Merge that adds or reorders fields doesn't reveal another one.
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
   useEffect(() => {
     const hide = () => setRevealed({});
     window.addEventListener("blur", hide);
     return () => window.removeEventListener("blur", hide);
   }, []);
-  const toggle = async (index: number) => {
-    if (index in revealed) {
+  const toggle = async (name: string) => {
+    if (name in revealed) {
       const next = { ...revealed };
-      delete next[index];
+      delete next[name];
       return setRevealed(next);
     }
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, index);
-      setRevealed((current) => ({ ...current, [index]: value }));
+      const value = await api.revealCustomField(entry.vault, entry.id, name);
+      setRevealed((current) => ({ ...current, [name]: value }));
     } catch (error) {
       toast(errorMessage(error), { icon: "error" });
     }
@@ -496,19 +497,19 @@ function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null
       ) : (
         <div className="vb-fields">
           {entry.customFields.map((field, index) => {
-            const value = field.value ?? revealed[index];
+            const value = field.value ?? revealed[field.name];
             const key = `field:${index}`;
             return (
               <FieldRow
                 key={index}
                 label={field.name}
                 copied={copied === key}
-                onCopy={field.isEmpty ? undefined : () => void onCopy({ kind: "customField", index }, field.name, key)}
+                onCopy={field.isEmpty ? undefined : () => void onCopy({ kind: "customField", name: field.name }, field.name, key)}
                 actions={
                   field.protected &&
                   !field.isEmpty && (
-                    <button type="button" className="btn ghost sm icon" aria-label={index in revealed ? "Hide" : "Show"} title={index in revealed ? "Hide" : "Show"} onClick={() => void toggle(index)}>
-                      {index in revealed ? <EyeOff /> : <Eye />}
+                    <button type="button" className="btn ghost sm icon" aria-label={field.name in revealed ? "Hide" : "Show"} title={field.name in revealed ? "Hide" : "Show"} onClick={() => void toggle(field.name)}>
+                      {field.name in revealed ? <EyeOff /> : <Eye />}
                     </button>
                   )
                 }
