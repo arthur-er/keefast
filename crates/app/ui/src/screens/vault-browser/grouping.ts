@@ -25,12 +25,19 @@ export interface GroupingOptions {
   acrossVaults: boolean;
   /** Whether a search ranks the list: Groups then come in the order of their best match. */
   searching: boolean;
+  /** Whether the list keeps the backend's order with no headings, as Recently modified does
+   * (newest first). */
+  flat?: boolean;
 }
+
+/** The one heading-less group of a flat list. */
+export const FLAT = "flat";
 
 /** The Entries under a heading per Group, in the order the backend listed them within each.
  * Unsearched, a Vault's top Group comes first, then the others by name; searched, Groups come in
  * the order of their best match, so the best Entry stays first. */
 export function groupEntries(entries: readonly EntrySummary[], options: GroupingOptions): EntryGroup[] {
+  if (options.flat) return entries.length ? [{ key: FLAT, label: "", top: false, entries: [...entries] }] : [];
   const groups = new Map<string, EntryGroup & { vault: VaultId; first: number }>();
   entries.forEach((entry, index) => {
     const key = `${entry.vault}:${entry.group}`;
@@ -87,6 +94,11 @@ export function moveSelection(
  * colours leave it out already. */
 export function hidesRecycleBin(scope: Scope): boolean {
   return scope.kind === "vault" || scope.kind === "allVaults";
+}
+
+/** Whether the list keeps the backend's order without Group headings. */
+export function isFlat(scope: Scope): boolean {
+  return scope.kind === "smartList" && scope.list === "recentlyModified";
 }
 
 /** Whether the list spans Vaults. */

@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { GroupContextMenu, useDeleteGroupCommand } from "@/screens/dialogs/GroupActions";
 
 import { useCurrentVault } from "./hooks";
+import { SMART_LISTS } from "./smartLists";
 import { useShell } from "./state";
 import { sameScope, useShowScope, useView } from "./view";
 import { storageLine, vaultIcon, vaultStatus } from "./vaultStatus";
@@ -169,6 +170,15 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
     <>
       <div className="nav-section">
         <NavItem scope={{ kind: "vault", vault: vault.id }} icon={<LayoutList />} label="All Entries" count={allCount} />
+        {SMART_LISTS.map(({ list, label, icon: Icon, count }) => (
+          <NavItem
+            key={list}
+            scope={{ kind: "smartList", vault: vault.id, list }}
+            icon={<Icon />}
+            label={label}
+            count={vault.smartLists[count] || ""}
+          />
+        ))}
       </div>
       <div className="nav-section">
         <div className="nav-head">

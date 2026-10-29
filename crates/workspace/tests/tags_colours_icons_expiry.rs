@@ -1,6 +1,7 @@
 //! Marking Entries with tags, colours and icons, and setting when they expire, through the
 //! Workspace: the sidebar's tag and colour filters list the marked Entries of every open Vault,
-//! and the Entry list flags expired Entries by the Workspace's clock.
+//! its Smart lists a Vault's Entries with TOTP, changed lately or expired, and the Entry list
+//! flags expired Entries by the Workspace's clock.
 
 mod support;
 
@@ -8,11 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_core::{
-    CompositeKey, EditError, EntryColor, EntryFields, EntryIcon, EntryId, Timestamp, Vault,
+    CompositeKey, CustomField, EditError, EntryColor, EntryFields, EntryIcon, EntryId, EntrySearch,
+    EntrySort, Timestamp, Vault,
 };
 use keefast_workspace::{
-    EditVaultError, EntryScope, ImportIconError, UnlockSecrets, VaultId, Workspace,
+    EditVaultError, EntryScope, ImportIconError, RECENTLY_MODIFIED, SmartList, UnlockSecrets,
+    VaultId, Workspace,
 };
+use secrecy::SecretString;
 use support::{
     FakeClipboard, FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault,
 };
@@ -226,6 +230,88 @@ fn an_entry_is_flagged_expired_once_its_expiry_time_passes() {
     h.workspace.save_vault(personal).unwrap();
     let saved = h.reopen(personal);
     assert_eq!(saved.entry(github).unwrap().expires(), Some(in_a_day));
+}
+
+#[test]
+fn with_totp_lists_the_vaults_entries_with_totp_set_up() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    let totp = |fields: &mut EntryFields| {
+        fields.custom_fields.push(CustomField {
+            name: "otp".into(),
+            value: SecretString::from("otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP"),
+            protected: true,
+        })
+    };
+    h.mark(personal, "GitHub", totp);
+    h.mark(personal, "Email", totp);
+    h.mark(work, "GitHub", totp);
+    let with_totp = EntryScope::Smart(personal, SmartList::WithTotp);
+    assert_eq!(
+        h.listed(with_totp.clone()),
+        [(personal, "Email".into()), (personal, "GitHub".into())]
+    );
+
+    // An Entry in the Recycle Bin is on no Smart list.
+    let email = h.entry(personal, "Email");
+    h.workspace.delete_entry(personal, email).unwrap();
+    assert_eq!(h.listed(with_totp), [(personal, "GitHub".into())]);
+    assert_eq!(h.workspace.smart_list(work, SmartList::WithTotp).len(), 1);
+}
+
+#[test]
+fn recently_modified_lists_entries_changed_in_the_last_30_days_newest_first() {
+    let mut h = harness();
+    let personal = h.personal;
+    let recent = EntryScope::Smart(personal, SmartList::RecentlyModified);
+    // The fixture's Entries were last changed long before.
+    assert!(h.listed(recent.clone()).is_empty());
+
+    h.mark(personal, "Email", tagged(&["mail"]));
+    h.clock.advance(Duration::from_secs(60));
+    h.mark(personal, "GitHub", tagged(&["dev"]));
+    h.clock.advance(Duration::from_secs(60));
+    h.mark(h.work, "Email", tagged(&["mail"]));
+    let newest_first = [(personal, "GitHub".into()), (personal, "Email".into())];
+    assert_eq!(h.listed(recent.clone()), newest_first);
+    // Whatever the sort asked for.
+    let found: Vec<(VaultId, String)> = h
+        .workspace
+        .find_entries(recent.clone(), &EntrySearch::default(), EntrySort::Title)
+        .iter()
+        .map(|listed| (listed.vault, listed.entry.title().to_owned()))
+        .collect();
+    assert_eq!(found, newest_first);
+
+    // 30 days after Email changed, only GitHub, changed a minute later, is still recent.
+    h.clock
+        .advance(RECENTLY_MODIFIED - Duration::from_secs(120));
+    assert_eq!(h.listed(recent.clone()), newest_first);
+    h.clock.advance(Duration::from_secs(1));
+    assert_eq!(h.listed(recent), [(personal, "GitHub".into())]);
+}
+
+#[test]
+fn expired_lists_the_vaults_entries_whose_expiry_time_has_come() {
+    let mut h = harness();
+    let (personal, work) = (h.personal, h.work);
+    let in_a_day = Timestamp::from_unix_seconds(START as i64 + 86_400);
+    h.mark(personal, "GitHub", |fields| fields.expires = Some(in_a_day));
+    h.mark(work, "GitHub", |fields| fields.expires = Some(in_a_day));
+    let expired = EntryScope::Smart(personal, SmartList::Expired);
+    assert!(h.listed(expired.clone()).is_empty());
+
+    h.clock.advance(Duration::from_secs(86_400));
+    assert_eq!(h.listed(expired), [(personal, "GitHub".into())]);
+}
+
+#[test]
+fn a_smart_list_is_in_its_vault_and_takes_new_entries_at_its_top() {
+    let h = harness();
+    let scope = EntryScope::Smart(h.work, SmartList::Expired);
+    assert_eq!(scope.vault(), Some(h.work));
+    let top = h.workspace.vault(h.work).unwrap().vault().root().id();
+    assert_eq!(h.workspace.group_for_new_items(scope), Some((h.work, top)));
 }
 
 #[test]

@@ -35,6 +35,8 @@ import type {
   LoginOption,
   LoginTarget,
   Scope,
+  SmartList,
+  SmartListCounts,
   TotpSetup,
   View,
   WorkspaceSnapshot,
@@ -51,6 +53,8 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { onSmartList } from "@/shell/smartLists";
+
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
 import { facetsOf, facetTemplates, formatOwned, listLabel, validateOwned } from "./plugins";
 
@@ -473,6 +477,16 @@ export function createMockBackend(): Backend & {
     return state.vaults.filter((v) => !v.locked && state.pendingLock?.vault !== v.id);
   }
 
+  function onList(list: SmartList, e: MockEntry): boolean {
+    const expired = e.expires !== null && e.expires <= now();
+    return onSmartList(list, { hasTotp: e.totp !== null, modified: e.modified, expired }, now());
+  }
+
+  function smartListCounts(v: MockVault): SmartListCounts {
+    const count = (list: SmartList) => (v.locked ? 0 : v.entries.filter((e) => !inBin(v, e.group) && onList(list, e)).length);
+    return { withTotp: count("withTotp"), recentlyModified: count("recentlyModified"), expired: count("expired") };
+  }
+
   function scoped(scope: Scope): [MockVault, MockEntry][] {
     const outsideBin = (v: MockVault) =>
       v.entries.filter((e) => !inBin(v, e.group)).map((e) => [v, e] as [MockVault, MockEntry]);
@@ -490,6 +504,11 @@ export function createMockBackend(): Backend & {
             const below = descendants(v, scope.group);
             return v.entries.filter((e) => below.has(e.group)).map((e) => [v, e] as [MockVault, MockEntry]);
           });
+      case "smartList":
+        return readable()
+          .filter((v) => v.id === scope.vault)
+          .flatMap(outsideBin)
+          .filter(([, e]) => onList(scope.list, e));
       case "tag":
         return readable().flatMap(outsideBin).filter(([, e]) => e.tags.includes(scope.tag));
       case "color":
@@ -619,6 +638,7 @@ export function createMockBackend(): Backend & {
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,
           browserGroup: hidden ? null : v.browserGroup,
+          smartLists: hidden ? { withTotp: 0, recentlyModified: 0, expired: 0 } : smartListCounts(v),
         };
       }),
       view: state.view,
@@ -915,12 +935,14 @@ export function createMockBackend(): Backend & {
     }),
     listEntries: command(async (query: EntryQuery) => {
       const words = query.search.toLowerCase().split(/\s+/).filter(Boolean);
+      // Recently modified is newest first, whatever the sort.
+      const sort = query.scope.kind === "smartList" && query.scope.list === "recentlyModified" ? "modified" : query.sort;
       const listed = scoped(query.scope)
         .map(([v, e]) => ({ v, e, score: matches(e, words) }))
         .filter((x): x is { v: MockVault; e: MockEntry; score: number } => x.score !== null)
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
-          const [ka, kb] = [sortKey(a.e, query.sort), sortKey(b.e, query.sort)];
+          const [ka, kb] = [sortKey(a.e, sort), sortKey(b.e, sort)];
           return ka < kb ? -1 : ka > kb ? 1 : 0;
         })
         .map(({ v, e }) => labelled(summary(v, e), e));

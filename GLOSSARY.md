@@ -42,6 +42,10 @@ _Avoid_: Folder, category
 The Group that deleted Entries and Groups move to, when the Vault has it enabled, so a delete can be undone. Deleting from the Recycle Bin deletes for good.
 _Avoid_: Trash, deleted items
 
+**Smart list**:
+A list in the sidebar of a Vault's Entries outside the Recycle Bin, picked by what they have rather than where they are: With TOTP, Recently modified (changed in the last 30 days, newest first) and Expired.
+_Avoid_: Filter, saved search, view
+
 **Storage provider**:
 Where a Vault file lives: the local filesystem or a remote service such as Dropbox.
 _Avoid_: Backend, remote, cloud

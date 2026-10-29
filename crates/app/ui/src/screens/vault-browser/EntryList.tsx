@@ -25,7 +25,8 @@ import { showView, useView } from "@/shell/view";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import {
-  entryKey, groupEntries, hidesRecycleBin, moveSelection, type Move, sameEntry, spansVaults, visibleEntries,
+  entryKey, FLAT, groupEntries, hidesRecycleBin, isFlat, moveSelection, type Move, sameEntry, spansVaults,
+  visibleEntries,
 } from "./grouping";
 
 const SORTS: { value: SortOrder; label: string }[] = [
@@ -57,7 +58,7 @@ export function EntryList() {
     [snapshot?.vaults],
   );
   const groups = useMemo(
-    () => groupEntries(entries, { topGroups, acrossVaults: spansVaults(scope), searching }),
+    () => groupEntries(entries, { topGroups, acrossVaults: spansVaults(scope), searching, flat: isFlat(scope) }),
     [entries, topGroups, scope, searching],
   );
   const shown = useMemo(() => visibleEntries(groups, collapsed), [groups, collapsed]);
@@ -141,7 +142,7 @@ export function EntryList() {
           />
           {!state.search && <Kbd combo="/" />}
         </label>
-        <SortMenu />
+        <SortMenu newestFirst={isFlat(scope)} />
         <AddMenu />
       </div>
       <div ref={body} className="vb-list-body" role="list">
@@ -150,6 +151,21 @@ export function EntryList() {
         ) : (
           groups.map((group) => {
             const isCollapsed = collapsed.has(group.key);
+            if (group.key === FLAT) {
+              return (
+                <div key={group.key} role="group">
+                  {group.entries.map((entry) => (
+                    <EntryRow
+                      key={entryKey(entry)}
+                      entry={entry}
+                      selected={sameEntry(selected, entry)}
+                      search={state.search}
+                      onSelect={() => select(entry)}
+                    />
+                  ))}
+                </div>
+              );
+            }
             return (
               <div key={group.key} role="group" aria-label={group.label}>
                 <button
@@ -288,8 +304,18 @@ function EmptyList({ searching, onClear }: { searching: boolean; onClear: () => 
   );
 }
 
-function SortMenu() {
+/** The sort, unless the list is Recently modified, which is always newest first. */
+function SortMenu({ newestFirst }: { newestFirst: boolean }) {
   const { state, actions } = useShell();
+  if (newestFirst) {
+    return (
+      <Tooltip content="Newest first">
+        <button type="button" className="btn ghost sm icon" aria-label="Sorted newest first" disabled>
+          <ArrowUpDown />
+        </button>
+      </Tooltip>
+    );
+  }
   return (
     <Menu>
       <Tooltip content="Sort">

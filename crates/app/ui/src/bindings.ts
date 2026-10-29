@@ -1147,10 +1147,23 @@ export type SaveFailed = {
 export type SaveState = "saving" | "failed" | "unsaved" | "saved";
 
 /**
- *  What the Entry list shows: every open Vault, one Vault, one Group, or the Entries of every
- *  open Vault with a tag or colour (outside the Recycle Bin).
+ *  What the Entry list shows: every open Vault, one Vault, one Group, one of a Vault's Smart
+ *  lists, or the Entries of every open Vault with a tag or colour (outside the Recycle Bin).
  */
-export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "smartList"; vault: VaultId; list: SmartList } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+
+/**
+ *  A list of a Vault's Entries outside the Recycle Bin, by what they have: those with TOTP, those
+ *  changed in the last 30 days (newest first, whatever the sort), or those expired.
+ */
+export type SmartList = "withTotp" | "recentlyModified" | "expired";
+
+/**  How many Entries a Vault's Smart lists have, as the sidebar shows them. */
+export type SmartListCounts = {
+	withTotp: number,
+	recentlyModified: number,
+	expired: number,
+};
 
 /**
  *  The orders the Entry list sorts in. Text sorts A to Z ignoring case, dates newest first;
@@ -1234,6 +1247,8 @@ export type VaultSummary = {
 	rootGroup: GroupId | null,
 	recycleBin: GroupId | null,
 	browserGroup: GroupId | null,
+	/**  How many Entries each of its Smart lists has; 0 unless unlocked. */
+	smartLists: SmartListCounts,
 };
 
 /**

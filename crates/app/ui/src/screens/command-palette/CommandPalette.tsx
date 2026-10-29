@@ -30,6 +30,7 @@ import { openHistory } from "@/screens/entry-history/open";
 import { copyField, openUrl } from "@/screens/vault-browser/actions";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
 import { type AppCommand, useAppCommands } from "@/shell/commands";
+import { onSmartList, smartListName } from "@/shell/smartLists";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
@@ -441,6 +442,8 @@ function scopeShows(scope: Scope, entry: EntrySummary): boolean {
       return scope.vault === entry.vault;
     case "group":
       return scope.vault === entry.vault && scope.group === entry.group;
+    case "smartList":
+      return scope.vault === entry.vault && !entry.inRecycleBin && onSmartList(scope.list, entry, Date.now() / 1000);
     case "tag":
       return entry.tags.includes(scope.tag);
     case "color":
@@ -457,6 +460,8 @@ function scopeName(scope: Scope | undefined, vaults: readonly { id: number; name
       return scope.tag;
     case "color":
       return scope.color[0]!.toUpperCase() + scope.color.slice(1);
+    case "smartList":
+      return smartListName(scope.list);
     default:
       return vaults?.find((vault) => vault.id === scope.vault)?.name ?? null;
   }

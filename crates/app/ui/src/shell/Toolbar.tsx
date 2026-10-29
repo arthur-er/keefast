@@ -11,7 +11,9 @@ import { Button, colorVar, Popover, PopoverContent, PopoverTrigger, toast } from
 import { cn } from "@/lib/utils";
 import { SyncDetail } from "@/screens/dropbox/SyncDetail";
 
+import { scopeVault } from "./hooks";
 import { COLOR_NAMES, dotClass, groupPath } from "./Sidebar";
+import { smartListName } from "./smartLists";
 import { useShell } from "./state";
 import { showView, useView } from "./view";
 import { toolbarStatus, vaultIcon, vaultStatus } from "./vaultStatus";
@@ -35,7 +37,7 @@ function Crumbs() {
   const view = useView();
   const snapshot = useWorkspace().data;
   const scope = view?.scope;
-  const vaultId = scope && (scope.kind === "vault" || scope.kind === "group") ? scope.vault : undefined;
+  const vaultId = scope ? (scopeVault(scope) ?? undefined) : undefined;
   const groups = useGroups(vaultId).data;
   if (!scope) return null;
   if (scope.kind === "allVaults") {
@@ -74,6 +76,7 @@ function Crumbs() {
     const path = groupPath(groups, scope.group).slice(1);
     parts.push(...path.map((group) => (group.isRecycleBin ? "Recycle Bin" : group.name)));
   }
+  if (scope.kind === "smartList") parts.push(smartListName(scope.list));
   return (
     <div className="crumbs min-w-0">
       <Icon />
@@ -92,7 +95,7 @@ function StatusButton() {
   const view = useView();
   const vaults = snapshot?.vaults ?? [];
   const scope: Scope | undefined = view?.scope;
-  const shownId = scope && (scope.kind === "vault" || scope.kind === "group") ? scope.vault : null;
+  const shownId = scope ? scopeVault(scope) : null;
   const shown = vaults.find((vault) => vault.id === shownId);
   const status = toolbarStatus(vaults, shown);
   const open = vaults.filter((vault) => vault.state !== "locked");
