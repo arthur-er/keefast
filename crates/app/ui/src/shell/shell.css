@@ -46,6 +46,11 @@
   .C-switch:focus-visible { outline: none; box-shadow: var(--ring); }
   .C-switch .vb-vault-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-bg); color: var(--accent-fg); flex: none; }
   .C-switch .vb-vault-ico svg.lucide { width: 13px; height: 13px; }
+  /* Dropbox's mark covers the tile: a Dropbox Vault, locked or not, never looks like a local one. */
+  .C-switch .vb-vault-ico .dbx-mark { width: 24px; height: 24px; border-radius: 7px; }
+  .C-switch .vb-vault-ico .dbx-mark svg { width: 13px; height: 13px; }
+  .menu-item .dbx-mark { width: 15px; height: 15px; border-radius: 4px; }
+  .menu-item .dbx-mark svg { width: 9px; height: 9px; }
   .C-switch .name { font-weight: 600; }
   .C-switch .file { font-size: var(--text-xs); color: var(--fg-2); }
   .C-switch > svg.lucide { margin-left: auto; color: var(--fg-2); width: 14px; height: 14px; }

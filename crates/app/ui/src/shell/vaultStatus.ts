@@ -44,10 +44,11 @@ export function toolbarStatus(vaults: readonly VaultSummary[], shown: VaultSumma
   return statuses.find((status) => status.tone !== "ok") ?? { tone: "ok", text: "All changes saved", short: "Saved" };
 }
 
-/** What the Vault switcher says under a Vault's name: "Local · Saved", "Dropbox · Synced". */
+/** What the Vault switcher says under a Vault's name: "Local · Saved", "Dropbox · Synced",
+ * "Dropbox · Locked"; a locked local Vault is just "Locked". */
 export function storageLine(vault: VaultSummary): string {
-  if (vault.state === "locked") return "Locked";
   const status = vaultStatus(vault).short;
+  if (vault.state === "locked" && vault.location.provider !== "dropbox") return status;
   return vault.location.provider === "dropbox" ? `Dropbox · ${status}` : `Local · ${status}`;
 }
 
