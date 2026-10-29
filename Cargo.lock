@@ -2835,8 +2835,11 @@ dependencies = [
  "crypto_box",
  "dirs 5.0.1",
  "interprocess",
+ "libc",
  "serde_json",
  "tempfile",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

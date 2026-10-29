@@ -46,6 +46,7 @@ hmac = "0.13"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 interprocess = "2.4"
 keyring = "4"
+libc = "0.2"
 notify = "8"
 percent-encoding = "2"
 keepass = "0.15"
@@ -74,11 +75,15 @@ wat = "1"
 # Turns a Plugin's core WebAssembly module into a component (`keefast-plugin build`). The version
 # that matches the SDK's wit-bindgen, which writes the metadata it reads.
 wit-component = { version = "0.259", default-features = false }
+widestring = "1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_LibraryLoader",
     "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.56"
