@@ -38,6 +38,7 @@ const entry = (overrides: Partial<EntryDetail> = {}): EntryDetail => ({
   facets: [],
   attachments: [],
   totp: { status: "ready", digits: 6, period: 30, algorithm: "sha1", steam: false },
+  strength: { bits: 61, score: "fair" },
   historyCount: 0,
   rememberedAccess: [],
   groupPath: ["Personal"],

@@ -27,6 +27,7 @@ import type {
   EntrySummary,
   EntryVersion,
   ErrorKind,
+  GeneratedPassword,
   GeneratorOptions,
   GroupNode,
   IconView,
@@ -35,6 +36,7 @@ import type {
   LoginOption,
   LoginTarget,
   Scope,
+  StrengthView,
   TotpSetup,
   View,
   WorkspaceSnapshot,
@@ -110,13 +112,32 @@ function monogram(entry: MockEntry): string | null {
 
 /** A TOTP code that changes every period, as a real one does (not RFC 6238). */
 function totpCode(totp: MockTotp, at = Date.now() / 1000) {
+  const step = (counter: number) => {
+    let hash = 2166136261;
+    for (const char of `${totp.secret}:${counter}`) {
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+    }
+    return String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
+  };
   const counter = Math.floor(at / totp.period);
-  let hash = 2166136261;
-  for (const char of `${totp.secret}:${counter}`) {
-    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
-  }
-  const code = String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
-  return { code, remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+  return { code: step(counter), next: step(counter + 1), remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+}
+
+/** A strength from bits, scored as keefast-core scores it. */
+function strengthOf(bits: number): StrengthView {
+  return { bits: Math.round(bits), score: bits < 45 ? "weak" : bits < 64 ? "fair" : bits < 90 ? "good" : "strong" };
+}
+
+/** A rougher estimate than keefast-core's: the kinds of character used, with repeats and runs
+ * counting a bit each. */
+function estimateStrength(password: string): StrengthView {
+  const chars = [...password];
+  const pool = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].reduce((sum, kind, index) => sum + (kind.test(password) ? [26, 26, 10, 33][index]! : 0), 0);
+  const bits = chars.reduce((sum, char, index) => {
+    const follows = index > 0 && Math.abs(char.codePointAt(0)! - chars[index - 1]!.codePointAt(0)!) <= 1;
+    return sum + (follows ? 1 : Math.log2(Math.max(pool, 1)));
+  }, 0);
+  return strengthOf(bits);
 }
 
 function locationView(location: Location): LocationView {
@@ -164,12 +185,16 @@ const DEFAULT_GENERATOR: GeneratorOptions = {
 
 const WORDS = "amber anchor apple arrow autumn badge banjo basil beacon birch bison blanket bramble breeze cabin canyon cedar chalk cinder clover comet copper coral cosmos crane dawn delta denim dune ember fable falcon fern fiddle flint forest fossil galaxy garnet ginger glacier granite harbor hazel heron hollow indigo island ivory jasper juniper kettle lantern lemon lilac lotus maple marble meadow mesa mint moss nectar nickel nova oak oasis olive onyx orbit otter pebble pepper pine plume prairie quartz quill raven reef ripple river saffron sage sequoia shadow slate sparrow spruce summit thistle thunder tulip tundra velvet violet walnut willow zephyr".split(" ");
 
-function generate(options: GeneratorOptions): string {
+function generate(options: GeneratorOptions): GeneratedPassword {
   const random = (n: number) => crypto.getRandomValues(new Uint32Array(1))[0]! % n;
   if (options.mode === "passphrase") {
     const { words, separator } = options.passphrase;
     if (words < 1 || words > 40) throw new MockError("invalid", "The number of words must be between 1 and 40.");
-    return Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator);
+    // As strong as keefast's word list makes it, though the mock's list is shorter.
+    return {
+      password: Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator),
+      strength: strengthOf(words * Math.log2(7772)),
+    };
   }
   const c = options.characters;
   const lookalikes = "0O1Il|8B6G";
@@ -193,7 +218,7 @@ function generate(options: GeneratorOptions): string {
     const j = random(i + 1);
     [out[i], out[j]] = [out[j]!, out[i]!];
   }
-  return out.join("");
+  return { password: out.join(""), strength: strengthOf(c.length * Math.log2(all.length)) };
 }
 
 /** Where browser integration stands, as `get_settings` says it, by how registering went. */
@@ -935,6 +960,7 @@ export function createMockBackend(): Backend & {
           preview: a.text !== undefined ? "text" : a.image !== undefined ? "image" : "none",
         })),
         totp: e.totp && { status: "ready", digits: e.totp.digits, period: e.totp.period, algorithm: e.totp.algorithm, steam: false },
+        strength: e.password ? estimateStrength(e.password) : null,
         historyCount: e.history.length,
         rememberedAccess: e.access,
         groupPath: groupPath(v, e.group),
@@ -976,6 +1002,15 @@ export function createMockBackend(): Backend & {
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
+      edited(v);
+      return null;
+    }),
+    addTags: command((id, entryId, text) => {
+      const [v, e] = entryOf(id, entryId);
+      const added = [...new Set(text.split(/[,;:]/).map((tag) => tag.trim()))].filter((tag) => tag && !e.tags.includes(tag));
+      if (added.length === 0) return null;
+      keepHistory(e);
+      e.tags = [...e.tags, ...added];
       edited(v);
       return null;
     }),
@@ -1151,6 +1186,7 @@ export function createMockBackend(): Backend & {
       return null;
     }),
     generatePassword: command((settings) => generate(settings ?? state.settings.generator)),
+    estimateStrength: command((password) => estimateStrength(password)),
     getSettings: command((): AppSettings => {
       const { browserIntegration, ...settings } = state.settings;
       return {

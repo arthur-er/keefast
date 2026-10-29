@@ -1,6 +1,9 @@
-//! The password generator, whose settings keefast and the Companion extension share.
+//! The password generator, whose settings keefast and the Companion extension share, and how
+//! strong a password is.
 
-use keefast_core::{CharacterRecipe, LOOKALIKES, PassphraseRecipe, SYMBOLS};
+use keefast_core::{
+    CharacterRecipe, LOOKALIKES, PassphraseRecipe, PasswordStrength, SYMBOLS, StrengthScore,
+};
 use keefast_workspace::{GeneratorMode, GeneratorSettings};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
@@ -124,6 +127,47 @@ pub async fn set_generator_settings(core: Core<'_>, settings: GeneratorOptions) 
     Ok(())
 }
 
+/// How strong a password is, as the strength meter shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StrengthView {
+    /// The estimated entropy, in bits.
+    pub bits: u32,
+    pub score: StrengthScoreChoice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum StrengthScoreChoice {
+    Weak,
+    Fair,
+    Good,
+    Strong,
+}
+
+impl From<PasswordStrength> for StrengthView {
+    fn from(strength: PasswordStrength) -> Self {
+        Self {
+            bits: strength.bits(),
+            score: match strength.score() {
+                StrengthScore::Weak => StrengthScoreChoice::Weak,
+                StrengthScore::Fair => StrengthScoreChoice::Fair,
+                StrengthScore::Good => StrengthScoreChoice::Good,
+                StrengthScore::Strong => StrengthScoreChoice::Strong,
+            },
+        }
+    }
+}
+
+/// A password the generator made, with how strong its recipe makes every password: the same
+/// whichever comes out, so regenerating doesn't move the meter.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedPassword {
+    pub password: String,
+    pub strength: StrengthView,
+}
+
 /// A new password or passphrase made with `settings`, or the saved settings when none are given.
 /// An error says which setting is out of range.
 #[tauri::command]
@@ -131,11 +175,25 @@ pub async fn set_generator_settings(core: Core<'_>, settings: GeneratorOptions) 
 pub async fn generate_password(
     core: Core<'_>,
     settings: Option<GeneratorOptions>,
-) -> ApiResult<String> {
+) -> ApiResult<GeneratedPassword> {
     let recipe = match settings {
         Some(settings) => GeneratorSettings::from(settings).recipe(),
         None => core.read(|workspace| workspace.generator_settings().recipe()),
     };
     let password = recipe.generate()?;
-    Ok(password.expose_secret().to_owned())
+    Ok(GeneratedPassword {
+        password: password.expose_secret().to_owned(),
+        strength: recipe
+            .strength()
+            .expect("a recipe that generates has a strength")
+            .into(),
+    })
+}
+
+/// How strong a password the user is typing is. A saved Entry's password needn't come here:
+/// its detail has its strength.
+#[tauri::command]
+#[specta::specta]
+pub async fn estimate_strength(password: String) -> ApiResult<StrengthView> {
+    Ok(PasswordStrength::estimate(&password).into())
 }
