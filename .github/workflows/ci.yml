@@ -171,3 +171,5 @@ jobs:
           name: keefast-companion
           path: extension/.output/keefast-companion-*.zip
           if-no-files-found: error
+          # .output is hidden, and upload-artifact skips hidden paths unless told otherwise.
+          include-hidden-files: true
