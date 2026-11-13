@@ -528,6 +528,7 @@ const KEYS: readonly [string, readonly KeyRow[]][] = [
     ["Copy password", "copyPassword"],
     ["Copy TOTP code", "copyTotp"],
     ["Entry history", "history"],
+    ["Generate a password", "generatePassword"],
     ["Delete Entry", "deleteEntry"],
   ]],
 ];

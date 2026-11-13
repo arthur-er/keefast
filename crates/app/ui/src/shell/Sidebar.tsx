@@ -23,6 +23,7 @@ import { SMART_LISTS } from "./smartLists";
 import { automaticTagColor, chosenTagColor, tagColor } from "./tagColors";
 import { useShell } from "./state";
 import { sameScope, useShowScope, useView } from "./view";
+import { VaultMark } from "./VaultMark";
 import { storageLine, vaultIcon, vaultStatus } from "./vaultStatus";
 
 export const COLORS: readonly Color[] = ["red", "orange", "yellow", "green", "blue", "violet"];
@@ -102,7 +103,6 @@ function VaultSwitcher({ current }: { current: VaultSummary }) {
   const snapshot = useWorkspace().data;
   const showScope = useShowScope();
   const { actions } = useShell();
-  const Icon = vaultIcon(current);
   const show = (scope: Scope) => {
     actions.showBrowser();
     showScope(scope);
@@ -112,7 +112,7 @@ function VaultSwitcher({ current }: { current: VaultSummary }) {
       <MenuTrigger asChild>
         <button type="button" className="C-switch" aria-label={`Vault: ${current.name}`}>
           <span className="vb-vault-ico">
-            <Icon />
+            <VaultMark vault={current} />
           </span>
           <span className="vstack min-w-0 gap-0">
             <span className="name truncate">{current.name}</span>
@@ -123,16 +123,13 @@ function VaultSwitcher({ current }: { current: VaultSummary }) {
       </MenuTrigger>
       <MenuContent align="start" className="w-[240px]">
         <MenuLabel>Open Vaults</MenuLabel>
-        {snapshot?.vaults.map((vault) => {
-          const VaultIcon = vaultIcon(vault);
-          return (
-            <MenuItem key={vault.id} icon={<VaultIcon />} onSelect={() => show({ kind: "vault", vault: vault.id })}>
-              <span className={cn("truncate", vault.state === "locked" && "text-fg-1")}>{vault.name}</span>
-              <span className="sub">{vaultStatus(vault).short}</span>
-              {vault.id === current.id && <Check className="vb-menu-check" />}
-            </MenuItem>
-          );
-        })}
+        {snapshot?.vaults.map((vault) => (
+          <MenuItem key={vault.id} icon={<VaultMark vault={vault} />} onSelect={() => show({ kind: "vault", vault: vault.id })}>
+            <span className={cn("truncate", vault.state === "locked" && "text-fg-1")}>{vault.name}</span>
+            <span className="sub">{vaultStatus(vault).short}</span>
+            {vault.id === current.id && <Check className="vb-menu-check" />}
+          </MenuItem>
+        ))}
         <MenuSeparator />
         <MenuItem icon={<LayoutGrid />} onSelect={() => show({ kind: "allVaults" })}>
           All Entries across Vaults

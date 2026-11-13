@@ -4,19 +4,21 @@
 // the order the GPUI app asked them. The backend brings keefast to the front when a browser asks.
 
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, Shield, Timer } from "lucide-react";
+import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, LockOpen, Shield, Timer } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AskedEntry, LoginOption, LoginTarget, VaultSummary, WorkspaceSnapshot } from "@/bindings";
 import { useEntry, useVaultSettings, useWorkspace } from "@/api/queries";
 import { Button, GroupIcon, toast } from "@/kit";
+import { timeAgo } from "@/lib/format";
+import { useNow } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
 import { useShell } from "@/shell/state";
 import { vaultIcon } from "@/shell/vaultStatus";
 
 import { DialogFrame, Kicker, Tile } from "./DialogFrame";
-import { type FrontRequest, frontRequest, requestKey, sameTarget, splitNewGroup, stepTarget } from "./logic";
+import { type FrontRequest, frontRequest, requestKey, sameTarget, splitNewGroup, splitOrigin, stepTarget } from "./logic";
 
 import "./dialogs.css";
 
@@ -47,6 +49,33 @@ function RequestDialog({ request, vaults }: { request: FrontRequest; vaults: Vau
 }
 
 const fail = (error: unknown) => toast(errorMessage(error), { icon: "error" });
+
+/** How long Allow and Pair wait after their dialog shows before they can be pressed, so a click
+ * or keystroke meant for another window can't answer a request that just appeared. */
+export const ARM_DELAY_MS = 700;
+
+/** Whether the dialog has shown for `ARM_DELAY_MS`. Each request gets a fresh dialog, so a new
+ * request waits again. */
+function useArmed(): boolean {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setArmed(true), ARM_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  return armed;
+}
+
+/** Who asks and when, above the title: "Chrome on my laptop · Browser request · just now". The
+ * browser is named by its Pairings, as the user named it when pairing. */
+function RequestKicker({ pairings, what, asked }: { pairings: string[]; what: string; asked: number | null }) {
+  const now = useNow();
+  const parts = [
+    ...(pairings.length > 0 ? [pairings.join(", ")] : []),
+    what,
+    ...(asked !== null ? [timeAgo(asked, now)] : []),
+  ];
+  return <Kicker icon={<Globe />}>{parts}</Kicker>;
+}
 
 /** Save, Discard or (when the user asked for the lock) Cancel. Enter saves; Escape cancels when it
  * may. */
@@ -110,7 +139,9 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
   const [busy, setBusy] = useState(false);
   const known = useVaultSettings(pairing.vault).data?.pairings ?? [];
   const field = useRef<HTMLInputElement>(null);
+  const armed = useArmed();
   const approve = async () => {
+    if (!armed) return;
     setBusy(true);
     try {
       await api.approvePairing(pairing.id, name);
@@ -154,7 +185,7 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
       actions={
         <>
           <Button onClick={deny}>Deny</Button>
-          <Button variant="primary" disabled={busy} onClick={() => void approve()} shortcut="↵">
+          <Button variant="primary" disabled={busy || !armed} onClick={() => void approve()} shortcut="↵">
             Pair
           </Button>
         </>
@@ -211,7 +242,9 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
  * keyboard allows, so a keystroke meant for something else never gives a site access. */
 function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendingAccess"]> }) {
   const [remember, setRemember] = useState(false);
+  const armed = useArmed();
   const answer = (allow: boolean) => {
+    if (allow && !armed) return;
     void api
       .answerAccess(access.id, allow, remember)
       .then(() =>
@@ -231,7 +264,7 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
       role="alertdialog"
       width={500}
       autoFocus={false}
-      lead={<Kicker icon={<Globe />}>{["Browser request"]}</Kicker>}
+      lead={<RequestKicker pairings={access.pairings} what="Browser request" asked={access.asked} />}
       title="Allow access?"
       onEscape={() => answer(false)}
       hint={
@@ -245,14 +278,14 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
           <Button onClick={() => answer(false)} shortcut="Esc">
             Deny
           </Button>
-          <Button variant="primary" onClick={() => answer(true)}>
+          <Button variant="primary" disabled={!armed} onClick={() => answer(true)}>
             Allow
           </Button>
         </>
       }
     >
-      <SiteAddress site={access.site} via={`asks for ${count} ${count === 1 ? "Entry" : "Entries"}`} />
-      {access.formSite && <SiteAddress site={access.formSite} via="its form sends them here" />}
+      <SiteAddress origin={access.origin} via={`asks for ${count} ${count === 1 ? "Entry" : "Entries"}`} />
+      {access.formOrigin && <SiteAddress origin={access.formOrigin} via="its form sends them here" />}
       <p className="dialog-desc m-0">
         {access.formSite ? (
           <>
@@ -286,13 +319,19 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
   );
 }
 
-function SiteAddress({ site, via }: { site: string; via: string }) {
+/** A site's full address, its scheme muted: "https://github.com". Plain `http` gets an open lock. */
+function SiteAddress({ origin, via }: { origin: string; via: string }) {
+  const { scheme, rest } = splitOrigin(origin);
+  const secure = scheme === "https://";
   return (
     <div className="dg-addr">
-      <span className="lockico">
-        <Lock />
+      <span className={cn("lockico", !secure && "insecure")} title={secure ? undefined : "Not encrypted"}>
+        {secure ? <Lock /> : <LockOpen />}
       </span>
-      <span className="host truncate">{site}</span>
+      <span className="host">
+        <span className="scheme">{scheme}</span>
+        {rest}
+      </span>
       <span className="via">{via}</span>
     </div>
   );
@@ -354,7 +393,7 @@ function LoginDialog({ login }: { login: NonNullable<WorkspaceSnapshot["pendingL
     <DialogFrame
       width={520}
       autoFocus={false}
-      lead={<Kicker icon={<Globe />}>{["Captured login"]}</Kicker>}
+      lead={<RequestKicker pairings={login.pairings} what="Captured login" asked={login.asked} />}
       title="Save login?"
       description={
         <>

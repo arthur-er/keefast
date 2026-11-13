@@ -17,5 +17,6 @@
   "newVault": ["Ctrl Shift N"],
   "openVault": ["Ctrl O"],
   "history": ["Ctrl H"],
+  "generatePassword": ["Ctrl G"],
   "close": ["Escape"]
 }

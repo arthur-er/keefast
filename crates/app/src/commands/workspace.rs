@@ -11,7 +11,7 @@ use super::Core;
 use crate::core::AppCore;
 use crate::dto::{
     Color, EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View,
-    group_icon_view, title_of,
+    group_icon_view, seconds, title_of,
 };
 use crate::error::ApiResult;
 
@@ -109,6 +109,9 @@ pub struct VaultSummary {
     pub save_failed: bool,
     /// `None` for a local Vault file.
     pub sync_status: Option<SyncState>,
+    /// When the Vault last synced with its Vault file in Dropbox, in seconds since 1970 UTC.
+    /// `None` for a local Vault file, a locked Vault, and until a sync goes through.
+    pub last_synced: Option<f64>,
     /// Entries in the Vault, outside the Recycle Bin too; 0 unless unlocked.
     pub entry_count: u32,
     pub root_group: Option<GroupId>,
@@ -188,10 +191,18 @@ pub struct PendingAccess {
     pub id: RequestId,
     /// The host of the site asking.
     pub site: String,
+    /// The site's full address: scheme, host, and port when it isn't the scheme's own.
+    pub origin: String,
     /// The host the site's form sends the Entries to, when it is another than `site`. The
     /// decision is for both, so the prompt shows both.
     pub form_site: Option<String>,
+    /// `form_site`'s full address.
+    pub form_origin: Option<String>,
     pub entries: Vec<AskedEntry>,
+    /// The browser that asked: the names of its Pairings, as the user named them.
+    pub pairings: Vec<String>,
+    /// When the site asked, in seconds since 1970 UTC.
+    pub asked: f64,
 }
 
 /// An Entry a browser asks for or could update.
@@ -259,6 +270,10 @@ pub struct PendingLogin {
     /// The host of the site the login was submitted on.
     pub site: String,
     pub username: String,
+    /// The browser that captured it: the names of its Pairings, as the user named them.
+    pub pairings: Vec<String>,
+    /// When the browser captured it, in seconds since 1970 UTC.
+    pub asked: f64,
     /// The places it can go, as a list: headings (without a target), the Entries it could
     /// update, then every Group of each Vault it may go to.
     pub options: Vec<LoginOption>,
@@ -313,6 +328,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
                 saving: open.is_saving(),
                 save_failed: open.save_failed(),
                 sync_status: open.sync_status().map(Into::into),
+                last_synced: open.last_synced().map(seconds),
                 entry_count: match locking {
                     true => 0,
                     false => vault.root().all_entries().count() as u32,
@@ -343,6 +359,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             saving: false,
             save_failed: false,
             sync_status: None,
+            last_synced: None,
             entry_count: 0,
             root_group: None,
             recycle_bin: None,
@@ -373,8 +390,12 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
         pending_access: workspace.pending_access().map(|pending| PendingAccess {
             id: RequestId::of(pending.id.as_u64()),
             site: pending.site,
+            origin: pending.origin,
             form_site: pending.form_site,
+            form_origin: pending.form_origin,
             entries: asked_entries(workspace, &pending.entries),
+            pairings: pending.pairings,
+            asked: seconds(pending.asked),
         }),
         pending_login: workspace.pending_login().map(|pending| PendingLogin {
             id: RequestId::of(pending.id.as_u64()),
@@ -382,6 +403,8 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             suggested: LoginTarget::from_workspace(pending.suggested),
             site: pending.site,
             username: pending.username,
+            pairings: pending.pairings,
+            asked: seconds(pending.asked),
         }),
         clipboard_clears_in: workspace
             .clipboard_clears_in()

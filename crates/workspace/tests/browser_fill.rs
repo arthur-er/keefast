@@ -227,6 +227,43 @@ fn the_first_access_asks_the_user_about_the_undecided_entries() {
 }
 
 #[test]
+fn an_access_request_says_which_browser_asked_and_when() {
+    let (mut browser, _) = Browser::paired(storage());
+    let key = browser.key();
+    let (name, key) = (key.0.to_owned(), key.1.to_owned());
+    let before = browser.workspace.now();
+    // A key no Vault has paired names no browser.
+    let sent = browser.get_logins_with(EXAMPLE, None, &[(&name, &key), ("Stranger", &key)]);
+
+    let pending = browser.ask(&sent);
+
+    assert_eq!(pending.pairings, ["Home"]);
+    assert!(before <= pending.asked && pending.asked <= browser.workspace.now());
+}
+
+#[test]
+fn an_access_request_carries_the_full_addresses_of_the_site_and_its_form() {
+    let (mut browser, _) = Browser::paired(storage());
+    let key = browser.key();
+    let (name, key) = (key.0.to_owned(), key.1.to_owned());
+    let sent = browser.get_logins_with(
+        "https://example.com:8443/login",
+        Some("http://collect.example.net/form"),
+        &[(&name, &key)],
+    );
+
+    let pending = browser.ask(&sent);
+
+    assert_eq!(pending.site, "example.com");
+    assert_eq!(pending.origin, "https://example.com:8443");
+    assert_eq!(pending.form_site.as_deref(), Some("collect.example.net"));
+    assert_eq!(
+        pending.form_origin.as_deref(),
+        Some("http://collect.example.net")
+    );
+}
+
+#[test]
 fn allowed_entries_carry_what_the_extension_fills() {
     let (mut browser, vault) = Browser::paired(storage());
     let sent = browser.get_logins(EXAMPLE);
@@ -437,6 +474,7 @@ fn a_form_submitting_to_its_own_host_shows_only_the_site() {
 
     assert_eq!(pending.site, "example.com");
     assert_eq!(pending.form_site, None);
+    assert_eq!(pending.form_origin, None);
 }
 
 #[test]

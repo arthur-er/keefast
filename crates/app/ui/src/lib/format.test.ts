@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeExpiry, formatDate, formatSize, highlight, hostOf } from "./format";
+import { describeExpiry, formatDate, formatSize, highlight, hostOf, timeAgo } from "./format";
 
 const at = (iso: string) => Date.parse(iso) / 1000;
 const NOW = at("2026-10-09T12:00:00");
@@ -20,6 +20,20 @@ describe("describeExpiry", () => {
     expect(describeExpiry(at("2026-10-09T11:00:00"), false, NOW).kind).toBe("expired");
     expect(describeExpiry(at("2026-10-20T12:00:00"), false, NOW)).toEqual({ kind: "soon", date: "Oct 20", days: 11 });
     expect(describeExpiry(at("2027-01-31T12:00:00"), false, NOW)).toEqual({ kind: "later", date: "Jan 31, 2027" });
+  });
+});
+
+describe("timeAgo", () => {
+  it("counts minutes, then hours, then days", () => {
+    const now = NOW;
+    expect(timeAgo(now - 20, now)).toBe("just now");
+    expect(timeAgo(now + 5, now)).toBe("just now");
+    expect(timeAgo(now - 60, now)).toBe("1 min ago");
+    expect(timeAgo(now - 59 * 60, now)).toBe("59 min ago");
+    expect(timeAgo(now - 60 * 60, now)).toBe("1 hour ago");
+    expect(timeAgo(now - 5 * 3600, now)).toBe("5 hours ago");
+    expect(timeAgo(now - 86400, now)).toBe("1 day ago");
+    expect(timeAgo(now - 3 * 86400, now)).toBe("3 days ago");
   });
 });
 

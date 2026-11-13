@@ -27,6 +27,7 @@ import type {
   EntrySummary,
   EntryVersion,
   ErrorKind,
+  GeneratedPassword,
   GeneratorOptions,
   GroupNode,
   IconView,
@@ -38,6 +39,7 @@ import type {
   Scope,
   SmartList,
   SmartListCounts,
+  StrengthView,
   TotpSetup,
   View,
   WorkspaceSnapshot,
@@ -121,13 +123,32 @@ function monogram(entry: MockEntry): string | null {
 
 /** A TOTP code that changes every period, as a real one does (not RFC 6238). */
 function totpCode(totp: MockTotp, at = Date.now() / 1000) {
+  const step = (counter: number) => {
+    let hash = 2166136261;
+    for (const char of `${totp.secret}:${counter}`) {
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+    }
+    return String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
+  };
   const counter = Math.floor(at / totp.period);
-  let hash = 2166136261;
-  for (const char of `${totp.secret}:${counter}`) {
-    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
-  }
-  const code = String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
-  return { code, remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+  return { code: step(counter), next: step(counter + 1), remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+}
+
+/** A strength from bits, scored as keefast-core scores it. */
+function strengthOf(bits: number): StrengthView {
+  return { bits: Math.round(bits), score: bits < 45 ? "weak" : bits < 64 ? "fair" : bits < 90 ? "good" : "strong" };
+}
+
+/** A rougher estimate than keefast-core's: the kinds of character used, with repeats and runs
+ * counting a bit each. */
+function estimateStrength(password: string): StrengthView {
+  const chars = [...password];
+  const pool = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].reduce((sum, kind, index) => sum + (kind.test(password) ? [26, 26, 10, 33][index]! : 0), 0);
+  const bits = chars.reduce((sum, char, index) => {
+    const follows = index > 0 && Math.abs(char.codePointAt(0)! - chars[index - 1]!.codePointAt(0)!) <= 1;
+    return sum + (follows ? 1 : Math.log2(Math.max(pool, 1)));
+  }, 0);
+  return strengthOf(bits);
 }
 
 function locationView(location: Location): LocationView {
@@ -175,12 +196,16 @@ const DEFAULT_GENERATOR: GeneratorOptions = {
 
 const WORDS = "amber anchor apple arrow autumn badge banjo basil beacon birch bison blanket bramble breeze cabin canyon cedar chalk cinder clover comet copper coral cosmos crane dawn delta denim dune ember fable falcon fern fiddle flint forest fossil galaxy garnet ginger glacier granite harbor hazel heron hollow indigo island ivory jasper juniper kettle lantern lemon lilac lotus maple marble meadow mesa mint moss nectar nickel nova oak oasis olive onyx orbit otter pebble pepper pine plume prairie quartz quill raven reef ripple river saffron sage sequoia shadow slate sparrow spruce summit thistle thunder tulip tundra velvet violet walnut willow zephyr".split(" ");
 
-function generate(options: GeneratorOptions): string {
+function generate(options: GeneratorOptions): GeneratedPassword {
   const random = (n: number) => crypto.getRandomValues(new Uint32Array(1))[0]! % n;
   if (options.mode === "passphrase") {
     const { words, separator } = options.passphrase;
     if (words < 1 || words > 40) throw new MockError("invalid", "The number of words must be between 1 and 40.");
-    return Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator);
+    // As strong as keefast's word list makes it, though the mock's list is shorter.
+    return {
+      password: Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator),
+      strength: strengthOf(words * Math.log2(7772)),
+    };
   }
   const c = options.characters;
   const lookalikes = "0O1Il|8B6G";
@@ -204,7 +229,7 @@ function generate(options: GeneratorOptions): string {
     const j = random(i + 1);
     [out[i], out[j]] = [out[j]!, out[i]!];
   }
-  return out.join("");
+  return { password: out.join(""), strength: strengthOf(c.length * Math.log2(all.length)) };
 }
 
 /** Where browser integration stands, as `get_settings` says it, by how registering went. */
@@ -228,12 +253,21 @@ interface MockState {
   settings: Omit<AppSettings, "browser" | "configError"> & { browserIntegration: boolean };
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
-  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][] } | null;
-  pendingLogin: { id: number; site: string; username: string; password: string; entries: [number, string][] } | null;
+  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][]; asked: number } | null;
+  pendingLogin: {
+    id: number;
+    site: string;
+    username: string;
+    password: string;
+    entries: [number, string][];
+    asked: number;
+  } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
   /** Connecting Dropbox "in the browser": stops it as cancelled. */
   dropboxConnecting: (() => void) | null;
+  /** When each Dropbox Vault last synced, in seconds since 1970; a while ago until it syncs here. */
+  syncedAt: Map<number, number>;
   /** Vaults' encryption, once changed from the default. */
   encryption: Map<number, EncryptionSettings>;
   /** How registering the browsers' native host went, while browser integration is on. */
@@ -268,12 +302,19 @@ function initialState(): MockState {
     clipboardClearsAt: null,
     dropboxAccount: { name: "Arthur Rezende", email: "arthur-er@protonmail.com" },
     dropboxConnecting: null,
+    syncedAt: new Map(),
     encryption: new Map(),
     browserHosts: "ok",
     configError: null,
     nextId: 100,
   };
 }
+
+/** Who the mock's browser requests come from: the Pairing's name. */
+const MOCK_BROWSER = "Chrome on my laptop";
+
+/** When the mock started, in seconds since 1970. */
+const MOCK_START = Date.now() / 1000;
 
 /** The scenes `?mock=` and `__keefastMock.simulate` set up. */
 export type MockScene =
@@ -372,7 +413,10 @@ export function createMockBackend(): Backend & {
       v.saving = false;
       v.unsaved = false;
       v.saveFailed = false;
-      if (v.sync) v.sync = "synced";
+      if (v.sync) {
+        v.sync = "synced";
+        state.syncedAt.set(v.id, Date.now() / 1000);
+      }
       if (state.pendingLock?.vault === v.id) {
         state.pendingLock = null;
         v.locked = true;
@@ -643,6 +687,7 @@ export function createMockBackend(): Backend & {
           saving: !v.locked && v.saving,
           saveFailed: !v.locked && v.saveFailed,
           syncStatus: v.locked ? null : v.sync,
+          lastSynced: v.locked || v.sync === null ? null : (state.syncedAt.get(v.id) ?? MOCK_START - 2 * 60),
           entryCount: hidden ? 0 : v.entries.length,
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,
@@ -675,7 +720,11 @@ export function createMockBackend(): Backend & {
       pendingAccess: state.pendingAccess && {
         id: state.pendingAccess.id,
         site: state.pendingAccess.site,
+        origin: `https://${state.pendingAccess.site}`,
         formSite: state.pendingAccess.formSite,
+        formOrigin: state.pendingAccess.formSite && `https://${state.pendingAccess.formSite}`,
+        pairings: [MOCK_BROWSER],
+        asked: state.pendingAccess.asked,
         entries: state.pendingAccess.entries.flatMap(([vaultId, entryId]) => {
           const v = state.vaults.find((x) => x.id === vaultId);
           const e = v?.entries.find((x) => x.id === entryId);
@@ -686,6 +735,8 @@ export function createMockBackend(): Backend & {
         id: login.id,
         site: login.site,
         username: login.username,
+        pairings: [MOCK_BROWSER],
+        asked: login.asked,
         options: loginOptions(login),
         // As the backend: update the Entry it matched, else a new Entry in the Browser group.
         suggested: login.entries[0]
@@ -979,6 +1030,7 @@ export function createMockBackend(): Backend & {
           preview: a.text !== undefined ? "text" : a.image !== undefined ? "image" : "none",
         })),
         totp: e.totp && { status: "ready", digits: e.totp.digits, period: e.totp.period, algorithm: e.totp.algorithm, steam: false },
+        strength: e.password ? estimateStrength(e.password) : null,
         historyCount: e.history.length,
         rememberedAccess: e.access,
         groupPath: groupPath(v, e.group),
@@ -1023,6 +1075,15 @@ export function createMockBackend(): Backend & {
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
+      edited(v);
+      return null;
+    }),
+    addTags: command((id, entryId, text) => {
+      const [v, e] = entryOf(id, entryId);
+      const added = [...new Set(text.split(/[,;:]/).map((tag) => tag.trim()))].filter((tag) => tag && !e.tags.includes(tag));
+      if (added.length === 0) return null;
+      keepHistory(e);
+      e.tags = [...e.tags, ...added];
       edited(v);
       return null;
     }),
@@ -1208,6 +1269,7 @@ export function createMockBackend(): Backend & {
       return null;
     }),
     generatePassword: command((settings) => generate(settings ?? state.settings.generator)),
+    estimateStrength: command((password) => estimateStrength(password)),
     getSettings: command((): AppSettings => {
       const { browserIntegration, ...settings } = state.settings;
       return {
@@ -1350,6 +1412,18 @@ export function createMockBackend(): Backend & {
       // Saves kept on this machine meanwhile upload at once.
       for (const v of state.vaults) if (v.sync) v.sync = "synced";
       changed();
+      return state.dropboxAccount;
+    }),
+    dropboxConnectAnother: command(async () => {
+      // Signed in as someone else "in the browser"; the account from before stays if stopped.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 4000);
+        state.dropboxConnecting = () => {
+          clearTimeout(timer);
+          reject(new MockError("cancelled", "Connecting Dropbox was stopped."));
+        };
+      }).finally(() => (state.dropboxConnecting = null));
+      state.dropboxAccount = { name: "Rezende Family", email: "family@rezende.dev" };
       return state.dropboxAccount;
     }),
     dropboxReopenConnectPage: command(() => null),
@@ -1506,13 +1580,25 @@ export function createMockBackend(): Backend & {
         emit("browserRequest", { kind: "pairing" });
         break;
       case "access": {
-        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: null, entries: entriesFor("github.com") };
+        state.pendingAccess = {
+          id: state.nextId++,
+          site: "github.com",
+          formSite: null,
+          entries: entriesFor("github.com"),
+          asked: Date.now() / 1000,
+        };
         emit("browserRequest", { kind: "access" });
         break;
       }
       case "access-form": {
         // A page whose login form sends what is filled to another host.
-        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: "auth.github-login.net", entries: entriesFor("github.com") };
+        state.pendingAccess = {
+          id: state.nextId++,
+          site: "github.com",
+          formSite: "auth.github-login.net",
+          entries: entriesFor("github.com"),
+          asked: Date.now() / 1000,
+        };
         emit("browserRequest", { kind: "access" });
         break;
       }
@@ -1524,6 +1610,7 @@ export function createMockBackend(): Backend & {
           username: "arthur@rezende.dev",
           password: "L1near!Issues-2026",
           entries: entriesFor("linear.app", "arthur@rezende.dev"),
+          asked: Date.now() / 1000,
         };
         emit("browserRequest", { kind: "login" });
         break;

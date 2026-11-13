@@ -4,7 +4,8 @@
 use std::collections::HashSet;
 
 use keefast_core::{
-    CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
+    CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe,
+    PasswordStrength, SYMBOLS, StrengthScore,
 };
 use secrecy::ExposeSecret;
 
@@ -248,4 +249,41 @@ fn the_default_recipes_are_strong() {
     let passphrase = PasswordRecipe::Passphrase(PassphraseRecipe::default());
     assert!(PassphraseRecipe::default().words >= 6);
     assert!(!generate(&passphrase).is_empty());
+}
+
+#[test]
+fn a_recipe_says_how_strong_its_passwords_are() {
+    let strength = |recipe: &PasswordRecipe| recipe.strength().map(|strength| strength.bits());
+    // 20 characters from all 94: 20 × log2(94).
+    assert_eq!(strength(&PasswordRecipe::default()), Some(131));
+    // 8 digits: 8 × log2(10).
+    let digits = characters(CharacterRecipe {
+        length: 8,
+        ..only(false, false, true, false)
+    });
+    assert_eq!(strength(&digits), Some(27));
+    assert_eq!(digits.strength().unwrap().score(), StrengthScore::Weak);
+    // 6 words from the 7,772 of the word list: 6 × log2(7772).
+    let passphrase = PasswordRecipe::Passphrase(PassphraseRecipe::default());
+    assert_eq!(strength(&passphrase), Some(78));
+    assert_eq!(passphrase.strength().unwrap().score(), StrengthScore::Good);
+    // A recipe that can't make a password has no strength.
+    assert_eq!(
+        strength(&characters(only(false, false, false, false))),
+        None
+    );
+}
+
+#[test]
+fn a_generated_passphrase_is_estimated_as_its_recipe_says() {
+    let recipe = PasswordRecipe::Passphrase(PassphraseRecipe {
+        words: 5,
+        separator: ".".to_owned(),
+    });
+    for _ in 0..20 {
+        assert_eq!(
+            PasswordStrength::estimate(&generate(&recipe)),
+            recipe.strength().unwrap()
+        );
+    }
 }

@@ -84,3 +84,10 @@ export function contentsLine(group: GroupNode): string {
   if (groups > 0) parts.push(`${groups} ${groups === 1 ? "Group" : "Groups"}`);
   return parts.length === 0 ? "Empty" : `${parts.join(" and ")} inside`;
 }
+
+/** A site's address split into its scheme, shown muted, and the rest: "https://" and
+ * "example.com:8443". */
+export function splitOrigin(origin: string): { scheme: string; rest: string } {
+  const at = origin.indexOf("://");
+  return at < 0 ? { scheme: "", rest: origin } : { scheme: origin.slice(0, at + 3), rest: origin.slice(at + 3) };
+}
