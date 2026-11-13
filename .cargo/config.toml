@@ -1,0 +1,5 @@
+# keefast.exe links the C runtime statically, so it needs no Visual C++ redistributable. Rust's
+# own crt-static does it for every crate, doctests included, unlike Tauri's empty msvcrt.lib
+# (crates/app/build.rs turns that off).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -12,7 +12,7 @@ permissions:
 jobs:
   version:
     name: Tag matches the version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -43,7 +43,7 @@ jobs:
   extension:
     name: Companion extension
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     defaults:
       run:
         working-directory: extension
@@ -70,7 +70,7 @@ jobs:
   release:
     name: Draft the release
     needs: [linux, windows, extension]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     permissions:
       contents: write
     steps:
