@@ -1244,7 +1244,7 @@ export function createMockBackend(): Backend & {
         throw new MockError("invalid", "Set a master password, a Key file, or both.");
       }
       const kdf = input.encryption.kdf;
-      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs at least 1 iteration.");
+      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs 1 to 4294967295 iterations.");
       if (kdf.kind === "aesKdf" && kdf.rounds < 1) throw new MockError("invalid", "AES-KDF needs at least 1 round.");
       state.encryption.set(v.id, structuredClone(input.encryption));
       v.unsaved = true;
