@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-4c, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
 
   ui:
     name: Desktop app's web UI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     defaults:
       run:
         working-directory: crates/app/ui
@@ -87,7 +87,7 @@ jobs:
 
   nix:
     name: Nix package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     steps:
       - uses: actions/checkout@v4
 
@@ -104,7 +104,7 @@ jobs:
   # no WebAssembly toolchain; this checks it with the toolchain it was built with, the dev shell's.
   plugins:
     name: Plugins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     steps:
       - uses: actions/checkout@v4
 
@@ -136,7 +136,7 @@ jobs:
 
   extension:
     name: Companion extension
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-4c
     defaults:
       run:
         working-directory: extension
@@ -171,3 +171,5 @@ jobs:
           name: keefast-companion
           path: extension/.output/keefast-companion-*.zip
           if-no-files-found: error
+          # .output is hidden, and upload-artifact skips hidden paths unless told otherwise.
+          include-hidden-files: true
