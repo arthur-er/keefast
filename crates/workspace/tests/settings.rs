@@ -215,3 +215,35 @@ fn pane_widths_are_kept_in_the_config_file() {
     store.save(&config).unwrap();
     assert_eq!(store.load().unwrap(), config);
 }
+
+#[test]
+fn shortcuts_the_user_changed_are_remembered_and_reset() {
+    let store = Arc::new(FakeConfigStore::default());
+    let (mut workspace, _) = workspace_with(store.clone());
+    assert!(workspace.shortcuts().is_empty());
+
+    workspace.set_shortcut("search", Some(vec!["Ctrl J".to_owned()]));
+    assert_eq!(workspace.shortcuts()["search"], ["Ctrl J"]);
+    assert_eq!(store.saved().unwrap().shortcuts["search"], ["Ctrl J"]);
+
+    workspace.set_shortcut("search", None);
+    assert!(workspace.shortcuts().is_empty());
+    assert!(store.saved().unwrap().shortcuts.is_empty());
+}
+
+#[test]
+fn shortcuts_are_kept_in_the_config_file() {
+    assert!(load("").shortcuts.is_empty());
+    let loaded = load("autosave = true\n\n[shortcuts]\nsearch = [\"Ctrl J\"]\n");
+    assert_eq!(loaded.shortcuts["search"], ["Ctrl J"]);
+    assert!(loaded.autosave);
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileConfigStore::new(dir.path().join("config.toml"));
+    let mut config = AppConfig::default();
+    config
+        .shortcuts
+        .insert("lockAll".to_owned(), vec!["Ctrl Shift L".to_owned()]);
+    store.save(&config).unwrap();
+    assert_eq!(store.load().unwrap().shortcuts, config.shortcuts);
+}

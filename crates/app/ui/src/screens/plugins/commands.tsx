@@ -59,7 +59,7 @@ function FacetCommand({ copy, active, onCopy }: { copy: FacetCopy; active: boole
     inFields: false,
     enabled: copy.enabled,
     run: () => {
-      if (field.index !== null) void onCopy({ kind: "customField", index: field.index }, field.name, copy.flashKey);
+      if (field.index !== null) void onCopy({ kind: "customField", name: field.name }, field.name, copy.flashKey);
     },
   };
   useAppCommand(registered, active);

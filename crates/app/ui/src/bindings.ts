@@ -37,6 +37,12 @@ export const commands = {
 } | null, ApiError>(__TAURI_INVOKE("group_for_new_items", { scope })),
 	/**  The encryption keefast gives new Vaults: AES-256 with Argon2id at its default cost. */
 	defaultEncryption: () => typedError<EncryptionSettings, ApiError>(__TAURI_INVOKE("default_encryption")),
+	/**
+	 *  About how many seconds unlocking a Vault file encrypted with these settings takes on this
+	 *  machine, from a short run of their key derivation. One runs at a time, so that two don't slow
+	 *  each other down.
+	 */
+	estimateUnlockTime: (encryption: EncryptionSettings) => typedError<number | null, ApiError>(__TAURI_INVOKE("estimate_unlock_time", { encryption })),
 	/**  Asks the user for a Vault file to open. */
 	chooseVaultFile: () => typedError<string | null, ApiError>(__TAURI_INVOKE("choose_vault_file")),
 	/**  Asks the user for a Key file. */
@@ -54,9 +60,11 @@ export const commands = {
 	createKeyFile: (near: string | null) => typedError<string | null, ApiError>(__TAURI_INVOKE("create_key_file", { near })),
 	/**
 	 *  Opens a Vault file, or unlocks its Vault if it is locked, deriving the key off the main
-	 *  thread. A Vault file whose Vault is open already is just shown.
+	 *  thread. A Vault file whose Vault is open already is just shown. `None` when the OS locked or
+	 *  suspended while the key was derived: the Vault stays as it was, for the user to unlock
+	 *  again.
 	 */
-	unlockVault: (location: Location, key: KeyInput) => typedError<VaultId, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
+	unlockVault: (location: Location, key: KeyInput) => typedError<number | null, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
 	/**
 	 *  Writes a new Vault file, never over an existing file, deriving the key off the main thread,
 	 *  then opens and shows its Vault.
@@ -108,15 +116,23 @@ export const commands = {
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
 	/**  An Entry's password, for the user to see. Copying doesn't need it: use `copy_field`. */
 	revealPassword: (vault: VaultId, entry: EntryId) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_password", { vault, entry })),
-	/**  A custom field's value, protected or not, for the user to see. */
-	revealCustomField: (vault: VaultId, entry: EntryId, index: number) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, index })),
+	/**
+	 *  A custom field's value, protected or not, for the user to see. The field is asked for by
+	 *  name, so a Merge that adds or reorders fields can't reveal another one.
+	 */
+	revealCustomField: (vault: VaultId, entry: EntryId, name: string) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, name })),
 	/**  Makes a new Entry in `group`, and returns it. */
 	createEntry: (vault: VaultId, group: GroupId, input: EntryInput) => typedError<EntryId, ApiError>(__TAURI_INVOKE("create_entry", { vault, group, input })),
 	/**
 	 *  Sets an Entry's fields, keeping the version it replaces in the Entry's history. Fields left
 	 *  as they were record no history.
+	 * 
+	 *  `seenModified` is the Entry's `modified` as the editor had it. If the Entry changed since,
+	 *  as when a Merge brought in a change made elsewhere, nothing is saved and the error's kind is
+	 *  `entryChanged`, so the editor never silently overwrites it. Without it the edit is saved over
+	 *  whatever the Entry is now, and that version goes to the history.
 	 */
-	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input })),
+	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput, seenModified: number | null) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input, seenModified })),
 	/**  Moves an Entry into another Group of its Vault. */
 	moveEntry: (vault: VaultId, entry: EntryId, to: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("move_entry", { vault, entry, to })),
 	/**
@@ -135,6 +151,11 @@ export const commands = {
 	 *  refused, so a Vault file can't make keefast run something.
 	 */
 	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
+	/**
+	 *  Chooses the colour a tag is drawn in, in the Vault, kept in its custom data; `None` goes back
+	 *  to the colour the UI picks for the tag's name.
+	 */
+	setTagColor: (vault: VaultId, tag: string, color: "red" | "orange" | "yellow" | "green" | "blue" | "violet" | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_tag_color", { vault, tag, color })),
 	/**
 	 *  Every facet the Plugins contribute, in the order the Plugins were loaded: the editor offers
 	 *  to add the ones with a section of their own.
@@ -248,6 +269,12 @@ export const commands = {
 	setDownloadFavicons: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_download_favicons", { enabled })),
 	/**  Remembers how wide the panes are. Changes nothing else, so the UI isn't told. */
 	setPaneWidths: (widths: PaneWidthsView) => typedError<null, ApiError>(__TAURI_INVOKE("set_pane_widths", { widths })),
+	/**
+	 *  Gives keefast's shortcut `name` these keys ("Ctrl J"), or its default keys back with `None`.
+	 *  Keys another of keefast's shortcuts, a running Plugin's command or text fields have are
+	 *  refused. Plugins loaded from now on can't have them either.
+	 */
+	setShortcut: (name: string, keys: string | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_shortcut", { name, keys })),
 	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
 	/**
 	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
@@ -391,6 +418,11 @@ export type AppSettings = {
 	downloadFavicons: boolean,
 	generator: GeneratorOptions,
 	paneWidths: PaneWidthsView,
+	/**
+	 *  The keys the user gave keefast's shortcuts, by name (`shortcuts.json`'s), in place of
+	 *  their defaults. Only those the user changed.
+	 */
+	shortcuts: { [key in string]: string[] },
 	/**  Why the app config couldn't be read or saved, if it couldn't. */
 	configError: string | null,
 };
@@ -481,8 +513,11 @@ export type Copied = {
 export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "url" } | 
 /**  The Entry's TOTP code now. */
 { kind: "totp" } | 
-/**  A custom field, by its index in the Entry's custom fields. */
-{ kind: "customField"; index: number };
+/**
+ *  A custom field, by its name, so a Merge that adds or reorders fields can't copy another
+ *  one.
+ */
+{ kind: "customField"; name: string };
 
 /**
  *  A custom field to give an Entry. A `value` of `None` keeps the value the field had at
@@ -700,6 +735,8 @@ export type ErrorKind =
 "dropbox" | 
 /**  The Vault file changed elsewhere in a way that can't be Merged, or is being saved. */
 "conflict" | 
+/**  The Entry changed since the editor read it: a Merge brought in a change made elsewhere. */
+"entryChanged" | 
 /**  Something keefast can't do in this build or on this machine. */
 "unavailable" | 
 /**  The user stopped it. */
@@ -808,6 +845,8 @@ export type GroupNode = {
 	id: GroupId,
 	/**  The top Group's name is the Vault's. */
 	name: string,
+	/**  Its standard icon (a folder unless given another) or custom icon, drawn as an Entry's. */
+	icon: IconView,
 	/**  The Entries right in this Group. */
 	entryCount: number,
 	/**  The Entries in this Group and every Group below it. */
@@ -884,6 +923,8 @@ export type LoginOption = {
 	label: string,
 	/**  Shown muted after the label: a Vault's name, or that it is the Browser group. */
 	detail: string | null,
+	/**  A Group's icon; `None` for headings, Entries, Vaults and a Group still to be made. */
+	icon: IconView | null,
 	depth: number,
 };
 
@@ -1166,10 +1207,23 @@ export type SaveFailed = {
 export type SaveState = "saving" | "failed" | "unsaved" | "saved";
 
 /**
- *  What the Entry list shows: every open Vault, one Vault, one Group, or the Entries of every
- *  open Vault with a tag or colour (outside the Recycle Bin).
+ *  What the Entry list shows: every open Vault, one Vault, one Group, one of a Vault's Smart
+ *  lists, or the Entries of every open Vault with a tag or colour (outside the Recycle Bin).
  */
-export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "smartList"; vault: VaultId; list: SmartList } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+
+/**
+ *  A list of a Vault's Entries outside the Recycle Bin, by what they have: those with TOTP, those
+ *  changed in the last 30 days (newest first, whatever the sort), or those expired.
+ */
+export type SmartList = "withTotp" | "recentlyModified" | "expired";
+
+/**  How many Entries a Vault's Smart lists have, as the sidebar shows them. */
+export type SmartListCounts = {
+	withTotp: number,
+	recentlyModified: number,
+	expired: number,
+};
 
 /**
  *  The orders the Entry list sorts in. Text sorts A to Z ignoring case, dates newest first;
@@ -1179,6 +1233,12 @@ export type SortOrder = "title" | "username" | "url" | "created" | "modified";
 
 /**  Where a Dropbox Vault stands with its Vault file in Dropbox. */
 export type SyncState = "synced" | "syncing" | "offline" | "error";
+
+/**  The colour chosen for a tag in a Vault. */
+export type TagColor = {
+	tag: string,
+	color: Color,
+};
 
 export type Theme = 
 /**  Follow the OS light/dark setting. */
@@ -1258,6 +1318,13 @@ export type VaultSummary = {
 	rootGroup: GroupId | null,
 	recycleBin: GroupId | null,
 	browserGroup: GroupId | null,
+	/**  How many Entries each of its Smart lists has; 0 unless unlocked. */
+	smartLists: SmartListCounts,
+	/**
+	 *  The colours chosen for its tags, by tag; empty unless unlocked. A tag without one is drawn
+	 *  in a colour picked from its name.
+	 */
+	tagColors: TagColor[],
 };
 
 /**

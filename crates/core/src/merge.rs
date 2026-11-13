@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
+use crate::attachment;
 use crate::edit::{HistoryLimits, Kind, child_or_insert, insert_entry, push, set_time};
 use crate::kdbx;
 use crate::vault::{decode_uuid, encode_uuid};
@@ -83,6 +84,9 @@ impl Vault {
         let Some(root) = id(self.root_group()) else {
             return MergeSummary::default();
         };
+        // References past the end of the pool go first, before the Merge adds to the pool and
+        // they would point at contents added for another Entry.
+        attachment::drop_dangling(&mut self.file.document, self.file.binaries.len());
         let mut merge = Merge {
             target: self,
             source: other,
@@ -95,6 +99,7 @@ impl Vault {
         merge.deletions();
         merge.meta();
         let mut summary = merge.summary;
+        attachment::drop_unused(&mut self.file.document, &mut self.file.binaries);
         self.drop_revoked_pairings();
         summary.changed = (&self.file.document, self.file.binaries.len()) != (&before.0, before.1);
         self.refresh();
@@ -283,8 +288,11 @@ impl Merge<'_> {
     }
 
     /// A copy of a source element for the target, its attachments added to the target's pool.
+    /// References to contents the source's pool doesn't have are left out: in the target they
+    /// would point at another Entry's attachment.
     fn import(&mut self, element: &Element) -> Element {
         let mut element = element.clone();
+        attachment::drop_dangling(&mut element, self.source.file.binaries.len());
         self.import_binaries(&mut element);
         element
     }

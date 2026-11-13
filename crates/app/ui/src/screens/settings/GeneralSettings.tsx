@@ -1,9 +1,9 @@
 // General Settings C: the app config's machine-local preferences, on one long page with an
 // "On this page" index and `/` search. Each change is kept as soon as it is made.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowUpRight, Check as CheckIcon, ChevronsUpDown, CircleAlert, Cloud, LoaderCircle, LockOpen, RotateCw, Shield, TriangleAlert,
+  ArrowUpRight, Check as CheckIcon, ChevronsUpDown, CircleAlert, Cloud, LoaderCircle, LockOpen, RotateCcw, RotateCw, Shield, TriangleAlert,
 } from "lucide-react";
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,9 +12,10 @@ import { api, errorMessage } from "@/api";
 import type { AppSettings, Theme, VaultSummary } from "@/bindings";
 import { keys, usePlugins, useSettings, useVaultSettings, useWorkspace } from "@/api/queries";
 import { Button, Kbd, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Switch, toast } from "@/kit";
-import { SHORTCUTS } from "@/lib/shortcuts";
+import { comboFromEvent, comboLabel, DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, type ShortcutName, useShortcuts } from "@/lib/shortcuts";
 import { useOsDark } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { disconnectConfirmation, dropboxVaults } from "@/screens/dropbox/account";
 import { useShell } from "@/shell/state";
 
 import { GeneratorSettings } from "./GeneratorSettings";
@@ -191,8 +192,8 @@ export function GeneralSettings({ section }: { section?: string }) {
       {
         id: "shortcuts",
         name: "Keyboard shortcuts",
-        desc: "Read-only for now.",
-        cards: [[{ id: "keys", search: KEYS.flatMap(([, rows]) => rows.map(([name]) => name)).join(" · "), render: () => <KeysBlock /> }]],
+        desc: KEYS_DESC,
+        cards: [[{ id: "keys", search: KEYS.flatMap(([, rows]) => rows.map(([title]) => title)).join(" · "), render: () => <KeysBlock /> }]],
       },
     );
     return list;
@@ -432,6 +433,7 @@ function PluginsLink({ onManage }: { onManage: () => void }) {
 function DropboxAccount() {
   const client = useQueryClient();
   const status = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus });
+  const open = dropboxVaults(useWorkspace().data?.vaults ?? []);
   const { actions } = useShell();
   const [connecting, setConnecting] = useState(false);
   const refresh = () => client.invalidateQueries({ queryKey: keys.dropbox });
@@ -452,8 +454,7 @@ function DropboxAccount() {
   };
   const disconnect = () =>
     actions.confirm({
-      title: "Disconnect Dropbox?",
-      description: "keefast forgets its access to your Dropbox. Vaults in Dropbox open again once you connect it again.",
+      ...disconnectConfirmation(open),
       confirmLabel: "Disconnect",
       danger: true,
       onConfirm: () => api.dropboxDisconnect().then(refresh, (error) => void fail(error)),
@@ -499,57 +500,189 @@ function DropboxAccount() {
 // ---------------------------------------------------------------------------------------------
 // Keyboard shortcuts
 
-/** The shortcuts DESIGN.md §5 gives, by group: a name, and its keys (alternatives, or a pair). */
-const KEYS: readonly [string, readonly [string, readonly string[], ("or" | "pair")?][]][] = [
+/** A row of the list: one shortcut by its name in `shortcuts.json`, or a fixed pair. */
+type KeyRow = readonly [title: string, shortcut: ShortcutName | readonly [ShortcutName, ShortcutName]];
+
+/** The shortcuts DESIGN.md §5 gives, by group. */
+const KEYS: readonly [string, readonly KeyRow[]][] = [
   ["General", [
-    ["Command palette", SHORTCUTS.palette.slice(0, 1)],
-    ["Search", SHORTCUTS.search, "or"],
-    ["Open Vault", SHORTCUTS.openVault],
-    ["New Vault", SHORTCUTS.newVault],
-    ["Save all Vaults", SHORTCUTS.save],
-    ["Lock all Vaults", SHORTCUTS.lockAll],
-    ["Settings", SHORTCUTS.settings],
-    ["Close or go back", SHORTCUTS.close],
+    ["Command palette", "palette"],
+    ["Search", "search"],
+    ["Open Vault", "openVault"],
+    ["New Vault", "newVault"],
+    ["Save all Vaults", "save"],
+    ["Lock all Vaults", "lockAll"],
+    ["Settings", "settings"],
+    ["Close or go back", "close"],
   ]],
   ["Entries", [
-    ["Next / previous Entry", [...SHORTCUTS.nextEntry, ...SHORTCUTS.previousEntry], "pair"],
-    ["First / last Entry", [...SHORTCUTS.firstEntry, ...SHORTCUTS.lastEntry], "pair"],
-    ["Edit Entry", SHORTCUTS.edit.slice(0, 1)],
-    ["New Entry", SHORTCUTS.newEntry],
-    ["Copy username", SHORTCUTS.copyUsername],
-    ["Copy password", SHORTCUTS.copyPassword],
-    ["Copy TOTP code", SHORTCUTS.copyTotp],
-    ["Entry history", SHORTCUTS.history],
+    ["Next / previous Entry", ["nextEntry", "previousEntry"]],
+    ["First Entry", "firstEntry"],
+    ["Last Entry", "lastEntry"],
+    ["Edit Entry", "edit"],
+    ["New Entry", "newEntry"],
+    ["Copy username", "copyUsername"],
+    ["Copy password", "copyPassword"],
+    ["Copy TOTP code", "copyTotp"],
+    ["Entry history", "history"],
+    ["Delete Entry", "deleteEntry"],
   ]],
 ];
 
+const KEYS_DESC = "Click a shortcut's keys to give it others.";
+
 function KeysBlock() {
   const query = useSearchQuery().toLowerCase();
+  const shortcuts = useShortcuts();
+  const changed = useSettings().data?.shortcuts ?? {};
+  const [recording, setRecording] = useState<ShortcutName | null>(null);
   // A search for the section itself shows every shortcut; another, those it matches.
-  const whole = !query || "keyboard shortcuts read-only for now.".includes(query);
-  const columns = KEYS.map(([group, rows]) => [group, rows.filter(([name]) => whole || name.toLowerCase().includes(query))] as const).filter(([, rows]) => rows.length > 0);
+  const whole = !query || `keyboard shortcuts ${KEYS_DESC}`.toLowerCase().includes(query);
+  const columns = KEYS.map(([group, rows]) => [group, rows.filter(([title]) => whole || title.toLowerCase().includes(query))] as const).filter(([, rows]) => rows.length > 0);
+  /** Every shortcut but `name`, by its title, to say which one has a key. */
+  const others = (name: ShortcutName) =>
+    KEYS.flatMap(([, rows]) => rows).flatMap(([title, shortcut]) =>
+      (typeof shortcut === "string" ? [shortcut] : shortcut).filter((other) => other !== name).map((other) => ({ title, keys: shortcuts[other] })),
+    );
   return (
     <div className={cn("keys", columns.length === 1 && "one")}>
       {columns.map(([group, rows]) => (
         <div key={group} className="kcol">
           <div className="kgroup">{group}</div>
-          {rows.map(([name, combos, join]) => (
-            <div key={name} className="krow">
-              <span>
-                <Hl>{name}</Hl>
-              </span>
-              <span className="kk">
-                {combos.map((combo, index) => (
-                  <span key={combo} className="inline-flex items-center gap-1">
-                    {index > 0 && join === "or" && <span className="or">or</span>}
-                    <Kbd combo={combo} />
-                  </span>
-                ))}
-              </span>
-            </div>
-          ))}
+          {rows.map(([title, shortcut]) =>
+            typeof shortcut === "string" ? (
+              <ShortcutRow
+                key={title}
+                title={title}
+                name={shortcut}
+                combos={shortcuts[shortcut]}
+                changed={shortcut in changed}
+                recording={recording === shortcut}
+                onRecord={(on) => setRecording(on ? shortcut : null)}
+                others={() => others(shortcut)}
+              />
+            ) : (
+              <div key={title} className="krow" title="Arrow keys move through every list: they can't be changed.">
+                <span>
+                  <Hl>{title}</Hl>
+                </span>
+                <span className="kk">
+                  {shortcut.flatMap((name) => shortcuts[name]).map((combo) => (
+                    <Kbd key={combo} combo={combo} />
+                  ))}
+                </span>
+              </div>
+            ),
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+/** A shortcut and its keys. Unless it is fixed, clicking the keys records new ones: the next
+ * key pressed with its modifiers, refused when another shortcut has it (Escape gives up). A
+ * shortcut the user changed can go back to its default keys. */
+function ShortcutRow({
+  title,
+  name,
+  combos,
+  changed,
+  recording,
+  onRecord,
+  others,
+}: {
+  title: string;
+  name: ShortcutName;
+  combos: readonly string[];
+  changed: boolean;
+  recording: boolean;
+  onRecord: (on: boolean) => void;
+  others: () => { title: string; keys: readonly string[] }[];
+}) {
+  const client = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const fixed = FIXED_SHORTCUTS.includes(name);
+  const defaults = DEFAULT_SHORTCUTS[name];
+
+  const save = async (combo: string | null) => {
+    try {
+      await api.setShortcut(name, combo);
+      await client.invalidateQueries({ queryKey: keys.settings });
+      setError(null);
+      onRecord(false);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    }
+  };
+
+  useEffect(() => {
+    if (!recording) return;
+    setError(null);
+    // Ahead of every other key binding: the key pressed is the one to record.
+    const onKey = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+        setError(null);
+        onRecord(false);
+        return;
+      }
+      const combo = comboFromEvent(event);
+      if (!combo) return;
+      const holder = holderOf(combo, others());
+      if (holder) setError(`${comboLabel(combo).join(" ")} is taken by ${holder.title}.`);
+      else void save(combo);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // `others` and `save` read the shortcuts as they are when the key is pressed.
+  }, [recording]);
+
+  const caps = combos.map((combo, index) => (
+    <span key={combo} className="inline-flex items-center gap-1">
+      {index > 0 && <span className="or">or</span>}
+      <Kbd combo={combo} />
+    </span>
+  ));
+  return (
+    <>
+      <div className={cn("krow", recording && "is-recording")}>
+        <span>
+          <Hl>{title}</Hl>
+        </span>
+        {changed && !recording && (
+          <button
+            type="button"
+            className="kreset"
+            title={`Back to ${defaults.join(" or ")}`}
+            aria-label={`Give ${title} its default keys back`}
+            onClick={() => void save(null)}
+          >
+            <RotateCcw />
+          </button>
+        )}
+        {fixed ? (
+          <span className="kk" title="Escape and the arrows keep their jobs in every list and dialog: they can't be changed.">
+            {caps}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="kk kedit"
+            aria-label={recording ? `Press the new keys for ${title}, or Escape` : `Change the keys of ${title}`}
+            title={recording ? undefined : "Change"}
+            onClick={() => onRecord(!recording)}
+          >
+            {recording ? <span className="krec">Press the new keys…</span> : caps}
+          </button>
+        )}
+      </div>
+      {error && (
+        <div className="kerr" role="alert">
+          <CircleAlert /> {error}
+        </div>
+      )}
+    </>
   );
 }

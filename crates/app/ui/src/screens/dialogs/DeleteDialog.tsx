@@ -8,7 +8,7 @@ import { Folder, Trash2 } from "lucide-react";
 import { api, errorMessage } from "@/api";
 import type { EntryId, GroupId, Scope, VaultId } from "@/bindings";
 import { useEntry, useGroups } from "@/api/queries";
-import { Button, toast } from "@/kit";
+import { Button, GroupIcon, toast } from "@/kit";
 import { hostOf } from "@/lib/format";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
 import type { DeleteOverlay, ShellActions } from "@/shell/state";
@@ -110,9 +110,7 @@ export function DeleteDialog({ overlay, onClose }: { overlay: DeleteOverlay; onC
         {item.kind === "entry" ? (
           entry ? <EntryAvatar entry={entry} size={28} /> : <span className="dg-gico" />
         ) : (
-          <span className="dg-gico">
-            <Folder />
-          </span>
+          <span className="dg-gico">{group ? <GroupIcon icon={group.icon} /> : <Folder />}</span>
         )}
         <div className="min-w-0">
           <div className="t truncate">{name ?? " "}</div>

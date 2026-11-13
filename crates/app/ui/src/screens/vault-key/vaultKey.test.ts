@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EncryptionSettings } from "@/bindings";
 
-import { checkEncryption, encryptionForm, encryptionSummary, formSummary, MESSAGES } from "./encryption";
+import { checkEncryption, encryptionForm, encryptionSummary, formSummary, MESSAGES, unlockTimeLabel } from "./encryption";
 import { checkKey, KEY_MESSAGES, matchState } from "./masterKey";
 
 const DEFAULT: EncryptionSettings = { cipher: "aes256", kdf: { kind: "argon2id", memoryKib: 65536, iterations: 5, parallelism: 4 } };
@@ -37,7 +37,9 @@ describe("the encryption form", () => {
     expect(checkEncryption({ ...form, parallelism: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.parallelism });
     expect(checkEncryption({ ...form, parallelism: "16777216" }, DEFAULT)).toMatchObject({ message: MESSAGES.parallelism });
     expect(checkEncryption({ ...form, memoryMib: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory, field: "memoryMib" });
-    expect(checkEncryption({ ...form, memoryMib: "4194304" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory });
+    expect(checkEncryption({ ...form, memoryMib: "4097", iterations: "1" }, DEFAULT)).toMatchObject({ message: MESSAGES.memory });
+    expect(checkEncryption({ ...form, memoryMib: "4096", iterations: "32" }, DEFAULT)).toMatchObject({ ok: true });
+    expect(checkEncryption({ ...form, memoryMib: "4096", iterations: "33" }, DEFAULT)).toMatchObject({ message: MESSAGES.cost, field: "iterations" });
     expect(checkEncryption({ ...form, kdf: "aesKdf", rounds: "0" }, DEFAULT)).toMatchObject({ message: MESSAGES.rounds, field: "rounds" });
     expect(checkEncryption({ ...form, kdf: "aesKdf", rounds: "4294967296" }, DEFAULT)).toMatchObject({ message: MESSAGES.roundsMax });
     // Fields the chosen KDF doesn't use don't matter.
@@ -67,5 +69,15 @@ describe("the master key", () => {
     expect(matchState("secret", "sec")).toBe("none");
     expect(matchState("secret", "secret")).toBe("match");
     expect(matchState("secret", "sex")).toBe("mismatch");
+  });
+});
+
+describe("the unlock time", () => {
+  it("is said to a tenth of a second while short, and roughly once long", () => {
+    expect(unlockTimeLabel(0.04)).toBe("<0.1 s");
+    expect(unlockTimeLabel(0.44)).toBe("0.4 s");
+    expect(unlockTimeLabel(2.25)).toBe("2.3 s");
+    expect(unlockTimeLabel(12.4)).toBe("12 s");
+    expect(unlockTimeLabel(400)).toBe("7 min");
   });
 });

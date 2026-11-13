@@ -2820,6 +2820,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.21",
  "twofish",
  "url",

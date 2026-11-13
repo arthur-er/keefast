@@ -434,6 +434,19 @@ fn being_offline_is_not_a_failed_save() {
 }
 
 #[test]
+fn a_check_that_fails_with_nothing_to_save_is_no_failed_save() {
+    let h = harness();
+    let (mut laptop, vault) = h.open();
+    h.dropbox.fail_reads(true);
+
+    laptop.sync_when_due();
+
+    assert_eq!(laptop.status(vault), Some(SyncStatus::Error));
+    assert!(!laptop.workspace.vault(vault).unwrap().save_failed());
+    assert_eq!(laptop.workspace.save_status(), SaveStatus::Saved);
+}
+
+#[test]
 fn edits_saved_offline_survive_a_restart_and_are_merged_on_upload() {
     let h = harness();
     let (mut laptop, vault) = h.open();

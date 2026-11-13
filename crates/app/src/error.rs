@@ -41,6 +41,8 @@ pub enum ErrorKind {
     Dropbox,
     /// The Vault file changed elsewhere in a way that can't be Merged, or is being saved.
     Conflict,
+    /// The Entry changed since the editor read it: a Merge brought in a change made elsewhere.
+    EntryChanged,
     /// Something keefast can't do in this build or on this machine.
     Unavailable,
     /// The user stopped it.
@@ -152,6 +154,12 @@ impl From<OpenVaultError> for ApiError {
                 "This Vault file format is not supported.",
                 Some(reason),
             ),
+            OpenVaultError::Vault(OpenError::KdfOverLimit(error)) => (
+                Invalid,
+                "This Vault file's key derivation settings are too high for keefast to unlock \
+                 it.",
+                Some(describe_encryption(error).to_owned()),
+            ),
             OpenVaultError::Storage(StorageError::NotFound(_)) => {
                 (NotFound, "The Vault file could not be found.", None)
             }
@@ -160,7 +168,7 @@ impl From<OpenVaultError> for ApiError {
                 "The Vault file could not be read.",
                 Some(error.to_string()),
             ),
-            OpenVaultError::Storage(StorageError::Conflict) => {
+            OpenVaultError::Storage(StorageError::Conflict | StorageError::Exists(_)) => {
                 (Io, "The Vault file could not be read.", None)
             }
             OpenVaultError::Storage(StorageError::Unavailable(_)) => (
@@ -235,12 +243,15 @@ impl From<DropboxError> for ApiError {
 
 fn describe_encryption(error: EncryptionError) -> &'static str {
     match error {
-        EncryptionError::Iterations => "Argon2 needs at least 1 iteration.",
+        EncryptionError::Iterations => "Argon2 needs 1 to 4294967295 iterations.",
         EncryptionError::Parallelism => "Argon2's parallelism must be between 1 and 16777215.",
         EncryptionError::Memory => {
-            "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 TiB."
+            "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 GiB."
         }
-        EncryptionError::Rounds => "AES-KDF needs at least 1 round.",
+        EncryptionError::Cost => {
+            "Argon2's memory times its iterations can't be more than 128 GiB. Lower one of them."
+        }
+        EncryptionError::Rounds => "AES-KDF needs 1 to 10000000000 rounds.",
     }
 }
 

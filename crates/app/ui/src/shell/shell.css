@@ -33,6 +33,7 @@
   .vb-color:hover { background: var(--bg-hover); }
   .vb-color.is-selected { background: var(--bg-active); box-shadow: inset 0 0 0 1px var(--border-strong); }
   .vb-color .dot { width: 10px; height: 10px; }
+  .vb-side .nav-item .vb-tag-dot { width: 7px; height: 7px; margin: 0 4px; }
   .vb-side-bottom { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; }
   .vb-side-foot { flex: none; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; border-top: 1px solid var(--border); }
   .vb-side-foot .btn.ghost { color: var(--fg-1); }

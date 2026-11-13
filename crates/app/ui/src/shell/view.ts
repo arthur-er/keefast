@@ -34,6 +34,8 @@ export function sameScope(a: Scope, b: Scope): boolean {
       return b.kind === "vault" && a.vault === b.vault;
     case "group":
       return b.kind === "group" && a.vault === b.vault && a.group === b.group;
+    case "smartList":
+      return b.kind === "smartList" && a.vault === b.vault && a.list === b.list;
     case "tag":
       return b.kind === "tag" && a.tag === b.tag;
     case "color":

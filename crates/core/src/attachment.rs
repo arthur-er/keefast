@@ -129,7 +129,7 @@ fn unique_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
 }
 
 /// An Entry element's attachments, in order. References to contents the pool doesn't have are
-/// left out; the next edit drops them (see [`drop_unused`]).
+/// left out; the next edit or Merge drops them (see [`drop_unused`]).
 pub(crate) fn read(entry: &Element, pool: &[Binary]) -> Vec<Attachment> {
     entry
         .children_named("Binary")
@@ -219,7 +219,7 @@ pub(crate) fn drop_unused(document: &mut Element, pool: &mut Vec<Binary>) {
 }
 
 /// Removes the attachments whose reference points past the pool.
-fn drop_dangling(element: &mut Element, pool_len: usize) {
+pub(crate) fn drop_dangling(element: &mut Element, pool_len: usize) {
     element.children.retain(|node| {
         !matches!(node, Node::Element(binary) if binary.name == "Binary"
             && reference(binary).is_some_and(|index| index >= pool_len))

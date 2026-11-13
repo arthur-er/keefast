@@ -24,6 +24,7 @@
   .pi .chev { color: var(--fg-2); width: 14px; height: 14px; }
   .pi .tick { color: var(--accent-fg); }
   .pi mark { background: none; color: var(--accent-fg); font-weight: 600; }
+  .pi.danger, .pi.danger > svg.lucide { color: var(--danger); }
   .pal-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px 16px 44px; color: var(--fg-1); text-align: center; }
   .pal-empty svg.lucide { width: 20px; height: 20px; color: var(--fg-2); }
   .pal-empty .subtle { font-size: var(--text-sm); }

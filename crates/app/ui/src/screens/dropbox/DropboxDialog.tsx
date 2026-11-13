@@ -13,11 +13,12 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError, errorMessage } from "@/api";
 import type { DropboxAccountView, DropboxEntry, Location } from "@/bindings";
-import { keys } from "@/api/queries";
-import { Button, Kbd, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/kit";
+import { keys, useWorkspace } from "@/api/queries";
+import { Button, Dialog, Kbd, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/kit";
 import { isTyping } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 
+import { disconnectConfirmation, dropboxVaults } from "./account";
 import { crumbs, isVaultFile, modifiedLabel, parentFolder, sizeLabel } from "./browse";
 import { DropboxMark } from "./DropboxMark";
 import "./dropbox.css";
@@ -40,6 +41,8 @@ let lastFolder = "";
 
 export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location) => void; onClose: () => void }) {
   const client = useQueryClient();
+  const openFromDropbox = dropboxVaults(useWorkspace().data?.vaults ?? []);
+  const [confirming, setConfirming] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "checking" });
   const [listing, setListing] = useState<Listing>({ folder: lastFolder, entries: [], loading: true, error: null });
   const [selected, setSelected] = useState<string | null>(null);
@@ -150,6 +153,12 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
     }
   };
 
+  /** Asks first while Vaults from Dropbox are open: they can't sync until it is connected again. */
+  const askToDisconnect = () => {
+    if (openFromDropbox.length === 0) void disconnect();
+    else setConfirming(true);
+  };
+
   const entries = listing.entries;
   const selectedEntry = entries.find((entry) => entry.path === selected) ?? null;
   const pick = (entry: DropboxEntry) => (entry.isFolder ? void open(entry.path) : onPick(entry.location));
@@ -165,7 +174,8 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
   }, [selected]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if (isTyping(event.target)) return;
+    // Keys in the disconnect confirmation are its own.
+    if (isTyping(event.target) || confirming) return;
     if (phase.kind === "connect" && event.key === "Enter" && !(event.target instanceof HTMLButtonElement)) {
       event.preventDefault();
       void connect();
@@ -214,7 +224,7 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
                 <AccountMenu
                   account={phase.account}
                   onUseAnother={() => void connect(phase.account)}
-                  onDisconnect={() => void disconnect()}
+                  onDisconnect={askToDisconnect}
                 />
               )}
               <DialogPrimitive.Close className="btn sm ghost icon" aria-label="Cancel" title="Cancel (Esc)">
@@ -315,6 +325,30 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
           </DialogPrimitive.Content>
         </DialogPrimitive.Overlay>
       </DialogPrimitive.Portal>
+      {confirming && (
+        <Dialog
+          open
+          onOpenChange={setConfirming}
+          {...disconnectConfirmation(openFromDropbox)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                autoFocus
+                onClick={() => {
+                  setConfirming(false);
+                  void disconnect();
+                }}
+              >
+                Disconnect
+              </Button>
+            </>
+          }
+        />
+      )}
     </DialogPrimitive.Root>
   );
 }
