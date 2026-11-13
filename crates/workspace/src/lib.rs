@@ -19,6 +19,7 @@ mod secret_store;
 mod storage;
 mod unlock_secrets;
 
+use std::collections::BTreeMap;
 use std::io;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -802,6 +803,23 @@ impl Workspace {
 
     pub fn pane_widths(&self) -> PaneWidths {
         self.config.pane_widths
+    }
+
+    /// The keys the user gave keefast's shortcuts, by name, in place of their defaults.
+    pub fn shortcuts(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.config.shortcuts
+    }
+
+    /// Gives a shortcut these keys, or its default keys back with `None`, and remembers it in
+    /// the app config. The app checks the keys are free first.
+    pub fn set_shortcut(&mut self, name: &str, keys: Option<Vec<String>>) {
+        let changed = match keys {
+            Some(keys) => self.config.shortcuts.insert(name.to_owned(), keys.clone()) != Some(keys),
+            None => self.config.shortcuts.remove(name).is_some(),
+        };
+        if changed {
+            self.save_config();
+        }
     }
 
     /// Changes how wide the Vault browser's panes are, and remembers it in the app config.

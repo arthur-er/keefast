@@ -1,6 +1,7 @@
 //! Opening, creating, locking and saving Vaults, and the recent Vault files.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use keefast_core::{Argon2, Cipher, Encryption, Kdf};
 use keefast_workspace::{
@@ -185,6 +186,22 @@ pub enum LockAnswer {
 #[specta::specta]
 pub async fn default_encryption() -> ApiResult<EncryptionSettings> {
     Ok(Encryption::default().into())
+}
+
+/// About how many seconds unlocking a Vault file encrypted with these settings takes on this
+/// machine, from a short run of their key derivation. One runs at a time, so that two don't slow
+/// each other down.
+#[tauri::command]
+#[specta::specta]
+pub async fn estimate_unlock_time(encryption: EncryptionSettings) -> ApiResult<f64> {
+    static RUNNING: Mutex<()> = Mutex::new(());
+    let kdf = encryption.to_core()?.kdf;
+    let time = blocking(move || {
+        let _one_at_a_time = RUNNING.lock().unwrap_or_else(PoisonError::into_inner);
+        kdf.unlock_time()
+    })
+    .await??;
+    Ok(time.as_secs_f64())
 }
 
 /// Asks the user for a Vault file to open.

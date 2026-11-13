@@ -216,6 +216,19 @@ impl PluginHost {
             .extend(shortcuts.iter().filter_map(|text| Combo::parse(text)));
     }
 
+    /// The name of the running Plugin one of whose commands has this shortcut, if one has.
+    pub fn shortcut_holder(&self, combo: &Combo) -> Option<&str> {
+        self.plugins
+            .iter()
+            .find(|plugin| {
+                plugin
+                    .shortcuts
+                    .values()
+                    .any(|held| Combo::parse(held).as_ref() == Some(combo))
+            })
+            .map(|plugin| plugin.manifest.name.as_str())
+    }
+
     /// The shortcuts Plugins declared and didn't get, and why: their commands are in the command
     /// palette without keys.
     pub fn refused_shortcuts(&self) -> &[RefusedShortcut] {
