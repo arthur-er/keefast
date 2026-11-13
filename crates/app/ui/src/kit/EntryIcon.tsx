@@ -44,3 +44,14 @@ export function EntryIcon({
   const Icon = STANDARD_ICONS[number] ?? Key;
   return <Icon className={cn("text-fg-1", className)} style={{ width: size, height: size }} />;
 }
+
+/** A Group's icon: its custom icon, else its standard icon (a folder unless given another).
+ * Sized by the CSS around it, as the Lucide icon it stands in for would be; a custom icon is
+ * `size` pixels. */
+export function GroupIcon({ icon, size = 15, className }: { icon: IconView; size?: number; className?: string }) {
+  if (icon.kind === "custom") {
+    return <img src={icon.url} alt="" width={size} height={size} className={cn("flex-none rounded-xs", className)} />;
+  }
+  const Icon = STANDARD_ICONS[icon.number] ?? Folder;
+  return <Icon className={className} />;
+}

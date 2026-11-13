@@ -127,8 +127,19 @@ export function ExpiryChip({
   );
 }
 
-/** Tags as tokens, typed with commas or Enter, the Vaults' tags offered as the user types. */
-export function TagInput({ tags, known, onChange }: { tags: string[]; known: readonly string[]; onChange: (tags: string[]) => void }) {
+/** Tags as tokens, each in its colour in `colorOf`, typed with commas or Enter, the Vaults' tags
+ * offered as the user types. */
+export function TagInput({
+  tags,
+  known,
+  colorOf,
+  onChange,
+}: {
+  tags: string[];
+  known: readonly string[];
+  colorOf: (tag: string) => Color;
+  onChange: (tags: string[]) => void;
+}) {
   const [text, setText] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -150,7 +161,7 @@ export function TagInput({ tags, known, onChange }: { tags: string[]; known: rea
         <div className="ee-tok" onClick={(event) => event.target === event.currentTarget && input.current?.focus()}>
           {tags.map((tag, index) => (
             <span key={tag} className="ee-tk">
-              <span className="dot" style={{ background: "var(--fg-2)" }} />
+              <span className="dot" style={{ background: colorVar(colorOf(tag)) }} />
               {tag}
               <button type="button" aria-label={`Remove ${tag}`} title={`Remove ${tag}`} onClick={() => onChange(tags.filter((_, at) => at !== index))}>
                 <X />
@@ -215,7 +226,7 @@ export function TagInput({ tags, known, onChange }: { tags: string[]; known: rea
               </>
             ) : (
               <>
-                <span className="dot mx-[3px] h-2 w-2" style={{ background: "var(--fg-2)" }} />
+                <span className="dot mx-[3px] h-2 w-2" style={{ background: colorVar(colorOf(option.tag)) }} />
                 {option.tag}
               </>
             )}

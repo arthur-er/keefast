@@ -8,12 +8,13 @@ use cipher::{
 };
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256, Sha512};
+use subtle::ConstantTimeEq;
 use twofish::Twofish;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::header::VariantDictionary;
-use crate::OpenError;
+use crate::{Argon2, Kdf, OpenError};
 
 pub(crate) const AES256: Uuid = Uuid::from_u128(0x31c1f2e6_bf71_4350_be58_05216afc5aff);
 pub(crate) const CHACHA20: Uuid = Uuid::from_u128(0xd6038a2b_8b6f_4cb5_a524_339a31dbb59a);
@@ -50,6 +51,12 @@ fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
         mac.update(part);
     }
     mac.finalize().into_bytes().into()
+}
+
+/// Whether a MAC, hash or key check matches the expected one, in time that doesn't depend on
+/// where they first differ, so an attacker can't learn the expected bytes one at a time.
+pub(crate) fn matches(found: &[u8], expected: &[u8]) -> bool {
+    found.ct_eq(expected).into()
 }
 
 pub(crate) fn random<const N: usize>() -> [u8; N] {
@@ -181,7 +188,8 @@ pub(crate) fn hmac_key(master_seed: &[u8], transformed: &Key) -> Zeroizing<[u8; 
 }
 
 /// Turns the composite key into the key that, with the master seed, encrypts the payload.
-/// This is the deliberately slow step.
+/// This is the deliberately slow step; settings that would make it slower than keefast runs
+/// fail with [`OpenError::KdfOverLimit`] before it starts.
 pub(crate) fn transform_key(
     kdf: &VariantDictionary,
     composite: &[u8; 32],
@@ -196,6 +204,9 @@ pub(crate) fn transform_key(
     match uuid {
         AES_KDF | AES_KDF_KDBX4 => {
             let rounds = kdf.u64("R").ok_or_else(|| missing("R"))?;
+            Kdf::AesKdf { rounds }
+                .check_limits()
+                .map_err(OpenError::KdfOverLimit)?;
             aes_kdf(composite, salt, rounds)
         }
         ARGON2D | ARGON2ID => {
@@ -212,6 +223,12 @@ pub(crate) fn transform_key(
             let memory = kdf.u64("M").ok_or_else(|| missing("M"))?;
             let iterations = kdf.u64("I").ok_or_else(|| missing("I"))?;
             let lanes = kdf.u32("P").ok_or_else(|| missing("P"))?;
+            let cost = Argon2 {
+                memory,
+                iterations,
+                parallelism: lanes,
+            };
+            cost.check_limits().map_err(OpenError::KdfOverLimit)?;
             let out_of_range =
                 |name: &str| OpenError::Unsupported(format!("Argon2 {name} out of range"));
             let config = argon2::Config {
@@ -278,7 +295,7 @@ pub(crate) fn read_hmac_blocks(mut data: &[u8], hmac_key: &[u8; 64]) -> Result<V
             &block_hmac_key(index, hmac_key),
             &[&index.to_le_bytes(), size_bytes, block],
         );
-        if hmac != expected {
+        if !matches(hmac, &expected) {
             return Err(OpenError::Corrupt(format!(
                 "block {index} fails its integrity check"
             )));
@@ -321,7 +338,7 @@ pub(crate) fn read_hashed_blocks(mut data: &[u8]) -> Result<Vec<u8>, OpenError> 
             break;
         }
         let block = data.get(40..40 + size).ok_or_else(truncated)?;
-        if hash != sha256(&[block]) {
+        if !matches(hash, &sha256(&[block])) {
             return Err(OpenError::Corrupt(
                 "a block fails its integrity check".into(),
             ));

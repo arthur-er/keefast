@@ -9,10 +9,10 @@ import {
 
 import { api, errorMessage } from "@/api";
 import type { CopyTarget, EntryDetail as Entry, TotpCodeView } from "@/bindings";
-import { useTotpCode } from "@/api/queries";
+import { useGroups, useTotpCode } from "@/api/queries";
 import {
-  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StrengthMeter, Tabs, TabsContent,
-  TabsList, TabsTrigger, toast,
+  Badge, Button, colorVar, GroupIcon, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StrengthMeter, Tabs,
+  TabsContent, TabsList, TabsTrigger, toast,
 } from "@/kit";
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
 import { SHORTCUTS } from "@/lib/shortcuts";
@@ -25,8 +25,9 @@ import { splitCode } from "@/screens/totp/totp";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
-import { COLOR_NAMES } from "@/shell/Sidebar";
+import { COLOR_NAMES, findGroup } from "@/shell/Sidebar";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import { EntryAvatar } from "./EntryList";
@@ -35,6 +36,7 @@ import { type CopyHandler, FieldRow } from "./FieldRow";
 const MASK = "••••••••••••";
 /** How long a copied field shows "Copied". */
 const FLASH_MS = 1200;
+const UNREADABLE_TOTP = "Can't be read · Set up again";
 
 type Tab = "overview" | "fields" | "files" | "history" | "access";
 
@@ -209,7 +211,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 type="button"
                 className={cn("C-qt is-setup is-action", totpSetup && "is-open")}
                 aria-expanded={totpSetup}
-                title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}
+                title={entry.totp?.status === "unreadable" ? `${UNREADABLE_TOTP}\n${entry.totp.reason}` : undefined}
                 onClick={() => setTotpSetup(!totpSetup)}
               >
                 <span className="k">
@@ -217,7 +219,8 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 </span>
                 <span className="v subtle">
                   {entry.totp?.status === "unreadable" ? (
-                    "Can't be read · Set up again"
+                    // In a span of its own: the tile's ellipsis doesn't show on bare text in a flex box.
+                    <span className="truncate">{UNREADABLE_TOTP}</span>
                   ) : (
                     <>
                       <Plus className="ico-sm" /> Set up TOTP
@@ -250,7 +253,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
           )}
           <TabsList className="C-tabs mt-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
+            <TabsTrigger value="fields" count={shownCustomFields(entry).length}>Fields</TabsTrigger>
             <TabsTrigger value="files" count={entry.attachments.length}>Files</TabsTrigger>
             <TabsTrigger value="history" count={entry.historyCount}>History</TabsTrigger>
             <TabsTrigger value="access" count={entry.rememberedAccess.length}>Access</TabsTrigger>
@@ -385,6 +388,7 @@ function NextTotpCode({ code }: Pick<TotpCodeView, "code">) {
 
 function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const expiry = describeExpiry(entry.expires, entry.expired);
+  const colorOf = useTagColor();
   return (
     <>
       {entry.facets.map((facet) => (
@@ -416,14 +420,14 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
         <div className="vb-fields px-3.5 py-1">
           <Prop label="Group">
             <span className="vb-chip">
-              <Folder />
+              <EntryGroupIcon entry={entry} />
               {entry.groupPath.length > 1 ? entry.groupPath[entry.groupPath.length - 1] : entry.vaultName}
             </span>
           </Prop>
           <Prop label="Tags">
             {entry.tags.map((tag) => (
               <span key={tag} className="tag">
-                <span className="dot" />
+                <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
                 {tag}
               </span>
             ))}
@@ -522,6 +526,13 @@ function AddTag({ entry }: { entry: Entry }) {
   );
 }
 
+/** The icon of the Group the Entry is in. */
+function EntryGroupIcon({ entry }: { entry: Entry }) {
+  const groups = useGroups(entry.vault).data;
+  const group = groups ? findGroup(groups, (group) => group.id === entry.group) : null;
+  return group ? <GroupIcon icon={group.icon} /> : <Folder />;
+}
+
 function Prop({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="vb-prop">
@@ -538,6 +549,12 @@ function SectionHead({ title, count, children }: { title: string; count: number;
       {children}
     </div>
   );
+}
+
+/** The custom fields the Fields tab lists, by their index in the Entry: those TOTP settings are
+ * kept in are the TOTP tile's while the Entry has TOTP. */
+function shownCustomFields(entry: Entry) {
+  return entry.customFields.flatMap((field, index) => (entry.totp && field.totpStorage ? [] : [{ field, index }]));
 }
 
 function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
@@ -560,14 +577,15 @@ function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null
       toast(errorMessage(error), { icon: "error" });
     }
   };
+  const fields = shownCustomFields(entry);
   return (
     <>
-      <SectionHead title="Custom fields" count={entry.customFields.length} />
-      {entry.customFields.length === 0 ? (
+      <SectionHead title="Custom fields" count={fields.length} />
+      {fields.length === 0 ? (
         <div className="vb-notes empty">No custom fields.</div>
       ) : (
         <div className="vb-fields">
-          {entry.customFields.map((field, index) => {
+          {fields.map(({ field, index }) => {
             const value = field.value ?? revealed[index];
             const key = `field:${index}`;
             return (

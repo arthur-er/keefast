@@ -79,13 +79,15 @@ impl VaultId {
     }
 }
 
-/// What the Entry list shows: every open Vault, one Vault, one Group of a Vault, or the
-/// Entries of every open Vault with a tag or colour.
+/// What the Entry list shows: every open Vault, one Vault, one Group of a Vault, one of a
+/// Vault's Smart lists, or the Entries of every open Vault with a tag or colour.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryScope {
     AllVaults,
     Vault(VaultId),
     Group(VaultId, GroupId),
+    /// The Vault's Entries outside the Recycle Bin that the Smart list picks.
+    Smart(VaultId, SmartList),
     /// Entries outside the Recycle Bin with this tag.
     Tag(String),
     /// Entries outside the Recycle Bin marked with this colour.
@@ -96,8 +98,47 @@ impl EntryScope {
     /// The Vault the scope is in, if it is in one.
     pub fn vault(&self) -> Option<VaultId> {
         match self {
-            EntryScope::Vault(vault) | EntryScope::Group(vault, _) => Some(*vault),
+            EntryScope::Vault(vault)
+            | EntryScope::Group(vault, _)
+            | EntryScope::Smart(vault, _) => Some(*vault),
             EntryScope::AllVaults | EntryScope::Tag(_) | EntryScope::Color(_) => None,
+        }
+    }
+}
+
+/// A list of a Vault's Entries picked by what they have rather than where they are, under All
+/// Entries in the sidebar. Entries in the Recycle Bin are never on one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SmartList {
+    /// Entries with TOTP set up, even settings keefast can't read.
+    WithTotp,
+    /// Entries changed in the last [`RECENTLY_MODIFIED`], newest first.
+    RecentlyModified,
+    /// Entries whose expiry time has come.
+    Expired,
+}
+
+/// How long ago an Entry may have changed to be on Recently modified.
+pub const RECENTLY_MODIFIED: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+impl SmartList {
+    pub const ALL: [SmartList; 3] = [
+        SmartList::WithTotp,
+        SmartList::RecentlyModified,
+        SmartList::Expired,
+    ];
+
+    /// Whether the list has the Entry, by `now`.
+    pub fn includes(self, entry: &Entry, now: Timestamp) -> bool {
+        match self {
+            SmartList::WithTotp => entry.totp().is_some(),
+            SmartList::RecentlyModified => {
+                let since = now.unix_seconds() - RECENTLY_MODIFIED.as_secs() as i64;
+                entry
+                    .last_modified()
+                    .is_some_and(|modified| modified.unix_seconds() >= since)
+            }
+            SmartList::Expired => entry.is_expired(now),
         }
     }
 }
@@ -1100,7 +1141,7 @@ impl Workspace {
             EntryScope::Group(vault, group) => {
                 return self.group(vault, group).map(|_| (vault, group));
             }
-            EntryScope::Vault(vault) => self.readable_vault(vault),
+            EntryScope::Vault(vault) | EntryScope::Smart(vault, _) => self.readable_vault(vault),
             EntryScope::AllVaults | EntryScope::Tag(_) | EntryScope::Color(_) => {
                 let readable: Vec<&OpenVault> = self.readable_vaults().collect();
                 match readable.as_slice() {
@@ -1149,14 +1190,19 @@ impl Workspace {
 
     /// The Entry list narrowed by a search: the Entries in scope that match, best match first
     /// and equally good ones in `sort` order. Entries that tie on both stay in the order their
-    /// Vaults were opened.
+    /// Vaults were opened. Recently modified is always newest first.
     pub fn find_entries(
         &self,
         scope: EntryScope,
         search: &EntrySearch,
         sort: EntrySort,
     ) -> Vec<ListedEntry<'_>> {
+        let sort = match scope {
+            EntryScope::Smart(_, SmartList::RecentlyModified) => EntrySort::Modified,
+            _ => sort,
+        };
         let entries = match scope {
+            EntryScope::Smart(vault, list) => self.smart_list(vault, list),
             EntryScope::Tag(tag) => self.marked_entries(|entry| entry.tags().contains(&tag)),
             EntryScope::Color(color) => self.marked_entries(|entry| entry.color() == Some(color)),
             EntryScope::AllVaults => self
@@ -1175,6 +1221,17 @@ impl Workspace {
                 .collect(),
         };
         search.rank(entries, |listed| listed.entry, sort)
+    }
+
+    /// The Entries the Vault's Smart list has, in Vault file order: count them for the sidebar.
+    pub fn smart_list(&self, vault: VaultId, list: SmartList) -> Vec<ListedEntry<'_>> {
+        let now = self.now();
+        self.readable_vault(vault)
+            .into_iter()
+            .flat_map(|open| entries_outside_recycle_bin(&open.vault))
+            .filter(|entry| list.includes(entry, now))
+            .map(|entry| ListedEntry { vault, entry })
+            .collect()
     }
 
     /// The Entries outside the Recycle Bin of every open Vault that `marked` picks.
@@ -1300,6 +1357,23 @@ impl Workspace {
         tags.sort_by_cached_key(|tag| (tag.to_lowercase(), tag.to_string()));
         tags.dedup();
         tags
+    }
+
+    /// Chooses the colour a tag is drawn in, in this Vault, or with `None` undoes the choice.
+    pub fn set_tag_color(
+        &mut self,
+        vault: VaultId,
+        tag: &str,
+        color: Option<EntryColor>,
+    ) -> Result<(), EditVaultError> {
+        let open = self.vault(vault).ok_or(EditVaultError::VaultNotOpen)?;
+        if open.vault.tag_colors().get(tag).copied() == color {
+            return Ok(());
+        }
+        self.edit(vault, |vault, now| {
+            vault.set_tag_color(tag, color, now);
+            Ok(())
+        })
     }
 
     /// Whether the Entry's expiry time has come.

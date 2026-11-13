@@ -148,6 +148,11 @@ export const commands = {
 	 */
 	openEntryUrl: (vault: VaultId, entry: EntryId) => typedError<null, ApiError>(__TAURI_INVOKE("open_entry_url", { vault, entry })),
 	/**
+	 *  Chooses the colour a tag is drawn in, in the Vault, kept in its custom data; `None` goes back
+	 *  to the colour the UI picks for the tag's name.
+	 */
+	setTagColor: (vault: VaultId, tag: string, color: "red" | "orange" | "yellow" | "green" | "blue" | "violet" | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_tag_color", { vault, tag, color })),
+	/**
 	 *  Every facet the Plugins contribute, in the order the Plugins were loaded: the editor offers
 	 *  to add the ones with a section of their own.
 	 */
@@ -846,6 +851,8 @@ export type GroupNode = {
 	id: GroupId,
 	/**  The top Group's name is the Vault's. */
 	name: string,
+	/**  Its standard icon (a folder unless given another) or custom icon, drawn as an Entry's. */
+	icon: IconView,
 	/**  The Entries right in this Group. */
 	entryCount: number,
 	/**  The Entries in this Group and every Group below it. */
@@ -922,6 +929,8 @@ export type LoginOption = {
 	label: string,
 	/**  Shown muted after the label: a Vault's name, or that it is the Browser group. */
 	detail: string | null,
+	/**  A Group's icon; `None` for headings, Entries, Vaults and a Group still to be made. */
+	icon: IconView | null,
 	depth: number,
 };
 
@@ -1187,10 +1196,23 @@ export type SaveFailed = {
 export type SaveState = "saving" | "failed" | "unsaved" | "saved";
 
 /**
- *  What the Entry list shows: every open Vault, one Vault, one Group, or the Entries of every
- *  open Vault with a tag or colour (outside the Recycle Bin).
+ *  What the Entry list shows: every open Vault, one Vault, one Group, one of a Vault's Smart
+ *  lists, or the Entries of every open Vault with a tag or colour (outside the Recycle Bin).
  */
-export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+export type Scope = { kind: "allVaults" } | { kind: "vault"; vault: VaultId } | { kind: "group"; vault: VaultId; group: GroupId } | { kind: "smartList"; vault: VaultId; list: SmartList } | { kind: "tag"; tag: string } | { kind: "color"; color: Color };
+
+/**
+ *  A list of a Vault's Entries outside the Recycle Bin, by what they have: those with TOTP, those
+ *  changed in the last 30 days (newest first, whatever the sort), or those expired.
+ */
+export type SmartList = "withTotp" | "recentlyModified" | "expired";
+
+/**  How many Entries a Vault's Smart lists have, as the sidebar shows them. */
+export type SmartListCounts = {
+	withTotp: number,
+	recentlyModified: number,
+	expired: number,
+};
 
 /**
  *  The orders the Entry list sorts in. Text sorts A to Z ignoring case, dates newest first;
@@ -1209,6 +1231,12 @@ export type StrengthView = {
 
 /**  Where a Dropbox Vault stands with its Vault file in Dropbox. */
 export type SyncState = "synced" | "syncing" | "offline" | "error";
+
+/**  The colour chosen for a tag in a Vault. */
+export type TagColor = {
+	tag: string,
+	color: Color,
+};
 
 export type Theme = 
 /**  Follow the OS light/dark setting. */
@@ -1285,6 +1313,13 @@ export type VaultSummary = {
 	rootGroup: GroupId | null,
 	recycleBin: GroupId | null,
 	browserGroup: GroupId | null,
+	/**  How many Entries each of its Smart lists has; 0 unless unlocked. */
+	smartLists: SmartListCounts,
+	/**
+	 *  The colours chosen for its tags, by tag; empty unless unlocked. A tag without one is drawn
+	 *  in a colour picked from its name.
+	 */
+	tagColors: TagColor[],
 };
 
 /**

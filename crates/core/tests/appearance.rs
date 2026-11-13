@@ -324,3 +324,52 @@ fn custom_icons_must_be_small_png_images() {
     assert_eq!(vault.add_custom_icon(&huge), Err(EditError::IconTooLarge));
     assert_eq!(vault.custom_icons().len(), 1);
 }
+
+#[test]
+fn a_tags_colour_is_kept_in_the_vaults_custom_data_and_reads_back() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    assert!(vault.tag_colors().is_empty());
+    vault.set_tag_color("dev", Some(EntryColor::Blue), now());
+    vault.set_tag_color("Shared", Some(EntryColor::Red), now());
+
+    let colors: Vec<_> = reopen(&vault).tag_colors().into_iter().collect();
+    assert_eq!(
+        colors,
+        [
+            ("Shared".to_owned(), EntryColor::Red),
+            ("dev".to_owned(), EntryColor::Blue)
+        ]
+    );
+    // An independent reader finds it where KDBX keeps a Vault's custom data, as an item other
+    // clients keep for keefast as they keep their own.
+    let xml = independent_xml(&vault);
+    let meta = &xml[xml.find("<Meta>").unwrap()..xml.find("</Meta>").unwrap()];
+    let item = &meta[meta.find("<Key>keefast_TAG_COLOR_dev</Key>").unwrap()..];
+    assert!(item[..item.find("</Item>").unwrap()].contains("<Value>#6FA8DC</Value>"));
+}
+
+#[test]
+fn an_undone_tag_colour_stays_undone_through_a_merge() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    vault.set_tag_color("dev", Some(EntryColor::Blue), now());
+    let elsewhere = reopen(&vault);
+
+    vault.set_tag_color("dev", None, later());
+    assert!(vault.tag_colors().is_empty());
+    vault.merge(&elsewhere);
+    assert!(vault.tag_colors().is_empty());
+
+    // The newest choice wins, whichever side made it.
+    let mut newer = reopen(&elsewhere);
+    let latest = Timestamp::from_unix_seconds(1_800_001_200);
+    newer.set_tag_color("dev", Some(EntryColor::Green), latest);
+    vault.merge(&newer);
+    assert_eq!(vault.tag_colors().get("dev"), Some(&EntryColor::Green));
+}
+
+#[test]
+fn undoing_a_colour_never_chosen_adds_nothing() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    vault.set_tag_color("dev", None, now());
+    assert!(!independent_xml(&vault).contains("keefast_TAG_COLOR_"));
+}
