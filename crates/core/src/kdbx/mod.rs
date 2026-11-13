@@ -117,6 +117,17 @@ impl Settings {
     }
 }
 
+/// Derives a key with `kdf`, from a throwaway key and seed: the work of opening or saving a
+/// Vault file with it, without one.
+pub(crate) fn derive_throwaway_key(kdf: Kdf) -> Result<(), OpenError> {
+    let mut settings = Settings::new_kdbx4();
+    settings.set_encryption(&Encryption {
+        cipher: Cipher::Aes256,
+        kdf,
+    });
+    crypto::transform_key(&settings.kdf, &[0; 32]).map(drop)
+}
+
 impl From<OuterCipher> for Cipher {
     fn from(cipher: OuterCipher) -> Self {
         match cipher {
