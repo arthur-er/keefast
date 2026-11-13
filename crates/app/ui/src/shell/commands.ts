@@ -31,6 +31,7 @@ export type AppCommandId =
   | "newerVersion"
   | "olderVersion"
   | "openUrl"
+  | "openVaultSettings"
   | "plugins"
   | "restoreVersion"
   | "revealVersion"
