@@ -6,6 +6,7 @@ import { entriesIn, moveTargets } from "./move";
 
 const node = (id: string, entryCount: number, children: GroupNode[] = [], bin = false): GroupNode => ({
   id, name: id, entryCount, totalEntries: entryCount, isRecycleBin: bin, inRecycleBin: bin, isBrowserGroup: false, children,
+  icon: { kind: "standard", number: 48 },
 });
 
 describe("moveTargets", () => {
