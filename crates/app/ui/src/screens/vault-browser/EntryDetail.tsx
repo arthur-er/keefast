@@ -34,6 +34,7 @@ import { type CopyHandler, FieldRow } from "./FieldRow";
 const MASK = "••••••••••••";
 /** How long a copied field shows "Copied". */
 const FLASH_MS = 1200;
+const UNREADABLE_TOTP = "Can't be read · Set up again";
 
 type Tab = "overview" | "fields" | "files" | "history" | "access";
 
@@ -207,7 +208,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 type="button"
                 className={cn("C-qt is-setup is-action", totpSetup && "is-open")}
                 aria-expanded={totpSetup}
-                title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}
+                title={entry.totp?.status === "unreadable" ? `${UNREADABLE_TOTP}\n${entry.totp.reason}` : undefined}
                 onClick={() => setTotpSetup(!totpSetup)}
               >
                 <span className="k">
@@ -215,7 +216,8 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 </span>
                 <span className="v subtle">
                   {entry.totp?.status === "unreadable" ? (
-                    "Can't be read · Set up again"
+                    // In a span of its own: the tile's ellipsis doesn't show on bare text in a flex box.
+                    <span className="truncate">{UNREADABLE_TOTP}</span>
                   ) : (
                     <>
                       <Plus className="ico-sm" /> Set up TOTP
@@ -248,7 +250,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
           )}
           <TabsList className="C-tabs mt-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
+            <TabsTrigger value="fields" count={shownCustomFields(entry).length}>Fields</TabsTrigger>
             <TabsTrigger value="files" count={entry.attachments.length}>Files</TabsTrigger>
             <TabsTrigger value="history" count={entry.historyCount}>History</TabsTrigger>
             <TabsTrigger value="access" count={entry.rememberedAccess.length}>Access</TabsTrigger>
@@ -468,6 +470,12 @@ function SectionHead({ title, count, children }: { title: string; count: number;
   );
 }
 
+/** The custom fields the Fields tab lists, by their index in the Entry: those TOTP settings are
+ * kept in are the TOTP tile's while the Entry has TOTP. */
+function shownCustomFields(entry: Entry) {
+  return entry.customFields.flatMap((field, index) => (entry.totp && field.totpStorage ? [] : [{ field, index }]));
+}
+
 function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   // By field name: a Merge that adds or reorders fields doesn't reveal another one.
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -489,14 +497,15 @@ function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null
       toast(errorMessage(error), { icon: "error" });
     }
   };
+  const fields = shownCustomFields(entry);
   return (
     <>
-      <SectionHead title="Custom fields" count={entry.customFields.length} />
-      {entry.customFields.length === 0 ? (
+      <SectionHead title="Custom fields" count={fields.length} />
+      {fields.length === 0 ? (
         <div className="vb-notes empty">No custom fields.</div>
       ) : (
         <div className="vb-fields">
-          {entry.customFields.map((field, index) => {
+          {fields.map(({ field, index }) => {
             const value = field.value ?? revealed[field.name];
             const key = `field:${index}`;
             return (

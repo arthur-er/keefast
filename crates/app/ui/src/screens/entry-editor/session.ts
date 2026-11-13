@@ -5,7 +5,7 @@
 import { useSyncExternalStore } from "react";
 
 import { api, errorMessage } from "@/api";
-import type { Color, GroupId, View, VaultId } from "@/bindings";
+import type { Color, EntryKey, GroupId, View, VaultId } from "@/bindings";
 import { toast } from "@/kit";
 import type { ShellActions } from "@/shell/state";
 
@@ -36,6 +36,27 @@ export function takeNewEntryRequest(): NewEntryTarget | null {
   const taken = pending;
   pending = null;
   return taken;
+}
+
+let changed: EntryKey | null = null;
+const changeSubscribers = new Set<() => void>();
+
+/** The Entry the editor has unsaved changes to, which the Entry list marks. */
+export function useEntryWithChanges(): EntryKey | null {
+  return useSyncExternalStore(
+    (notify) => {
+      changeSubscribers.add(notify);
+      return () => changeSubscribers.delete(notify);
+    },
+    () => changed,
+  );
+}
+
+/** Tells the Entry list which Entry the editor has unsaved changes to, if any. */
+export function setEntryWithChanges(key: EntryKey | null) {
+  if (key?.vault === changed?.vault && key?.entry === changed?.entry) return;
+  changed = key;
+  changeSubscribers.forEach((notify) => notify());
 }
 
 /** Opens the editor on a new Entry in the Group new items go to for what the list shows. */

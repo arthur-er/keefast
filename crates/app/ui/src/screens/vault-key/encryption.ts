@@ -113,6 +113,14 @@ export function encryptionSummary(settings: EncryptionSettings): string[] {
   return parts;
 }
 
+/** How long unlocking takes, as the change-key card says it: "<0.1 s", "0.4 s", "12 s", "3 min". */
+export function unlockTimeLabel(seconds: number): string {
+  if (seconds < 0.1) return "<0.1 s";
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 120) return `${Math.round(seconds)} s`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
 /** The summary of what the form says now, or of `fallback` while the form can't be used. */
 export function formSummary(form: EncryptionForm, fallback: EncryptionSettings): string[] {
   const checked = checkEncryption(form, fallback);

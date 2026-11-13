@@ -43,7 +43,7 @@ import {
 } from "./draft";
 import { IconPicker } from "./IconPicker";
 import { ColorChip, ExpiryChip, TagInput } from "./Props";
-import { type NewEntryTarget, takeNewEntryRequest, useNewEntryRequest } from "./session";
+import { type NewEntryTarget, setEntryWithChanges, takeNewEntryRequest, useNewEntryRequest } from "./session";
 import "./entry-editor.css";
 
 type Session = { id: number; kind: "existing"; key: EntryKey } | { id: number; kind: "new"; target: NewEntryTarget };
@@ -181,6 +181,11 @@ function EditorForm({
   const changed = isDirty(saved, draft) || stagedTotp !== null;
   dirty.current = changed;
   title.current = entry?.title ?? "";
+  // The Entry list marks the Entry while it has unsaved changes, until the editor closes.
+  useEffect(() => {
+    setEntryWithChanges(changed && entry ? { vault: entry.vault, entry: entry.id } : null);
+  }, [changed, entry?.vault, entry?.id]);
+  useEffect(() => () => setEntryWithChanges(null), []);
   const hidden = hiddenFields(entry, draft).map((field) => field.name);
   const found = tried ? problems(draft, hidden) : null;
   const update = (change: Partial<Draft>) => {

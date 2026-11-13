@@ -52,7 +52,9 @@ import {
   type MockVault,
 } from "./data";
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
-import { facetsOf, facetTemplates, formatOwned, listLabel, validateOwned } from "./plugins";
+import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, SHORTCUTS, type ShortcutName } from "@/lib/shortcuts";
+
+import { facetsOf, facetTemplates, formatOwned, listLabel, shortcutsOf, validateOwned } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -248,6 +250,7 @@ function initialState(): MockState {
       downloadFavicons: true,
       generator: structuredClone(DEFAULT_GENERATOR),
       paneWidths: { sidebar: 232, entryList: 360 },
+      shortcuts: {},
     },
     pendingLock: null,
     pendingPairing: null,
@@ -738,6 +741,10 @@ export function createMockBackend(): Backend & {
       return { vault: v.id, group: g };
     }),
     defaultEncryption: command(() => structuredClone(DEFAULT_ENCRYPTION)),
+    // The prototype's rates: no key derivation runs in the browser.
+    estimateUnlockTime: command(({ kdf }: EncryptionSettings) =>
+      kdf.kind === "aesKdf" ? kdf.rounds / 2.4e6 : (kdf.memoryKib / 1024) * kdf.iterations / Math.max(kdf.parallelism, 1) / 420,
+    ),
     listPlugins: command(() => plugins.list()),
     choosePluginPackage: command(() => plugins.choose()),
     installPlugin: command((path: string, digest: string) => plugins.install(path, digest)),
@@ -1196,6 +1203,22 @@ export function createMockBackend(): Backend & {
     }),
     setDownloadFavicons: command((enabled) => {
       state.settings.downloadFavicons = enabled;
+      changed();
+      return null;
+    }),
+    // The checks of the backend's `shortcuts::check`, briefly.
+    setShortcut: command((name: string, keys: string | null) => {
+      const changedKeys = { ...state.settings.shortcuts };
+      if (keys === null) delete changedKeys[name];
+      else {
+        if (!(name in DEFAULT_SHORTCUTS) || FIXED_SHORTCUTS.includes(name as ShortcutName)) throw new MockError("invalid", "This shortcut can't be changed.");
+        const others = Object.entries(SHORTCUTS).filter(([other]) => other !== name).map(([, taken]) => ({ keys: taken }));
+        if (holderOf(keys, others)) throw new MockError("invalid", `${keys} is taken by another of keefast's shortcuts.`);
+        const held = [...shortcutsOf(plugins.runs).given.values()].map((taken) => ({ keys: [taken] }));
+        if (holderOf(keys, held)) throw new MockError("invalid", `${keys} is taken by the Card Plugin.`);
+        changedKeys[name] = [keys];
+      }
+      state.settings.shortcuts = changedKeys;
       changed();
       return null;
     }),
