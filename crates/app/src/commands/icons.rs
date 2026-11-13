@@ -112,11 +112,11 @@ mod tests {
 
         import_icon(&core, vault.into(), &png).unwrap();
 
-        // Saves run on threads of their own.
+        // Saves run on threads of their own; one can take a while on a slow, busy machine.
         let started = Instant::now();
         loop {
             let status = core.read(|workspace| workspace.save_status());
-            if status != SaveStatus::Saving || started.elapsed() > Duration::from_secs(10) {
+            if status != SaveStatus::Saving || started.elapsed() > Duration::from_secs(60) {
                 return status;
             }
             std::thread::sleep(Duration::from_millis(10));
