@@ -111,10 +111,17 @@ struct Aftermath {
 
 /// keefast's own Plugins alone, until [`AppCore::use_plugin_store`] runs the installed ones too.
 /// Every host keeps keefast's shortcuts (`shortcuts.json`) from the Plugins it loads.
-fn bundled_plugin_host() -> PluginHost {
-    let host = PluginHost::bundled();
+/// Every host keeps the keys the user gave keefast's shortcuts from them too.
+fn bundled_plugin_host(user_shortcuts: &[String]) -> PluginHost {
+    let reserved: Vec<&str> = user_shortcuts.iter().map(String::as_str).collect();
+    let host = PluginHost::bundled_reserving(&reserved);
     say_refused_shortcuts(&host);
     host
+}
+
+/// The keys the user gave keefast's shortcuts in Settings.
+fn user_shortcuts(workspace: &Workspace) -> Vec<String> {
+    workspace.shortcuts().values().flatten().cloned().collect()
 }
 
 /// Says on stderr which shortcuts Plugins couldn't have, and why. Settings → Plugins shows it on
@@ -144,7 +151,7 @@ fn form_fills(host: &PluginHost) -> Vec<FormFill> {
 
 impl AppCore {
     pub fn new(mut workspace: Workspace, notifier: Box<dyn Notifier>, launch: Launch) -> Arc<Self> {
-        let plugins = bundled_plugin_host();
+        let plugins = bundled_plugin_host(&user_shortcuts(&workspace));
         workspace.set_form_fills(form_fills(&plugins));
         Arc::new(Self {
             workspace: Mutex::new(workspace),
@@ -163,7 +170,9 @@ impl AppCore {
 
     /// Runs the Plugins installed in `store` from now on, in place of keefast's own alone.
     pub fn use_plugin_store(&self, mut store: PluginStore) {
+        let reserved = self.read(user_shortcuts);
         let mut host = PluginHost::new();
+        host.reserve_shortcuts(&reserved.iter().map(String::as_str).collect::<Vec<_>>());
         store.load(&mut host);
         say_refused_shortcuts(&host);
         let fills = form_fills(&host);
@@ -454,7 +463,16 @@ pub(crate) mod tests {
 
     #[test]
     fn the_card_gets_every_shortcut_it_asks_for() {
-        assert!(bundled_plugin_host().refused_shortcuts().is_empty());
+        assert!(bundled_plugin_host(&[]).refused_shortcuts().is_empty());
+    }
+
+    #[test]
+    fn keys_the_user_gave_keefasts_shortcuts_are_kept_from_plugins() {
+        let host = bundled_plugin_host(&["Ctrl Shift C".to_owned()]);
+        assert_eq!(
+            host.refused_shortcuts()[0].reason.to_string(),
+            "Ctrl Shift C is one of keefast's own shortcuts"
+        );
     }
 
     #[test]

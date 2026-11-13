@@ -3,23 +3,28 @@
 // with "Change…", which opens an inline card. The card starts from the Vault's own encryption and
 // keeps its master key unless "Set a new master key" is on; Save changes gives the Vault the new
 // settings and saves the Vault file straight away (`change_vault_key`; the Vault keeps its old key
-// until the save has written the new one, ADR 0006).
+// until the save has written the new one, ADR 0006). Under the key derivation's numbers, the card
+// says about how long unlocking takes with them on this machine, as Vault settings B's flow does
+// (`estimate_unlock_time` times a short run of the key derivation in the backend).
 //
 // Vault settings C opens `ChangeVaultKey` in its Security section's card, in place of the row
 // (`screens/settings/VaultKeySection.tsx`).
 
 import { useEffect, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CircleAlert, Eye, EyeOff, FileKey2, Gauge, Info, KeyRound, Plus, ShieldCheck, TriangleAlert, X } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { EncryptionSettings, VaultId } from "@/bindings";
-import { useVaultSettings } from "@/api/queries";
+import { keys, useVaultSettings } from "@/api/queries";
 import { Button, Kbd, Switch, toast } from "@/kit";
 import { useShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 
 import { Choice } from "./EncryptionFields";
-import { CIPHERS, checkEncryption, type EncryptionField, encryptionForm, type EncryptionForm, encryptionSummary, KDFS } from "./encryption";
+import {
+  CIPHERS, checkEncryption, type EncryptionField, encryptionForm, type EncryptionForm, encryptionSummary, KDFS, unlockTimeLabel,
+} from "./encryption";
 import { checkKey, KEY_MESSAGES, matchState } from "./masterKey";
 import { useKeyFile } from "./useKeyFile";
 import "./vault-key.css";
@@ -282,6 +287,7 @@ function ChangeKeyCard({
         <Gauge />
         <div>
           <div>Higher values make guessing the master password slower, and unlocking and saving too.</div>
+          {checked.ok && <UnlockEstimate settings={checked.settings} />}
           {encryptionError && (
             <div className="error-msg mt-1" role="alert">
               <CircleAlert /> {encryptionError.message}
@@ -309,5 +315,37 @@ function ChangeKeyCard({
         </Button>
       </div>
     </form>
+  );
+}
+
+/** How long the time is measured after the user stops typing a number. */
+const ESTIMATE_DELAY_MS = 300;
+
+/** "Unlocking takes about 0.4 s on this machine" for the settings as they are, measured once the
+ * user stops changing them; the last estimate stays, dimmed, while the next is measured. */
+function UnlockEstimate({ settings }: { settings: EncryptionSettings }) {
+  const [measured, setMeasured] = useState(settings);
+  const key = JSON.stringify(settings.kdf);
+  useEffect(() => {
+    const timer = setTimeout(() => setMeasured(settings), ESTIMATE_DELAY_MS);
+    return () => clearTimeout(timer);
+    // `settings` is a new object each render; its KDF is what is measured.
+  }, [key]);
+  const estimate = useQuery({
+    queryKey: keys.unlockTime(measured.kdf),
+    queryFn: () => api.estimateUnlockTime(measured),
+    placeholderData: keepPreviousData,
+  });
+  if (estimate.isError || estimate.data == null) return null;
+  const stale = estimate.isPlaceholderData || key !== JSON.stringify(measured.kdf);
+  return (
+    <div className={cn("kc-est", stale && "is-stale")} aria-live="polite">
+      <span className="k">Unlocking takes about</span>
+      <span className="v mono">{unlockTimeLabel(estimate.data)}</span>
+      <span className="bar" aria-hidden>
+        <i style={{ width: `${Math.min(100, estimate.data * 40)}%` }} />
+      </span>
+      <span className="k">on this machine</span>
+    </div>
   );
 }

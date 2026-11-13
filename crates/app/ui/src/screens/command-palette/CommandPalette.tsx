@@ -2,7 +2,8 @@
 // Shift P too). With nothing typed it lists every command the screens on display registered
 // (`useAppCommand`), grouped by section, with their keys; typing ranks commands and Entries
 // together with keefast's fuzzy matching. Enter on an Entry opens a page of its actions (copy,
-// open, go to it, edit, history…, and its Plugins' commands, such as "Copy card number"); Ctrl C /
+// open, go to it, edit, history, move, delete…, and its Plugins' commands, such as "Copy card
+// number"); "Move to Group…" opens a page of its Vault's Groups (palette C's move page). Ctrl C /
 // B / T on a highlighted Entry copy at once, and a Plugin command's keys on its page.
 //
 // A screen's commands show here by registering them with `useAppCommand`; nothing here needs
@@ -12,25 +13,27 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useStat
 import { Command } from "cmdk";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import {
-  ArrowDownAZ, ArrowRight, ArrowUpDown, CalendarPlus, Check, ChevronRight, Clock, CornerDownLeft, ExternalLink, History,
-  KeyRound, Link, type LucideIcon, Pencil, RefreshCw, SearchX, Settings2, TextCursorInput, Timer, UserRound, Vault, X,
+  ArrowDownAZ, ArrowRight, ArrowUpDown, CalendarPlus, Check, ChevronRight, Clock, CornerDownLeft, ExternalLink, Folder,
+  FolderInput, History, KeyRound, Link, type LucideIcon, Pencil, RefreshCw, SearchX, Settings2, TextCursorInput, Timer, Trash2,
+  UserRound, Vault, X,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { EntryDetail, EntrySummary, Scope, SortOrder } from "@/bindings";
-import { useEntry, usePaletteSearch, useTotpCode, useWorkspace } from "@/api/queries";
+import type { EntryDetail, EntrySummary, GroupId, Scope, SortOrder } from "@/bindings";
+import { useEntry, useGroups, usePaletteSearch, useTotpCode, useWorkspace } from "@/api/queries";
 import { Kbd, toast } from "@/kit";
 import { hostOf } from "@/lib/format";
-import { matchesCombo, parseCombo } from "@/lib/shortcuts";
+import { matchesCombo, parseCombo, SHORTCUTS, useShortcuts } from "@/lib/shortcuts";
 import { facetCopies } from "@/screens/plugins/commands";
 import { facetIcon } from "@/screens/plugins/FacetSection";
 import { openHistory } from "@/screens/entry-history/open";
-import { copyField, openUrl } from "@/screens/vault-browser/actions";
+import { copyField, deleteEntry, openUrl } from "@/screens/vault-browser/actions";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
 import { type AppCommand, useAppCommands } from "@/shell/commands";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
+import { entriesIn, moveTargets } from "./move";
 import { foundEntries, highlightRuns, isConfident, orderSections, rankByTitle } from "./rank";
 
 import "./palette.css";
@@ -52,6 +55,10 @@ interface Action {
   page?: boolean;
   /** A ticked option, such as the sort order in use. */
   checked?: boolean;
+  /** In red: deleting. */
+  danger?: boolean;
+  /** How deep a Group is in its Vault, on the move page. */
+  depth?: number;
   /** Matched characters of the title. */
   positions?: number[];
   score?: number;
@@ -74,7 +81,12 @@ interface Section {
   items: Item[];
 }
 
-type Page = { kind: "entry"; entry: EntrySummary } | { kind: "sort" } | { kind: "fields"; entry: EntrySummary };
+type Page =
+  | { kind: "entry"; entry: EntrySummary }
+  | { kind: "sort" }
+  | { kind: "fields"; entry: EntrySummary }
+  /** The Groups to move the Entry to; Escape goes back to `from`. */
+  | { kind: "move"; entry: EntrySummary; from: Page | null };
 
 const SORTS: { order: SortOrder; name: string; phrase: string; icon: LucideIcon }[] = [
   { order: "title", name: "Title", phrase: "title", icon: ArrowDownAZ },
@@ -93,6 +105,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const selectedKey = view?.entry ?? null;
   const selected = useEntry(selectedKey?.vault, selectedKey?.entry).data;
   const registered = useAppCommands();
+  // Its own keys for an Entry's copies are the user's too.
+  useShortcuts();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<Page | null>(null);
   const [highlighted, setHighlighted] = useState("");
@@ -100,6 +114,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const pageEntry = page && page.kind !== "sort" ? page.entry : null;
   const pageDetail = useEntry(pageEntry?.vault, pageEntry?.id).data;
+  const moveGroups = useGroups(page?.kind === "move" ? page.entry.vault : undefined).data;
 
   /** Selects an Entry in the list (keeping the scope when it shows the Entry) and its detail. */
   const goTo = (entry: EntrySummary) => {
@@ -108,14 +123,23 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     actions.showBrowser();
   };
 
+  const moveEntry = async (entry: EntrySummary, to: GroupId, name: string) => {
+    try {
+      await api.moveEntry(entry.vault, entry.id, to);
+      toast(<>Moved <b>{entry.title}</b> to {name}</>, { icon: FolderInput });
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+
   const entryActions = (entry: EntrySummary, detail: EntryDetail | undefined, section: string): Action[] => {
     const id = `${entry.vault}:${entry.id}`;
     const list: Action[] = [
-      { kind: "action", value: `act:${id}:password`, section, title: "Copy password", icon: KeyRound, shortcut: "Ctrl C", enabled: entry.hasPassword, trail: <span className="pal-mono">{MASK}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "password" }, "Password") },
-      { kind: "action", value: `act:${id}:username`, section, title: "Copy username", icon: UserRound, shortcut: "Ctrl B", enabled: entry.username !== "", trail: entry.username && <span className="ctx">{entry.username}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "username" }, "Username") },
+      { kind: "action", value: `act:${id}:password`, section, title: "Copy password", icon: KeyRound, shortcut: SHORTCUTS.copyPassword[0], enabled: entry.hasPassword, trail: <span className="pal-mono">{MASK}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "password" }, "Password") },
+      { kind: "action", value: `act:${id}:username`, section, title: "Copy username", icon: UserRound, shortcut: SHORTCUTS.copyUsername[0], enabled: entry.username !== "", trail: entry.username && <span className="ctx">{entry.username}</span>, run: () => void copyField(entry.vault, entry.id, { kind: "username" }, "Username") },
     ];
     if (entry.hasTotp) {
-      list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: "Ctrl T", enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
+      list.push({ kind: "action", value: `act:${id}:totp`, section, title: "Copy TOTP code", icon: Timer, shortcut: SHORTCUTS.copyTotp[0], enabled: true, trail: <TotpTrail entry={entry} />, run: () => void copyField(entry.vault, entry.id, { kind: "totp" }, "TOTP code") });
     }
     facetCopies(detail).forEach(({ facet, command, field, enabled }) => {
       // The Plugin's text ("Visa •••• 1111"), a value, or a mask: never a protected value.
@@ -135,23 +159,43 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     list.push(
       { kind: "action", value: `act:${id}:goto`, section, title: "Show in the Entry list", icon: ArrowRight, enabled: true, run: () => goTo(entry) },
-      { kind: "action", value: `act:${id}:edit`, section, title: "Edit Entry", icon: Pencil, shortcut: "Enter", enabled: true, run: () => (goTo(entry), actions.editEntry()) },
+      { kind: "action", value: `act:${id}:edit`, section, title: "Edit Entry", icon: Pencil, shortcut: SHORTCUTS.edit.at(-1), enabled: true, run: () => (goTo(entry), actions.editEntry()) },
       {
-        kind: "action", value: `act:${id}:history`, section, title: "Show Entry history", icon: History, shortcut: "Ctrl H", enabled: true,
+        kind: "action", value: `act:${id}:history`, section, title: "Show Entry history", icon: History, shortcut: SHORTCUTS.history[0], enabled: true,
         trail: detail && detail.historyCount > 0 && <span className="ctx">{detail.historyCount} versions</span>,
         run: () => (goTo(entry), openHistory(actions)),
       },
+      moveAction(entry, section, page),
+      { kind: "action", value: `act:${id}:delete`, section, title: "Delete Entry", icon: Trash2, enabled: true, danger: true, run: () => void deleteEntry(entry.vault, entry.id, actions) },
       { kind: "action", value: `act:${id}:vault`, section, title: "Vault settings", icon: Settings2, enabled: true, trail: <span className="ctx">{entry.vaultName}</span>, run: () => actions.openVaultSettings(entry.vault) },
     );
     return list;
   };
 
-  // The palette's own commands: pages for the sort order and the custom fields, and syncing.
+  const moveAction = (entry: EntrySummary, section: string, from: Page | null, value = `act:${entry.vault}:${entry.id}:move`): Action => ({
+    kind: "action", value, section, title: "Move to Group…", icon: FolderInput, enabled: true, page: true,
+    trail: <span className="ctx">{entry.groupName}</span>,
+    run: () => openPage({ kind: "move", entry, from }),
+  });
+
+  /** The move page's Groups: the Entry's own ticked, the others moving it there. */
+  const moveActions = (entry: EntrySummary): Action[] =>
+    moveGroups
+      ? moveTargets(moveGroups, entry.group).map(({ group, depth, current }) => ({
+          kind: "action", value: `move:${group.id}`, section: "", title: group.name, icon: depth === 0 ? Vault : Folder, enabled: true, depth,
+          checked: current, trail: <span className="ctx">{current ? "Current" : entriesIn(group)}</span>,
+          run: () => !current && void moveEntry(entry, group.id, group.name),
+        }))
+      : [];
+
+  // The palette's own commands: pages for the sort order, the custom fields and moving the
+  // selected Entry, and syncing.
   const builtIns = (searching: boolean): Action[] => {
     const list: Action[] = [];
     if (selected && customFieldsOf(selected).length > 0) {
       list.push({ kind: "action", value: "own:fields", section: "Entry", title: "Copy custom field…", icon: TextCursorInput, enabled: true, page: true, run: () => openPage({ kind: "fields", entry: selected }) });
     }
+    if (selected && !selected.inRecycleBin) list.push(moveAction(selected, "Entry", null, "own:move"));
     if (snapshot?.vaults.some((vault) => vault.syncStatus !== null)) {
       list.push({ kind: "action", value: "own:sync", section: "Vaults", title: "Sync Dropbox Vaults now", icon: RefreshCw, enabled: true, run: () => void api.syncNow().catch((error) => toast(errorMessage(error), { icon: "error" })) });
     }
@@ -176,6 +220,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   /** The actions the page lists, which a query ranks. */
   function listed(): Action[] {
     if (page?.kind === "sort") return SORTS.map((sort) => sortAction(sort, "", true));
+    if (page?.kind === "move") return moveActions(page.entry);
     if (page) {
       const all = entryActions(page.entry, pageDetail, "");
       return page.kind === "fields" ? all.filter((action) => action.value.includes(":field:")) : all;
@@ -191,6 +236,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const sections = buildSections();
 
   function buildSections(): Section[] {
+    if (page?.kind === "move") {
+      // Ranked by name, the tree's indent would mislead.
+      return [{ key: "move", heading: null, items: searching ? rankActions(all).map((action) => ({ ...action, depth: 0 })) : all }];
+    }
     if (page) return [{ key: page.kind === "sort" ? "sort" : "page", heading: null, items: searching ? rankActions(all) : all }];
     if (!searching) {
       return orderSections(all.map((action) => action.section)).map((section) => ({
@@ -235,6 +284,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     input.current?.focus();
   }
 
+  /** Escape and Backspace leave a page for the one it came from. */
+  const back = () => openPage(page?.kind === "move" ? page.from : null);
+
   const run = (item: Item) => {
     if (item.kind === "entry") return openPage({ kind: "entry", entry: item.entry });
     if (!item.enabled) return;
@@ -257,7 +309,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     if (event.key === "Backspace" && query === "" && page) {
       event.preventDefault();
-      openPage(null);
+      back();
       return;
     }
     // A Plugin command's keys run it on the Entry whose actions show.
@@ -270,12 +322,18 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         return;
       }
     }
-    // Ctrl C / B / T copy from the highlighted Entry, or the one whose actions show, unless
-    // text is selected in the query.
+    // Ctrl C / B / T (or the keys the user gave them, with Ctrl, the query taking others) copy
+    // from the highlighted Entry, or the one whose actions show, unless text is selected in the
+    // query.
     const target = highlightedItem?.kind === "entry" ? highlightedItem.entry : page?.kind === "entry" ? page.entry : null;
-    if ((event.ctrlKey || event.metaKey) && target && input.current?.selectionStart === input.current?.selectionEnd) {
-      const what = { c: "password", b: "username", t: "totp" } as const;
-      const field = what[event.key.toLowerCase() as keyof typeof what];
+    if (target && input.current?.selectionStart === input.current?.selectionEnd) {
+      const copies = [["password", SHORTCUTS.copyPassword], ["username", SHORTCUTS.copyUsername], ["totp", SHORTCUTS.copyTotp]] as const;
+      const pressed = (combos: readonly string[]) =>
+        combos.some((text) => {
+          const combo = parseCombo(text);
+          return (combo.ctrl || combo.meta) && matchesCombo(event, combo);
+        });
+      const field = copies.find(([, combos]) => pressed(combos))?.[0];
       if (field && (field !== "totp" || target.hasTotp)) {
         event.preventDefault();
         runOnEntry(target, field);
@@ -283,7 +341,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const placeholder = page?.kind === "entry" ? `Search actions for ${page.entry.title}…` : page?.kind === "fields" ? "Pick a custom field…" : page ? "Pick a sort order…" : "Type a command or search Entries…";
+  const placeholder =
+    page?.kind === "entry" ? `Search actions for ${page.entry.title}…`
+    : page?.kind === "fields" ? "Pick a custom field…"
+    : page?.kind === "move" ? "Pick a Group…"
+    : page ? "Pick a sort order…"
+    : "Type a command or search Entries…";
 
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
@@ -295,7 +358,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             onEscapeKeyDown={(event) => {
               if (page) {
                 event.preventDefault();
-                openPage(null);
+                back();
               }
             }}
             onOpenAutoFocus={(event) => {
@@ -306,7 +369,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>
             <Command shouldFilter={false} loop vimBindings={false} value={highlighted} onValueChange={setHighlighted} onKeyDown={onKeyDown} label="Command palette">
               <div className="pal-ctx">
-                <ContextChips page={page} selected={selected} onBack={() => openPage(null)} scopeName={scopeName(view?.scope, snapshot?.vaults)} />
+                <ContextChips page={page} selected={selected} onBack={back} scopeName={scopeName(view?.scope, snapshot?.vaults)} />
               </div>
               <div className="pal-q">
                 <Command.Input ref={input} value={query} onValueChange={setQuery} placeholder={placeholder} autoComplete="off" spellCheck={false} />
@@ -315,7 +378,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
                 {items.length === 0 && !(searching && matched.isPending) && (
                   <div className="pal-empty">
                     <SearchX />
-                    <div>{page ? "No matching actions" : "No matching commands"}</div>
+                    <div>{page?.kind === "move" ? "No matching Groups" : page ? "No matching actions" : "No matching commands"}</div>
                     {query.trim() && <div className="subtle">Nothing matches “{query.trim()}”{page ? "." : " in commands or Entries."}</div>}
                   </div>
                 )}
@@ -329,7 +392,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
                   ),
                 )}
               </Command.List>
-              <Footer item={highlightedItem} inPage={page !== null} />
+              <Footer item={highlightedItem} inPage={page !== null} moving={page?.kind === "move"} />
             </Command>
           </DialogPrimitive.Content>
         </DialogPrimitive.Overlay>
@@ -352,8 +415,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           <span className="trail">
             {isHighlighted ? (
               <>
-                {entry.hasPassword && <QuickAction label="Copy password (Ctrl C)" icon={KeyRound} onClick={() => runOnEntry(entry, "password")} />}
-                {entry.hasTotp && <QuickAction label="Copy TOTP code (Ctrl T)" icon={Timer} onClick={() => runOnEntry(entry, "totp")} />}
+                {entry.hasPassword && <QuickAction label={`Copy password (${SHORTCUTS.copyPassword[0]})`} icon={KeyRound} onClick={() => runOnEntry(entry, "password")} />}
+                {entry.hasTotp && <QuickAction label={`Copy TOTP code (${SHORTCUTS.copyTotp[0]})`} icon={Timer} onClick={() => runOnEntry(entry, "totp")} />}
                 <QuickAction label="Actions (Enter)" icon={CornerDownLeft} onClick={() => openPage({ kind: "entry", entry })} />
               </>
             ) : (
@@ -365,7 +428,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     const Icon = item.icon;
     return (
-      <Command.Item key={item.value} value={item.value} className="pi" disabled={!item.enabled} onSelect={() => run(item)}>
+      <Command.Item
+        key={item.value}
+        value={item.value}
+        className={item.danger ? "pi danger" : "pi"}
+        disabled={!item.enabled}
+        onSelect={() => run(item)}
+        style={item.depth ? { paddingLeft: 12 + (item.depth - 1) * 16 } : undefined}
+      >
         {Icon && <Icon />}
         <span className="lbl">
           <Marked text={item.title} positions={item.positions ?? []} />
@@ -410,7 +480,7 @@ function customFieldsOf(entry: EntryDetail | undefined) {
 
 /** Commands the palette puts first in their section, as the prototype lists them, and last. */
 const FIRST = ["cmd:copyPassword", "cmd:copyUsername", "cmd:copyTotp", "own:fields", "cmd:editEntry", "cmd:showHistory"];
-const LAST = ["cmd:deleteEntry"];
+const LAST = ["own:move", "cmd:deleteEntry"];
 
 /** A section's actions: the known ones in the prototype's order, Plugins' commands after the
  * Entry's own copies, the others as registered. */
@@ -419,7 +489,8 @@ function inOrder(actions: Action[]): Action[] {
     const first = FIRST.indexOf(action.value);
     if (first >= 0) return first - FIRST.length;
     if (action.value.startsWith("cmd:plugin:")) return FIRST.indexOf("cmd:copyTotp") - FIRST.length + 0.5;
-    return LAST.includes(action.value) ? 1 : 0;
+    const last = LAST.indexOf(action.value);
+    return last >= 0 ? 1 + last : 0;
   };
   return actions.map((action, index) => ({ action, index })).sort((a, b) => rank(a.action) - rank(b.action) || a.index - b.index).map(({ action }) => action);
 }
@@ -467,6 +538,24 @@ function ContextChips({ page, selected, scopeName, onBack }: { page: Page | null
         <span>Sort Entries by…</span>
         {back}
       </span>
+    );
+  }
+  if (page?.kind === "move") {
+    return (
+      <>
+        <span className="pal-chip">
+          <EntryAvatar entry={page.entry} size={16} />
+          <span>{page.entry.title}</span>
+        </span>
+        <span className="pal-chip-sep">
+          <ChevronRight />
+        </span>
+        <span className="pal-chip plain is-page">
+          <FolderInput />
+          <span>Move to Group</span>
+          {back}
+        </span>
+      </>
     );
   }
   if (page) {
@@ -563,7 +652,7 @@ function TotpTrail({ entry }: { entry: EntrySummary }) {
   );
 }
 
-function Footer({ item, inPage }: { item: Item | undefined; inPage: boolean }) {
+function Footer({ item, inPage, moving }: { item: Item | undefined; inPage: boolean; moving: boolean }) {
   const hint = (keys: ReactNode, label: string) => (
     <span className="h">
       {keys}
@@ -582,13 +671,13 @@ function Footer({ item, inPage }: { item: Item | undefined; inPage: boolean }) {
       {item?.kind === "entry" ? (
         <>
           {hint(keys("↵"), "Actions")}
-          {item.entry.hasPassword && hint(keys("Ctrl", "C"), "Copy password")}
-          {item.entry.hasTotp && hint(keys("Ctrl", "T"), "Copy TOTP")}
+          {item.entry.hasPassword && hint(<Kbd combo={SHORTCUTS.copyPassword[0]!} />, "Copy password")}
+          {item.entry.hasTotp && hint(<Kbd combo={SHORTCUTS.copyTotp[0]!} />, "Copy TOTP")}
         </>
       ) : item ? (
         <>
           {hint(keys("↑", "↓"), "Navigate")}
-          {hint(keys("↵"), item.page ? "Open" : "Run")}
+          {hint(keys("↵"), item.page ? "Open" : moving ? "Move here" : "Run")}
         </>
       ) : (
         hint(keys("⌫"), "Edit query")

@@ -1,5 +1,6 @@
 //! The app settings: machine-local preferences kept in the app config (ADR 0005).
 
+use std::collections::BTreeMap;
 use std::sync::PoisonError;
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use super::generator::GeneratorOptions;
 use crate::browser;
 use crate::core::AppCore;
 use crate::error::ApiResult;
+use crate::shortcuts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +80,9 @@ pub struct AppSettings {
     pub download_favicons: bool,
     pub generator: GeneratorOptions,
     pub pane_widths: PaneWidthsView,
+    /// The keys the user gave keefast's shortcuts, by name (`shortcuts.json`'s), in place of
+    /// their defaults. Only those the user changed.
+    pub shortcuts: BTreeMap<String, Vec<String>>,
     /// Why the app config couldn't be read or saved, if it couldn't.
     pub config_error: Option<String>,
 }
@@ -160,6 +165,7 @@ pub async fn get_settings(core: Core<'_>) -> ApiResult<AppSettings> {
                 sidebar: widths.sidebar,
                 entry_list: widths.entry_list,
             },
+            shortcuts: workspace.shortcuts().clone(),
             config_error: workspace.config_error().map(ToString::to_string),
         }
     }))
@@ -244,5 +250,27 @@ pub async fn set_pane_widths(core: Core<'_>, widths: PaneWidthsView) -> ApiResul
             entry_list: widths.entry_list,
         })
     });
+    Ok(())
+}
+
+/// Gives keefast's shortcut `name` these keys ("Ctrl J"), or its default keys back with `None`.
+/// Keys another of keefast's shortcuts, a running Plugin's command or text fields have are
+/// refused. Plugins loaded from now on can't have them either.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_shortcut(core: Core<'_>, name: String, keys: Option<String>) -> ApiResult<()> {
+    let Some(keys) = keys else {
+        core.update(|workspace| workspace.set_shortcut(&name, None));
+        return Ok(());
+    };
+    let changed = core.read(|workspace| workspace.shortcuts().clone());
+    let keys = {
+        let plugins = core.plugins();
+        shortcuts::check(&name, &keys, &changed, |combo| {
+            plugins.shortcut_holder(combo).map(str::to_owned)
+        })?
+    };
+    core.change_plugins(|_, host| host.reserve_shortcuts(&[&keys]));
+    core.update(|workspace| workspace.set_shortcut(&name, Some(vec![keys])));
     Ok(())
 }
