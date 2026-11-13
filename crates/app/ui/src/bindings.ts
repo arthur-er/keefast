@@ -338,6 +338,12 @@ export const commands = {
 	 *  Dropbox sends the browser back. keefast never sees the Dropbox password.
 	 */
 	dropboxConnect: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect")),
+	/**
+	 *  Connects another Dropbox account in place of the one connected: as `dropbox_connect`, but
+	 *  Dropbox asks the user to sign in rather than letting in the account the browser is signed in
+	 *  to. The account connected stays if the user stops or Dropbox refuses.
+	 */
+	dropboxConnectAnother: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect_another")),
 	/**  Opens Dropbox's page again, while connecting. */
 	dropboxReopenConnectPage: () => typedError<null, ApiError>(__TAURI_INVOKE("dropbox_reopen_connect_page")),
 	/**  Stops waiting for the browser; `dropbox_connect` then fails as cancelled. */
@@ -1014,12 +1020,20 @@ export type PendingAccess = {
 	id: RequestId,
 	/**  The host of the site asking. */
 	site: string,
+	/**  The site's full address: scheme, host, and port when it isn't the scheme's own. */
+	origin: string,
 	/**
 	 *  The host the site's form sends the Entries to, when it is another than `site`. The
 	 *  decision is for both, so the prompt shows both.
 	 */
 	formSite: string | null,
+	/**  `form_site`'s full address. */
+	formOrigin: string | null,
 	entries: AskedEntry[],
+	/**  The browser that asked: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the site asked, in seconds since 1970 UTC. */
+	asked: number | null,
 };
 
 export type PendingLock = {
@@ -1037,6 +1051,10 @@ export type PendingLogin = {
 	/**  The host of the site the login was submitted on. */
 	site: string,
 	username: string,
+	/**  The browser that captured it: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the browser captured it, in seconds since 1970 UTC. */
+	asked: number | null,
 	/**
 	 *  The places it can go, as a list: headings (without a target), the Entries it could
 	 *  update, then every Group of each Vault it may go to.
@@ -1290,6 +1308,11 @@ export type VaultSummary = {
 	saveFailed: boolean,
 	/**  `None` for a local Vault file. */
 	syncStatus: SyncState | null,
+	/**
+	 *  When the Vault last synced with its Vault file in Dropbox, in seconds since 1970 UTC.
+	 *  `None` for a local Vault file, a locked Vault, and until a sync goes through.
+	 */
+	lastSynced: number | null,
 	/**  Entries in the Vault, outside the Recycle Bin too; 0 unless unlocked. */
 	entryCount: number,
 	rootGroup: GroupId | null,

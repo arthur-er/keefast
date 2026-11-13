@@ -45,8 +45,9 @@ impl ConnectCanceller {
 
 impl Authorization {
     /// Listens on the loopback port and builds the Dropbox page that asks the user to let
-    /// keefast in.
-    pub(super) fn begin(config: &DropboxConfig) -> Result<Self, DropboxError> {
+    /// keefast in. With `sign_in_again`, Dropbox signs out the account the browser is signed in
+    /// to first, so the user can pick another.
+    pub(super) fn begin(config: &DropboxConfig, sign_in_again: bool) -> Result<Self, DropboxError> {
         let v4 = bind_loopback(config.redirect_port)?;
         let port = v4.local_addr().map_err(DropboxError::Callback)?.port();
         let mut listeners = vec![v4];
@@ -74,6 +75,10 @@ impl Authorization {
             .append_pair("token_access_type", "offline")
             .append_pair("redirect_uri", &redirect_uri)
             .append_pair("state", &state);
+        if sign_in_again {
+            url.query_pairs_mut()
+                .append_pair("force_reauthentication", "true");
+        }
         Ok(Self {
             url: url.into(),
             redirect_uri,

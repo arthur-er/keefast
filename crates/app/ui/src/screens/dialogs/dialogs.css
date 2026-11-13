@@ -5,12 +5,14 @@
   .dg-kicker { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-2); margin-bottom: 10px; }
   .dg-kicker svg.lucide { width: 13px; height: 13px; }
   .dg-kicker .sep { width: 2px; height: 2px; border-radius: 50%; background: var(--fg-2); }
-  .dg-addr { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px 0 10px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border-strong); }
-  .dg-addr .host { font-family: var(--font-mono); font-size: 15px; letter-spacing: 0; color: var(--fg-0); font-weight: 500; }
+  /* The whole address always shows: a long host wraps rather than being cut short. */
+  .dg-addr { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px 8px 10px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border-strong); }
+  .dg-addr .host { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 15px; letter-spacing: 0; color: var(--fg-0); font-weight: 500; }
   .dg-addr .host .scheme { color: var(--fg-2); font-weight: 400; }
-  .dg-addr .via { margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; }
+  .dg-addr .via { flex: none; white-space: nowrap; margin-left: auto; font-size: var(--text-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; }
   .dg-addr .lockico { color: var(--ok); display: grid; place-items: center; }
   .dg-addr .lockico svg.lucide { width: 14px; height: 14px; }
+  .dg-addr .lockico.insecure { color: var(--warn); }
   .dg-desc b, .dialog-desc b { color: var(--fg-0); font-weight: 500; }
   .dg-list { border: 1px solid var(--border); border-radius: var(--r-md); overflow: auto; max-height: 220px; }
   .dg-list .li { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; }

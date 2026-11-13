@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GroupNode, LoginOption, WorkspaceSnapshot } from "@/bindings";
 
-import { contentsLine, findGroup, frontRequest, requestKey, sameTarget, splitNewGroup, stepTarget } from "./logic";
+import { contentsLine, findGroup, frontRequest, requestKey, sameTarget, splitNewGroup, splitOrigin, stepTarget } from "./logic";
 
 type Pending = Partial<Pick<WorkspaceSnapshot, "pendingLock" | "pendingPairing" | "pendingAccess" | "pendingLogin">>;
 const none: Pending = { pendingLock: null, pendingPairing: null, pendingAccess: null, pendingLogin: null };
@@ -10,13 +10,24 @@ const snapshot = (pending: Pending) => ({ ...none, ...pending }) as unknown as W
 
 const lock = { vault: 2, vaultName: "Work", canCancel: true };
 const pairing = { id: 7, vault: 0, vaultName: "Personal" };
-const access = { id: 8, site: "github.com", formSite: null, entries: [] };
+const access = {
+  id: 8,
+  site: "github.com",
+  origin: "https://github.com",
+  formSite: null,
+  formOrigin: null,
+  entries: [],
+  pairings: [],
+  asked: null,
+};
 const login = {
   id: 9,
   site: "linear.app",
   username: "arthur",
   options: [],
   suggested: { kind: "newEntry" as const, vault: 0, group: null },
+  pairings: [],
+  asked: null,
 };
 
 describe("frontRequest", () => {
@@ -92,5 +103,13 @@ describe("a Group to delete", () => {
     expect(contentsLine(findGroup(tree, "old")!)).toBe("6 Entries and 2 Groups inside");
     expect(contentsLine(findGroup(tree, "older")!)).toBe("2 Entries and 1 Group inside");
     expect(contentsLine(findGroup(tree, "empty")!)).toBe("Empty");
+  });
+});
+
+describe("splitOrigin", () => {
+  it("splits off the scheme to mute it", () => {
+    expect(splitOrigin("https://github.com")).toEqual({ scheme: "https://", rest: "github.com" });
+    expect(splitOrigin("http://example.com:8080")).toEqual({ scheme: "http://", rest: "example.com:8080" });
+    expect(splitOrigin("github.com")).toEqual({ scheme: "", rest: "github.com" });
   });
 });

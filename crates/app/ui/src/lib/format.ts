@@ -37,6 +37,18 @@ export function describeExpiry(expires: number | null, expired: boolean, now = D
   return days <= 30 ? { kind: "soon", date, days } : { kind: "later", date };
 }
 
+/** How long before `now` a time was: "just now", "5 min ago", "2 hours ago", "3 days ago". Times
+ * are seconds since 1970, UTC; one ahead of `now`, from a clock a little off, is just now. */
+export function timeAgo(seconds: number, now = Date.now() / 1000): string {
+  const minutes = Math.floor((now - seconds) / 60);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
 /** The host of a URL ("github.com"), or the URL as it is when it has none. */
 export function hostOf(url: string): string {
   const trimmed = url.trim();

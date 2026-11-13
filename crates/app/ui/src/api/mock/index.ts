@@ -223,12 +223,21 @@ interface MockState {
   settings: Omit<AppSettings, "browser" | "configError"> & { browserIntegration: boolean };
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
-  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][] } | null;
-  pendingLogin: { id: number; site: string; username: string; password: string; entries: [number, string][] } | null;
+  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][]; asked: number } | null;
+  pendingLogin: {
+    id: number;
+    site: string;
+    username: string;
+    password: string;
+    entries: [number, string][];
+    asked: number;
+  } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
   /** Connecting Dropbox "in the browser": stops it as cancelled. */
   dropboxConnecting: (() => void) | null;
+  /** When each Dropbox Vault last synced, in seconds since 1970; a while ago until it syncs here. */
+  syncedAt: Map<number, number>;
   /** Vaults' encryption, once changed from the default. */
   encryption: Map<number, EncryptionSettings>;
   /** How registering the browsers' native host went, while browser integration is on. */
@@ -263,12 +272,19 @@ function initialState(): MockState {
     clipboardClearsAt: null,
     dropboxAccount: { name: "Arthur Rezende", email: "arthur-er@protonmail.com" },
     dropboxConnecting: null,
+    syncedAt: new Map(),
     encryption: new Map(),
     browserHosts: "ok",
     configError: null,
     nextId: 100,
   };
 }
+
+/** Who the mock's browser requests come from: the Pairing's name. */
+const MOCK_BROWSER = "Chrome on my laptop";
+
+/** When the mock started, in seconds since 1970. */
+const MOCK_START = Date.now() / 1000;
 
 /** The scenes `?mock=` and `__keefastMock.simulate` set up. */
 export type MockScene =
@@ -367,7 +383,10 @@ export function createMockBackend(): Backend & {
       v.saving = false;
       v.unsaved = false;
       v.saveFailed = false;
-      if (v.sync) v.sync = "synced";
+      if (v.sync) {
+        v.sync = "synced";
+        state.syncedAt.set(v.id, Date.now() / 1000);
+      }
       if (state.pendingLock?.vault === v.id) {
         state.pendingLock = null;
         v.locked = true;
@@ -638,6 +657,7 @@ export function createMockBackend(): Backend & {
           saving: !v.locked && v.saving,
           saveFailed: !v.locked && v.saveFailed,
           syncStatus: v.locked ? null : v.sync,
+          lastSynced: v.locked || v.sync === null ? null : (state.syncedAt.get(v.id) ?? MOCK_START - 2 * 60),
           entryCount: hidden ? 0 : v.entries.length,
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,
@@ -670,7 +690,11 @@ export function createMockBackend(): Backend & {
       pendingAccess: state.pendingAccess && {
         id: state.pendingAccess.id,
         site: state.pendingAccess.site,
+        origin: `https://${state.pendingAccess.site}`,
         formSite: state.pendingAccess.formSite,
+        formOrigin: state.pendingAccess.formSite && `https://${state.pendingAccess.formSite}`,
+        pairings: [MOCK_BROWSER],
+        asked: state.pendingAccess.asked,
         entries: state.pendingAccess.entries.flatMap(([vaultId, entryId]) => {
           const v = state.vaults.find((x) => x.id === vaultId);
           const e = v?.entries.find((x) => x.id === entryId);
@@ -681,6 +705,8 @@ export function createMockBackend(): Backend & {
         id: login.id,
         site: login.site,
         username: login.username,
+        pairings: [MOCK_BROWSER],
+        asked: login.asked,
         options: loginOptions(login),
         // As the backend: update the Entry it matched, else a new Entry in the Browser group.
         suggested: login.entries[0]
@@ -1326,6 +1352,18 @@ export function createMockBackend(): Backend & {
       changed();
       return state.dropboxAccount;
     }),
+    dropboxConnectAnother: command(async () => {
+      // Signed in as someone else "in the browser"; the account from before stays if stopped.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 4000);
+        state.dropboxConnecting = () => {
+          clearTimeout(timer);
+          reject(new MockError("cancelled", "Connecting Dropbox was stopped."));
+        };
+      }).finally(() => (state.dropboxConnecting = null));
+      state.dropboxAccount = { name: "Rezende Family", email: "family@rezende.dev" };
+      return state.dropboxAccount;
+    }),
     dropboxReopenConnectPage: command(() => null),
     dropboxCancelConnect: command(() => {
       state.dropboxConnecting?.();
@@ -1480,13 +1518,25 @@ export function createMockBackend(): Backend & {
         emit("browserRequest", { kind: "pairing" });
         break;
       case "access": {
-        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: null, entries: entriesFor("github.com") };
+        state.pendingAccess = {
+          id: state.nextId++,
+          site: "github.com",
+          formSite: null,
+          entries: entriesFor("github.com"),
+          asked: Date.now() / 1000,
+        };
         emit("browserRequest", { kind: "access" });
         break;
       }
       case "access-form": {
         // A page whose login form sends what is filled to another host.
-        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: "auth.github-login.net", entries: entriesFor("github.com") };
+        state.pendingAccess = {
+          id: state.nextId++,
+          site: "github.com",
+          formSite: "auth.github-login.net",
+          entries: entriesFor("github.com"),
+          asked: Date.now() / 1000,
+        };
         emit("browserRequest", { kind: "access" });
         break;
       }
@@ -1498,6 +1548,7 @@ export function createMockBackend(): Backend & {
           username: "arthur@rezende.dev",
           password: "L1near!Issues-2026",
           entries: entriesFor("linear.app", "arthur@rezende.dev"),
+          asked: Date.now() / 1000,
         };
         emit("browserRequest", { kind: "login" });
         break;
