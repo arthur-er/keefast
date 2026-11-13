@@ -408,6 +408,35 @@ fn vaults_lock_after_15_minutes_of_inactivity() {
 }
 
 #[test]
+fn the_app_looks_for_a_due_idle_lock_at_least_every_minute() {
+    let mut h = harness();
+    assert_eq!(
+        h.workspace.idle_lock_wait(),
+        Workspace::IDLE_LOCK_LOOK_AT_MOST
+    );
+
+    h.idle(15 * 60 - 20);
+    assert_eq!(h.workspace.idle_lock_wait(), Duration::from_secs(20));
+
+    // Off, or with nothing to lock, it is still looked for now and then: a Vault may be
+    // unlocked or the idle lock turned on meanwhile.
+    h.idle(20);
+    assert!(h.is_locked(h.personal));
+    assert_eq!(
+        h.workspace.idle_lock_wait(),
+        Workspace::IDLE_LOCK_LOOK_AT_MOST
+    );
+    let h = harness_with(AppConfig {
+        idle_lock_after: None,
+        ..AppConfig::default()
+    });
+    assert_eq!(
+        h.workspace.idle_lock_wait(),
+        Workspace::IDLE_LOCK_LOOK_AT_MOST
+    );
+}
+
+#[test]
 fn activity_postpones_the_idle_lock() {
     let mut h = harness();
 

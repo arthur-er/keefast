@@ -396,9 +396,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "get-databasehash" {
-            return Err(ProtocolError::DatabaseHashNotReceived);
-        }
         if let Some(Value::Array(ids)) = message.get("connectedKeys") {
             self.connected_ids = ids
                 .iter()
@@ -420,9 +417,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "associate" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         // The extension proves it holds this session's key, and sends the key it will
         // identify itself with from now on.
         let session_key = &self.keys.as_ref().expect("decrypted").client_key;
@@ -446,9 +440,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "test-associate" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let (id, key) = (text(&message, "id"), text(&message, "key"));
         // KeePassXC answers a request without both as if no database were open.
         if id.is_empty() || key.is_empty() {
@@ -476,9 +467,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "get-logins" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let url = text(&message, "url");
         if url.is_empty() {
             return Err(ProtocolError::NoUrlProvided);
@@ -541,9 +529,6 @@ impl BrowserSession {
         let password = SecretString::from(text(&message, "password").to_owned());
         if let Some(Value::String(sent)) = message.get_mut("password") {
             sent.zeroize();
-        }
-        if text(&message, "action") != "set-login" {
-            return Err(ProtocolError::IncorrectAction);
         }
         let url = text(&message, "url");
         if url.is_empty() {
@@ -629,7 +614,9 @@ impl BrowserSession {
         )
     }
 
-    /// The request's encrypted `message`, as JSON.
+    /// The request's encrypted `message`, as JSON: every handler's first step after
+    /// `change-public-keys`. The message must name the request's own action, or the request
+    /// is refused and the message, which may hold a password, is wiped.
     fn decrypt(
         &self,
         request: &Map<String, Value>,
@@ -646,8 +633,17 @@ impl BrowserSession {
             .and_then(|sealed| keys.crypto.decrypt(&nonce.into(), &sealed[..]).ok())
             .and_then(|plain| serde_json::from_slice::<Map<String, Value>>(&plain).ok())
             .ok_or(ProtocolError::CannotDecryptMessage)?;
+        let action = text(request, "action");
+        if text(&message, "action") != action {
+            wipe(&mut Value::Object(message));
+            // KeePassXC answers a hash request for something else as if it had no hash.
+            return Err(match action {
+                "get-databasehash" => ProtocolError::DatabaseHashNotReceived,
+                _ => ProtocolError::IncorrectAction,
+            });
+        }
         let request = Request {
-            action: text(request, "action").to_owned(),
+            action: action.to_owned(),
             nonce,
             request_id: request.get("requestID").cloned(),
         };

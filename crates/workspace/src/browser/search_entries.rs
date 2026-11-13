@@ -51,9 +51,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "keefast-search-entries" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let site = Site::parse(text(&message, "url")).ok_or(ProtocolError::NoUrlProvided)?;
         let hosts = hosts(&site, text(&message, "submitUrl"));
         let keys = keys(&message);
@@ -111,9 +108,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "keefast-pick-entry" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let entry =
             EntryId::from_hex(text(&message, "uuid")).ok_or(ProtocolError::NoValidUuidProvided)?;
         let site = Site::parse(text(&message, "url")).ok_or(ProtocolError::NoUrlProvided)?;

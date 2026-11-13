@@ -332,6 +332,46 @@ fn unknown_actions_and_garbage_are_refused() {
 }
 
 #[test]
+fn a_message_naming_another_action_is_refused() {
+    let (workspace, _) = workspace_with_personal_vault();
+    let (extension, mut session) = connected(&workspace);
+    let other = json!({ "action": "get-logins", "url": "https://example.com" });
+
+    for action in [
+        "associate",
+        "test-associate",
+        "get-logins",
+        "set-login",
+        "get-totp",
+        "generate-password",
+        "keefast-search-entries",
+        "keefast-pick-entry",
+        "keefast-fill-form",
+    ] {
+        let message = if action == "get-logins" {
+            json!({ "action": "set-login", "url": "https://example.com" })
+        } else {
+            other.clone()
+        };
+        let reply = parse(&send(
+            &mut session,
+            &workspace,
+            &extension.encrypted(action, message),
+        ));
+        assert_eq!(reply["errorCode"], "12", "{action}: {reply}");
+        assert_eq!(reply["action"], action);
+    }
+
+    // As KeePassXC does, a hash request for something else is answered as having no hash.
+    let reply = parse(&send(
+        &mut session,
+        &workspace,
+        &extension.encrypted("get-databasehash", other),
+    ));
+    assert_eq!(reply["errorCode"], "2");
+}
+
+#[test]
 fn the_browser_deals_with_the_focused_vault() {
     let mut workspace = Workspace::new(storage());
     let key = UnlockSecrets::password(PASSWORD);

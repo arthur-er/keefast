@@ -994,7 +994,7 @@ export function createMockBackend(): Backend & {
     }),
     setBrowserGroup: command((id, groupId) => {
       const v = vault(id);
-      if (inBin(v, groupId)) throw new MockError("invalid", "Logins can't be saved in the Recycle Bin.");
+      if (inBin(v, groupId)) throw new MockError("invalid", "Entries from the browser can't be saved in the Recycle Bin.");
       v.browserGroup = groupId;
       edited(v);
       return null;
@@ -1502,7 +1502,7 @@ export function createMockBackend(): Backend & {
             v.browserGroup = groupId;
           }
         }
-        if (inBin(v, groupId)) throw new MockError("invalid", "Logins can't be saved in the Recycle Bin.");
+        if (inBin(v, groupId)) throw new MockError("invalid", "Entries from the browser can't be saved in the Recycle Bin.");
         v.entries.push({
           id: `n${state.nextId++}`, title: pending.site, brand: "", username: pending.username, password: pending.password,
           url: `https://${pending.site}`, notes: "", tags: [], color: null, icon: { kind: "standard", number: 1 }, totp: null,

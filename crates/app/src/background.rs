@@ -7,12 +7,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use keefast_workspace::{DownloadedFavicon, PendingFavicon, Workspace};
+use keefast_workspace::{DownloadedFavicon, PendingFavicon, Workspace, settled_vault_file_changes};
 
 use crate::core::{AppCore, Failures};
-
-/// How long a Vault file must stay unchanged before it is read: sync tools write in steps.
-const SETTLE: Duration = Duration::from_millis(500);
 
 /// How many favicons download at once.
 const DOWNLOADS_AT_ONCE: usize = 4;
@@ -38,16 +35,7 @@ fn watch_vault_files(core: &Arc<AppCore>) {
     });
     let core = Arc::clone(core);
     thread::spawn(move || {
-        while let Ok(first) = changed.recv() {
-            let mut vaults = vec![first];
-            loop {
-                thread::sleep(SETTLE);
-                let more: Vec<_> = changed.try_iter().collect();
-                if more.is_empty() {
-                    break;
-                }
-                vaults.extend(more);
-            }
+        while let Some(vaults) = settled_vault_file_changes(&changed) {
             core.update(|workspace| {
                 for vault in vaults {
                     workspace.vault_file_changed(vault);
@@ -61,16 +49,12 @@ fn watch_vault_files(core: &Arc<AppCore>) {
 /// Checks Dropbox Vaults for changes made elsewhere whenever one is due, Merging them in and
 /// uploading saves made offline.
 fn sync_online_vaults(core: &Arc<AppCore>) {
-    // With no check due, look again soon: a Vault may be opened or unlocked meanwhile, with a
-    // save made offline to upload at once.
-    const AT_MOST: Duration = Duration::from_secs(5);
     let core = Arc::clone(core);
     thread::spawn(move || {
         loop {
-            let wait = core.read(Workspace::sync_in);
-            thread::sleep(wait.unwrap_or(AT_MOST).min(AT_MOST));
+            thread::sleep(core.read(Workspace::sync_wait));
             // Nothing due changes nothing: the UI needn't hear of it.
-            if core.read(|workspace| workspace.sync_in()) != Some(Duration::ZERO) {
+            if core.read(Workspace::sync_in) != Some(Duration::ZERO) {
                 continue;
             }
             let syncs = core.update(Workspace::begin_syncs);
@@ -87,13 +71,10 @@ pub fn sync_now(core: &Arc<AppCore>) {
 
 /// Locks every Vault after the configured inactivity.
 fn lock_when_idle(core: &Arc<AppCore>) {
-    // With no idle lock due, look again now and then: a Vault may be unlocked meanwhile.
-    const AT_MOST: Duration = Duration::from_secs(60);
     let core = Arc::clone(core);
     thread::spawn(move || {
         loop {
-            let wait = core.read(Workspace::idle_lock_in);
-            thread::sleep(wait.unwrap_or(AT_MOST).min(AT_MOST));
+            thread::sleep(core.read(Workspace::idle_lock_wait));
             if core.read(Workspace::idle_lock_in) != Some(Duration::ZERO) {
                 continue;
             }

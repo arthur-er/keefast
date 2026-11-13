@@ -101,10 +101,10 @@ export function Popup() {
         {view.kind === "pair" && (
           <>
             <Message
-              title="Connect this browser to keefast."
+              title="Pair this browser with keefast."
               detail="You approve the Pairing in keefast, which then fills sign-in forms when you ask."
             />
-            <Button onClick={() => void pair()}>Connect</Button>
+            <Button onClick={() => void pair()}>Pair</Button>
           </>
         )}
         {view.kind === "entries" && (
@@ -149,7 +149,7 @@ function EntryList({
     if (filled.ok && filled.value) return window.close();
     if (!filled.ok) return onFailed(failure(filled.reason));
     const why = fields.login
-      ? "This page has no login form, or it changed."
+      ? "This page has no sign-in form, or it changed."
       : "This page changed, or keefast no longer gives this Entry's code here.";
     onFailed({
       kind: "message",
@@ -184,7 +184,7 @@ function EntryList({
                 title={
                   entry.hasTotp && fields.totp
                     ? fields.login
-                      ? "Fills the login and its TOTP code"
+                      ? "Fills its username, password and TOTP code"
                       : "Fills its TOTP code"
                     : undefined
                 }

@@ -95,6 +95,7 @@ export interface ShortcutOptions {
   when?: (event: KeyboardEvent) => boolean;
 }
 
+/** A shortcut's name in `shortcuts.json`: "lockAll", "palette". */
 export type ShortcutName = keyof typeof shortcuts;
 export type Shortcuts = { readonly [Name in ShortcutName]: readonly string[] };
 

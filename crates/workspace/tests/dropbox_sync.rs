@@ -359,6 +359,27 @@ fn a_key_change_saved_offline_keeps_the_old_key_until_it_is_uploaded() {
 }
 
 #[test]
+fn the_app_looks_for_a_due_sync_at_least_every_few_seconds() {
+    let h = harness();
+    let (laptop, _) = h.open();
+    assert_eq!(laptop.workspace.sync_wait(), Workspace::SYNC_LOOK_AT_MOST);
+
+    laptop
+        .clock
+        .advance(Workspace::SYNC_INTERVAL - Duration::from_secs(2));
+    assert_eq!(laptop.workspace.sync_wait(), Duration::from_secs(2));
+
+    laptop.clock.advance(Duration::from_secs(2));
+    assert_eq!(laptop.workspace.sync_wait(), Duration::ZERO);
+
+    // With no online Vault, the app still looks now and then: one may be opened meanwhile.
+    let storage = Arc::new(FakeStorage::default().with_file(&personal_vault(), KEEPASSXC_KDBX4));
+    let mut workspace = Workspace::new(storage);
+    workspace.open_vault(&personal_vault(), &secrets()).unwrap();
+    assert_eq!(workspace.sync_wait(), Workspace::SYNC_LOOK_AT_MOST);
+}
+
+#[test]
 fn checks_while_offline_wait_longer_each_time() {
     let h = harness();
     let (mut laptop, _) = h.open();

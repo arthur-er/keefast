@@ -179,7 +179,7 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
       hint={
         <>
           <Info />
-          It can ask for logins while the Vault is open.
+          It can ask for Entries while the Vault is open.
         </>
       }
       actions={
@@ -393,11 +393,11 @@ function LoginDialog({ login }: { login: NonNullable<WorkspaceSnapshot["pendingL
     <DialogFrame
       width={520}
       autoFocus={false}
-      lead={<RequestKicker pairings={login.pairings} what="Captured login" asked={login.asked} />}
-      title="Save login?"
+      lead={<RequestKicker pairings={login.pairings} what="Captured sign-in" asked={login.asked} />}
+      title="Save this sign-in?"
       description={
         <>
-          You signed in to <b>{login.site}</b> as <b>“{login.username}”</b>. Choose where keefast saves this login.
+          You signed in to <b>{login.site}</b> as <b>“{login.username}”</b>. Choose where keefast saves it.
         </>
       }
       onEscape={cancel}
@@ -422,7 +422,7 @@ function LoginDialog({ login }: { login: NonNullable<WorkspaceSnapshot["pendingL
         </>
       }
     >
-      <div ref={list} role="radiogroup" aria-label="Where to save the login" className={cn("tl", login.options.length > 9 && "scroll")}>
+      <div ref={list} role="radiogroup" aria-label="Where to save the sign-in" className={cn("tl", login.options.length > 9 && "scroll")}>
         {login.options.map((option, index) =>
           option.target ? (
             <TargetRow
