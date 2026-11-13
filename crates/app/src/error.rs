@@ -41,6 +41,8 @@ pub enum ErrorKind {
     Dropbox,
     /// The Vault file changed elsewhere in a way that can't be Merged, or is being saved.
     Conflict,
+    /// The Entry changed since the editor read it: a Merge brought in a change made elsewhere.
+    EntryChanged,
     /// Something keefast can't do in this build or on this machine.
     Unavailable,
     /// The user stopped it.

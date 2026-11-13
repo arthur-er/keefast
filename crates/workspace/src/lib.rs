@@ -907,6 +907,54 @@ impl Workspace {
         self.view.clone()
     }
 
+    /// The Groups that the Group shown, if it is in `vault`, is in: its parent first, up to but
+    /// not including the Vault's root Group. Where [`Self::keep_view_to_what_exists`] moves the
+    /// user if the Group goes.
+    fn groups_shown_in(&self, vault: VaultId) -> Vec<GroupId> {
+        let EntryScope::Group(shown, group) = self.view.scope else {
+            return Vec::new();
+        };
+        let Some(open) = self.vault(vault).filter(|_| shown == vault) else {
+            return Vec::new();
+        };
+        let mut parents = Vec::new();
+        for child in open.vault.root().groups() {
+            if parents_of(child, group, &mut parents) {
+                break;
+            }
+        }
+        parents
+    }
+
+    /// Moves the view off what isn't there any more, or is in a Vault that is locked: a Group
+    /// gone to the nearest of `shown_in` (see [`Self::groups_shown_in`]) still there, or else
+    /// to the Vault root, and an Entry gone to no Entry.
+    fn keep_view_to_what_exists(&mut self, shown_in: &[GroupId]) {
+        let has_group = |workspace: &Self, vault, group| {
+            workspace
+                .vault(vault)
+                .is_some_and(|open| open.vault.group(group).is_some())
+        };
+        if let EntryScope::Group(vault, group) = self.view.scope
+            && !has_group(self, vault, group)
+        {
+            self.view.scope = shown_in
+                .iter()
+                .copied()
+                .find(|&parent| has_group(self, vault, parent))
+                .map_or(EntryScope::Vault(vault), |parent| {
+                    EntryScope::Group(vault, parent)
+                });
+        }
+        if let Some((vault, entry)) = self.view.entry
+            && self
+                .vault(vault)
+                .is_none_or(|open| open.vault.entry(entry).is_none())
+        {
+            self.view.entry = None;
+        }
+    }
+
     /// Vault files opened lately, most recent first, whether open now or not.
     pub fn recent_vaults(&self) -> &[VaultLocation] {
         &self.config.recent_vaults
@@ -1073,7 +1121,7 @@ impl Workspace {
             None => {
                 self.next_id += 1;
                 let id = VaultId(self.next_id - 1);
-                (id, Some(View::from(EntryScope::Vault(id))))
+                (id, Some((View::from(EntryScope::Vault(id)), Vec::new())))
             }
         };
         let watch = self.watch(id, &unlocked.location);
@@ -1104,7 +1152,7 @@ impl Workspace {
         let at = self.vaults.partition_point(|open| open.id < id);
         self.vaults.insert(at, open);
         match view {
-            Some(view) => self.restore_view(view),
+            Some((view, shown_in)) => self.restore_view(view, &shown_in),
             // Showing a Vault still locked, the user is shown the one they unlocked instead.
             None if self
                 .view
@@ -1499,6 +1547,8 @@ impl Workspace {
     /// lock until it is saved locks now if nothing is left unsaved. A save begun before the
     /// Vault locked is not recorded.
     pub fn finish_save(&mut self, finished: FinishedSave) -> Result<(), SaveVaultError> {
+        // Read before the Merge, which may take the Group shown away.
+        let shown_in = self.groups_shown_in(finished.id);
         let Some(open) = self
             .vaults
             .iter_mut()
@@ -1511,7 +1561,8 @@ impl Workspace {
         for theirs in &finished.merged {
             summary += open.vault.merge(theirs);
         }
-        if summary.changed() {
+        let merged = summary.changed();
+        if merged {
             self.merges.push(MergeReport {
                 vault: open.id,
                 summary,
@@ -1561,7 +1612,12 @@ impl Workspace {
         if let Some(sync) = &mut open.online {
             sync.record(problem, now);
         }
-        if open.lock_requested && !open.has_unsaved_changes() {
+        let lock = open.lock_requested && !open.has_unsaved_changes();
+        if merged {
+            // The Merge may have taken away the Group or Entry the user is in.
+            self.keep_view_to_what_exists(&shown_in);
+        }
+        if lock {
             self.lock_now(&[finished.id]);
         }
         outcome
@@ -1706,6 +1762,22 @@ fn entries_outside_recycle_bin(vault: &Vault) -> impl Iterator<Item = &Entry> {
     let mut entries = Vec::new();
     collect(vault.root(), vault.recycle_bin(), &mut entries);
     entries.into_iter()
+}
+
+/// Whether `group` is `within` or below it, adding the Groups it is in below `within`, then
+/// `within`, to `parents`, nearest first.
+fn parents_of(within: &Group, group: GroupId, parents: &mut Vec<GroupId>) -> bool {
+    if within.id() == group {
+        return true;
+    }
+    let found = within
+        .groups()
+        .iter()
+        .any(|child| parents_of(child, group, parents));
+    if found {
+        parents.push(within.id());
+    }
+    found
 }
 
 /// Reads an icon image, refusing one too large to be an icon before reading it all.

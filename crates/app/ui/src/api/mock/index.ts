@@ -992,8 +992,8 @@ export function createMockBackend(): Backend & {
       return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
-    revealCustomField: command((id, entryId, index) => {
-      const field = entryOf(id, entryId)[1].fields[index];
+    revealCustomField: command((id, entryId, name) => {
+      const field = entryOf(id, entryId)[1].fields.find((f) => f.name === name);
       if (!field) throw notFound();
       return field.value;
     }),
@@ -1010,8 +1010,11 @@ export function createMockBackend(): Backend & {
       edited(v);
       return made.id;
     }),
-    updateEntry: command((id, entryId, input) => {
+    updateEntry: command((id, entryId, input, seenModified) => {
       const [v, e] = entryOf(id, entryId);
+      if (seenModified !== null && e.modified !== seenModified) {
+        throw new MockError("entryChanged", "This Entry changed while you were editing it: changes made elsewhere were Merged into it.");
+      }
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
@@ -1177,7 +1180,7 @@ export function createMockBackend(): Backend & {
         : field.kind === "password" ? e.password
         : field.kind === "url" ? e.url
         : field.kind === "totp" ? (e.totp ? totpCode(e.totp).code : "")
-        : (e.fields[field.index]?.value ?? "");
+        : (e.fields.find((f) => f.name === field.name)?.value ?? "");
       if (!text) throw new MockError("empty", "That field is empty, so nothing was copied.");
       void navigator.clipboard?.writeText(text).catch(() => {});
       const seconds = state.settings.clipboardClearSeconds;
@@ -1503,14 +1506,23 @@ export function createMockBackend(): Backend & {
         first.unsaved = true;
         state.pendingLock = { vault: first.id, canCancel: true };
         break;
-      case "merge":
+      case "merge": {
         if (!first) return;
+        // Changes the Entry selected (else the first), as a change made elsewhere would.
+        const selected = state.view.entry;
+        const merged = (selected && vault(selected.vault).entries.find((e) => e.id === selected.entry)) ?? first.entries[0];
+        if (merged) {
+          keepHistory(merged);
+          merged.username = `${merged.username || "someone"}.elsewhere`;
+          merged.modified += 60;
+        }
         emit("mergeNotice", {
           vault: first.id,
           vaultName: first.name,
           message: `Merged changes made elsewhere into ${first.name}: 1 Entry updated, 2 Entries added`,
         });
         break;
+      }
       case "saveFailed":
         if (!first) return;
         first.saveFailed = true;
