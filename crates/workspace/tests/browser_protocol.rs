@@ -289,7 +289,9 @@ fn a_tampered_message_cannot_be_decrypted() {
     let sent = extension.get_database_hash(&[]);
     let mut request = parse(&sent.json);
     let message = request["message"].as_str().unwrap();
-    let tampered = format!("B{}", &message[1..]);
+    // Another first character, whatever the random message starts with.
+    let first = if message.starts_with('B') { 'C' } else { 'B' };
+    let tampered = format!("{first}{}", &message[1..]);
     request["message"] = tampered.into();
 
     let reply = parse(&send(

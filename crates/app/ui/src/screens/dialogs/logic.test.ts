@@ -10,7 +10,7 @@ const snapshot = (pending: Pending) => ({ ...none, ...pending }) as unknown as W
 
 const lock = { vault: 2, vaultName: "Work", canCancel: true };
 const pairing = { id: 7, vault: 0, vaultName: "Personal" };
-const access = { id: 8, site: "github.com", entries: [] };
+const access = { id: 8, site: "github.com", formSite: null, entries: [] };
 const login = {
   id: 9,
   site: "linear.app",

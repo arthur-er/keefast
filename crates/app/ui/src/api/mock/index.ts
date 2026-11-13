@@ -5,7 +5,7 @@
 // fails the way the real one does for the cases screens show (a wrong master key, a name taken).
 //
 // Driving it from the console or agent-browser, for states a screen must show:
-//   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
+//   __keefastMock.simulate("pairing" | "access" | "access-form" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
 //     | "browserError" | "browserNone" | "browserServed" | "configError"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
@@ -248,7 +248,7 @@ interface MockState {
   settings: Omit<AppSettings, "browser" | "configError"> & { browserIntegration: boolean };
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
-  pendingAccess: { id: number; site: string; entries: [number, string][] } | null;
+  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][] } | null;
   pendingLogin: { id: number; site: string; username: string; password: string; entries: [number, string][] } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
@@ -299,6 +299,7 @@ function initialState(): MockState {
 export type MockScene =
   | "pairing"
   | "access"
+  | "access-form"
   | "login"
   | "lockUnsaved"
   | "merge"
@@ -694,6 +695,7 @@ export function createMockBackend(): Backend & {
       pendingAccess: state.pendingAccess && {
         id: state.pendingAccess.id,
         site: state.pendingAccess.site,
+        formSite: state.pendingAccess.formSite,
         entries: state.pendingAccess.entries.flatMap(([vaultId, entryId]) => {
           const v = state.vaults.find((x) => x.id === vaultId);
           const e = v?.entries.find((x) => x.id === entryId);
@@ -1016,8 +1018,8 @@ export function createMockBackend(): Backend & {
       return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
-    revealCustomField: command((id, entryId, index) => {
-      const field = entryOf(id, entryId)[1].fields[index];
+    revealCustomField: command((id, entryId, name) => {
+      const field = entryOf(id, entryId)[1].fields.find((f) => f.name === name);
       if (!field) throw notFound();
       return field.value;
     }),
@@ -1034,8 +1036,11 @@ export function createMockBackend(): Backend & {
       edited(v);
       return made.id;
     }),
-    updateEntry: command((id, entryId, input) => {
+    updateEntry: command((id, entryId, input, seenModified) => {
       const [v, e] = entryOf(id, entryId);
+      if (seenModified !== null && e.modified !== seenModified) {
+        throw new MockError("entryChanged", "This Entry changed while you were editing it: changes made elsewhere were Merged into it.");
+      }
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
@@ -1210,7 +1215,7 @@ export function createMockBackend(): Backend & {
         : field.kind === "password" ? e.password
         : field.kind === "url" ? e.url
         : field.kind === "totp" ? (e.totp ? totpCode(e.totp).code : "")
-        : (e.fields[field.index]?.value ?? "");
+        : (e.fields.find((f) => f.name === field.name)?.value ?? "");
       if (!text) throw new MockError("empty", "That field is empty, so nothing was copied.");
       void navigator.clipboard?.writeText(text).catch(() => {});
       const seconds = state.settings.clipboardClearSeconds;
@@ -1352,6 +1357,9 @@ export function createMockBackend(): Backend & {
         };
       }).finally(() => (state.dropboxConnecting = null));
       state.dropboxAccount = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
+      // Saves kept on this machine meanwhile upload at once.
+      for (const v of state.vaults) if (v.sync) v.sync = "synced";
+      changed();
       return state.dropboxAccount;
     }),
     dropboxReopenConnectPage: command(() => null),
@@ -1361,6 +1369,9 @@ export function createMockBackend(): Backend & {
     }),
     dropboxDisconnect: command(() => {
       state.dropboxAccount = null;
+      // Dropbox Vaults stay open, saving to the local cache until Dropbox is connected again.
+      for (const v of state.vaults) if (v.sync) v.sync = "offline";
+      changed();
       return null;
     }),
     dropboxListFolder: command(async (path: string) => {
@@ -1403,7 +1414,7 @@ export function createMockBackend(): Backend & {
       if (remember) {
         for (const [vaultId, entryId] of pending.entries) {
           const e = state.vaults.find((v) => v.id === vaultId)?.entries.find((x) => x.id === entryId);
-          e?.access.push({ host: pending.site, allowed: allow });
+          for (const host of [pending.site, pending.formSite]) if (host) e?.access.push({ host, allowed: allow });
         }
       }
       changed();
@@ -1505,7 +1516,13 @@ export function createMockBackend(): Backend & {
         emit("browserRequest", { kind: "pairing" });
         break;
       case "access": {
-        state.pendingAccess = { id: state.nextId++, site: "github.com", entries: entriesFor("github.com") };
+        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: null, entries: entriesFor("github.com") };
+        emit("browserRequest", { kind: "access" });
+        break;
+      }
+      case "access-form": {
+        // A page whose login form sends what is filled to another host.
+        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: "auth.github-login.net", entries: entriesFor("github.com") };
         emit("browserRequest", { kind: "access" });
         break;
       }
@@ -1525,14 +1542,23 @@ export function createMockBackend(): Backend & {
         first.unsaved = true;
         state.pendingLock = { vault: first.id, canCancel: true };
         break;
-      case "merge":
+      case "merge": {
         if (!first) return;
+        // Changes the Entry selected (else the first), as a change made elsewhere would.
+        const selected = state.view.entry;
+        const merged = (selected && vault(selected.vault).entries.find((e) => e.id === selected.entry)) ?? first.entries[0];
+        if (merged) {
+          keepHistory(merged);
+          merged.username = `${merged.username || "someone"}.elsewhere`;
+          merged.modified += 60;
+        }
         emit("mergeNotice", {
           vault: first.id,
           vaultName: first.name,
           message: `Merged changes made elsewhere into ${first.name}: 1 Entry updated, 2 Entries added`,
         });
         break;
+      }
       case "saveFailed":
         if (!first) return;
         first.saveFailed = true;

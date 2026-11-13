@@ -379,7 +379,10 @@ function secretRefs(rows: readonly Row[]): SecretRef[] {
 
 function reveal(entry: EntryDetail, ref: SecretRef): Promise<string> {
   if (ref.version === "current") {
-    return ref.field === "password" ? api.revealPassword(entry.vault, entry.id) : api.revealCustomField(entry.vault, entry.id, ref.field);
+    if (ref.field === "password") return api.revealPassword(entry.vault, entry.id);
+    // By name: the Entry's fields may have moved since this snapshot of it.
+    const field = entry.customFields[ref.field];
+    return field ? api.revealCustomField(entry.vault, entry.id, field.name) : Promise.reject(new Error("That field is no longer in the Entry."));
   }
   return ref.field === "password"
     ? api.revealVersionPassword(entry.vault, entry.id, ref.version)

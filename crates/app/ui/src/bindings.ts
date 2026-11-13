@@ -60,9 +60,11 @@ export const commands = {
 	createKeyFile: (near: string | null) => typedError<string | null, ApiError>(__TAURI_INVOKE("create_key_file", { near })),
 	/**
 	 *  Opens a Vault file, or unlocks its Vault if it is locked, deriving the key off the main
-	 *  thread. A Vault file whose Vault is open already is just shown.
+	 *  thread. A Vault file whose Vault is open already is just shown. `None` when the OS locked or
+	 *  suspended while the key was derived: the Vault stays as it was, for the user to unlock
+	 *  again.
 	 */
-	unlockVault: (location: Location, key: KeyInput) => typedError<VaultId, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
+	unlockVault: (location: Location, key: KeyInput) => typedError<number | null, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
 	/**
 	 *  Writes a new Vault file, never over an existing file, deriving the key off the main thread,
 	 *  then opens and shows its Vault.
@@ -114,15 +116,23 @@ export const commands = {
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
 	/**  An Entry's password, for the user to see. Copying doesn't need it: use `copy_field`. */
 	revealPassword: (vault: VaultId, entry: EntryId) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_password", { vault, entry })),
-	/**  A custom field's value, protected or not, for the user to see. */
-	revealCustomField: (vault: VaultId, entry: EntryId, index: number) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, index })),
+	/**
+	 *  A custom field's value, protected or not, for the user to see. The field is asked for by
+	 *  name, so a Merge that adds or reorders fields can't reveal another one.
+	 */
+	revealCustomField: (vault: VaultId, entry: EntryId, name: string) => typedError<string, ApiError>(__TAURI_INVOKE("reveal_custom_field", { vault, entry, name })),
 	/**  Makes a new Entry in `group`, and returns it. */
 	createEntry: (vault: VaultId, group: GroupId, input: EntryInput) => typedError<EntryId, ApiError>(__TAURI_INVOKE("create_entry", { vault, group, input })),
 	/**
 	 *  Sets an Entry's fields, keeping the version it replaces in the Entry's history. Fields left
 	 *  as they were record no history.
+	 * 
+	 *  `seenModified` is the Entry's `modified` as the editor had it. If the Entry changed since,
+	 *  as when a Merge brought in a change made elsewhere, nothing is saved and the error's kind is
+	 *  `entryChanged`, so the editor never silently overwrites it. Without it the edit is saved over
+	 *  whatever the Entry is now, and that version goes to the history.
 	 */
-	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input })),
+	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput, seenModified: number | null) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input, seenModified })),
 	/**
 	 *  Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
 	 *  Entry's history. `text` is split on commas and semicolons as KeePass does; tags the Entry has
@@ -510,8 +520,11 @@ export type Copied = {
 export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "url" } | 
 /**  The Entry's TOTP code now. */
 { kind: "totp" } | 
-/**  A custom field, by its index in the Entry's custom fields. */
-{ kind: "customField"; index: number };
+/**
+ *  A custom field, by its name, so a Merge that adds or reorders fields can't copy another
+ *  one.
+ */
+{ kind: "customField"; name: string };
 
 /**
  *  A custom field to give an Entry. A `value` of `None` keeps the value the field had at
@@ -734,6 +747,8 @@ export type ErrorKind =
 "dropbox" | 
 /**  The Vault file changed elsewhere in a way that can't be Merged, or is being saved. */
 "conflict" | 
+/**  The Entry changed since the editor read it: a Merge brought in a change made elsewhere. */
+"entryChanged" | 
 /**  Something keefast can't do in this build or on this machine. */
 "unavailable" | 
 /**  The user stopped it. */
@@ -1026,6 +1041,11 @@ export type PendingAccess = {
 	id: RequestId,
 	/**  The host of the site asking. */
 	site: string,
+	/**
+	 *  The host the site's form sends the Entries to, when it is another than `site`. The
+	 *  decision is for both, so the prompt shows both.
+	 */
+	formSite: string | null,
 	entries: AskedEntry[],
 };
 

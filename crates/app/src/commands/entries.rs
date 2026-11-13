@@ -708,23 +708,32 @@ pub async fn reveal_password(core: Core<'_>, vault: VaultId, entry: EntryId) -> 
     })
 }
 
-/// A custom field's value, protected or not, for the user to see.
+/// A custom field's value, protected or not, for the user to see. The field is asked for by
+/// name, so a Merge that adds or reorders fields can't reveal another one.
 #[tauri::command]
 #[specta::specta]
 pub async fn reveal_custom_field(
     core: Core<'_>,
     vault: VaultId,
     entry: EntryId,
-    index: u32,
+    name: String,
 ) -> ApiResult<String> {
-    core.read(|workspace| {
-        let (_, found) = find(workspace, vault, &entry)?;
-        found
-            .custom_fields()
-            .get(index as usize)
-            .map(|field| field.value.expose_secret().to_owned())
-            .ok_or_else(ApiError::not_found)
-    })
+    core.read(|workspace| custom_field_value(workspace, vault, &entry, &name))
+}
+
+fn custom_field_value(
+    workspace: &Workspace,
+    vault: VaultId,
+    entry: &EntryId,
+    name: &str,
+) -> ApiResult<String> {
+    let (_, found) = find(workspace, vault, entry)?;
+    found
+        .custom_fields()
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| field.value.expose_secret().to_owned())
+        .ok_or_else(ApiError::not_found)
 }
 
 /// Makes a new Entry in `group`, and returns it.
@@ -749,6 +758,11 @@ pub async fn create_entry(
 
 /// Sets an Entry's fields, keeping the version it replaces in the Entry's history. Fields left
 /// as they were record no history.
+///
+/// `seenModified` is the Entry's `modified` as the editor had it. If the Entry changed since,
+/// as when a Merge brought in a change made elsewhere, nothing is saved and the error's kind is
+/// `entryChanged`, so the editor never silently overwrites it. Without it the edit is saved over
+/// whatever the Entry is now, and that version goes to the history.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_entry(
@@ -756,12 +770,38 @@ pub async fn update_entry(
     vault: VaultId,
     entry: EntryId,
     input: EntryInput,
+    seen_modified: Option<f64>,
 ) -> ApiResult<()> {
-    let (vault, entry, fields) = core.read(|workspace| {
-        let (open, found) = find(workspace, vault, &entry)?;
-        Ok::<_, ApiError>((open.id(), found.id(), input.to_fields(Some(found))?))
-    })?;
-    core.edit(|workspace| workspace.update_entry(vault, entry, &fields))
+    let result =
+        core.update(|workspace| update_entry_in(workspace, vault, &entry, &input, seen_modified));
+    if result.is_ok() {
+        core.autosave();
+    }
+    result
+}
+
+/// [`update_entry`], checked and saved in one go, so nothing changes the Entry in between.
+fn update_entry_in(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    entry: &EntryId,
+    input: &EntryInput,
+    seen_modified: Option<f64>,
+) -> ApiResult<()> {
+    let (vault, entry, fields) = {
+        let (open, found) = find(workspace, vault, entry)?;
+        if let Some(seen) = seen_modified
+            && found.last_modified().map(seconds) != Some(seen)
+        {
+            return Err(ApiError::new(
+                ErrorKind::EntryChanged,
+                "This Entry changed while you were editing it: changes made elsewhere were \
+                 Merged into it.",
+            ));
+        }
+        (open.id(), found.id(), input.to_fields(Some(found))?)
+    };
+    Ok(workspace.update_entry(vault, entry, &fields)?)
 }
 
 /// Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
@@ -908,7 +948,8 @@ mod tests {
 
     use super::{
         CustomFieldInput, EntryInput, EntryQuery, OwnedFieldKind, SortOrder, add_tags_to,
-        custom_field_view, entry_detail, entry_list, facet_views, web_address,
+        custom_field_value, custom_field_view, entry_detail, entry_list, facet_views,
+        update_entry_in, web_address,
     };
     use crate::core::AppCore;
     use crate::dto::{EntryId, IconChoice, VaultId};
@@ -1266,5 +1307,204 @@ mod tests {
         ] {
             assert_eq!(web_address(url), None, "{url}");
         }
+    }
+
+    /// A Vault opened from a copy of the KeePassXC fixture, with a Bank Entry holding two
+    /// protected custom fields, saved; and another device that edits its Vault file.
+    struct Elsewhere {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+        workspace: keefast_workspace::Workspace,
+        vault: crate::dto::VaultId,
+        bank: crate::dto::EntryId,
+    }
+
+    impl Elsewhere {
+        fn new() -> Self {
+            use keefast_workspace::{LocalStorage, UnlockSecrets, VaultLocation, Workspace};
+
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("personal.kdbx");
+            std::fs::copy(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../fixtures/keepassxc-kdbx4.kdbx"
+                ),
+                &path,
+            )
+            .unwrap();
+            let mut workspace = Workspace::new(std::sync::Arc::new(LocalStorage));
+            let vault = workspace
+                .open_vault(
+                    &VaultLocation::Local(path.clone()),
+                    &UnlockSecrets::password("fixture-password"),
+                )
+                .unwrap();
+            let root = workspace.vault(vault).unwrap().vault().root().id();
+            let fields = keefast_core::EntryFields {
+                title: "Bank".into(),
+                password: SecretString::from("made-here"),
+                custom_fields: vec![field("PIN", "1111", true), field("CVV", "737", true)],
+                ..keefast_core::EntryFields::default()
+            };
+            let bank = workspace.create_entry(vault, root, &fields).unwrap();
+            workspace.save_vault(vault).unwrap();
+            Self {
+                _dir: dir,
+                path,
+                workspace,
+                vault: vault.into(),
+                bank: bank.into(),
+            }
+        }
+
+        /// Another device edits the Bank Entry, later than anything here, and saves the Vault
+        /// file; then the Vault is saved here, which Merges the change in.
+        fn edit_elsewhere(&mut self, edit: impl FnOnce(&mut keefast_core::EntryFields)) {
+            use keefast_core::{CompositeKey, Timestamp, Vault};
+
+            let key = CompositeKey::password("fixture-password");
+            let mut theirs = Vault::open(&std::fs::read(&self.path).unwrap(), &key).unwrap();
+            let bank = self.bank.resolve().unwrap();
+            let mut fields = keefast_core::EntryFields::from(theirs.entry(bank).unwrap());
+            edit(&mut fields);
+            let later = Timestamp::from_unix_seconds(self.workspace.now().unix_seconds() + 600);
+            theirs.update_entry(bank, &fields, later).unwrap();
+            std::fs::write(&self.path, theirs.save().unwrap()).unwrap();
+            let id = self.vault.resolve_open(&self.workspace).unwrap();
+            self.workspace.save_vault(id).unwrap();
+        }
+
+        fn bank(&self) -> &keefast_core::Entry {
+            super::find(&self.workspace, self.vault, &self.bank)
+                .unwrap()
+                .1
+        }
+
+        fn modified(&self) -> Option<f64> {
+            self.bank().last_modified().map(crate::dto::seconds)
+        }
+    }
+
+    fn field(name: &str, value: &str, protected: bool) -> CustomField {
+        CustomField {
+            name: name.to_owned(),
+            value: SecretString::from(value),
+            protected,
+        }
+    }
+
+    /// What the editor saves: the Bank Entry with its title changed, everything else kept.
+    fn retitled(title: &str) -> EntryInput {
+        let kept = |name: &str, original| CustomFieldInput {
+            name: name.into(),
+            value: None,
+            protected: true,
+            original: Some(original),
+        };
+        EntryInput {
+            title: title.into(),
+            username: String::new(),
+            password: None,
+            url: String::new(),
+            notes: String::new(),
+            custom_fields: vec![kept("PIN", 0), kept("CVV", 1)],
+            tags: Vec::new(),
+            color: None,
+            icon: IconChoice::Standard { number: 0 },
+            expires: None,
+        }
+    }
+
+    #[test]
+    fn an_edit_is_not_saved_over_an_entry_merged_since_the_editor_opened() {
+        let mut h = Elsewhere::new();
+        // The editor opens.
+        let seen = h.modified();
+
+        h.edit_elsewhere(|fields| fields.password = SecretString::from("changed-elsewhere"));
+        let error = update_entry_in(
+            &mut h.workspace,
+            h.vault,
+            &h.bank.clone(),
+            &retitled("Bank (edited)"),
+            seen,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, crate::error::ErrorKind::EntryChanged);
+        assert_eq!(h.bank().title(), "Bank", "nothing was saved");
+        assert_eq!(h.bank().password().expose_secret(), "changed-elsewhere");
+    }
+
+    #[test]
+    fn keeping_ones_edits_over_an_entry_merged_meanwhile_keeps_the_merged_version_in_history() {
+        let mut h = Elsewhere::new();
+        let seen = h.modified();
+        h.edit_elsewhere(|fields| fields.title = "Bank (renamed elsewhere)".into());
+
+        // The user keeps their edits: saved over the Entry as it is now.
+        let now = h.modified();
+        assert_ne!(now, seen);
+        update_entry_in(
+            &mut h.workspace,
+            h.vault,
+            &h.bank.clone(),
+            &retitled("Bank (edited)"),
+            now,
+        )
+        .unwrap();
+
+        let bank = h.bank();
+        assert_eq!(bank.title(), "Bank (edited)");
+        assert_eq!(
+            bank.history().last().unwrap().title(),
+            "Bank (renamed elsewhere)",
+            "the merged version is in the history"
+        );
+    }
+
+    #[test]
+    fn an_edit_of_an_entry_not_changed_meanwhile_is_saved() {
+        let mut h = Elsewhere::new();
+        let seen = h.modified();
+
+        update_entry_in(
+            &mut h.workspace,
+            h.vault,
+            &h.bank.clone(),
+            &retitled("Bank (edited)"),
+            seen,
+        )
+        .unwrap();
+
+        assert_eq!(h.bank().title(), "Bank (edited)");
+    }
+
+    #[test]
+    fn a_custom_field_is_revealed_by_name_after_a_merge_adds_and_reorders_fields() {
+        let mut h = Elsewhere::new();
+        let reveal = |h: &Elsewhere, name: &str| {
+            custom_field_value(&h.workspace, h.vault, &h.bank, name).unwrap()
+        };
+        assert_eq!(reveal(&h, "CVV"), "737");
+
+        h.edit_elsewhere(|fields| {
+            fields.custom_fields = vec![
+                field("Recovery code", "r-e-c-o-v-e-r", true),
+                field("CVV", "737", true),
+                field("PIN", "1111", true),
+            ];
+        });
+
+        assert_eq!(h.bank().custom_fields()[1].name, "CVV", "the fields moved");
+        assert_eq!(reveal(&h, "CVV"), "737");
+        assert_eq!(reveal(&h, "PIN"), "1111");
+        assert_eq!(
+            custom_field_value(&h.workspace, h.vault, &h.bank, "Gone")
+                .unwrap_err()
+                .kind,
+            crate::error::ErrorKind::NotFound
+        );
     }
 }

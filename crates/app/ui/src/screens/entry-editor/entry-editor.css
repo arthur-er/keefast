@@ -52,6 +52,12 @@
   .ee-tk button:hover { background: var(--bg-active); color: var(--fg-0); }
   .ee-tk button svg.lucide { width: 11px; height: 11px; stroke-width: 2.25; }
 
+  .ee-changed { display: flex; align-items: center; gap: 10px; margin: 16px 0 0 54px; padding: 10px 10px 10px 12px; border-radius: var(--r-sm); background: var(--warn-bg); font-size: var(--text-sm); animation: kf-rise var(--dur) var(--ease); }
+  .ee-changed > svg.lucide { width: 14px; height: 14px; flex: none; color: var(--warn); }
+  .ee-changed .msg { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ee-changed .msg b { font-weight: 600; color: var(--fg-0); }
+  .ee-changed .msg span { color: var(--fg-1); }
+
   .ee-errors { display: flex; flex-direction: column; gap: 6px; margin: 16px 0 0 54px; }
   .ee-err { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--danger-bg); color: var(--danger); font-size: var(--text-sm); font-weight: 500; animation: kf-rise var(--dur) var(--ease); }
   .ee-err svg.lucide { width: 14px; height: 14px; flex: none; }

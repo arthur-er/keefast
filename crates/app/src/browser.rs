@@ -21,7 +21,8 @@ use crate::core::AppCore;
 pub struct BrowserBridge {
     replies: HashMap<ConnectionId, Replies>,
     server: Option<Server>,
-    /// Why the app can't serve the native hosts, if it can't: another keefast serves them.
+    /// Why the app can't serve the native hosts, if it can't: another keefast serves them, or
+    /// there is nowhere private to serve them from.
     serve_error: Option<io::Error>,
 }
 
@@ -55,7 +56,8 @@ pub fn serve(core: &Arc<AppCore>) {
     }
     bridge.serve_error = None;
     let (events, received) = mpsc::channel();
-    let server = Server::start(ipc::socket_path(), move |event| events.send(event).is_ok());
+    let server = ipc::socket_path()
+        .and_then(|path| Server::start(path, move |event| events.send(event).is_ok()));
     match server {
         Ok(server) => bridge.server = Some(server),
         Err(error) => {

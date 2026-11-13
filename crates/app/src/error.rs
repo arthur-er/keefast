@@ -41,6 +41,8 @@ pub enum ErrorKind {
     Dropbox,
     /// The Vault file changed elsewhere in a way that can't be Merged, or is being saved.
     Conflict,
+    /// The Entry changed since the editor read it: a Merge brought in a change made elsewhere.
+    EntryChanged,
     /// Something keefast can't do in this build or on this machine.
     Unavailable,
     /// The user stopped it.
@@ -166,7 +168,7 @@ impl From<OpenVaultError> for ApiError {
                 "The Vault file could not be read.",
                 Some(error.to_string()),
             ),
-            OpenVaultError::Storage(StorageError::Conflict) => {
+            OpenVaultError::Storage(StorageError::Conflict | StorageError::Exists(_)) => {
                 (Io, "The Vault file could not be read.", None)
             }
             OpenVaultError::Storage(StorageError::Unavailable(_)) => (
