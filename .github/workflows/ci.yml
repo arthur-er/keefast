@@ -101,6 +101,10 @@ jobs:
   nix:
     name: Nix package
     runs-on: ubuntu-4c
+    # The path filter reads the pull request's changed files.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
 
