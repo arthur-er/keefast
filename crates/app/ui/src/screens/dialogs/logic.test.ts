@@ -10,7 +10,7 @@ const snapshot = (pending: Pending) => ({ ...none, ...pending }) as unknown as W
 
 const lock = { vault: 2, vaultName: "Work", canCancel: true };
 const pairing = { id: 7, vault: 0, vaultName: "Personal" };
-const access = { id: 8, site: "github.com", entries: [] };
+const access = { id: 8, site: "github.com", formSite: null, entries: [] };
 const login = {
   id: 9,
   site: "linear.app",
@@ -38,11 +38,11 @@ describe("frontRequest", () => {
 
 describe("a captured login's places", () => {
   const options: LoginOption[] = [
-    { target: null, label: "Update an existing Entry", detail: null, depth: 0 },
-    { target: { kind: "update", vault: 1, entry: "w5" }, label: "Linear · arthur", detail: "Work", depth: 1 },
-    { target: null, label: "Save as a new Entry in", detail: null, depth: 0 },
-    { target: { kind: "newEntry", vault: 0, group: "root" }, label: "Personal", detail: null, depth: 1 },
-    { target: { kind: "newEntry", vault: 0, group: null }, label: "Browser (new Group)", detail: "Browser group", depth: 2 },
+    { target: null, label: "Update an existing Entry", detail: null, icon: null, depth: 0 },
+    { target: { kind: "update", vault: 1, entry: "w5" }, label: "Linear · arthur", detail: "Work", icon: null, depth: 1 },
+    { target: null, label: "Save as a new Entry in", detail: null, icon: null, depth: 0 },
+    { target: { kind: "newEntry", vault: 0, group: "root" }, label: "Personal", detail: null, icon: null, depth: 1 },
+    { target: { kind: "newEntry", vault: 0, group: null }, label: "Browser (new Group)", detail: "Browser group", icon: null, depth: 2 },
   ];
 
   it("moves through the places, skipping headings and stopping at the ends", () => {
@@ -78,6 +78,7 @@ describe("a Group to delete", () => {
     isRecycleBin: false,
     inRecycleBin: false,
     isBrowserGroup: false,
+    icon: { kind: "standard", number: 48 },
     children,
   });
   const tree = node("root", 9, [node("old", 6, [node("older", 2, [node("oldest", 0)])]), node("empty", 0)]);

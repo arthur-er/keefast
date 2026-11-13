@@ -9,7 +9,7 @@ import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, Shield, Time
 import { api, errorMessage } from "@/api";
 import type { AskedEntry, LoginOption, LoginTarget, VaultSummary, WorkspaceSnapshot } from "@/bindings";
 import { useEntry, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, toast } from "@/kit";
+import { Button, GroupIcon, toast } from "@/kit";
 import { cn } from "@/lib/utils";
 import { EntryAvatar } from "@/screens/vault-browser/EntryList";
 import { useShell } from "@/shell/state";
@@ -252,8 +252,18 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
       }
     >
       <SiteAddress site={access.site} via={`asks for ${count} ${count === 1 ? "Entry" : "Entries"}`} />
+      {access.formSite && <SiteAddress site={access.formSite} via="its form sends them here" />}
       <p className="dialog-desc m-0">
-        <b>{access.site}</b> asks for these Entries. Allow only if you are signing in there.
+        {access.formSite ? (
+          <>
+            <b>{access.site}</b> asks for these Entries, and its form sends them to <b>{access.formSite}</b>. Allow only if
+            you are signing in there and trust both.
+          </>
+        ) : (
+          <>
+            <b>{access.site}</b> asks for these Entries. Allow only if you are signing in there.
+          </>
+        )}
       </p>
       <div className="dg-list">
         {access.entries.map((entry) => (
@@ -264,6 +274,12 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
         <span className={cn("check", remember && "is-on")} />
         <span>
           Remember this decision for <b>{access.site}</b>
+          {access.formSite && (
+            <>
+              {" "}
+              and <b>{access.formSite}</b>
+            </>
+          )}
         </span>
       </button>
     </DialogFrame>
@@ -413,11 +429,11 @@ function TargetRow({ option, target, on, onChoose }: { option: LoginOption; targ
     );
   }
   const { name, isNew } = splitNewGroup(option.label);
-  const Icon = isNew ? FolderPlus : Folder;
+  const icon = isNew ? <FolderPlus /> : option.icon ? <GroupIcon icon={option.icon} /> : <Folder />;
   return (
     <div className={cn("tl-row", on && "is-on")} style={{ paddingLeft: 8 + Math.max(0, option.depth - 1) * 20 }} {...common}>
       <span className={cn("radio", on && "is-on")} />
-      {option.depth <= 1 ? <VaultGlyph vault={target.vault} /> : <Icon />}
+      {option.depth <= 1 ? <VaultGlyph vault={target.vault} /> : icon}
       <span className={cn("lbl truncate", option.depth <= 1 && "font-medium")}>
         {name}
         {isNew && <span className="subtle"> (new Group)</span>}

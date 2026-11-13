@@ -2820,6 +2820,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.21",
  "twofish",
  "url",
@@ -2835,8 +2836,11 @@ dependencies = [
  "crypto_box",
  "dirs 5.0.1",
  "interprocess",
+ "libc",
  "serde_json",
  "tempfile",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

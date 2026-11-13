@@ -90,6 +90,9 @@ pub enum StorageError {
     NotFound(VaultLocation),
     #[error("the Vault file was changed elsewhere meanwhile")]
     Conflict,
+    /// Creating a Vault file where a file already is.
+    #[error("a file is already at {0:?}")]
+    Exists(VaultLocation),
     #[error("could not access the Vault file: {0}")]
     Io(#[from] io::Error),
     #[error("no Storage provider can reach {0:?}")]
@@ -100,6 +103,19 @@ pub enum StorageError {
     Offline(String),
     #[error(transparent)]
     Dropbox(#[from] DropboxError),
+}
+
+impl StorageError {
+    /// Whether the Storage provider can't be reached for now, but may be later: without a
+    /// network, or with the Dropbox account disconnected, or no longer letting keefast in,
+    /// until the user connects it again. Saves wait in the local cache meanwhile.
+    pub fn is_out_of_reach(&self) -> bool {
+        matches!(
+            self,
+            StorageError::Offline(_)
+                | StorageError::Dropbox(DropboxError::NotConnected | DropboxError::AccessRevoked)
+        )
+    }
 }
 
 /// Reads and writes Vault files wherever they live. Injected into the Workspace.
@@ -128,6 +144,11 @@ pub trait StorageProvider: Send + Sync {
         bytes: &[u8],
         expected: Option<&Revision>,
     ) -> Result<Revision, StorageError>;
+
+    /// Writes a new Vault file with `bytes`, all or nothing, only if no file is there: one
+    /// already there, even one that appeared a moment ago, is never replaced, and
+    /// [`StorageError::Exists`] returned instead. Returns the revision written.
+    fn create(&self, location: &VaultLocation, bytes: &[u8]) -> Result<Revision, StorageError>;
 
     /// Calls `on_change` whenever the Vault file may have changed, until the returned Watch is
     /// dropped. Writes of the provider's own trigger it too. `None` when the provider can't
@@ -183,6 +204,19 @@ impl StorageProvider for LocalStorage {
         match atomic_file::replace_if(path, bytes, unchanged)? {
             true => Ok(content_revision(bytes)),
             false => Err(StorageError::Conflict),
+        }
+    }
+
+    /// Links the new Vault file in from a temporary file, which the filesystem does only if
+    /// nothing is there by then.
+    fn create(&self, location: &VaultLocation, bytes: &[u8]) -> Result<Revision, StorageError> {
+        let path = local_path(location)?;
+        match atomic_file::create_new(path, bytes) {
+            Ok(()) => Ok(content_revision(bytes)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Err(StorageError::Exists(location.clone()))
+            }
+            Err(error) => Err(error.into()),
         }
     }
 

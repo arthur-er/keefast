@@ -9,7 +9,10 @@ use specta::Type;
 
 use super::Core;
 use crate::core::AppCore;
-use crate::dto::{EntryId, GroupId, Location, LocationView, Scope, VaultId, View, title_of};
+use crate::dto::{
+    Color, EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View,
+    group_icon_view, title_of,
+};
 use crate::error::ApiResult;
 
 /// Everything the shell shows, in one answer: the Vaults, where the user is, the save status,
@@ -111,6 +114,39 @@ pub struct VaultSummary {
     pub root_group: Option<GroupId>,
     pub recycle_bin: Option<GroupId>,
     pub browser_group: Option<GroupId>,
+    /// How many Entries each of its Smart lists has; 0 unless unlocked.
+    pub smart_lists: SmartListCounts,
+    /// The colours chosen for its tags, by tag; empty unless unlocked. A tag without one is drawn
+    /// in a colour picked from its name.
+    pub tag_colors: Vec<TagColor>,
+}
+
+/// The colour chosen for a tag in a Vault.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TagColor {
+    pub tag: String,
+    pub color: Color,
+}
+
+/// How many Entries a Vault's Smart lists have, as the sidebar shows them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartListCounts {
+    pub with_totp: u32,
+    pub recently_modified: u32,
+    pub expired: u32,
+}
+
+impl SmartListCounts {
+    fn of(workspace: &Workspace, vault: ws::VaultId) -> Self {
+        let count = |list| workspace.smart_list(vault, list).len() as u32;
+        Self {
+            with_totp: count(ws::SmartList::WithTotp),
+            recently_modified: count(ws::SmartList::RecentlyModified),
+            expired: count(ws::SmartList::Expired),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -152,6 +188,9 @@ pub struct PendingAccess {
     pub id: RequestId,
     /// The host of the site asking.
     pub site: String,
+    /// The host the site's form sends the Entries to, when it is another than `site`. The
+    /// decision is for both, so the prompt shows both.
+    pub form_site: Option<String>,
     pub entries: Vec<AskedEntry>,
 }
 
@@ -235,6 +274,8 @@ pub struct LoginOption {
     pub label: String,
     /// Shown muted after the label: a Vault's name, or that it is the Browser group.
     pub detail: Option<String>,
+    /// A Group's icon; `None` for headings, Entries, Vaults and a Group still to be made.
+    pub icon: Option<IconView>,
     pub depth: u32,
 }
 
@@ -279,6 +320,18 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
                 root_group: (!locking).then(|| vault.root().id().into()),
                 recycle_bin: vault.recycle_bin().filter(|_| !locking).map(Into::into),
                 browser_group: vault.browser_group().filter(|_| !locking).map(Into::into),
+                smart_lists: SmartListCounts::of(workspace, open.id()),
+                tag_colors: match locking {
+                    true => Vec::new(),
+                    false => vault
+                        .tag_colors()
+                        .into_iter()
+                        .map(|(tag, color)| TagColor {
+                            tag,
+                            color: color.into(),
+                        })
+                        .collect(),
+                },
             }
         })
         .chain(workspace.locked_vaults().map(|locked| VaultSummary {
@@ -294,6 +347,8 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             root_group: None,
             recycle_bin: None,
             browser_group: None,
+            smart_lists: SmartListCounts::default(),
+            tag_colors: Vec::new(),
         }))
         .collect();
     vaults.sort_by_key(|vault| vault.id.0);
@@ -318,6 +373,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
         pending_access: workspace.pending_access().map(|pending| PendingAccess {
             id: RequestId::of(pending.id.as_u64()),
             site: pending.site,
+            form_site: pending.form_site,
             entries: asked_entries(workspace, &pending.entries),
         }),
         pending_login: workspace.pending_login().map(|pending| PendingLogin {
@@ -362,6 +418,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
         target: None,
         label: label.to_owned(),
         detail: None,
+        icon: None,
         depth: 0,
     };
     let mut options = Vec::new();
@@ -382,6 +439,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
             }),
             label: format!("{} · {}", title_of(found), found.username()),
             detail: Some(open.display_name()),
+            icon: None,
             depth: 1,
         });
     }
@@ -402,6 +460,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
             target: new_entry(Some(root.id())),
             label: open.display_name(),
             detail: None,
+            icon: None,
             depth: 1,
         });
         if browser_group.is_none() {
@@ -409,6 +468,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
                 target: new_entry(None),
                 label: format!("{DEFAULT_BROWSER_GROUP} (new Group)"),
                 detail: Some("Browser group".to_owned()),
+                icon: None,
                 depth: 2,
             });
         }
@@ -422,6 +482,7 @@ fn login_options(workspace: &Workspace, pending: &ws::PendingLogin) -> Vec<Login
                 target: new_entry(Some(group.id())),
                 label: group.name().to_owned(),
                 detail: (browser_group == Some(group.id())).then(|| "Browser group".to_owned()),
+                icon: Some(group_icon_view(vault, group.icon(), open.vault())),
                 depth,
             });
         }

@@ -60,7 +60,7 @@ fn the_key_file_is_read_off_the_ui_thread_with_the_vault_file() {
         .unwrap()
         .unwrap();
 
-    workspace.add_unlocked(unlocked);
+    workspace.add_unlocked(unlocked).unwrap();
     assert_eq!(workspace.vaults().count(), 1);
 }
 

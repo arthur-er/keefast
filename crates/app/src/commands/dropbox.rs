@@ -12,6 +12,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use super::{Core, blocking};
+use crate::background;
 use crate::dto::{Location, Provider, seconds as seconds_since_1970};
 use crate::error::{ApiError, ApiResult, ErrorKind};
 
@@ -155,7 +156,11 @@ pub async fn dropbox_connect(
     }
     let connected = blocking(move || dropbox.finish_connect(authorization)).await?;
     *connecting.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
-    Ok(connected?.into())
+    let connected = connected?;
+    // Saves kept on this machine while the account was disconnected upload now, Merged with
+    // what Dropbox holds, without waiting for the next check.
+    background::sync_now(core.inner());
+    Ok(connected.into())
 }
 
 /// Opens Dropbox's page again, while connecting.
