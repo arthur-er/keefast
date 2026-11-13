@@ -838,6 +838,20 @@ fn web_address(url: &str) -> Option<String> {
     port_or_nothing.then(|| format!("https://{url}"))
 }
 
+/// Chooses the colour a tag is drawn in, in the Vault, kept in its custom data; `None` goes back
+/// to the colour the UI picks for the tag's name.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_tag_color(
+    core: Core<'_>,
+    vault: VaultId,
+    tag: String,
+    color: Option<Color>,
+) -> ApiResult<()> {
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.edit(|workspace| workspace.set_tag_color(vault, &tag, color.map(Into::into)))
+}
+
 #[cfg(test)]
 mod tests {
     use keefast_core::CustomField;

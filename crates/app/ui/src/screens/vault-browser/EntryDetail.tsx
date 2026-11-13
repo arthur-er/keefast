@@ -9,9 +9,9 @@ import {
 
 import { api, errorMessage } from "@/api";
 import type { CopyTarget, EntryDetail as Entry } from "@/bindings";
-import { useTotpCode } from "@/api/queries";
+import { useGroups, useTotpCode } from "@/api/queries";
 import {
-  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
+  Badge, Button, colorVar, GroupIcon, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
   TabsTrigger, toast,
 } from "@/kit";
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
@@ -24,8 +24,9 @@ import { FacetSection } from "@/screens/plugins/FacetSection";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
-import { COLOR_NAMES } from "@/shell/Sidebar";
+import { COLOR_NAMES, findGroup } from "@/shell/Sidebar";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import { EntryAvatar } from "./EntryList";
@@ -371,6 +372,7 @@ function TotpCode({ code, remaining, period }: { code: string; remaining: number
 
 function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const expiry = describeExpiry(entry.expires, entry.expired);
+  const colorOf = useTagColor();
   return (
     <>
       {entry.facets.map((facet) => (
@@ -402,7 +404,7 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
         <div className="vb-fields px-3.5 py-1">
           <Prop label="Group">
             <span className="vb-chip">
-              <Folder />
+              <EntryGroupIcon entry={entry} />
               {entry.groupPath.length > 1 ? entry.groupPath[entry.groupPath.length - 1] : entry.vaultName}
             </span>
           </Prop>
@@ -410,7 +412,7 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
             {entry.tags.length ? (
               entry.tags.map((tag) => (
                 <span key={tag} className="tag">
-                  <span className="dot" />
+                  <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
                   {tag}
                 </span>
               ))
@@ -450,6 +452,13 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
       </div>
     </>
   );
+}
+
+/** The icon of the Group the Entry is in. */
+function EntryGroupIcon({ entry }: { entry: Entry }) {
+  const groups = useGroups(entry.vault).data;
+  const group = groups ? findGroup(groups, (group) => group.id === entry.group) : null;
+  return group ? <GroupIcon icon={group.icon} /> : <Folder />;
 }
 
 function Prop({ label, children }: { label: string; children: ReactNode }) {

@@ -1,11 +1,12 @@
 //! A Vault's Groups: the tree, and creating, renaming, moving and deleting them.
 
 use keefast_core::{Group, Vault};
+use keefast_workspace as ws;
 use serde::Serialize;
 use specta::Type;
 
 use super::Core;
-use crate::dto::{GroupId, VaultId};
+use crate::dto::{GroupId, IconView, VaultId, group_icon_view};
 use crate::error::{ApiError, ApiResult};
 
 /// A Group and the Groups in it.
@@ -15,6 +16,8 @@ pub struct GroupNode {
     pub id: GroupId,
     /// The top Group's name is the Vault's.
     pub name: String,
+    /// Its standard icon (a folder unless given another) or custom icon, drawn as an Entry's.
+    pub icon: IconView,
     /// The Entries right in this Group.
     pub entry_count: u32,
     /// The Entries in this Group and every Group below it.
@@ -27,12 +30,13 @@ pub struct GroupNode {
     pub children: Vec<GroupNode>,
 }
 
-fn node(vault: &Vault, group: &Group, in_bin: bool) -> GroupNode {
+fn node(id: ws::VaultId, vault: &Vault, group: &Group, in_bin: bool) -> GroupNode {
     let is_bin = vault.recycle_bin() == Some(group.id());
     let in_bin = in_bin || is_bin;
     GroupNode {
         id: group.id().into(),
         name: group.name().to_owned(),
+        icon: group_icon_view(id, group.icon(), vault),
         entry_count: group.entries().len() as u32,
         total_entries: group.all_entries().count() as u32,
         is_recycle_bin: is_bin,
@@ -41,7 +45,7 @@ fn node(vault: &Vault, group: &Group, in_bin: bool) -> GroupNode {
         children: group
             .groups()
             .iter()
-            .map(|child| node(vault, child, in_bin))
+            .map(|child| node(id, vault, child, in_bin))
             .collect(),
     }
 }
@@ -55,7 +59,7 @@ pub async fn list_groups(core: Core<'_>, vault: VaultId) -> ApiResult<GroupNode>
         let open = workspace
             .readable_vault(id)
             .ok_or_else(ApiError::vault_not_found)?;
-        Ok(node(open.vault(), open.vault().root(), false))
+        Ok(node(id, open.vault(), open.vault().root(), false))
     })
 }
 

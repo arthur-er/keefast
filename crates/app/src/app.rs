@@ -63,6 +63,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::entries::delete_entry,
             commands::entries::forget_access,
             commands::entries::open_entry_url,
+            commands::entries::set_tag_color,
             commands::facets::list_facets,
             commands::facets::format_owned_field,
             commands::facets::validate_owned_field,

@@ -21,12 +21,17 @@ import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
 import { startNewEntry, useEntryWithChanges } from "@/screens/entry-editor/session";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 import { showView, useView } from "@/shell/view";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import {
-  entryKey, groupEntries, hidesRecycleBin, moveSelection, type Move, sameEntry, spansVaults, visibleEntries,
+  entryKey, FLAT, groupEntries, hidesRecycleBin, isFlat, moveSelection, type Move, sameEntry, spansVaults,
+  visibleEntries,
 } from "./grouping";
+
+/** How many of an Entry's tags its row shows before "+n". */
+const TAGS_IN_ROW = 2;
 
 const SORTS: { value: SortOrder; label: string }[] = [
   { value: "title", label: "Title" },
@@ -57,7 +62,7 @@ export function EntryList() {
     [snapshot?.vaults],
   );
   const groups = useMemo(
-    () => groupEntries(entries, { topGroups, acrossVaults: spansVaults(scope), searching }),
+    () => groupEntries(entries, { topGroups, acrossVaults: spansVaults(scope), searching, flat: isFlat(scope) }),
     [entries, topGroups, scope, searching],
   );
   const shown = useMemo(() => visibleEntries(groups, collapsed), [groups, collapsed]);
@@ -142,7 +147,7 @@ export function EntryList() {
           />
           {!state.search && <Kbd combo="/" />}
         </label>
-        <SortMenu />
+        <SortMenu newestFirst={isFlat(scope)} />
         <AddMenu />
       </div>
       <div ref={body} className="vb-list-body" role="list">
@@ -151,6 +156,21 @@ export function EntryList() {
         ) : (
           groups.map((group) => {
             const isCollapsed = collapsed.has(group.key);
+            if (group.key === FLAT) {
+              return (
+                <div key={group.key} role="group">
+                  {group.entries.map((entry) => (
+                    <EntryRow
+                      key={entryKey(entry)}
+                      entry={entry}
+                      selected={sameEntry(selected, entry)}
+                      search={state.search}
+                      onSelect={() => select(entry)}
+                    />
+                  ))}
+                </div>
+              );
+            }
             return (
               <div key={group.key} role="group" aria-label={group.label}>
                 <button
@@ -198,6 +218,7 @@ function EntryRow({
   onSelect: () => void;
 }) {
   const { actions } = useShell();
+  const colorOf = useTagColor();
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -223,6 +244,13 @@ function EntryRow({
             {entry.username || entry.label === null ? <Marked text={entry.username} query={search} /> : entry.label}
           </span>
           <span className="m">
+            {entry.tags.slice(0, TAGS_IN_ROW).map((tag) => (
+              <span key={tag} className="tag">
+                <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
+                {tag}
+              </span>
+            ))}
+            {entry.tags.length > TAGS_IN_ROW && <span className="more">+{entry.tags.length - TAGS_IN_ROW}</span>}
             {entry.expired && <Badge tone="danger" className="vb-badge-exp">Expired</Badge>}
             {entry.attachmentCount > 0 && <Paperclip aria-label="Has attachments" />}
             {entry.hasTotp && <Timer aria-label="Has TOTP" />}
@@ -298,8 +326,18 @@ function EmptyList({ searching, onClear }: { searching: boolean; onClear: () => 
   );
 }
 
-function SortMenu() {
+/** The sort, unless the list is Recently modified, which is always newest first. */
+function SortMenu({ newestFirst }: { newestFirst: boolean }) {
   const { state, actions } = useShell();
+  if (newestFirst) {
+    return (
+      <Tooltip content="Newest first">
+        <button type="button" className="btn ghost sm icon" aria-label="Sorted newest first" disabled>
+          <ArrowUpDown />
+        </button>
+      </Tooltip>
+    );
+  }
   return (
     <Menu>
       <Tooltip content="Sort">

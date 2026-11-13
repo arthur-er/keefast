@@ -22,6 +22,8 @@ export function MenuContent({ className, children, ...props }: ComponentProps<ty
 interface ItemProps {
   icon?: ReactNode;
   shortcut?: string;
+  /** After the label, at the end of the row: a check mark, say. */
+  trailing?: ReactNode;
   danger?: boolean;
   onSelect?: (event: Event) => void;
   disabled?: boolean;
@@ -61,14 +63,18 @@ export function ContextMenuContent({ className, children, ...props }: ComponentP
   );
 }
 
-export function ContextMenuItem({ icon, shortcut, danger, children, ...props }: ItemProps) {
+export function ContextMenuItem({ icon, shortcut, trailing, danger, children, ...props }: ItemProps) {
   return (
     <ContextPrimitive.Item className={itemClass(danger)} {...props}>
       {icon}
       <span className="truncate">{children}</span>
+      {trailing}
       {shortcut && <Kbd combo={shortcut} />}
     </ContextPrimitive.Item>
   );
 }
 
 export const ContextMenuSeparator = () => <ContextPrimitive.Separator className="menu-sep" />;
+export const ContextMenuLabel = ({ children }: { children: ReactNode }) => (
+  <ContextPrimitive.Label className="menu-label">{children}</ContextPrimitive.Label>
+);

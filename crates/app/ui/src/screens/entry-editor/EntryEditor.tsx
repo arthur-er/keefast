@@ -16,7 +16,7 @@ import {
 import { api, errorMessage } from "@/api";
 import type { EntryDetail, EntryKey, TotpSetup } from "@/bindings";
 import { keys, useEntry, useFacets, useGroups, useWorkspace } from "@/api/queries";
-import { Badge, Button, IconButton, Kbd, Switch, toast } from "@/kit";
+import { Badge, Button, GroupIcon, IconButton, Kbd, Switch, toast } from "@/kit";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { GeneratorPopover, GeneratorTrigger } from "@/screens/password-generator/GeneratorPopover";
@@ -28,7 +28,8 @@ import { LiveTotp, TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { copyField, openUrl } from "@/screens/vault-browser/actions";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
-import { groupPath } from "@/shell/Sidebar";
+import { findGroup, groupPath } from "@/shell/Sidebar";
+import { useTagColor } from "@/shell/tagColors";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
@@ -147,7 +148,8 @@ function EditorForm({
   const keysActive = useKeysActive();
   const snapshot = useWorkspace().data;
   const vault = entry?.vault ?? target!.vault;
-  const groups = useGroups(target ? vault : undefined).data;
+  const groups = useGroups(vault).data;
+  const colorOf = useTagColor();
   const [saved] = useState<Draft>(() => (entry ? draftOf(entry) : newDraft({ tags: target?.tags, color: target?.color })));
   const [draft, setDraft] = useState<Draft>(saved);
   const [stagedTotp, setStagedTotp] = useState<TotpSetup | null>(null);
@@ -321,6 +323,11 @@ function EditorForm({
       .slice(1)
       .map((group) => (group.isRecycleBin ? "Recycle Bin" : group.name));
   }, [entry, groups, target]);
+  // The Group the Entry is in, or goes into.
+  const home = useMemo(() => {
+    const id = entry?.group ?? target?.group;
+    return groups && id ? findGroup(groups, (group) => group.id === id) : null;
+  }, [entry, groups, target]);
   const passwordKept = draft.password === null || draft.password === draft.savedPassword;
   const totpReady = entry?.totp?.status === "ready";
   const errors = [
@@ -389,7 +396,12 @@ function EditorForm({
               onChange={(change) => update(change)}
             />
             <span className="vdivider mx-1 h-4 self-center" />
-            <TagInput tags={draft.tags} known={snapshot?.tags ?? []} onChange={(tags) => update({ tags })} />
+            <TagInput
+              tags={draft.tags}
+              known={snapshot?.tags ?? []}
+              colorOf={(tag) => colorOf(vault, tag)}
+              onChange={(tags) => update({ tags })}
+            />
           </div>
           {errors.length > 0 && (
             <div className="ee-errors" role="alert">
@@ -701,7 +713,7 @@ function EditorForm({
 
           <div className="ee-hr" />
           <div className="ee-foot">
-            <Folder />
+            {home ? <GroupIcon icon={home.icon} /> : <Folder />}
             <span className="truncate">{[vaultName, ...place].join(" / ")}</span>
             {entry?.created != null && (
               <>
