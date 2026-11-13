@@ -18,6 +18,8 @@ function vault(name: string, provider: "local" | "dropbox", state: VaultSummary[
     rootGroup: null,
     recycleBin: null,
     browserGroup: null,
+    smartLists: { withTotp: 0, recentlyModified: 0, expired: 0 },
+    tagColors: [],
   };
 }
 
