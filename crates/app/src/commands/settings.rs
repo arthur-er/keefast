@@ -1,6 +1,7 @@
 //! The app settings: machine-local preferences kept in the app config (ADR 0005).
 
 use std::collections::BTreeMap;
+use std::io;
 use std::sync::PoisonError;
 use std::time::Duration;
 
@@ -115,10 +116,15 @@ fn browser_status(core: &AppCore, workspace: &Workspace) -> BrowserStatus {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .serve_error()
-        .is_some();
-    if serve_failed {
+        .map(|error| match error.kind() {
+            io::ErrorKind::AddrInUse => {
+                "Another keefast is already serving the browser.".to_owned()
+            }
+            _ => format!("keefast can't serve the browser: {error}"),
+        });
+    if let Some(message) = serve_failed {
         return BrowserStatus {
-            message: Some("Another keefast is already serving the browser.".to_owned()),
+            message: Some(message),
             error: true,
             ..off
         };

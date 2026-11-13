@@ -1001,6 +1001,11 @@ export type PendingAccess = {
 	id: RequestId,
 	/**  The host of the site asking. */
 	site: string,
+	/**
+	 *  The host the site's form sends the Entries to, when it is another than `site`. The
+	 *  decision is for both, so the prompt shows both.
+	 */
+	formSite: string | null,
 	entries: AskedEntry[],
 };
 

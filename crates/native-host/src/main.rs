@@ -8,15 +8,26 @@ use interprocess::local_socket::traits::Stream as _;
 use keefast_native_host::{ipc, relay};
 
 fn main() -> ExitCode {
-    let path = ipc::socket_path();
     let result = relay::run(io::stdin().lock(), io::stdout(), || {
-        Ok(ipc::connect(&path)?.split())
+        // The browser hears only that keefast isn't running. Where it isn't simply that, the
+        // browser's log says why.
+        let path = ipc::socket_path().inspect_err(report)?;
+        let stream = ipc::connect(&path).inspect_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                report(error);
+            }
+        })?;
+        Ok(stream.split())
     });
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("keefast-native-host: {error}");
+            report(&error);
             ExitCode::FAILURE
         }
     }
+}
+
+fn report(error: &io::Error) {
+    eprintln!("keefast-native-host: {error}");
 }

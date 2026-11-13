@@ -87,6 +87,19 @@ describe("mock backend", () => {
     mock.simulate("access");
     const access = (await api.getWorkspace()).pendingAccess!;
     expect(access.entries.map((entry) => entry.title)).toContain("GitHub");
+    expect(access.formSite).toBeNull();
+  });
+
+  it("remembers a decision for the site and the host its form sends to, both shown", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    mock.simulate("access-form");
+    const access = (await api.getWorkspace()).pendingAccess!;
+    expect([access.site, access.formSite]).toEqual(["github.com", "auth.github-login.net"]);
+    const github = access.entries.find((entry) => entry.title === "GitHub")!;
+    await api.answerAccess(access.id, true, true);
+    const hosts = (await api.getEntry(github.vault, github.entry)).rememberedAccess.map((access) => access.host);
+    expect(hosts).toEqual(expect.arrayContaining(["github.com", "auth.github-login.net"]));
   });
 
   it("runs the Card Plugin's component for an Entry's Card, protected values left out", async () => {

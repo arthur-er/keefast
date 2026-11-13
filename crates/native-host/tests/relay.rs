@@ -206,7 +206,7 @@ mod server {
     #[test]
     fn a_second_app_cannot_take_over_the_socket() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("browser.sock");
+        let path = dir.path().join("keefast").join("browser.sock");
         let _first = Server::start(path.clone(), |_| true).unwrap();
 
         let second = Server::start(path, |_| true);

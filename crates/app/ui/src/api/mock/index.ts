@@ -5,7 +5,7 @@
 // fails the way the real one does for the cases screens show (a wrong master key, a name taken).
 //
 // Driving it from the console or agent-browser, for states a screen must show:
-//   __keefastMock.simulate("pairing" | "access" | "login" | "lockUnsaved" | "merge" | "saveFailed"
+//   __keefastMock.simulate("pairing" | "access" | "access-form" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
 //     | "browserError" | "browserNone" | "browserServed" | "configError"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
@@ -223,7 +223,7 @@ interface MockState {
   settings: Omit<AppSettings, "browser" | "configError"> & { browserIntegration: boolean };
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
-  pendingAccess: { id: number; site: string; entries: [number, string][] } | null;
+  pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][] } | null;
   pendingLogin: { id: number; site: string; username: string; password: string; entries: [number, string][] } | null;
   clipboardClearsAt: number | null;
   dropboxAccount: { name: string; email: string } | null;
@@ -274,6 +274,7 @@ function initialState(): MockState {
 export type MockScene =
   | "pairing"
   | "access"
+  | "access-form"
   | "login"
   | "lockUnsaved"
   | "merge"
@@ -669,6 +670,7 @@ export function createMockBackend(): Backend & {
       pendingAccess: state.pendingAccess && {
         id: state.pendingAccess.id,
         site: state.pendingAccess.site,
+        formSite: state.pendingAccess.formSite,
         entries: state.pendingAccess.entries.flatMap(([vaultId, entryId]) => {
           const v = state.vaults.find((x) => x.id === vaultId);
           const e = v?.entries.find((x) => x.id === entryId);
@@ -1373,7 +1375,7 @@ export function createMockBackend(): Backend & {
       if (remember) {
         for (const [vaultId, entryId] of pending.entries) {
           const e = state.vaults.find((v) => v.id === vaultId)?.entries.find((x) => x.id === entryId);
-          e?.access.push({ host: pending.site, allowed: allow });
+          for (const host of [pending.site, pending.formSite]) if (host) e?.access.push({ host, allowed: allow });
         }
       }
       changed();
@@ -1475,7 +1477,13 @@ export function createMockBackend(): Backend & {
         emit("browserRequest", { kind: "pairing" });
         break;
       case "access": {
-        state.pendingAccess = { id: state.nextId++, site: "github.com", entries: entriesFor("github.com") };
+        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: null, entries: entriesFor("github.com") };
+        emit("browserRequest", { kind: "access" });
+        break;
+      }
+      case "access-form": {
+        // A page whose login form sends what is filled to another host.
+        state.pendingAccess = { id: state.nextId++, site: "github.com", formSite: "auth.github-login.net", entries: entriesFor("github.com") };
         emit("browserRequest", { kind: "access" });
         break;
       }

@@ -252,8 +252,18 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
       }
     >
       <SiteAddress site={access.site} via={`asks for ${count} ${count === 1 ? "Entry" : "Entries"}`} />
+      {access.formSite && <SiteAddress site={access.formSite} via="its form sends them here" />}
       <p className="dialog-desc m-0">
-        <b>{access.site}</b> asks for these Entries. Allow only if you are signing in there.
+        {access.formSite ? (
+          <>
+            <b>{access.site}</b> asks for these Entries, and its form sends them to <b>{access.formSite}</b>. Allow only if
+            you are signing in there and trust both.
+          </>
+        ) : (
+          <>
+            <b>{access.site}</b> asks for these Entries. Allow only if you are signing in there.
+          </>
+        )}
       </p>
       <div className="dg-list">
         {access.entries.map((entry) => (
@@ -264,6 +274,12 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
         <span className={cn("check", remember && "is-on")} />
         <span>
           Remember this decision for <b>{access.site}</b>
+          {access.formSite && (
+            <>
+              {" "}
+              and <b>{access.formSite}</b>
+            </>
+          )}
         </span>
       </button>
     </DialogFrame>
