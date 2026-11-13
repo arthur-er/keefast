@@ -148,6 +148,18 @@
   .keys .krow:hover { color: var(--fg-0); background: var(--bg-hover); }
   .keys .krow .kk { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
   .keys .krow .or { margin: 0 2px; font-size: var(--text-xs); color: var(--fg-2); }
+  /* Changing a shortcut: its keys are a button that records the next ones pressed. */
+  .keys .krow .kedit { height: 24px; padding: 0 4px; margin-right: -4px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; cursor: default; }
+  .keys .krow .kedit:hover { border-color: var(--border-strong); }
+  .keys .krow .kedit:focus-visible { outline: none; border-color: var(--border-focus); }
+  .keys .krow.is-recording .kedit { border-color: var(--accent); background: var(--accent-bg); padding: 0 8px; }
+  .keys .krow .krec { font-size: var(--text-sm); color: var(--accent-fg); }
+  .keys .krow .kreset { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: auto; margin-right: 4px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--fg-2); }
+  .keys .krow .kreset + .kk { margin-left: 0; }
+  .keys .krow .kreset:hover { background: var(--bg-active); color: var(--fg-0); }
+  .keys .krow .kreset svg.lucide { width: 13px; height: 13px; }
+  .keys .kerr { display: flex; align-items: center; gap: 6px; padding: 0 16px 6px; font-size: var(--text-sm); color: var(--danger); }
+  .keys .kerr svg.lucide { width: 13px; height: 13px; flex: none; }
 
   /* Vault settings C */
   .vs-file .desc { font-family: var(--font-mono); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

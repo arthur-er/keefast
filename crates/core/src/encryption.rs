@@ -1,5 +1,7 @@
 //! How a Vault file is encrypted, and changing it: the master key, the cipher and the key
-//! derivation function (KDF).
+//! derivation function (KDF), and what the KDF costs on this machine.
+
+use std::time::{Duration, Instant};
 
 use crate::edit::{child_or_insert, set_value};
 use crate::kdbx;
@@ -103,10 +105,73 @@ impl Default for Encryption {
 impl Encryption {
     /// Whether key derivation can run with these settings.
     pub fn check(&self) -> Result<(), EncryptionError> {
-        match self.kdf {
+        self.kdf.check()
+    }
+}
+
+impl Kdf {
+    /// The most memory a [`Self::sample`] of Argon2 fills, in KiB.
+    const SAMPLE_KIB: u64 = 16 * 1024;
+    /// The most lanes a sample of Argon2 has: more than the cores of any machine keefast runs on,
+    /// so the sample runs as many of them at once as the real derivation does.
+    const SAMPLE_LANES: u32 = 64;
+    /// The most rounds a sample of AES-KDF runs.
+    const SAMPLE_ROUNDS: u64 = 100_000;
+
+    /// Whether key derivation can run with these settings.
+    pub fn check(&self) -> Result<(), EncryptionError> {
+        match *self {
             Kdf::Argon2id(argon2) | Kdf::Argon2d(argon2) => argon2.check(),
             Kdf::AesKdf { rounds: 0 } => Err(EncryptionError::Rounds),
             Kdf::AesKdf { .. } => Ok(()),
+        }
+    }
+
+    /// About how long deriving the key with these settings takes on this machine, which is what
+    /// unlocking a Vault file costs, and saving it too. It times a [`Self::sample`] of the
+    /// work and scales it up, so it takes a few tens of milliseconds whatever the settings: still
+    /// too long for the UI thread.
+    pub fn unlock_time(&self) -> Result<Duration, EncryptionError> {
+        self.check()?;
+        let (sample, scale) = self.sample();
+        let started = Instant::now();
+        // Checked settings always derive a key, and so do their samples.
+        crate::kdbx::derive_throwaway_key(sample).expect("checked KDF settings derive a key");
+        Ok(started.elapsed().mul_f64(scale))
+    }
+
+    /// A small run of this KDF, and how many times its work these settings do. Argon2's time
+    /// grows with its memory times its iterations, so its sample is one iteration over at most
+    /// [`Self::SAMPLE_KIB`], with the same lanes (up to [`Self::SAMPLE_LANES`]) to run them in
+    /// parallel as the real one does; AES-KDF's grows with its rounds. Settings smaller than the
+    /// sample are their own, at one iteration.
+    pub(crate) fn sample(&self) -> (Kdf, f64) {
+        let argon2 = |argon2: Argon2| {
+            let kib = argon2.memory / 1024;
+            let sample = Argon2 {
+                memory: kib.min(Self::SAMPLE_KIB) * 1024,
+                iterations: 1,
+                parallelism: argon2.parallelism.min(Self::SAMPLE_LANES),
+            };
+            let scale = argon2.memory as f64 / sample.memory as f64 * argon2.iterations as f64;
+            (sample, scale)
+        };
+        match *self {
+            Kdf::Argon2id(settings) => {
+                let (sample, scale) = argon2(settings);
+                (Kdf::Argon2id(sample), scale)
+            }
+            Kdf::Argon2d(settings) => {
+                let (sample, scale) = argon2(settings);
+                (Kdf::Argon2d(sample), scale)
+            }
+            Kdf::AesKdf { rounds } => {
+                let sample = rounds.min(Self::SAMPLE_ROUNDS);
+                (
+                    Kdf::AesKdf { rounds: sample },
+                    rounds as f64 / sample as f64,
+                )
+            }
         }
     }
 }
@@ -151,4 +216,84 @@ pub(crate) fn new_settings(encryption: &Encryption) -> kdbx::Settings {
     let mut settings = kdbx::Settings::new_kdbx4();
     settings.set_encryption(encryption);
     settings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIB: u64 = 1024 * 1024;
+
+    fn argon2(memory: u64, iterations: u64, parallelism: u32) -> Argon2 {
+        Argon2 {
+            memory,
+            iterations,
+            parallelism,
+        }
+    }
+
+    #[test]
+    fn an_argon2_sample_is_one_iteration_over_less_memory_with_the_same_lanes() {
+        let (sample, scale) = Kdf::Argon2id(Argon2::default()).sample();
+        assert_eq!(sample, Kdf::Argon2id(argon2(16 * MIB, 1, 4)));
+        // 64 MiB is 4 times the sample's memory, 5 times over.
+        assert_eq!(scale, 20.0);
+
+        let (sample, scale) = Kdf::Argon2d(argon2(4 * MIB, 3, 2)).sample();
+        assert_eq!(sample, Kdf::Argon2d(argon2(4 * MIB, 1, 2)));
+        assert_eq!(scale, 3.0);
+    }
+
+    #[test]
+    fn an_argon2_sample_keeps_enough_memory_for_its_lanes() {
+        let (sample, _) = Kdf::Argon2id(argon2(1024 * MIB, 1, 0xFF_FFFF)).sample();
+        let Kdf::Argon2id(sample) = sample else {
+            panic!("the sample is Argon2id")
+        };
+        assert_eq!(sample.parallelism, 64);
+        assert_eq!(sample.check(), Ok(()));
+    }
+
+    #[test]
+    fn an_aes_kdf_sample_runs_fewer_rounds() {
+        assert_eq!(
+            Kdf::AesKdf { rounds: 2_000_000 }.sample(),
+            (Kdf::AesKdf { rounds: 100_000 }, 20.0)
+        );
+        assert_eq!(
+            Kdf::AesKdf { rounds: 6_000 }.sample(),
+            (Kdf::AesKdf { rounds: 6_000 }, 1.0)
+        );
+    }
+
+    #[test]
+    fn the_unlock_time_is_refused_for_settings_that_cannot_derive_a_key() {
+        assert_eq!(
+            Kdf::AesKdf { rounds: 0 }.unlock_time(),
+            Err(EncryptionError::Rounds)
+        );
+        assert_eq!(
+            Kdf::Argon2id(argon2(64 * MIB, 0, 4)).unlock_time(),
+            Err(EncryptionError::Iterations)
+        );
+    }
+
+    #[test]
+    fn the_unlock_time_is_about_what_deriving_the_key_takes() {
+        // Twice the sample's memory, three times over: six samples' work. The fastest of a few
+        // tries of each, so other tests running at the same time don't decide it.
+        let kdf = Kdf::Argon2id(argon2(32 * MIB, 3, 2));
+        let fastest = |time: &dyn Fn() -> Duration| (0..3).map(|_| time()).min().unwrap();
+        let estimate = fastest(&|| kdf.unlock_time().unwrap());
+        let actual = fastest(&|| {
+            let started = Instant::now();
+            crate::kdbx::derive_throwaway_key(kdf).unwrap();
+            started.elapsed()
+        });
+        let ratio = estimate.as_secs_f64() / actual.as_secs_f64();
+        assert!(
+            (0.4..2.5).contains(&ratio),
+            "estimated {estimate:?} for {actual:?}"
+        );
+    }
 }

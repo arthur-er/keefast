@@ -9,7 +9,7 @@ import { api, errorMessage, onEvent } from "@/api";
 import { useBackendEvents, useSettings, useWorkspace } from "@/api/queries";
 import { dismissToast, toast, Toaster } from "@/kit";
 import { useActivityReporting } from "@/lib/activity";
-import { SHORTCUTS, useShortcut } from "@/lib/shortcuts";
+import { setChangedShortcuts, SHORTCUTS, useShortcut } from "@/lib/shortcuts";
 import { useApplyTheme } from "@/lib/theme";
 import { OpenVault } from "@/screens/open-vault/OpenVault";
 import { RequestDialogs } from "@/screens/dialogs/RequestDialogs";
@@ -36,6 +36,9 @@ function Root() {
   useActivityReporting();
   const settings = useSettings();
   useApplyTheme(settings.data?.theme);
+  // The keys the user gave shortcuts in Settings, for every key binding.
+  const changedShortcuts = settings.data?.shortcuts;
+  useEffect(() => setChangedShortcuts(changedShortcuts ?? {}), [changedShortcuts]);
   const workspace = useWorkspace();
   const { state, actions } = useShell();
   const snapshot = workspace.data;
