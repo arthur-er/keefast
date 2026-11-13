@@ -3,6 +3,7 @@
 
 mod atomic_file;
 mod attachments;
+mod background;
 mod browser;
 mod browser_hosts;
 mod cache;
@@ -36,6 +37,7 @@ use keefast_core::{
 use secrecy::SecretString;
 
 pub use attachments::{read_attachment, write_attachment};
+pub use background::settled_vault_file_changes;
 pub use browser::{
     AccessAnswer, AccessId, AccessRequest, BrowserReply, BrowserSession, ConnectionId, FormFill,
     FormPick, KEEPASSXC_VERSION, LoginId, LoginRequest, LoginTarget, Outgoing, PairingId,
@@ -362,8 +364,13 @@ impl OpenVault {
         &self.location
     }
 
+    /// The Vault's name, or its Vault file's when it has none.
     pub fn display_name(&self) -> String {
-        self.location.display_name()
+        let name = self.vault.name();
+        match name.trim() {
+            "" => self.location.display_name(),
+            name => name.to_owned(),
+        }
     }
 
     pub fn vault(&self) -> &Vault {
@@ -1383,6 +1390,32 @@ impl Workspace {
         name: &str,
     ) -> Result<GroupId, EditVaultError> {
         self.edit(vault, |vault, now| vault.create_group(parent, name, now))
+    }
+
+    /// Renames the Vault itself. An empty name names it after its Vault file again.
+    pub fn rename_vault(&mut self, vault: VaultId, name: &str) -> Result<(), EditVaultError> {
+        self.edit(vault, |vault, now| {
+            vault.rename(name, now);
+            Ok(())
+        })
+    }
+
+    /// Turns the Vault's Recycle Bin on or off: off, deleting deletes for good.
+    pub fn set_recycle_bin_enabled(
+        &mut self,
+        vault: VaultId,
+        enabled: bool,
+    ) -> Result<(), EditVaultError> {
+        if self
+            .vault(vault)
+            .is_some_and(|open| open.vault.recycle_bin_enabled() == enabled)
+        {
+            return Ok(());
+        }
+        self.edit(vault, |vault, now| {
+            vault.set_recycle_bin_enabled(enabled, now);
+            Ok(())
+        })
     }
 
     pub fn rename_group(

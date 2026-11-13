@@ -39,7 +39,7 @@ pub use encryption::{Argon2, Cipher, Encryption, EncryptionError, Kdf};
 pub use generator::{
     CharacterRecipe, GeneratorError, LOOKALIKES, PassphraseRecipe, PasswordRecipe, SYMBOLS,
 };
-pub use key::{CompositeKey, KeyFileError, new_key_file};
+pub use key::{CompositeKey, KeyFileError, KeyParts, new_key_file};
 pub use merge::MergeSummary;
 pub use open::OpenError;
 pub use save::SaveError;

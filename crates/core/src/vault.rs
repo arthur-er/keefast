@@ -11,7 +11,7 @@ use crate::attachment::{self, Attachment};
 use crate::edit::{is_standard_field, string_value};
 use crate::kdbx::{Binary, Key, VaultFile};
 use crate::xml::Element;
-use crate::{EntryColor, EntryIcon, OpenError, Timestamp, Totp, TotpError, totp};
+use crate::{EntryColor, EntryIcon, KeyParts, OpenError, Timestamp, Totp, TotpError, totp};
 
 /// An opened, decrypted Vault: a tree of Groups holding Entries.
 ///
@@ -25,6 +25,8 @@ pub struct Vault {
     pub(crate) file: VaultFile,
     /// The hash of the composite key, which saving needs to re-encrypt the Vault file.
     pub(crate) key: Key,
+    /// What the master key `key` was made from.
+    pub(crate) key_parts: KeyParts,
     /// The keys the Vault had before its key was changed, oldest first, until the Vault file
     /// has the new one.
     pub(crate) previous_keys: Vec<Key>,
@@ -130,7 +132,11 @@ pub struct Entry {
 }
 
 impl Vault {
-    pub(crate) fn from_file(file: VaultFile, key: Key) -> Result<Self, OpenError> {
+    pub(crate) fn from_file(
+        file: VaultFile,
+        key: Key,
+        key_parts: KeyParts,
+    ) -> Result<Self, OpenError> {
         let group = file
             .document
             .child("Root")
@@ -141,6 +147,7 @@ impl Vault {
             custom_icons: custom_icons(&file.document),
             file,
             key,
+            key_parts,
             previous_keys: Vec::new(),
         })
     }

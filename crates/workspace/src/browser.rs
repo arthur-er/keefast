@@ -26,7 +26,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
 use keefast_core::{
-    AccessDecision, CapturedLogin, DefaultAccessPolicy, EntryId, GroupId, Site, SiteEntry,
+    AccessDecision, CapturedLogin, DefaultAccessPolicy, EntryId, GroupId, Pairing, Site, SiteEntry,
     Timestamp,
 };
 use secrecy::{ExposeSecret, SecretString};
@@ -396,9 +396,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "get-databasehash" {
-            return Err(ProtocolError::DatabaseHashNotReceived);
-        }
         if let Some(Value::Array(ids)) = message.get("connectedKeys") {
             self.connected_ids = ids
                 .iter()
@@ -420,9 +417,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "associate" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         // The extension proves it holds this session's key, and sends the key it will
         // identify itself with from now on.
         let session_key = &self.keys.as_ref().expect("decrypted").client_key;
@@ -446,9 +440,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "test-associate" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let (id, key) = (text(&message, "id"), text(&message, "key"));
         // KeePassXC answers a request without both as if no database were open.
         if id.is_empty() || key.is_empty() {
@@ -476,9 +467,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "get-logins" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let url = text(&message, "url");
         if url.is_empty() {
             return Err(ProtocolError::NoUrlProvided);
@@ -541,9 +529,6 @@ impl BrowserSession {
         let password = SecretString::from(text(&message, "password").to_owned());
         if let Some(Value::String(sent)) = message.get_mut("password") {
             sent.zeroize();
-        }
-        if text(&message, "action") != "set-login" {
-            return Err(ProtocolError::IncorrectAction);
         }
         let url = text(&message, "url");
         if url.is_empty() {
@@ -629,7 +614,9 @@ impl BrowserSession {
         )
     }
 
-    /// The request's encrypted `message`, as JSON.
+    /// The request's encrypted `message`, as JSON: every handler's first step after
+    /// `change-public-keys`. The message must name the request's own action, or the request
+    /// is refused and the message, which may hold a password, is wiped.
     fn decrypt(
         &self,
         request: &Map<String, Value>,
@@ -646,8 +633,17 @@ impl BrowserSession {
             .and_then(|sealed| keys.crypto.decrypt(&nonce.into(), &sealed[..]).ok())
             .and_then(|plain| serde_json::from_slice::<Map<String, Value>>(&plain).ok())
             .ok_or(ProtocolError::CannotDecryptMessage)?;
+        let action = text(request, "action");
+        if text(&message, "action") != action {
+            wipe(&mut Value::Object(message));
+            // KeePassXC answers a hash request for something else as if it had no hash.
+            return Err(match action {
+                "get-databasehash" => ProtocolError::DatabaseHashNotReceived,
+                _ => ProtocolError::IncorrectAction,
+            });
+        }
         let request = Request {
-            action: text(request, "action").to_owned(),
+            action: action.to_owned(),
             nonce,
             request_id: request.get("requestID").cloned(),
         };
@@ -839,6 +835,9 @@ pub(crate) struct BrowserConnections {
     unsolicited: Vec<Outgoing>,
     /// What the extension may fill into forms other than logins, from the running Plugins.
     fills: Vec<FormFill>,
+    /// When each Vault's Pairings were last used, by name, to the second. The Vaults record
+    /// it only to the hour.
+    used: HashMap<(VaultId, String), Timestamp>,
 }
 
 impl Workspace {
@@ -859,6 +858,7 @@ impl Workspace {
             .remove(&connection)
             .unwrap_or_default();
         let reply = session.handle(self, request);
+        self.note_pairings_used(&session.proven);
         self.browser.sessions.insert(connection, session);
         match reply {
             BrowserReply::Send(reply) => Some(reply),
@@ -1429,6 +1429,37 @@ impl Workspace {
                     .map(|open| open.id)
                     .find(|&vault| paired(vault))
             })
+    }
+
+    /// The Vault's Pairings, each last used when its browser last asked this Workspace for
+    /// anything, or else as the Vault recorded it.
+    pub fn pairings(&self, vault: VaultId) -> Option<Vec<Pairing>> {
+        let open = self.readable_vault(vault)?;
+        let mut pairings = open.vault.pairings();
+        for pairing in &mut pairings {
+            let used = self
+                .browser
+                .used
+                .get(&(vault, pairing.name.clone()))
+                .copied();
+            pairing.last_used = pairing.last_used.max(used);
+        }
+        Some(pairings)
+    }
+
+    /// Records that the extension holding the Pairings `proven` asked for something, in the
+    /// open Vaults that have them. It is no edit of the Vaults: their Vault files get it with
+    /// the next save.
+    fn note_pairings_used(&mut self, proven: &[(String, String)]) {
+        let now = self.now();
+        for open in self.vaults.iter_mut().filter(|open| !open.lock_requested) {
+            for (name, key) in proven {
+                if open.vault.is_paired_with(name, key) {
+                    open.vault.note_pairing_used(name, now);
+                    self.browser.used.insert((open.id, name.clone()), now);
+                }
+            }
+        }
     }
 
     /// Stores a Pairing in a Vault: the extension known as `name` by `key` may ask it for

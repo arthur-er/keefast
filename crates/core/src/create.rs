@@ -25,7 +25,7 @@ impl Vault {
             binaries: Vec::new(),
             document: document(name, now),
         };
-        Ok(Vault::from_file(file, key.hash()).expect("a new Vault has a root Group"))
+        Ok(Vault::from_file(file, key.hash(), key.parts()).expect("a new Vault has a root Group"))
     }
 }
 

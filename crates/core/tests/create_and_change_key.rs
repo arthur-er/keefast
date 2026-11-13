@@ -2,8 +2,8 @@
 //! written must open with the new key only, and read the same in an independent KDBX reader.
 
 use keefast_core::{
-    Argon2, Cipher, CompositeKey, Encryption, EncryptionError, EntryFields, Kdf, OpenError,
-    Timestamp, Vault, new_key_file,
+    Argon2, Cipher, CompositeKey, Encryption, EncryptionError, EntryFields, Kdf, KeyParts,
+    OpenError, Timestamp, Vault, new_key_file,
 };
 use keepass::config::{DatabaseConfig, InnerCipherConfig, KdfConfig, OuterCipherConfig};
 use keepass::{Database, DatabaseKey};
@@ -147,6 +147,27 @@ fn a_new_vault_can_be_keyed_with_a_key_file_alone_or_with_a_password() {
             Err(OpenError::WrongKey)
         ));
     }
+}
+
+#[test]
+fn a_vault_knows_what_its_master_key_is_made_of_after_opening_and_changing_it() {
+    let key_file = new_key_file();
+    let password = CompositeKey::password(PASSWORD);
+    let both = CompositeKey::password_and_key_file(PASSWORD, &key_file).unwrap();
+    let bytes = create("Keyed", &both, &quick()).save().unwrap();
+
+    let mut vault = Vault::open(&bytes, &both).unwrap();
+    assert_eq!(vault.key_parts(), KeyParts::PasswordAndKeyFile);
+
+    vault.change_key(&CompositeKey::key_file(&key_file).unwrap(), now());
+    assert_eq!(vault.key_parts(), KeyParts::KeyFile);
+    vault.change_key(&password, now());
+    assert_eq!(vault.key_parts(), KeyParts::Password);
+    // A version of the Vault file opened to Merge it doesn't change the Vault's key.
+    assert_eq!(
+        vault.open_version(&bytes).unwrap().key_parts(),
+        KeyParts::Password
+    );
 }
 
 #[test]

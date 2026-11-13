@@ -5,6 +5,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use keefast_core::EditError;
 use keefast_workspace::{
@@ -13,7 +14,7 @@ use keefast_workspace::{
 };
 use serde_json::{Value, json};
 use support::extension::{FakeExtension, Sent};
-use support::{FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
+use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
 
 /// The fixture Vault's browser hash: SHA-256 of its root Group's UUID in hex.
 const FIXTURE_HASH: &str = "e664e0d1a663bc5bf6293d1955671b5b1c87d5d0cef01daf1fdbe87e477ed419";
@@ -331,6 +332,46 @@ fn unknown_actions_and_garbage_are_refused() {
 }
 
 #[test]
+fn a_message_naming_another_action_is_refused() {
+    let (workspace, _) = workspace_with_personal_vault();
+    let (extension, mut session) = connected(&workspace);
+    let other = json!({ "action": "get-logins", "url": "https://example.com" });
+
+    for action in [
+        "associate",
+        "test-associate",
+        "get-logins",
+        "set-login",
+        "get-totp",
+        "generate-password",
+        "keefast-search-entries",
+        "keefast-pick-entry",
+        "keefast-fill-form",
+    ] {
+        let message = if action == "get-logins" {
+            json!({ "action": "set-login", "url": "https://example.com" })
+        } else {
+            other.clone()
+        };
+        let reply = parse(&send(
+            &mut session,
+            &workspace,
+            &extension.encrypted(action, message),
+        ));
+        assert_eq!(reply["errorCode"], "12", "{action}: {reply}");
+        assert_eq!(reply["action"], action);
+    }
+
+    // As KeePassXC does, a hash request for something else is answered as having no hash.
+    let reply = parse(&send(
+        &mut session,
+        &workspace,
+        &extension.encrypted("get-databasehash", other),
+    ));
+    assert_eq!(reply["errorCode"], "2");
+}
+
+#[test]
 fn the_browser_deals_with_the_focused_vault() {
     let mut workspace = Workspace::new(storage());
     let key = UnlockSecrets::password(PASSWORD);
@@ -455,6 +496,56 @@ mod connections {
         assert_eq!(denied.connection, SECOND);
         assert_eq!(parse(&denied.message)["errorCode"], "6");
         assert_eq!(workspace.pending_pairing(), None);
+    }
+
+    #[test]
+    fn a_pairing_is_used_whenever_its_browser_asks_and_the_vault_records_it_by_the_hour() {
+        // 2026-10-07 23:15:22 UTC.
+        let clock = Arc::new(FakeClock::at_unix_seconds(1_791_414_922));
+        let mut workspace = Workspace::with_clock(storage(), clock.clone());
+        let vault = workspace
+            .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+        workspace.set_browser_integration(true);
+        let extension = connect(&mut workspace, FIRST);
+        request(&mut workspace, FIRST, &extension.associate());
+        let pending = workspace.pending_pairing().unwrap();
+        workspace.approve_pairing(pending.id, "Laptop").unwrap();
+        workspace.save_vault(vault).unwrap();
+        let laptop = |workspace: &Workspace| {
+            let pairings = workspace.pairings(vault).unwrap();
+            pairings.into_iter().find(|p| p.name == "Laptop").unwrap()
+        };
+        let paired = laptop(&workspace).created.unwrap();
+        assert_eq!(paired.unix_seconds(), 1_791_414_922);
+        assert_eq!(laptop(&workspace).last_used, None);
+        let id_key = extension.id_key();
+        let ask = |workspace: &mut Workspace| {
+            request(
+                workspace,
+                FIRST,
+                &extension.test_associate("Laptop", &id_key),
+            )
+            .unwrap();
+        };
+
+        clock.advance(Duration::from_secs(90));
+        ask(&mut workspace);
+        let first_use = laptop(&workspace).last_used.unwrap();
+        assert_eq!(first_use.unix_seconds(), 1_791_414_922 + 90);
+        clock.advance(Duration::from_secs(60));
+        ask(&mut workspace);
+
+        // To the second here, while the Vault keeps the first use of the hour, and isn't
+        // left with unsaved changes for it.
+        assert_eq!(
+            laptop(&workspace).last_used.unwrap().unix_seconds(),
+            1_791_414_922 + 150
+        );
+        let recorded = workspace.vault(vault).unwrap().vault().pairings();
+        let recorded = recorded.iter().find(|p| p.name == "Laptop").unwrap();
+        assert_eq!(recorded.last_used, Some(first_use));
+        assert!(!workspace.vault(vault).unwrap().has_unsaved_changes());
     }
 
     #[test]

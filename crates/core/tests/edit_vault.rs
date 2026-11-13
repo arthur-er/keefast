@@ -330,6 +330,45 @@ fn disable_recycle_bin(vault: &mut Vault) {
 }
 
 #[test]
+fn the_recycle_bin_is_turned_off_and_on_again_as_other_clients_read_it() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    assert!(vault.recycle_bin_enabled());
+    let email = entry_titled(&vault, "Email").id();
+
+    vault.set_recycle_bin_enabled(false, now());
+
+    let mut vault = reopen(&vault);
+    assert!(!vault.recycle_bin_enabled());
+    assert_eq!(vault.deletes_entry_for_good(email), Ok(true));
+    let independent = Database::parse(
+        &vault.save().unwrap(),
+        DatabaseKey::new().with_password(PASSWORD),
+    )
+    .unwrap();
+    assert_eq!(independent.meta.recyclebin_enabled, Some(false));
+
+    vault.set_recycle_bin_enabled(true, later());
+    assert!(reopen(&vault).recycle_bin_enabled());
+    assert_eq!(vault.deletes_entry_for_good(email), Ok(false));
+}
+
+#[test]
+fn the_vault_is_renamed_as_other_clients_read_it() {
+    let mut vault = open(KEEPASSXC_KDBX4);
+
+    vault.rename("  Home  ", now());
+
+    let vault = reopen(&vault);
+    assert_eq!(vault.name(), "Home");
+    let independent = Database::parse(
+        &vault.save().unwrap(),
+        DatabaseKey::new().with_password(PASSWORD),
+    )
+    .unwrap();
+    assert_eq!(independent.meta.database_name.as_deref(), Some("Home"));
+}
+
+#[test]
 fn groups_are_created_renamed_and_nested() {
     let mut vault = open(KEEPASSXC_KDBX4);
     let work = group_named(&vault, "Work").id();

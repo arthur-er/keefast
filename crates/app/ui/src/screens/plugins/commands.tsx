@@ -4,7 +4,7 @@
 // index, Rust-to-clipboard through `copyField`, as the section's copy buttons do.
 
 import type { EntryDetail, FacetCommandView, FacetView, OwnedFieldView } from "@/bindings";
-import { type AppCommand, useAppCommand } from "@/shell/commands";
+import { type AppCommand, type AppCommandId, useAppCommand } from "@/shell/commands";
 import type { CopyHandler } from "@/screens/vault-browser/FieldRow";
 
 import { facetIcon } from "./FacetSection";
@@ -15,7 +15,7 @@ export interface FacetCopy {
   command: FacetCommandView;
   field: OwnedFieldView;
   /** Unique among the app's commands: `plugin:keefast.card:card:copy-number`. */
-  id: string;
+  id: AppCommandId;
   /** Whether the Entry has a value to copy. */
   enabled: boolean;
   /** The key the detail's "Copied" flash goes by, as `FacetSection`'s copy button's. */
@@ -33,7 +33,7 @@ export function facetCopies(entry: EntryDetail | undefined): FacetCopy[] {
           facet,
           command,
           field,
-          id: `plugin:${facet.plugin}:${facet.facet}:${command.id}`,
+          id: `plugin:${facet.plugin}:${facet.facet}:${command.id}` as const,
           enabled: field.index !== null && !field.isEmpty,
           flashKey: `facet:${facet.plugin}:${facet.facet}:${field.key}`,
         },

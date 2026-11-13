@@ -2,7 +2,7 @@
 // (feat/linear-style-ui-prototypes, crates/app/prototype-linear-ui/kit/kit.js, `KF.data`), so
 // screens built against the mock can be compared with the prototype's screenshots.
 
-import type { Color, Location, SyncState } from "@/bindings";
+import type { Color, Location, MasterKeyParts, SyncState } from "@/bindings";
 
 export interface MockTotp {
   secret: string;
@@ -70,6 +70,13 @@ export interface MockGroup {
   icon?: number;
 }
 
+export interface MockPairing {
+  name: string;
+  /** Seconds since 1970. */
+  created: number | null;
+  lastUsed: number | null;
+}
+
 export interface MockVault {
   id: number;
   name: string;
@@ -78,12 +85,14 @@ export interface MockVault {
   groups: MockGroup[];
   entries: MockEntry[];
   recycleBin: string | null;
+  recycleBinEnabled: boolean;
   browserGroup: string | null;
   unsaved: boolean;
   saving: boolean;
   saveFailed: boolean;
   sync: SyncState | null;
-  pairings: string[];
+  masterKey: MasterKeyParts;
+  pairings: MockPairing[];
   policy: "ask" | "alwaysAllow" | "alwaysDeny";
   customIcons: { id: string; png: string }[];
   /** The colours chosen for tags, by tag. */
@@ -92,6 +101,9 @@ export interface MockVault {
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
 const day = (date: string) => (date.includes("T") ? Date.parse(date) : Date.parse(`${date}T12:00:00Z`)) / 1000;
+
+/** `minutes` ago, in seconds. */
+const ago = (minutes: number) => Math.floor(Date.now() / 1000) - minutes * 60;
 
 /** The prototype's site colours, for the Entries' stand-in favicons. */
 export const BRAND_COLORS: Record<string, string> = {
@@ -225,12 +237,17 @@ export function fakeVaults(): MockVault[] {
         { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
+      recycleBinEnabled: true,
       browserGroup: "browser",
       unsaved: false,
       saving: false,
       saveFailed: false,
       sync: null,
-      pairings: ["Chrome on my laptop", "Brave (work profile)"],
+      masterKey: "passwordAndKeyFile",
+      pairings: [
+        { name: "Chrome on my laptop", created: day("2026-08-02"), lastUsed: ago(2) },
+        { name: "Brave (work profile)", created: day("2026-09-14"), lastUsed: ago(26 * 60) },
+      ],
       policy: "ask",
       customIcons: [],
       tagColors: { "2fa": "violet", email: "green", shared: "orange" },
@@ -266,12 +283,14 @@ export function fakeVaults(): MockVault[] {
         { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
+      recycleBinEnabled: true,
       browserGroup: null,
       unsaved: false,
       saving: false,
       saveFailed: false,
       sync: "synced",
-      pairings: ["Chrome on my laptop"],
+      masterKey: "password",
+      pairings: [{ name: "Chrome on my laptop", created: day("2026-08-03"), lastUsed: ago(3 * 24 * 60) }],
       policy: "ask",
       customIcons: [],
       entries: [
@@ -296,11 +315,13 @@ export function fakeVaults(): MockVault[] {
         { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
+      recycleBinEnabled: true,
       browserGroup: null,
       unsaved: false,
       saving: false,
       saveFailed: false,
       sync: null,
+      masterKey: "password",
       pairings: [],
       policy: "ask",
       customIcons: [],

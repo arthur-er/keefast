@@ -4,7 +4,7 @@
 use secrecy::ExposeSecret;
 use serde_json::{Map, Value, json};
 
-use super::{BrowserReply, BrowserSession, ProtocolError, text};
+use super::{BrowserReply, BrowserSession, ProtocolError};
 use crate::Workspace;
 
 impl BrowserSession {
@@ -17,10 +17,7 @@ impl BrowserSession {
         workspace: &Workspace,
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
-        let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "generate-password" {
-            return Err(ProtocolError::IncorrectAction);
-        }
+        let (request, _) = self.decrypt(request)?;
         let password = workspace
             .generate_password()
             .map_err(|_| ProtocolError::ActionCancelledOrDenied)?;

@@ -1,20 +1,21 @@
-// Vault settings C: one Vault's own settings, kept in its Vault file (ADR 0005): its Vault file
-// (saving and locking it), how it answers the Companion extension (Default access policy,
+// Vault settings C: one Vault's own settings, kept in its Vault file (ADR 0005): its name, its
+// Vault file (saving, locking and showing it), its Recycle Bin, how it answers the Companion extension (Default access policy,
 // Browser group), its Pairings, and its master key and encryption. Same page as General
 // Settings C; leaves when the Vault locks.
 
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { Check as CheckIcon, ChevronsUpDown, Folder, Globe, Lock, PlugZap, Save, Shield, Trash2 } from "lucide-react";
+import { Check as CheckIcon, ChevronsUpDown, Folder, FolderOpen, Globe, Lock, PlugZap, Save, Shield, Trash2 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { AccessPolicy, GroupNode, VaultId, VaultSettings, VaultSummary } from "@/bindings";
+import type { AccessPolicy, GroupNode, PairingView, VaultId, VaultSettings, VaultSummary } from "@/bindings";
 import { useGroups, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, GroupIcon, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Segmented, toast } from "@/kit";
+import { Button, GroupIcon, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
 import { vaultStatus } from "@/shell/vaultStatus";
 
+import { pairedText, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
 import { KEY_SEARCH, VaultKeySection } from "./VaultKeySection";
 
@@ -27,6 +28,9 @@ const POLICIES: readonly { value: AccessPolicy; label: string }[] = [
 ];
 
 const POLICY_NOTE = "When a site asks for an Entry you haven't decided on for it. A decision remembered on the Entry always comes first.";
+
+const NAME_NOTE = "Shown in the sidebar and when a browser asks for logins.";
+const RECYCLE_NOTE = "Deleted Entries and Groups move to the Recycle Bin, so a delete can be undone.";
 
 export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?: string }) {
   const snapshot = useWorkspace().data;
@@ -57,11 +61,35 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
       {
         id: "general",
         name: "General",
-        cards: [[{
-          id: "file",
-          search: `Vault file ${settings.location.description} path location kdbx disk save lock status`,
-          render: () => <VaultFileRow settings={settings} summary={summary} />,
-        }]],
+        cards: [[
+          {
+            id: "name",
+            search: `Name ${NAME_NOTE} title rename`,
+            render: () => (
+              <SettingRow label="Name" desc={NAME_NOTE}>
+                <NameField key={settings.name} vault={vault} name={settings.name} />
+              </SettingRow>
+            ),
+          },
+          {
+            id: "file",
+            search: `Vault file ${settings.location.description} path location kdbx disk save lock status show in folder`,
+            render: () => <VaultFileRow settings={settings} summary={summary} />,
+          },
+          {
+            id: "recycle",
+            search: `Recycle Bin ${RECYCLE_NOTE} trash delete undo`,
+            render: () => (
+              <SettingRow label="Recycle Bin" desc={RECYCLE_NOTE}>
+                <Switch
+                  label="Recycle Bin"
+                  checked={settings.recycleBinEnabled}
+                  onCheckedChange={(enabled) => void api.setRecycleBinEnabled(vault, enabled).catch(fail)}
+                />
+              </SettingRow>
+            ),
+          },
+        ]],
       },
       {
         id: "browser",
@@ -84,9 +112,9 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
           },
           {
             id: "browserGroup",
-            search: "Browser group Where logins captured in the browser are saved by default save logins group companion",
+            search: "Browser group Where sign-ins captured in the browser are saved as Entries by default save logins sign-ins group companion",
             render: () => (
-              <SettingRow label="Browser group" desc="Where logins captured in the browser are saved by default.">
+              <SettingRow label="Browser group" desc="Where sign-ins captured in the browser are saved as Entries by default.">
                 <BrowserGroupPicker vault={vault} settings={settings} />
               </SettingRow>
             ),
@@ -97,13 +125,13 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
         id: "pairings",
         name: "Paired browsers",
         count: settings.pairings.length,
-        desc: "These browsers can ask this Vault for logins while it is open.",
+        desc: "These browsers can ask this Vault for Entries while it is open.",
         cards: [
           settings.pairings.length > 0
-            ? settings.pairings.map((name) => ({
-                id: `pairing-${name}`,
-                search: `${name} pairing paired browser revoke`,
-                render: () => <PairingRow vault={vault} name={name} />,
+            ? settings.pairings.map((pairing) => ({
+                id: `pairing-${pairing.name}`,
+                search: `${pairing.name} pairing paired browser revoke used`,
+                render: () => <PairingRow vault={vault} pairing={pairing} />,
               }))
             : [{
                 id: "none",
@@ -164,7 +192,41 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
   );
 }
 
-/** The Vault file: where it is, where it stands, and saving and locking it. */
+/** The Vault's name, renamed when the field is left or Enter is pressed. Empty, the Vault is
+ * named after its Vault file again. */
+function NameField({ vault, name }: { vault: VaultId; name: string }) {
+  const [value, setValue] = useState(name);
+  const commit = () => {
+    if (value.trim() === name) return setValue(name);
+    api.renameVault(vault, value).catch((error) => {
+      setValue(name);
+      fail(error);
+    });
+  };
+  return (
+    <div className="input name-input">
+      <input
+        aria-label="Vault name"
+        value={value}
+        spellCheck={false}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            // Escape puts the name back, not the page away.
+            event.preventDefault();
+            event.stopPropagation();
+            setValue(name);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** The Vault file: where it is, where it stands, saving and locking it, and showing it in its
+ * folder when it is on this computer. */
 function VaultFileRow({ settings, summary }: { settings: VaultSettings; summary: VaultSummary }) {
   const status = vaultStatus(summary);
   const tone = status.tone === "failed" ? "danger" : status.tone === "warn" || status.tone === "busy" ? status.tone : "";
@@ -174,6 +236,11 @@ function VaultFileRow({ settings, summary }: { settings: VaultSettings; summary:
         <span className="status-dot" />
         {status.text}
       </span>
+      {settings.location.provider === "local" && (
+        <Button size="sm" variant="ghost" onClick={() => void api.showVaultFileInFolder(summary.id).catch(fail)}>
+          <FolderOpen /> <Hl>Show in folder</Hl>
+        </Button>
+      )}
       <Button size="sm" variant="ghost" disabled={summary.saving} onClick={() => void api.saveVault(summary.id).catch(fail)}>
         <Save /> Save
       </Button>
@@ -212,7 +279,7 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
         </button>
       </MenuTrigger>
       <MenuContent align="end" className="max-h-[360px] w-[240px] overflow-y-auto">
-        <MenuLabel>Save browser logins here</MenuLabel>
+        <MenuLabel>Save browser sign-ins here</MenuLabel>
         <MenuPrimitive.RadioGroup
           value={settings.browserGroup ?? ""}
           onValueChange={(group) => void api.setBrowserGroup(vault, group).catch(fail)}
@@ -238,7 +305,7 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
             <MenuPrimitive.Item disabled className="menu-item outline-none data-[disabled]:text-fg-2">
               <Trash2 /> Recycle Bin
             </MenuPrimitive.Item>
-            <div className="menu-note">Logins can't be saved in the Recycle Bin.</div>
+            <div className="menu-note">Entries from the browser can't be saved in the Recycle Bin.</div>
           </>
         )}
       </MenuContent>
@@ -246,9 +313,13 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
   );
 }
 
-/** A paired browser, revoked once the user confirms in a popover. */
-function PairingRow({ vault, name }: { vault: VaultId; name: string }) {
+/** A paired browser, with when it was last used and paired, revoked once the user confirms in
+ * a popover. */
+function PairingRow({ vault, pairing }: { vault: VaultId; pairing: PairingView }) {
+  const { name } = pairing;
   const [open, setOpen] = useState(false);
+  const used = usedText(pairing.lastUsed);
+  const paired = pairedText(pairing.created);
   const revoke = () => {
     setOpen(false);
     api.revokePairing(vault, name).then(() => toast(`Pairing “${name}” revoked`, { icon: "check" }), fail);
@@ -259,6 +330,18 @@ function PairingRow({ vault, name }: { vault: VaultId; name: string }) {
       <div className="txt">
         <div className="lbl truncate">
           <Hl>{name}</Hl>
+        </div>
+        <div className="desc pair-meta">
+          <span className={cn(used.live && "live")}>
+            {used.live && <span className="status-dot" />}
+            {used.text}
+          </span>
+          {paired && (
+            <>
+              <span>·</span>
+              <span>{paired}</span>
+            </>
+          )}
         </div>
       </div>
       <div className="ctl">
@@ -288,7 +371,7 @@ function ConfirmRevoke({ name, onCancel, onRevoke }: { name: string; onCancel: (
   return (
     <>
       <h4>Revoke the Pairing “{name}”?</h4>
-      <p>It must pair again to fill logins.</p>
+      <p>It must pair again to fill Entries.</p>
       <div className="hstack justify-end">
         <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel

@@ -148,7 +148,7 @@ type Unavailable = Exclude<Status, "paired"> | FailureReason;
 function explain(status: Unavailable): [title: string, detail?: string] {
   switch (status) {
     case "unpaired":
-      return ["Connect this browser to keefast.", "You approve the Pairing in keefast."];
+      return ["Pair this browser with keefast.", "You approve the Pairing in keefast."];
     case "not-running":
       return ["keefast isn't running.", "Start keefast and unlock it."];
     case "locked":
@@ -314,7 +314,7 @@ export class FieldIcons {
     if (status === "unpaired") {
       const connect = this.document.createElement("button");
       connect.type = "button";
-      connect.textContent = "Connect";
+      connect.textContent = "Pair";
       connect.addEventListener("click", async (event) => {
         if (!this.byUser(event)) return;
         connect.disabled = true;

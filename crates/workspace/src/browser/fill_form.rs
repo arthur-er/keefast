@@ -80,9 +80,6 @@ impl BrowserSession {
         request: &Map<String, Value>,
     ) -> Result<BrowserReply, ProtocolError> {
         let (request, message) = self.decrypt(request)?;
-        if text(&message, "action") != "keefast-fill-form" {
-            return Err(ProtocolError::IncorrectAction);
-        }
         let entry =
             EntryId::from_hex(text(&message, "uuid")).ok_or(ProtocolError::NoValidUuidProvided)?;
         let site = Site::parse(text(&message, "url")).ok_or(ProtocolError::NoUrlProvided)?;
