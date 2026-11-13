@@ -116,7 +116,7 @@ fn unlocking_can_run_on_another_thread() {
         .join()
         .unwrap()
         .unwrap();
-    let id = workspace.add_unlocked(unlocked);
+    let id = workspace.add_unlocked(unlocked).unwrap();
 
     assert_eq!(workspace.visible_entries(EntryScope::Vault(id)).len(), 4);
 }

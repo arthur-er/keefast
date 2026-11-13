@@ -34,6 +34,7 @@ pub struct FakeStorage {
     files: Mutex<HashMap<VaultLocation, (Vec<u8>, u64)>>,
     next_revision: Mutex<u64>,
     failing_writes: Mutex<bool>,
+    failing_reads: Mutex<bool>,
     writes: Mutex<usize>,
     watchers: Arc<Mutex<Vec<(VaultLocation, OnChange)>>>,
     /// Changes made elsewhere, landing just before the next write each.
@@ -110,6 +111,11 @@ impl FakeStorage {
         *self.failing_writes.lock().unwrap() = fail;
     }
 
+    /// Makes every read fail, like a file keefast may not read, until turned off again.
+    pub fn fail_reads(&self, fail: bool) {
+        *self.failing_reads.lock().unwrap() = fail;
+    }
+
     pub fn writes(&self) -> usize {
         *self.writes.lock().unwrap()
     }
@@ -129,9 +135,29 @@ impl FakeStorage {
         *self.conflicts.lock().unwrap()
     }
 
+    /// Lands the change made elsewhere waiting for the next write to `location`, if any.
+    fn race(&self, location: &VaultLocation) {
+        let race = {
+            let mut races = self.races.lock().unwrap();
+            let index = races.iter().position(|(raced, _)| raced == location);
+            index.map(|index| races.remove(index))
+        };
+        if let Some((_, theirs)) = race {
+            self.change_elsewhere(location, &theirs);
+        }
+    }
+
     fn check_online(&self) -> Result<(), StorageError> {
         match *self.offline.lock().unwrap() {
             true => Err(StorageError::Offline("no network".into())),
+            false => Ok(()),
+        }
+    }
+
+    fn check_readable(&self) -> Result<(), StorageError> {
+        self.check_online()?;
+        match *self.failing_reads.lock().unwrap() {
+            true => Err(StorageError::Io(io::Error::other("permission denied"))),
             false => Ok(()),
         }
     }
@@ -139,7 +165,7 @@ impl FakeStorage {
 
 impl StorageProvider for FakeStorage {
     fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
-        self.check_online()?;
+        self.check_readable()?;
         *self.reads.lock().unwrap() += 1;
         let files = self.files.lock().unwrap();
         let (bytes, revision) = files
@@ -161,14 +187,7 @@ impl StorageProvider for FakeStorage {
         if *self.failing_writes.lock().unwrap() {
             return Err(StorageError::Io(io::Error::other("disk full")));
         }
-        let race = {
-            let mut races = self.races.lock().unwrap();
-            let index = races.iter().position(|(raced, _)| raced == location);
-            index.map(|index| races.remove(index))
-        };
-        if let Some((_, theirs)) = race {
-            self.change_elsewhere(location, &theirs);
-        }
+        self.race(location);
         let current = self
             .files
             .lock()
@@ -185,8 +204,21 @@ impl StorageProvider for FakeStorage {
         Ok(self.put(location, bytes))
     }
 
-    fn revision(&self, location: &VaultLocation) -> Result<Revision, StorageError> {
+    fn create(&self, location: &VaultLocation, bytes: &[u8]) -> Result<Revision, StorageError> {
         self.check_online()?;
+        if *self.failing_writes.lock().unwrap() {
+            return Err(StorageError::Io(io::Error::other("disk full")));
+        }
+        self.race(location);
+        if self.files.lock().unwrap().contains_key(location) {
+            return Err(StorageError::Exists(location.clone()));
+        }
+        *self.writes.lock().unwrap() += 1;
+        Ok(self.put(location, bytes))
+    }
+
+    fn revision(&self, location: &VaultLocation) -> Result<Revision, StorageError> {
+        self.check_readable()?;
         let files = self.files.lock().unwrap();
         let (_, revision) = files
             .get(location)
@@ -219,6 +251,52 @@ impl Drop for Unwatch {
             .lock()
             .unwrap()
             .retain(|(_, on_change)| Arc::as_ptr(on_change) as *const () as usize != self.id);
+    }
+}
+
+/// A real Storage provider, but a file appears, as another device or app would put it there,
+/// right after a read first finds none: between a check that no file is there and the write
+/// that follows it.
+pub struct AppearsAfterCheck {
+    inner: Arc<dyn StorageProvider>,
+    appear: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl AppearsAfterCheck {
+    pub fn new(inner: Arc<dyn StorageProvider>, appear: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            inner,
+            appear: Mutex::new(Some(Box::new(appear))),
+        }
+    }
+}
+
+impl StorageProvider for AppearsAfterCheck {
+    fn read(&self, location: &VaultLocation) -> Result<StoredFile, StorageError> {
+        let result = self.inner.read(location);
+        if matches!(result, Err(StorageError::NotFound(_)))
+            && let Some(appear) = self.appear.lock().unwrap().take()
+        {
+            appear();
+        }
+        result
+    }
+
+    fn canonical(&self, location: &VaultLocation) -> VaultLocation {
+        self.inner.canonical(location)
+    }
+
+    fn write(
+        &self,
+        location: &VaultLocation,
+        bytes: &[u8],
+        expected: Option<&Revision>,
+    ) -> Result<Revision, StorageError> {
+        self.inner.write(location, bytes, expected)
+    }
+
+    fn create(&self, location: &VaultLocation, bytes: &[u8]) -> Result<Revision, StorageError> {
+        self.inner.create(location, bytes)
     }
 }
 

@@ -86,13 +86,15 @@ impl Workspace {
     }
 
     /// Tells the Workspace the OS screen locked or the machine is suspending: every Vault
-    /// locks, unless the user turned that off. A Vault with unsaved changes can only be saved
-    /// or discarded, not left open: whoever is at the keyboard didn't ask to lock it, and may
-    /// not be the user.
+    /// locks, unless the user turned that off, and unlocks still running are discarded once
+    /// they end. A Vault with unsaved changes can only be saved or discarded, not left open:
+    /// whoever is at the keyboard didn't ask to lock it, and may not be the user.
     pub fn os_locked(&mut self, clipboard: &mut dyn Clipboard) -> Vec<PendingSave> {
         if !self.config.lock_on_os_lock {
             return Vec::new();
         }
+        // An unlock still running, its key derived before the lock, is discarded when it ends.
+        self.os_locks += 1;
         let all = self.vaults.iter().map(|open| open.id).collect();
         self.request_lock(all, clipboard, true)
     }

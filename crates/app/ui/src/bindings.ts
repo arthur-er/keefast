@@ -60,9 +60,11 @@ export const commands = {
 	createKeyFile: (near: string | null) => typedError<string | null, ApiError>(__TAURI_INVOKE("create_key_file", { near })),
 	/**
 	 *  Opens a Vault file, or unlocks its Vault if it is locked, deriving the key off the main
-	 *  thread. A Vault file whose Vault is open already is just shown.
+	 *  thread. A Vault file whose Vault is open already is just shown. `None` when the OS locked or
+	 *  suspended while the key was derived: the Vault stays as it was, for the user to unlock
+	 *  again.
 	 */
-	unlockVault: (location: Location, key: KeyInput) => typedError<VaultId, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
+	unlockVault: (location: Location, key: KeyInput) => typedError<number | null, ApiError>(__TAURI_INVOKE("unlock_vault", { location, key })),
 	/**
 	 *  Writes a new Vault file, never over an existing file, deriving the key off the main thread,
 	 *  then opens and shows its Vault.

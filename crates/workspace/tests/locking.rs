@@ -434,6 +434,51 @@ fn the_os_locking_or_suspending_locks_every_vault() {
 }
 
 #[test]
+fn an_unlock_still_running_when_the_os_locks_leaves_the_vault_locked() {
+    let mut h = harness();
+    h.lock_all();
+    let pending = h.workspace.begin_open(personal_vault(), key()).unwrap();
+    let unlocking = std::thread::spawn(move || pending.unlock());
+
+    let saves = h.workspace.os_locked(&mut h.clipboard);
+    run(&mut h.workspace, saves);
+    let unlocked = unlocking.join().unwrap().unwrap();
+
+    assert_eq!(h.workspace.add_unlocked(unlocked), None);
+    assert!(h.is_locked(h.personal));
+    assert_eq!(h.workspace.vaults().count(), 0);
+    // Back at the keyboard, the user unlocks it as usual.
+    assert_eq!(h.unlock(&personal_vault()).unwrap(), h.personal);
+}
+
+#[test]
+fn a_vault_opening_when_the_os_locks_is_not_opened() {
+    let mut h = harness();
+    let other = VaultLocation::Local("/vaults/other.kdbx".into());
+    h.storage.change_elsewhere(&other, KEEPASSXC_KDBX4);
+    let pending = h.workspace.begin_open(other.clone(), key()).unwrap();
+
+    let saves = h.workspace.os_locked(&mut h.clipboard);
+    run(&mut h.workspace, saves);
+
+    assert_eq!(h.workspace.add_unlocked(pending.unlock().unwrap()), None);
+    assert_eq!(h.workspace.open_vault_at(&other), None);
+    assert_eq!(h.workspace.locked_vault_at(&other), None);
+}
+
+#[test]
+fn an_unlock_begun_after_the_os_locked_unlocks() {
+    let mut h = harness();
+    let saves = h.workspace.os_locked(&mut h.clipboard);
+    run(&mut h.workspace, saves);
+
+    let pending = h.workspace.begin_open(personal_vault(), key()).unwrap();
+    let unlocked = h.workspace.add_unlocked(pending.unlock().unwrap());
+
+    assert_eq!(unlocked, Some(h.personal));
+}
+
+#[test]
 fn locking_on_os_lock_can_be_turned_off() {
     let mut h = harness_with(AppConfig {
         lock_on_os_lock: false,

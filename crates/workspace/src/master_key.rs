@@ -63,8 +63,10 @@ pub struct PendingCreate {
 
 impl PendingCreate {
     /// Writes the new Vault file, and returns its Vault to add with [`Workspace::add_unlocked`].
-    /// A file already there is never replaced: it may be another Vault file.
+    /// A file already there is never replaced, even one that appears while the key is
+    /// derived: it may be another Vault file.
     pub fn create(self) -> Result<UnlockedVault, CreateVaultError> {
+        // Checked first too, so the user needn't wait for key derivation to hear of it.
         match self.storage.read(&self.location) {
             Ok(_) => return Err(CreateVaultError::FileExists),
             Err(StorageError::NotFound(_)) => {}
@@ -73,7 +75,11 @@ impl PendingCreate {
         let key = self.new.secrets.new_key()?;
         let vault = Vault::create(&self.new.name, &key, &self.new.encryption, self.now)?;
         let bytes = vault.save()?;
-        let revision = self.storage.write(&self.location, &bytes, None)?;
+        let revision = match self.storage.create(&self.location, &bytes) {
+            Ok(revision) => revision,
+            Err(StorageError::Exists(_)) => return Err(CreateVaultError::FileExists),
+            Err(error) => return Err(error.into()),
+        };
         // Known by its canonical location now that it exists.
         let location = self.storage.canonical(&self.location);
         if let Some(cache) = &self.cache {
@@ -92,6 +98,7 @@ impl PendingCreate {
             vault,
             revision: Some(revision),
             fetched: Fetched::FromProvider,
+            os_locks: None,
         })
     }
 }

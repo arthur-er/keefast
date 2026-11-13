@@ -166,7 +166,7 @@ impl From<OpenVaultError> for ApiError {
                 "The Vault file could not be read.",
                 Some(error.to_string()),
             ),
-            OpenVaultError::Storage(StorageError::Conflict) => {
+            OpenVaultError::Storage(StorageError::Conflict | StorageError::Exists(_)) => {
                 (Io, "The Vault file could not be read.", None)
             }
             OpenVaultError::Storage(StorageError::Unavailable(_)) => (
