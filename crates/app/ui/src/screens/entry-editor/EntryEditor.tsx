@@ -18,10 +18,11 @@ import {
 } from "lucide-react";
 
 import { api, ApiError, errorMessage } from "@/api";
-import type { EntryDetail, EntryKey, TotpSetup } from "@/bindings";
+import type { EntryDetail, EntryKey, StrengthView, TotpSetup } from "@/bindings";
 import { keys, useEntry, useFacets, useGroups, useWorkspace } from "@/api/queries";
-import { Badge, Button, GroupIcon, IconButton, Kbd, Switch, toast } from "@/kit";
+import { Badge, Button, GroupIcon, IconButton, Kbd, StrengthMeter, Switch, toast } from "@/kit";
 import { formatDate } from "@/lib/format";
+import { SHORTCUTS } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { GeneratorPopover, GeneratorTrigger } from "@/screens/password-generator/GeneratorPopover";
 import {
@@ -350,6 +351,11 @@ function EditorForm({
   }, [keysActive]);
   useAppCommand({ id: "entryEditorDone", title: "Save the Entry", section: "Entry", icon: Check, run: () => void latest.current.save() });
   useAppCommand({ id: "entryEditorCancel", title: "Cancel editing", section: "Entry", icon: X, run: () => latest.current.cancel() });
+  useAppCommand(
+    { id: "generatePassword", title: "Generate a password", section: "Entry", icon: WandSparkles, shortcut: SHORTCUTS.generatePassword, run: () => setGeneratorOpen((open) => !open) },
+    keysActive,
+  );
+  const strength = usePasswordStrength(entry, draft.password === draft.savedPassword ? null : draft.password);
 
   const vaultName = entry?.vaultName ?? snapshot?.vaults.find((candidate) => candidate.id === vault)?.name ?? "";
   const place = useMemo(() => {
@@ -493,6 +499,7 @@ function EditorForm({
                   setShowPassword(true);
                   toast(<>Generated password filled in<span className="subtle"> · {entry ? "Done" : "Create"} saves it</span></>, { icon: WandSparkles });
                 }}
+                onOpenSettings={() => leave(() => actions.openSettings("generator"))}
               >
                 <div className={cn("gi-group", generatorOpen && "is-open")}>
                   <input
@@ -526,13 +533,19 @@ function EditorForm({
                     <Copy />
                   </IconButton>
                   <GeneratorTrigger asChild>
-                    <Button variant="secondary" size="sm" aria-expanded={generatorOpen}>
+                    <Button variant="secondary" size="sm" aria-expanded={generatorOpen} title="Generate a password · Ctrl G">
                       <WandSparkles /> Generate
                     </Button>
                   </GeneratorTrigger>
                 </div>
               </GeneratorPopover>
             </div>
+            {strength && (
+              <div className="ee-kv ee-strength">
+                <span />
+                <StrengthMeter strength={strength} />
+              </div>
+            )}
             <div className="ee-kv">
               <span className="k">URL</span>
               <div className="gi-group">
@@ -794,4 +807,26 @@ function EditorForm({
       </div>
     </div>
   );
+}
+
+/** How strong the password being edited is: the saved one's (`password` null) as the backend
+ * estimated it, without revealing it, or the one typed, estimated as it is typed. */
+function usePasswordStrength(entry: EntryDetail | null, password: string | null): StrengthView | null {
+  const [typed, setTyped] = useState<StrengthView | null>(null);
+  useEffect(() => {
+    if (!password) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      api.estimateStrength(password).then(
+        (strength) => current && setTyped(strength),
+        () => {},
+      );
+    }, 100);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [password]);
+  if (password === null) return entry?.strength ?? null;
+  return password ? typed : null;
 }

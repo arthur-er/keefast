@@ -34,6 +34,34 @@ describe("mock backend", () => {
     expect(await api.revealPassword(github.vault, github.id)).toBe("x7#Lq9!vR2mZ@pW4");
   });
 
+  it("says how strong a password is without revealing it", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const detail = await api.getEntry(github!.vault, github!.id);
+    expect(detail.strength?.score).toBe("strong");
+    expect((await api.estimateStrength("aaaa")).score).toBe("weak");
+    const generated = await api.generatePassword(null);
+    expect(generated.strength.bits).toBeGreaterThan(100);
+  });
+
+  it("adds tags from the detail once, keeping the version before", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const before = await api.getEntry(github!.vault, github!.id);
+    await api.addTags(github!.vault, github!.id, "work, dev");
+    await api.addTags(github!.vault, github!.id, "work");
+    const after = await api.getEntry(github!.vault, github!.id);
+    expect(after.tags).toEqual([...before.tags, "work"]);
+    expect(after.historyCount).toBe(before.historyCount + 1);
+  });
+
+  it("gives a TOTP code with the one after it", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const code = (await api.getTotpCode(github!.vault, github!.id))!;
+    expect(code.next).toMatch(/^\d{6}$/);
+  });
+
   it("refuses an edit of an Entry Merged since the editor read it, until the user keeps it", async () => {
     const mock = createMockBackend();
     const api = unwrap(mock.commands);

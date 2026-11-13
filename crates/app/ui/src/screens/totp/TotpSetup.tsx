@@ -317,6 +317,9 @@ export function LiveTotp({ vault, entry, className }: { vault: number; entry: st
         <span>{b}</span>
       </span>
       <span className="tt-secs">{left} s</span>
+      <span className="tt-next">
+        Next <span className="mono">{splitCode(code.next).join(" ")}</span>
+      </span>
     </span>
   );
 }

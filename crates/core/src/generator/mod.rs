@@ -8,6 +8,8 @@
 use secrecy::SecretString;
 use zeroize::Zeroizing;
 
+use crate::strength::{PasswordStrength, word_bits};
+
 /// The symbols a password may use: ASCII punctuation, as KeePassXC offers them.
 pub const SYMBOLS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
@@ -18,7 +20,7 @@ const LOWERCASE: &str = "abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &str = "0123456789";
 
-const WORD_LIST: &str = include_str!("eff_large_wordlist.txt");
+pub(crate) const WORD_LIST: &str = include_str!("eff_large_wordlist.txt");
 
 /// How to make a password: from character classes, or as a passphrase.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +113,24 @@ impl PasswordRecipe {
             Self::Passphrase(recipe) => recipe.generate()?,
         };
         Ok(SecretString::from(password.as_str()))
+    }
+
+    /// How strong every password this recipe makes is: the bits of its random picks, the same
+    /// whichever password comes out. `None` when the recipe can't make one.
+    pub fn strength(&self) -> Option<PasswordStrength> {
+        let bits = match self {
+            Self::Characters(recipe) => {
+                let classes = recipe.classes();
+                let valid = !classes.is_empty()
+                    && (recipe.min_length()..=CharacterRecipe::MAX_LENGTH).contains(&recipe.length);
+                let pool: usize = classes.iter().map(Vec::len).sum();
+                valid.then(|| f64::from(recipe.length) * (pool as f64).log2())
+            }
+            Self::Passphrase(recipe) => (1..=PassphraseRecipe::MAX_WORDS)
+                .contains(&recipe.words)
+                .then(|| f64::from(recipe.words) * word_bits()),
+        };
+        bits.map(PasswordStrength::from_bits)
     }
 }
 

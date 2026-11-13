@@ -133,6 +133,12 @@ export const commands = {
 	 *  whatever the Entry is now, and that version goes to the history.
 	 */
 	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput, seenModified: number | null) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input, seenModified })),
+	/**
+	 *  Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
+	 *  Entry's history. `text` is split on commas and semicolons as KeePass does; tags the Entry has
+	 *  already change nothing.
+	 */
+	addTags: (vault: VaultId, entry: EntryId, text: string) => typedError<null, ApiError>(__TAURI_INVOKE("add_tags", { vault, entry, text })),
 	/**  Moves an Entry into another Group of its Vault. */
 	moveEntry: (vault: VaultId, entry: EntryId, to: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("move_entry", { vault, entry, to })),
 	/**
@@ -192,6 +198,8 @@ export const commands = {
 	 */
 	getTotpCode: (vault: VaultId, entry: EntryId) => typedError<{
 	code: string,
+	/**  The code that takes over when `remaining` runs out. */
+	next: string,
 	/**  Seconds until the next code, from 1 to the period. */
 	remaining: number,
 	period: number,
@@ -250,7 +258,12 @@ export const commands = {
 	mode: GeneratorModeChoice,
 	characters: CharacterSettings,
 	passphrase: PassphraseSettings,
-} | null) => typedError<string, ApiError>(__TAURI_INVOKE("generate_password", { settings })),
+} | null) => typedError<GeneratedPassword, ApiError>(__TAURI_INVOKE("generate_password", { settings })),
+	/**
+	 *  How strong a password the user is typing is. A saved Entry's password needn't come here:
+	 *  its detail has its strength.
+	 */
+	estimateStrength: (password: string) => typedError<StrengthView, ApiError>(__TAURI_INVOKE("estimate_strength", { password })),
 	getSettings: () => typedError<AppSettings, ApiError>(__TAURI_INVOKE("get_settings")),
 	setTheme: (theme: Theme) => typedError<null, ApiError>(__TAURI_INVOKE("set_theme", { theme })),
 	/**  Changes how long the Vaults wait for the user's input before they lock; `None` (or 0) never. */
@@ -598,6 +611,11 @@ export type EntryDetail = {
 	facets: FacetView[],
 	attachments: AttachmentView[],
 	totp: TotpView | null,
+	/**
+	 *  How strong the password is, `None` without one. Estimated here, so showing it needs no
+	 *  reveal.
+	 */
+	strength: StrengthView | null,
 	/**  How many earlier versions the Entry's history keeps. */
 	historyCount: number,
 	rememberedAccess: RememberedAccessView[],
@@ -807,6 +825,15 @@ export type FacetView = {
 	 *  capability, which every v1 command needs.
 	 */
 	commands: FacetCommandView[],
+};
+
+/**
+ *  A password the generator made, with how strong its recipe makes every password: the same
+ *  whichever comes out, so regenerating doesn't move the meter.
+ */
+export type GeneratedPassword = {
+	password: string,
+	strength: StrengthView,
 };
 
 /**  What the generator's controls may be set to. */
@@ -1231,6 +1258,15 @@ export type SmartListCounts = {
  */
 export type SortOrder = "title" | "username" | "url" | "created" | "modified";
 
+export type StrengthScoreChoice = "weak" | "fair" | "good" | "strong";
+
+/**  How strong a password is, as the strength meter shows it. */
+export type StrengthView = {
+	/**  The estimated entropy, in bits. */
+	bits: number,
+	score: StrengthScoreChoice,
+};
+
 /**  Where a Dropbox Vault stands with its Vault file in Dropbox. */
 export type SyncState = "synced" | "syncing" | "offline" | "error";
 
@@ -1246,9 +1282,11 @@ export type Theme =
 
 export type TotpAlgorithmChoice = "sha1" | "sha256" | "sha512";
 
-/**  A TOTP code, with how long it stays valid. */
+/**  A TOTP code, with how long it stays valid and the code after it. */
 export type TotpCodeView = {
 	code: string,
+	/**  The code that takes over when `remaining` runs out. */
+	next: string,
 	/**  Seconds until the next code, from 1 to the period. */
 	remaining: number,
 	period: number,
