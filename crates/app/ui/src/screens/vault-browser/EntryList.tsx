@@ -164,6 +164,7 @@ export function EntryList() {
                       key={entryKey(entry)}
                       entry={entry}
                       selected={sameEntry(selected, entry)}
+                      unsaved={sameEntry(withChanges, entry)}
                       search={state.search}
                       onSelect={() => select(entry)}
                     />
