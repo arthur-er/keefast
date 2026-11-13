@@ -267,6 +267,8 @@ struct OnlineSync {
     failures: u32,
     /// When the Vault file is next checked for changes made elsewhere.
     next_check: SystemTime,
+    /// When a sync last went through, if one has since the Vault was unlocked.
+    last_synced: Option<SystemTime>,
 }
 
 impl OnlineSync {
@@ -276,6 +278,7 @@ impl OnlineSync {
             problem: None,
             failures: 0,
             next_check: now,
+            last_synced: None,
         };
         match fetched {
             Fetched::FromProvider => sync.record(None, now),
@@ -290,6 +293,9 @@ impl OnlineSync {
     /// sync doesn't go through, up to [`Workspace::MAX_SYNC_WAIT`].
     fn record(&mut self, problem: Option<SyncProblem>, now: SystemTime) {
         self.problem = problem;
+        if problem.is_none() {
+            self.last_synced = Some(now);
+        }
         self.failures = match problem {
             Some(_) => self.failures.saturating_add(1),
             None => 0,
@@ -388,6 +394,16 @@ impl OpenVault {
     /// local Vault files.
     pub fn sync_status(&self) -> Option<SyncStatus> {
         Some(self.online.as_ref()?.status(self.saving))
+    }
+
+    /// When the Vault last synced with its Vault file at an online Storage provider: the last
+    /// time a sync went through since the Vault was unlocked. `None` for local Vault files, and
+    /// until a sync goes through.
+    pub fn last_synced(&self) -> Option<Timestamp> {
+        self.online
+            .as_ref()?
+            .last_synced
+            .map(Timestamp::from_system_time)
     }
 }
 

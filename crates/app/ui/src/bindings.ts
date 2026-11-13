@@ -135,6 +135,12 @@ export const commands = {
 	 *  whatever the Entry is now, and that version goes to the history.
 	 */
 	updateEntry: (vault: VaultId, entry: EntryId, input: EntryInput, seenModified: number | null) => typedError<null, ApiError>(__TAURI_INVOKE("update_entry", { vault, entry, input, seenModified })),
+	/**
+	 *  Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
+	 *  Entry's history. `text` is split on commas and semicolons as KeePass does; tags the Entry has
+	 *  already change nothing.
+	 */
+	addTags: (vault: VaultId, entry: EntryId, text: string) => typedError<null, ApiError>(__TAURI_INVOKE("add_tags", { vault, entry, text })),
 	/**  Moves an Entry into another Group of its Vault. */
 	moveEntry: (vault: VaultId, entry: EntryId, to: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("move_entry", { vault, entry, to })),
 	/**
@@ -194,6 +200,8 @@ export const commands = {
 	 */
 	getTotpCode: (vault: VaultId, entry: EntryId) => typedError<{
 	code: string,
+	/**  The code that takes over when `remaining` runs out. */
+	next: string,
 	/**  Seconds until the next code, from 1 to the period. */
 	remaining: number,
 	period: number,
@@ -252,7 +260,12 @@ export const commands = {
 	mode: GeneratorModeChoice,
 	characters: CharacterSettings,
 	passphrase: PassphraseSettings,
-} | null) => typedError<string, ApiError>(__TAURI_INVOKE("generate_password", { settings })),
+} | null) => typedError<GeneratedPassword, ApiError>(__TAURI_INVOKE("generate_password", { settings })),
+	/**
+	 *  How strong a password the user is typing is. A saved Entry's password needn't come here:
+	 *  its detail has its strength.
+	 */
+	estimateStrength: (password: string) => typedError<StrengthView, ApiError>(__TAURI_INVOKE("estimate_strength", { password })),
 	getSettings: () => typedError<AppSettings, ApiError>(__TAURI_INVOKE("get_settings")),
 	setTheme: (theme: Theme) => typedError<null, ApiError>(__TAURI_INVOKE("set_theme", { theme })),
 	/**  Changes how long the Vaults wait for the user's input before they lock; `None` (or 0) never. */
@@ -340,6 +353,12 @@ export const commands = {
 	 *  Dropbox sends the browser back. keefast never sees the Dropbox password.
 	 */
 	dropboxConnect: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect")),
+	/**
+	 *  Connects another Dropbox account in place of the one connected: as `dropbox_connect`, but
+	 *  Dropbox asks the user to sign in rather than letting in the account the browser is signed in
+	 *  to. The account connected stays if the user stops or Dropbox refuses.
+	 */
+	dropboxConnectAnother: () => typedError<DropboxAccountView, ApiError>(__TAURI_INVOKE("dropbox_connect_another")),
 	/**  Opens Dropbox's page again, while connecting. */
 	dropboxReopenConnectPage: () => typedError<null, ApiError>(__TAURI_INVOKE("dropbox_reopen_connect_page")),
 	/**  Stops waiting for the browser; `dropbox_connect` then fails as cancelled. */
@@ -594,6 +613,11 @@ export type EntryDetail = {
 	facets: FacetView[],
 	attachments: AttachmentView[],
 	totp: TotpView | null,
+	/**
+	 *  How strong the password is, `None` without one. Estimated here, so showing it needs no
+	 *  reveal.
+	 */
+	strength: StrengthView | null,
 	/**  How many earlier versions the Entry's history keeps. */
 	historyCount: number,
 	rememberedAccess: RememberedAccessView[],
@@ -803,6 +827,15 @@ export type FacetView = {
 	 *  capability, which every v1 command needs.
 	 */
 	commands: FacetCommandView[],
+};
+
+/**
+ *  A password the generator made, with how strong its recipe makes every password: the same
+ *  whichever comes out, so regenerating doesn't move the meter.
+ */
+export type GeneratedPassword = {
+	password: string,
+	strength: StrengthView,
 };
 
 /**  What the generator's controls may be set to. */
@@ -1045,12 +1078,20 @@ export type PendingAccess = {
 	id: RequestId,
 	/**  The host of the site asking. */
 	site: string,
+	/**  The site's full address: scheme, host, and port when it isn't the scheme's own. */
+	origin: string,
 	/**
 	 *  The host the site's form sends the Entries to, when it is another than `site`. The
 	 *  decision is for both, so the prompt shows both.
 	 */
 	formSite: string | null,
+	/**  `form_site`'s full address. */
+	formOrigin: string | null,
 	entries: AskedEntry[],
+	/**  The browser that asked: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the site asked, in seconds since 1970 UTC. */
+	asked: number | null,
 };
 
 export type PendingLock = {
@@ -1068,6 +1109,10 @@ export type PendingLogin = {
 	/**  The host of the site the login was submitted on. */
 	site: string,
 	username: string,
+	/**  The browser that captured it: the names of its Pairings, as the user named them. */
+	pairings: string[],
+	/**  When the browser captured it, in seconds since 1970 UTC. */
+	asked: number | null,
 	/**
 	 *  The places it can go, as a list: headings (without a target), the Entries it could
 	 *  update, then every Group of each Vault it may go to.
@@ -1244,6 +1289,15 @@ export type SmartListCounts = {
  */
 export type SortOrder = "title" | "username" | "url" | "created" | "modified";
 
+export type StrengthScoreChoice = "weak" | "fair" | "good" | "strong";
+
+/**  How strong a password is, as the strength meter shows it. */
+export type StrengthView = {
+	/**  The estimated entropy, in bits. */
+	bits: number,
+	score: StrengthScoreChoice,
+};
+
 /**  Where a Dropbox Vault stands with its Vault file in Dropbox. */
 export type SyncState = "synced" | "syncing" | "offline" | "error";
 
@@ -1259,9 +1313,11 @@ export type Theme =
 
 export type TotpAlgorithmChoice = "sha1" | "sha256" | "sha512";
 
-/**  A TOTP code, with how long it stays valid. */
+/**  A TOTP code, with how long it stays valid and the code after it. */
 export type TotpCodeView = {
 	code: string,
+	/**  The code that takes over when `remaining` runs out. */
+	next: string,
 	/**  Seconds until the next code, from 1 to the period. */
 	remaining: number,
 	period: number,
@@ -1321,6 +1377,11 @@ export type VaultSummary = {
 	saveFailed: boolean,
 	/**  `None` for a local Vault file. */
 	syncStatus: SyncState | null,
+	/**
+	 *  When the Vault last synced with its Vault file in Dropbox, in seconds since 1970 UTC.
+	 *  `None` for a local Vault file, a locked Vault, and until a sync goes through.
+	 */
+	lastSynced: number | null,
 	/**  Entries in the Vault, outside the Recycle Bin too; 0 unless unlocked. */
 	entryCount: number,
 	rootGroup: GroupId | null,

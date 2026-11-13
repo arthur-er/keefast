@@ -187,6 +187,7 @@ fn local_vaults_are_not_cached_and_have_no_sync_status() {
     let vault = workspace.open_vault(&personal_vault(), &secrets()).unwrap();
 
     assert_eq!(workspace.vault(vault).unwrap().sync_status(), None);
+    assert_eq!(workspace.vault(vault).unwrap().last_synced(), None);
     assert!(h.cache.cached(&personal_vault()).is_none());
     assert_eq!(workspace.sync_in(), None);
 }
@@ -380,6 +381,44 @@ fn checks_while_offline_wait_longer_each_time() {
     h.dropbox.go_offline(false);
     laptop.sync_when_due();
     assert_eq!(laptop.workspace.sync_in(), Some(Workspace::SYNC_INTERVAL));
+}
+
+#[test]
+fn a_dropbox_vault_says_when_it_last_synced() {
+    let h = harness();
+    let (mut laptop, vault) = h.open();
+    let synced_at = |device: &Device| device.workspace.vault(vault).unwrap().last_synced();
+    let opened = laptop.workspace.now();
+    assert_eq!(synced_at(&laptop), Some(opened), "opening synced it");
+
+    laptop.sync_when_due();
+    let checked = laptop.workspace.now();
+    assert!(checked > opened);
+    assert_eq!(synced_at(&laptop), Some(checked));
+
+    h.dropbox.go_offline(true);
+    laptop.sync_when_due();
+    assert_eq!(
+        synced_at(&laptop),
+        Some(checked),
+        "a sync that didn't go through"
+    );
+
+    h.dropbox.go_offline(false);
+    laptop.sync_when_due();
+    assert_eq!(synced_at(&laptop), Some(laptop.workspace.now()));
+}
+
+#[test]
+fn a_dropbox_vault_opened_offline_has_not_synced() {
+    let h = harness();
+    drop(h.open());
+    h.dropbox.go_offline(true);
+
+    let (laptop, vault) = h.open();
+
+    assert_eq!(laptop.status(vault), Some(SyncStatus::Offline));
+    assert_eq!(laptop.workspace.vault(vault).unwrap().last_synced(), None);
 }
 
 #[test]

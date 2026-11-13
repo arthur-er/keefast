@@ -13,6 +13,7 @@ function vault(name: string, provider: "local" | "dropbox", state: VaultSummary[
     unsavedChanges: false,
     saving: false,
     saveFailed: false,
+    lastSynced: null,
     syncStatus: provider === "dropbox" ? "synced" : null,
     entryCount: 0,
     rootGroup: null,

@@ -7,7 +7,7 @@ import { storageLine, toolbarStatus, vaultStatus } from "./vaultStatus";
 function vault(changes: Partial<VaultSummary> = {}): VaultSummary {
   return {
     id: 0, name: "Personal", location: { provider: "local", path: "/v/Personal.kdbx", name: "Personal", description: "/v/Personal.kdbx" },
-    state: "unlocked", unsavedChanges: false, saving: false, saveFailed: false, syncStatus: null, entryCount: 1,
+    state: "unlocked", unsavedChanges: false, saving: false, saveFailed: false, syncStatus: null, lastSynced: null, entryCount: 1,
     rootGroup: "r", recycleBin: null, browserGroup: null, smartLists: { withTotp: 0, recentlyModified: 0, expired: 0 },
     tagColors: [], ...changes,
   };
@@ -26,6 +26,13 @@ describe("vaultStatus", () => {
     expect(storageLine(vault())).toBe("Local · Saved");
     const dropbox = vault({ syncStatus: "synced", location: { provider: "dropbox", path: "/W.kdbx", name: "W", description: "Dropbox: /W.kdbx" } });
     expect(storageLine(dropbox)).toBe("Dropbox · Synced");
+  });
+
+  it("tells a locked Dropbox Vault from a locked local one", () => {
+    const locked = { state: "locked", syncStatus: null } as const;
+    expect(storageLine(vault(locked))).toBe("Locked");
+    const dropbox = { provider: "dropbox", path: "/W.kdbx", name: "W", description: "Dropbox: /W.kdbx" } as const;
+    expect(storageLine(vault({ ...locked, location: dropbox }))).toBe("Dropbox · Locked");
   });
 });
 

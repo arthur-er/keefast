@@ -10,6 +10,8 @@ import { api, errorMessage } from "@/api";
 import type { SyncState, VaultSummary } from "@/bindings";
 import { keys } from "@/api/queries";
 import { Button, toast } from "@/kit";
+import { timeAgo } from "@/lib/format";
+import { useNow } from "@/lib/now";
 import { cn } from "@/lib/utils";
 
 import "./dropbox.css";
@@ -27,6 +29,7 @@ const DISCONNECTED = "Dropbox isn't connected. Saves are kept on this machine an
 export function SyncDetail({ vault }: { vault: VaultSummary }) {
   const status = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data;
   const account = status?.account;
+  const now = useNow();
   const sync = vault.syncStatus;
   if (!sync) return null;
   const { word } = SYNC[sync];
@@ -45,7 +48,10 @@ export function SyncDetail({ vault }: { vault: VaultSummary }) {
         )}
         {word}
       </div>
-      <p>{body}</p>
+      <p>
+        {body}
+        {vault.lastSynced !== null && ` Last synced ${timeAgo(vault.lastSynced, now)}.`}
+      </p>
       {(sync === "error" || sync === "offline") && (
         <div className="hstack mt-2.5">
           <Button

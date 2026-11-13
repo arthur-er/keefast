@@ -7,10 +7,11 @@
 //! without a reveal (ADR 0009).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use keefast_core::{
     self as core, AccessDecision, AttachmentPreview, CustomField, Entry, EntryFields, EntrySearch,
-    EntrySort, Group, Site, Timestamp, Totp, parse_tags,
+    EntrySort, Group, PasswordStrength, Site, Timestamp, Totp, parse_tags,
 };
 use keefast_plugins::{Capability, EntryField, FieldKind, FoundFacet, PluginHost};
 use keefast_workspace::{self as ws, Workspace};
@@ -22,6 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use super::Core;
 use super::facets::FacetEditorView;
+use super::generator::StrengthView;
 use crate::core::AppCore;
 use crate::dto::{
     Color, EntryId, GroupId, IconChoice, IconView, Scope, VaultId, icon_view, seconds, title_of,
@@ -265,6 +267,9 @@ pub struct EntryDetail {
     pub facets: Vec<FacetView>,
     pub attachments: Vec<AttachmentView>,
     pub totp: Option<TotpView>,
+    /// How strong the password is, `None` without one. Estimated here, so showing it needs no
+    /// reveal.
+    pub strength: Option<StrengthView>,
     /// How many earlier versions the Entry's history keeps.
     pub history_count: u32,
     pub remembered_access: Vec<RememberedAccessView>,
@@ -738,9 +743,13 @@ fn utf16_positions(text: &str, offsets: &[usize]) -> Vec<u32> {
 #[tauri::command]
 #[specta::specta]
 pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiResult<EntryDetail> {
+    entry_detail(&core, vault, &entry)
+}
+
+fn entry_detail(core: &AppCore, vault: VaultId, entry: &EntryId) -> ApiResult<EntryDetail> {
     let plugins = core.plugins();
     core.read(|workspace| {
-        let (open, found) = find(workspace, vault, &entry)?;
+        let (open, found) = find(workspace, vault, entry)?;
         let places = Places::of(open.vault());
         let mut summary = summary(workspace, open, &places, found);
         // As the list shows it, from the same Plugins.
@@ -768,6 +777,9 @@ pub async fn get_entry(core: Core<'_>, vault: VaultId, entry: EntryId) -> ApiRes
                 })
                 .collect(),
             totp: found.totp().map(totp_view),
+            strength: Some(found.password().expose_secret())
+                .filter(|password| !password.is_empty())
+                .map(|password| PasswordStrength::estimate(password).into()),
             history_count: found.history().len() as u32,
             remembered_access: found
                 .remembered_access()
@@ -892,6 +904,41 @@ fn update_entry_in(
     Ok(workspace.update_entry(vault, entry, &fields)?)
 }
 
+/// Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
+/// Entry's history. `text` is split on commas and semicolons as KeePass does; tags the Entry has
+/// already change nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn add_tags(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+    text: String,
+) -> ApiResult<()> {
+    add_tags_to(&core, vault, &entry, &text)
+}
+
+fn add_tags_to(core: &Arc<AppCore>, vault: VaultId, entry: &EntryId, text: &str) -> ApiResult<()> {
+    let edit = core.read(|workspace| {
+        let (open, found) = find(workspace, vault, entry)?;
+        let mut fields = EntryFields::from(found);
+        let before = fields.tags.len();
+        for tag in parse_tags(text) {
+            if !fields.tags.contains(&tag) {
+                fields.tags.push(tag);
+            }
+        }
+        let added = fields.tags.len() > before;
+        Ok::<_, ApiError>(added.then(|| (open.id(), found.id(), fields)))
+    })?;
+    match edit {
+        Some((vault, entry, fields)) => {
+            core.edit(|workspace| workspace.update_entry(vault, entry, &fields))
+        }
+        None => Ok(()),
+    }
+}
+
 /// Moves an Entry into another Group of its Vault.
 #[tauri::command]
 #[specta::specta]
@@ -1000,10 +1047,89 @@ mod tests {
     use keefast_plugins::PluginHost;
 
     use super::{
-        CustomFieldInput, EntryInput, EntryQuery, OwnedFieldKind, SortOrder, custom_field_value,
-        custom_field_view, entry_list, facet_views, update_entry_in, web_address,
+        CustomFieldInput, EntryInput, EntryQuery, OwnedFieldKind, SortOrder, add_tags_to,
+        custom_field_value, custom_field_view, entry_detail, entry_list, facet_views,
+        update_entry_in, web_address,
     };
-    use crate::dto::IconChoice;
+    use crate::core::AppCore;
+    use crate::dto::{EntryId, IconChoice, VaultId};
+
+    /// A core with a copy of the KeePassXC fixture open, and a new Entry made in it from
+    /// `fields`. The temporary directory must live as long as the Vault.
+    fn with_entry(
+        fields: keefast_core::EntryFields,
+    ) -> (std::sync::Arc<AppCore>, VaultId, EntryId, tempfile::TempDir) {
+        use keefast_workspace::{UnlockSecrets, VaultLocation};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.kdbx");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/keepassxc-kdbx4.kdbx"
+            ),
+            &path,
+        )
+        .unwrap();
+        let (core, _) = crate::core::tests::core();
+        let (vault, entry) = core.update(|workspace| {
+            let vault = workspace
+                .open_vault(
+                    &VaultLocation::Local(path.clone()),
+                    &UnlockSecrets::password("fixture-password"),
+                )
+                .unwrap();
+            let root = workspace.vault(vault).unwrap().vault().root().id();
+            let entry = workspace.create_entry(vault, root, &fields).unwrap();
+            (vault, entry)
+        });
+        (core, vault.into(), entry.into(), dir)
+    }
+
+    #[test]
+    fn the_detail_has_the_passwords_strength_and_not_the_password() {
+        use super::super::generator::StrengthScoreChoice;
+
+        let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
+            title: "Forum".into(),
+            password: SecretString::from("Password123!"),
+            ..Default::default()
+        });
+        let detail = entry_detail(&core, vault, &entry).unwrap();
+        let strength = detail.strength.unwrap();
+        assert_eq!(strength.score, StrengthScoreChoice::Weak);
+        assert!(strength.bits < 45);
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(!json.contains("Password123!"));
+
+        let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
+            title: "No password".into(),
+            ..Default::default()
+        });
+        assert_eq!(entry_detail(&core, vault, &entry).unwrap().strength, None);
+    }
+
+    #[test]
+    fn tags_added_from_the_detail_join_the_entrys_own() {
+        let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
+            title: "GitHub".into(),
+            password: SecretString::from("hunter2"),
+            tags: vec!["dev".into()],
+            ..Default::default()
+        });
+        add_tags_to(&core, vault, &entry, "work, dev; ops ").unwrap();
+        let detail = entry_detail(&core, vault, &entry).unwrap();
+        assert_eq!(detail.summary.tags, ["dev", "work", "ops"]);
+        assert_eq!(
+            detail.history_count, 1,
+            "the version before keeps the old tags"
+        );
+        assert!(detail.summary.has_password, "the rest of the Entry is kept");
+
+        // Tags it has already change nothing, not even its history.
+        add_tags_to(&core, vault, &entry, "ops,dev").unwrap();
+        assert_eq!(entry_detail(&core, vault, &entry).unwrap().history_count, 1);
+    }
 
     #[test]
     fn fields_keeping_totp_settings_are_marked() {

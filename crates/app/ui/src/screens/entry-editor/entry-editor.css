@@ -72,6 +72,8 @@
   .ee-kv > .k { color: var(--fg-2); font-size: var(--text-sm); }
   .ee-kv.top { align-items: start; }
   .ee-kv.top > .k { padding-top: 6px; }
+  /* The password's strength, under it (Entry editor A). */
+  .ee-kv.ee-strength { min-height: 22px; margin-top: -2px; padding-left: 2px; }
   .ee-empty { color: var(--fg-2); font-size: var(--text-sm); padding: 6px 0; }
 
   /* Ghost inputs: they sit where the value sits, with a faint hairline */

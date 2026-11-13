@@ -6,9 +6,9 @@ import { Check as CheckIcon, CircleAlert, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
-import type { AppSettings, GeneratorOptions } from "@/bindings";
+import type { AppSettings, GeneratedPassword, GeneratorOptions } from "@/bindings";
 import { keys } from "@/api/queries";
-import { IconButton, Segmented } from "@/kit";
+import { IconButton, Segmented, StrengthMeter } from "@/kit";
 import { cn } from "@/lib/utils";
 
 /** The sliders' ranges; the number fields go up to the generator's limits. */
@@ -26,11 +26,11 @@ const CLASSES: readonly [Classes, string][] = [
 export function GeneratorSettings({ options }: { options: GeneratorOptions }) {
   const client = useQueryClient();
   const limits = useQuery({ queryKey: keys.generatorLimits, queryFn: api.generatorLimits }).data;
-  const [sample, setSample] = useState<{ password: string } | { error: string } | null>(null);
+  const [sample, setSample] = useState<GeneratedPassword | { error: string } | null>(null);
 
   const regenerate = (settings: GeneratorOptions) =>
     api.generatePassword(settings).then(
-      (password) => setSample({ password }),
+      (generated) => setSample(generated),
       (error) => setSample({ error: errorMessage(error) }),
     );
 
@@ -63,6 +63,11 @@ export function GeneratorSettings({ options }: { options: GeneratorOptions }) {
           <RefreshCw />
         </IconButton>
       </div>
+      {sample && "strength" in sample && (
+        <div className="gen-meter">
+          <StrengthMeter strength={sample.strength} />
+        </div>
+      )}
       <div className="gen-grid">
         <span className="k">Type</span>
         <div>

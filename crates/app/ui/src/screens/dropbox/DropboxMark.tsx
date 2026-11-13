@@ -1,5 +1,7 @@
 import { cn } from "@/lib/utils";
 
+import "./dropbox.css";
+
 /** Dropbox's mark on its blue tile, as the prototype draws it. */
 export function DropboxMark({ size, className }: { size?: "md" | "lg"; className?: string }) {
   return (

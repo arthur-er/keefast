@@ -1,13 +1,13 @@
 // Open from Dropbox A: a file browser dialog over Open a Vault B. It connects the Dropbox account
 // in the browser when there is none (keefast never sees the Dropbox password), browses the whole
-// Dropbox, and gives back the Vault file picked; Open a Vault then unlocks it. Disconnecting
-// forgets the account's tokens.
+// Dropbox, and gives back the Vault file picked; Open a Vault then unlocks it. The account menu
+// connects another account in place of this one, or disconnects, forgetting the account's tokens.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import {
   ArrowUp, ChevronDown, ChevronRight, CircleAlert, CloudOff, Database, ExternalLink, File, FileLock2, Folder, FolderOpen,
-  LoaderCircle, Lock, RotateCw, ShieldCheck, Unplug, X,
+  LoaderCircle, Lock, Repeat, RotateCw, ShieldCheck, Unplug, X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -109,20 +109,33 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
     // Only when the dialog opens.
   }, []);
 
-  const connect = async () => {
+  /** Connects an account, or with `from`, another account in place of that one. */
+  const connect = async (from?: DropboxAccountView) => {
     setPhase({ kind: "connecting" });
     connecting.current = true;
     try {
-      const account = await api.dropboxConnect();
+      const account = await (from ? api.dropboxConnectAnother() : api.dropboxConnect());
       connecting.current = false;
       void client.invalidateQueries({ queryKey: keys.dropbox });
       toast(`Connected as ${account.email || account.name}`, { icon: "check" });
+      if (from) {
+        // Another Dropbox: its folders aren't the last account's.
+        lastFolder = "";
+        setListing({ folder: "", entries: [], loading: true, error: null });
+      }
       connected(account);
     } catch (failure) {
       connecting.current = false;
       // Stopping is the user's own doing, not an error.
       const stopped = failure instanceof ApiError && failure.kind === "cancelled";
-      setPhase({ kind: "connect", error: stopped ? null : errorMessage(failure) });
+      const error = stopped ? null : errorMessage(failure);
+      if (from) {
+        // The account from before is still connected: back to its files.
+        setPhase({ kind: "connected", account: from });
+        if (error) toast(error, { icon: "error" });
+        return;
+      }
+      setPhase({ kind: "connect", error });
     }
   };
 
@@ -207,7 +220,13 @@ export function DropboxDialog({ onPick, onClose }: { onPick: (location: Location
                   {isConnected ? "Choose the Vault file to open." : "Open a Vault file stored in your Dropbox."}
                 </DialogPrimitive.Description>
               </div>
-              {phase.kind === "connected" && <AccountMenu account={phase.account} onDisconnect={askToDisconnect} />}
+              {phase.kind === "connected" && (
+                <AccountMenu
+                  account={phase.account}
+                  onUseAnother={() => void connect(phase.account)}
+                  onDisconnect={askToDisconnect}
+                />
+              )}
               <DialogPrimitive.Close className="btn sm ghost icon" aria-label="Cancel" title="Cancel (Esc)">
                 <X />
               </DialogPrimitive.Close>
@@ -400,7 +419,15 @@ function Connect({ error, onConnect }: { error: string | null; onConnect: () => 
   );
 }
 
-function AccountMenu({ account, onDisconnect }: { account: DropboxAccountView; onDisconnect: () => void }) {
+function AccountMenu({
+  account,
+  onUseAnother,
+  onDisconnect,
+}: {
+  account: DropboxAccountView;
+  onUseAnother: () => void;
+  onDisconnect: () => void;
+}) {
   const who = account.email || account.name;
   const initials =
     account.name
@@ -422,6 +449,9 @@ function AccountMenu({ account, onDisconnect }: { account: DropboxAccountView; o
       </MenuTrigger>
       <MenuContent align="end" className="w-[240px]">
         <MenuLabel>Connected as {account.name || who}</MenuLabel>
+        <MenuItem icon={<Repeat />} onSelect={onUseAnother}>
+          Use another account…
+        </MenuItem>
         <MenuSeparator />
         <MenuItem icon={<Unplug />} danger onSelect={onDisconnect}>
           Disconnect

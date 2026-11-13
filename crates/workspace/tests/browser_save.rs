@@ -126,6 +126,21 @@ impl Browser {
 }
 
 #[test]
+fn a_captured_login_says_which_browser_captured_it_and_when() {
+    let (mut browser, _) = Browser::new(&[personal_vault(), work_vault()]);
+    let before = browser.workspace.now();
+    let sent = browser
+        .extension
+        .set_login(SHOP, "carol", "s3cret", None, None);
+
+    let pending = browser.ask(&sent);
+
+    // Paired with both Vaults under one name, the browser is named once.
+    assert_eq!(pending.pairings, ["Home"]);
+    assert!(before <= pending.asked && pending.asked <= browser.workspace.now());
+}
+
+#[test]
 fn a_new_login_asks_the_user_and_preselects_the_browser_group_of_the_vault() {
     let (mut browser, vaults) = Browser::new(&[personal_vault()]);
     let sent = browser

@@ -1,15 +1,16 @@
 // Password generator A: a popover on the password field. Characters or a passphrase, with the
 // settings the app config remembers (every change is saved, as the GPUI generator did), a
-// preview coloured by kind of character, and "Use password" to fill the field.
+// preview coloured by kind of character with the recipe's strength, "Use password" to fill the
+// field, and "Settings…" for the defaults in General Settings.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { CaseSensitive, CircleAlert, RefreshCw, WholeWord } from "lucide-react";
+import { CaseSensitive, CircleAlert, RefreshCw, SlidersHorizontal, WholeWord } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
-import type { GeneratorOptions } from "@/bindings";
+import type { GeneratedPassword, GeneratorOptions } from "@/bindings";
 import { keys, useSettings } from "@/api/queries";
-import { Button, Kbd, Popover, PopoverAnchor, PopoverContent, PopoverTrigger, Segmented, Switch } from "@/kit";
+import { Button, Kbd, Popover, PopoverAnchor, PopoverContent, PopoverTrigger, Segmented, StrengthMeter, Switch } from "@/kit";
 import { isTyping } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 
@@ -29,16 +30,19 @@ const CLASSES = [
   ["symbols", "!@#$"],
 ] as const;
 
-/** The password field (`children`, holding a `GeneratorTrigger`) with the popover under it. */
+/** The password field (`children`, holding a `GeneratorTrigger`) with the popover under it.
+ * `onOpenSettings` is its "Settings…" link, to General Settings' password generator section. */
 export function GeneratorPopover({
   open,
   onOpenChange,
   onUse,
+  onOpenSettings,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUse: (password: string) => void;
+  onOpenSettings?: () => void;
   children: ReactNode;
 }) {
   return (
@@ -56,6 +60,13 @@ export function GeneratorPopover({
               onUse(password);
               onOpenChange(false);
             }}
+            onOpenSettings={
+              onOpenSettings &&
+              (() => {
+                onOpenChange(false);
+                onOpenSettings();
+              })
+            }
           />
         </PopoverContent>
       )}
@@ -66,19 +77,19 @@ export function GeneratorPopover({
 /** What opens the generator: a button inside the field. */
 export const GeneratorTrigger = PopoverTrigger;
 
-function Generator({ onUse }: { onUse: (password: string) => void }) {
+function Generator({ onUse, onOpenSettings }: { onUse: (password: string) => void; onOpenSettings?: () => void }) {
   const saved = useSettings().data?.generator;
   const limits = useQuery({ queryKey: keys.generatorLimits, queryFn: api.generatorLimits }).data;
   const [options, setOptions] = useState<GeneratorOptions>(() => saved ?? FALLBACK);
-  const [result, setResult] = useState<{ password: string } | { error: string } | null>(null);
+  const [result, setResult] = useState<GeneratedPassword | { error: string } | null>(null);
   const asked = useRef(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const generate = async (with_: GeneratorOptions) => {
     const ask = ++asked.current;
     try {
-      const password = await api.generatePassword(with_);
-      if (ask === asked.current) setResult({ password });
+      const generated = await api.generatePassword(with_);
+      if (ask === asked.current) setResult(generated);
     } catch (error) {
       if (ask === asked.current) setResult({ error: errorMessage(error) });
     }
@@ -99,6 +110,7 @@ function Generator({ onUse }: { onUse: (password: string) => void }) {
   };
 
   const password = result && "password" in result ? result.password : null;
+  const strength = result && "strength" in result ? result.strength : null;
   const error = result && "error" in result ? result.error : null;
   const passphrase = options.mode === "passphrase";
   const count = passphrase ? options.passphrase.words : options.characters.length;
@@ -135,6 +147,12 @@ function Generator({ onUse }: { onUse: (password: string) => void }) {
             { value: "passphrase", label: <><WholeWord className="ico-sm" />Passphrase</> },
           ]}
         />
+        <span className="spacer" />
+        {onOpenSettings && (
+          <Button variant="ghost" size="sm" title="The generator's defaults, in General Settings" onClick={onOpenSettings}>
+            <SlidersHorizontal /> Settings…
+          </Button>
+        )}
       </div>
       <div className="gp-prev">
         <div className={cn("pv", error && "err")} aria-live="polite">
@@ -152,7 +170,11 @@ function Generator({ onUse }: { onUse: (password: string) => void }) {
           ) : null}
         </div>
         <div className="gp-prev-foot">
-          <span className="hint">{error ? "" : passphrase ? `${options.passphrase.words} words` : `${options.characters.length} characters`}</span>
+          <StrengthMeter
+            strength={strength}
+            extra={error ? undefined : passphrase ? `${options.passphrase.words} words` : `${options.characters.length} characters`}
+            className="gp-strength"
+          />
           <span className="spacer" />
           <button type="button" className="btn ghost sm icon" aria-label="Regenerate" title="Regenerate (R)" disabled={!!error} onClick={() => void generate(options)}>
             <RefreshCw />

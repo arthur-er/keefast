@@ -124,6 +124,8 @@ pub struct AccessRequest {
     query: SiteQuery,
     /// The Entries to decide on.
     undecided: Vec<(VaultId, EntryId)>,
+    /// When the site asked.
+    asked: Timestamp,
     request: Request,
 }
 
@@ -162,6 +164,8 @@ pub struct LoginRequest {
     pairings: Vec<(String, String)>,
     /// The Entry the extension picked to update, if it did.
     picked: Option<EntryId>,
+    /// When the browser captured it.
+    asked: Timestamp,
     request: Request,
 }
 
@@ -185,6 +189,8 @@ struct SiteQuery {
     site_host: String,
     /// The host the site's form submits to, if that differs: it needs the decision too.
     form_host: Option<String>,
+    /// The scheme, host and port the site's form submits to, when `form_host` is set.
+    form_origin: Option<String>,
     /// The Pairings the extension holds keys for, as name and key.
     keys: Vec<(String, String)>,
     /// The `id` the extension sent, echoed back.
@@ -479,9 +485,9 @@ impl BrowserSession {
         }
         let site = Site::parse(url).ok_or(ProtocolError::NoLoginsFound)?;
         let site_host = site.host();
-        let form_host = Site::parse(text(&message, "submitUrl"))
-            .map(|form| form.host())
-            .filter(|form| *form != site_host);
+        let form = Site::parse(text(&message, "submitUrl")).filter(|form| form.host() != site_host);
+        let form_host = form.as_ref().map(Site::host);
+        let form_origin = form.as_ref().map(Site::origin);
         let keys = match message.get("keys") {
             Some(Value::Array(keys)) => keys
                 .iter()
@@ -494,6 +500,7 @@ impl BrowserSession {
             site,
             site_host,
             form_host,
+            form_origin,
             keys,
             id: text(&message, "id").to_owned(),
         };
@@ -517,6 +524,7 @@ impl BrowserSession {
         Ok(BrowserReply::AskAccess(AccessRequest {
             query,
             undecided,
+            asked: workspace.now(),
             request,
         }))
     }
@@ -549,6 +557,7 @@ impl BrowserSession {
             },
             pairings: self.proven.clone(),
             picked: EntryId::from_hex(text(&message, "uuid")),
+            asked: workspace.now(),
             request,
         };
         if workspace.login_vaults(&login).is_empty() {
@@ -760,11 +769,19 @@ pub struct PendingAccess {
     pub id: AccessId,
     /// The host of the site asking.
     pub site: String,
+    /// The site's scheme, host and port, as in `https://example.com`.
+    pub origin: String,
     /// The host the site's form sends the Entries to, if it is another than `site`. The
     /// decision, remembered or not, is for both, so show both.
     pub form_site: Option<String>,
+    /// The scheme, host and port of `form_site`.
+    pub form_origin: Option<String>,
     /// The Entries to decide on.
     pub entries: Vec<(VaultId, EntryId)>,
+    /// The names of the Pairings the browser asked with, as the user named them, each once.
+    pub pairings: Vec<String>,
+    /// When the site asked.
+    pub asked: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -785,6 +802,10 @@ pub struct PendingLogin {
     /// The host of the site the login was submitted on.
     pub site: String,
     pub username: String,
+    /// The names of the Pairings the browser proved, as the user named them, each once.
+    pub pairings: Vec<String>,
+    /// When the browser captured the login.
+    pub asked: Timestamp,
     /// The open Vaults the login may go to: those the extension is paired with.
     pub vaults: Vec<VaultId>,
     /// The Entries the login could update: the one the extension picked, and those for the
@@ -904,9 +925,28 @@ impl Workspace {
             .map(|(id, _, request)| PendingAccess {
                 id: *id,
                 site: request.site().to_owned(),
+                origin: request.query.site.origin(),
                 form_site: request.form_site().map(str::to_owned),
+                form_origin: request.query.form_origin.clone(),
                 entries: request.entries().to_vec(),
+                pairings: self.pairing_names(&request.query.keys),
+                asked: request.asked,
             })
+    }
+
+    /// The names of the Pairings among `keys` that an open Vault has, each once: the browser, as
+    /// the user named it when pairing.
+    fn pairing_names(&self, keys: &[(String, String)]) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for (name, key) in keys {
+            let paired = self
+                .readable_vaults()
+                .any(|open| open.vault.is_paired_with(name, key));
+            if paired && !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
     }
 
     /// Answers the pending Access request `id` with the user's decision, and returns the
@@ -988,6 +1028,8 @@ impl Workspace {
             id: *id,
             site: request.login.site_name(),
             username: request.login.username.clone(),
+            pairings: self.pairing_names(&request.pairings),
+            asked: request.asked,
             vaults,
             entries,
             suggested,

@@ -38,11 +38,13 @@ impl From<TotpAlgorithmChoice> for TotpAlgorithm {
     }
 }
 
-/// A TOTP code, with how long it stays valid.
+/// A TOTP code, with how long it stays valid and the code after it.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TotpCodeView {
     pub code: String,
+    /// The code that takes over when `remaining` runs out.
+    pub next: String,
     /// Seconds until the next code, from 1 to the period.
     pub remaining: u32,
     pub period: u32,
@@ -52,6 +54,7 @@ impl From<TotpCode> for TotpCodeView {
     fn from(code: TotpCode) -> Self {
         Self {
             code: code.code().to_owned(),
+            next: code.next().to_owned(),
             remaining: code.remaining(),
             period: code.period(),
         }
