@@ -34,6 +34,20 @@ describe("mock backend", () => {
     expect(await api.revealPassword(github.vault, github.id)).toBe("x7#Lq9!vR2mZ@pW4");
   });
 
+  it("renames a Vault, and turns its Recycle Bin off so deleting deletes for good", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const personal = (await api.getWorkspace()).vaults.find((vault) => vault.state === "unlocked")!;
+    await api.renameVault(personal.id, "  Home  ");
+    expect((await api.getVaultSettings(personal.id)).name).toBe("Home");
+    expect((await api.getWorkspace()).vaults.find((vault) => vault.id === personal.id)!.name).toBe("Home");
+
+    const [entry] = await api.listEntries({ scope: { kind: "vault", vault: personal.id }, search: "", sort: "title" });
+    expect((await api.getEntry(personal.id, entry!.id)).deletesForGood).toBe(false);
+    await api.setRecycleBinEnabled(personal.id, false);
+    expect((await api.getVaultSettings(personal.id)).recycleBinEnabled).toBe(false);
+    expect((await api.getEntry(personal.id, entry!.id)).deletesForGood).toBe(true);
+  });
+
   it("says how strong a password is without revealing it", async () => {
     const api = unwrap(createMockBackend().commands);
     const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
@@ -107,7 +121,7 @@ describe("mock backend", () => {
     await expect(api.approvePairing(pairing.id, "  ")).rejects.toThrow("Give this browser a name.");
     await api.approvePairing(pairing.id, "Firefox at home");
     expect((await api.getWorkspace()).pendingPairing).toBeNull();
-    expect((await api.getVaultSettings(pairing.vault)).pairings).toContain("Firefox at home");
+    expect((await api.getVaultSettings(pairing.vault)).pairings.map((p) => p.name)).toContain("Firefox at home");
   });
 
   it("shows browser integration failing until it is turned on again", async () => {

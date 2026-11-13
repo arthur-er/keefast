@@ -42,6 +42,26 @@ impl Timestamp {
         format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
     }
 
+    /// The time written as [`Self::to_iso_8601`] writes it, if `text` is one.
+    pub(crate) fn from_iso_8601(text: &str) -> Option<Self> {
+        let (date, time) = text.trim().strip_suffix('Z')?.split_once('T')?;
+        let day = Self::parse_date(date)?;
+        let mut parts = time.split(':');
+        let mut part = |max: i64| {
+            let part = parts.next()?;
+            let valid = part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_digit());
+            valid
+                .then(|| part.parse::<i64>().ok())
+                .flatten()
+                .filter(|n| *n <= max)
+        };
+        let (hour, minute, second) = (part(23)?, part(59)?, part(59)?);
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self(day.0 + hour * 3600 + minute * 60 + second))
+    }
+
     /// `2026-10-07 23:15:22 UTC`, for people to read.
     pub fn to_utc_string(self) -> String {
         let ((year, month, day), (hour, minute, second)) = self.utc();
@@ -126,6 +146,24 @@ mod tests {
         assert_eq!(iso(1_791_414_922), "2026-10-07T23:15:22Z");
         assert_eq!(iso(951_825_600), "2000-02-29T12:00:00Z");
         assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn reads_iso_8601_back() {
+        let time = Timestamp::from_unix_seconds(1_791_414_922);
+        assert_eq!(Timestamp::from_iso_8601("2026-10-07T23:15:22Z"), Some(time));
+        for invalid in [
+            "",
+            "2026-10-07",
+            "2026-10-07T23:15:22",
+            "2026-10-07T24:00:00Z",
+            "2026-10-07T23:15Z",
+            "2026-10-07T23:15:22:01Z",
+            // KeePassXC writes its own Pairing dates in the system's short date format.
+            "07/10/2026 23:15",
+        ] {
+            assert_eq!(Timestamp::from_iso_8601(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

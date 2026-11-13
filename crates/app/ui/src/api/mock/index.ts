@@ -35,6 +35,7 @@ import type {
   LocationView,
   LoginOption,
   LoginTarget,
+  MasterKeyParts,
   Scope,
   SmartList,
   SmartListCounts,
@@ -72,6 +73,10 @@ class MockError extends Error {
     super(message);
   }
 }
+
+/** What a master key typed is made of: the Key file alone when the password is empty. */
+const keyParts = (key: { password: string; keyFile: string | null }): MasterKeyParts =>
+  key.keyFile === null ? "password" : key.password ? "passwordAndKeyFile" : "keyFile";
 
 const notFound = () => new MockError("notFound", "That Entry or Group no longer exists.");
 
@@ -868,8 +873,8 @@ export function createMockBackend(): Backend & {
       state.vaults.push({
         id, name, location, locked: false,
         groups: [{ id: "root", name, parent: null }, { id: "bin", name: "Recycle Bin", parent: "root" }],
-        entries: [], recycleBin: "bin", browserGroup: null, unsaved: false, saving: false, saveFailed: false,
-        sync: location.provider === "dropbox" ? "synced" : null, pairings: [], policy: "ask", customIcons: [],
+        entries: [], recycleBin: "bin", recycleBinEnabled: true, browserGroup: null, unsaved: false, saving: false, saveFailed: false,
+        sync: location.provider === "dropbox" ? "synced" : null, masterKey: "password", pairings: [], policy: "ask", customIcons: [],
       });
       state.recents = state.recents.filter((r) => r.path !== location.path);
       state.view = { scope: { kind: "vault", vault: id }, entry: null };
@@ -891,8 +896,8 @@ export function createMockBackend(): Backend & {
       const name = input.name.trim() || locationView({ provider: "local", path: input.path }).name;
       state.vaults.push({
         id, name, location: { provider: "local", path: input.path }, locked: false,
-        groups: [{ id: "root", name, parent: null }], entries: [], recycleBin: null, browserGroup: null,
-        unsaved: false, saving: false, saveFailed: false, sync: null, pairings: [], policy: "ask", customIcons: [],
+        groups: [{ id: "root", name, parent: null }], entries: [], recycleBin: null, recycleBinEnabled: true, browserGroup: null,
+        unsaved: false, saving: false, saveFailed: false, sync: null, masterKey: keyParts(input.key), pairings: [], policy: "ask", customIcons: [],
       });
       state.view = { scope: { kind: "vault", vault: id }, entry: null };
       changed();
@@ -973,7 +978,7 @@ export function createMockBackend(): Backend & {
       const v = vault(id);
       const g = group(v, groupId);
       if (g.parent === null) throw new MockError("invalid", "The top Group of a Vault cannot be moved or deleted.");
-      if (v.recycleBin && !inBin(v, groupId)) {
+      if (v.recycleBin && v.recycleBinEnabled && !inBin(v, groupId)) {
         g.parent = v.recycleBin;
       } else {
         const gone = descendants(v, groupId);
@@ -985,7 +990,7 @@ export function createMockBackend(): Backend & {
     }),
     deletesGroupForGood: command((id, groupId) => {
       const v = vault(id);
-      return !v.recycleBin || inBin(v, groupId);
+      return !v.recycleBin || !v.recycleBinEnabled || inBin(v, groupId);
     }),
     setBrowserGroup: command((id, groupId) => {
       const v = vault(id);
@@ -1029,7 +1034,7 @@ export function createMockBackend(): Backend & {
         historyCount: e.history.length,
         rememberedAccess: e.access,
         groupPath: groupPath(v, e.group),
-        deletesForGood: !v.recycleBin || inBin(v, e.group),
+        deletesForGood: !v.recycleBin || !v.recycleBinEnabled || inBin(v, e.group),
       };
     }),
     listFacets: command(() => facetTemplates(plugins.runs)),
@@ -1091,7 +1096,7 @@ export function createMockBackend(): Backend & {
     }),
     deleteEntry: command((id, entryId) => {
       const [v, e] = entryOf(id, entryId);
-      if (v.recycleBin && !inBin(v, e.group)) e.group = v.recycleBin;
+      if (v.recycleBin && v.recycleBinEnabled && !inBin(v, e.group)) e.group = v.recycleBin;
       else v.entries = v.entries.filter((x) => x !== e);
       if (state.view.entry?.entry === entryId) state.view = { ...state.view, entry: null };
       edited(v);
@@ -1338,9 +1343,11 @@ export function createMockBackend(): Backend & {
         location: locationView(v.location),
         saveStatus: v.saving ? "saving" : v.saveFailed ? "failed" : v.unsaved ? "unsaved" : "saved",
         syncStatus: v.sync,
+        masterKey: v.masterKey,
         encryption: structuredClone(state.encryption.get(v.id) ?? DEFAULT_ENCRYPTION),
+        recycleBinEnabled: v.recycleBinEnabled,
         defaultAccessPolicy: v.policy,
-        pairings: [...v.pairings],
+        pairings: v.pairings.map((pairing) => ({ ...pairing })),
         browserGroup: v.browserGroup,
         browserGroupName: v.browserGroup ? group(v, v.browserGroup).name : null,
       };
@@ -1354,9 +1361,28 @@ export function createMockBackend(): Backend & {
       if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs 1 to 4294967295 iterations.");
       if (kdf.kind === "aesKdf" && kdf.rounds < 1) throw new MockError("invalid", "AES-KDF needs at least 1 round.");
       state.encryption.set(v.id, structuredClone(input.encryption));
+      if (input.newKey) v.masterKey = keyParts(input.newKey);
       v.unsaved = true;
       save(v);
       changed();
+      return null;
+    }),
+    renameVault: command((id, name) => {
+      const v = vault(id);
+      v.name = name.trim() || locationView(v.location).name;
+      edited(v);
+      return null;
+    }),
+    setRecycleBinEnabled: command((id, enabled) => {
+      const v = vault(id);
+      if (v.recycleBinEnabled === enabled) return null;
+      v.recycleBinEnabled = enabled;
+      edited(v);
+      return null;
+    }),
+    showVaultFileInFolder: command((id) => {
+      const v = vault(id);
+      if (v.location.provider !== "local") throw new MockError("invalid", "Only a Vault file on this computer can be shown in a folder.");
       return null;
     }),
     setDefaultAccessPolicy: command((id, policy) => {
@@ -1367,8 +1393,8 @@ export function createMockBackend(): Backend & {
     }),
     revokePairing: command((id, name) => {
       const v = vault(id);
-      if (!v.pairings.includes(name)) throw new MockError("invalid", "This browser is no longer paired with the Vault.");
-      v.pairings = v.pairings.filter((p) => p !== name);
+      if (!v.pairings.some((p) => p.name === name)) throw new MockError("invalid", "This browser is no longer paired with the Vault.");
+      v.pairings = v.pairings.filter((p) => p.name !== name);
       edited(v);
       return null;
     }),
@@ -1434,8 +1460,8 @@ export function createMockBackend(): Backend & {
       if (!pending || pending.id !== id) return null;
       requireName(name);
       const v = vault(pending.vault);
-      if (v.pairings.includes(name.trim())) throw new MockError("invalid", "This Vault already has a browser with this name.");
-      v.pairings.push(name.trim());
+      if (v.pairings.some((p) => p.name === name.trim())) throw new MockError("invalid", "This Vault already has a browser with this name.");
+      v.pairings.push({ name: name.trim(), created: now(), lastUsed: null });
       state.pendingPairing = null;
       edited(v);
       return null;

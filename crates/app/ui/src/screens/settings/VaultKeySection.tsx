@@ -1,5 +1,5 @@
-// Vault settings C's "Security" section: what it takes to unlock the Vault (its cipher and key
-// derivation, from `get_vault_settings`), and changing its master key and encryption. "Change…"
+// Vault settings C's "Security" section: what it takes to unlock the Vault (what its master key
+// is made of, and its cipher and key derivation, from `get_vault_settings`), and changing its master key and encryption. "Change…"
 // opens the change-key card (`screens/vault-key/`, the prototype's
 // `vault-settings.html?variant=C&state=key`) in this section's card, in place of the summary row;
 // Vault settings opened at the "key" section open it at once.
@@ -8,6 +8,7 @@ import type { VaultId, VaultSettings } from "@/bindings";
 import { Button } from "@/kit";
 import { ChangeVaultKey } from "@/screens/vault-key/ChangeVaultKey";
 import { encryptionSummary } from "@/screens/vault-key/encryption";
+import { masterKeyName } from "@/screens/vault-key/masterKey";
 
 import { SettingRow } from "./SettingsLayout";
 
@@ -37,10 +38,15 @@ export function VaultKeySection({
     );
   }
   return (
-    <SettingRow label="Master key and encryption" desc={encryptionSummary(settings.encryption).slice(0, 3).join(" · ")}>
+    <SettingRow label="Master key and encryption" desc={keySummary(settings)}>
       <Button size="sm" onClick={onOpen}>
         Change…
       </Button>
     </SettingRow>
   );
+}
+
+/** "Master password + Key file · AES-256 · Argon2id · 64 MiB": the master key and encryption. */
+export function keySummary(settings: Pick<VaultSettings, "masterKey" | "encryption">): string {
+  return [masterKeyName(settings.masterKey), ...encryptionSummary(settings.encryption).slice(0, 3)].join(" · ");
 }

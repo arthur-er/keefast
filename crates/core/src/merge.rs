@@ -22,6 +22,28 @@ use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::{Element, Node};
 use crate::{OpenError, Timestamp, Vault};
 
+/// A `Meta` setting stored with when it last changed.
+struct TimedSetting {
+    name: &'static str,
+    changed: &'static str,
+    /// The elements it goes after when the Vault has none, as KeePass orders `Meta`.
+    after: &'static [&'static str],
+}
+
+/// The Vault's name, and whether its Recycle Bin is on.
+const TIMED_SETTINGS: &[TimedSetting] = &[
+    TimedSetting {
+        name: "DatabaseName",
+        changed: "DatabaseNameChanged",
+        after: &["Generator"],
+    },
+    TimedSetting {
+        name: "RecycleBinEnabled",
+        changed: "RecycleBinChanged",
+        after: &["CustomIcons", "MemoryProtection"],
+    },
+];
+
 /// What a Merge changed in the Vault.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MergeSummary {
@@ -72,7 +94,7 @@ impl Vault {
             }
             read = kdbx::read(bytes, previous);
         }
-        Vault::from_file(read?, self.key.clone())
+        Vault::from_file(read?, self.key.clone(), self.key_parts)
     }
 
     /// Merges `other`, another version of this Vault, into this one with KeePass's rules (see
@@ -448,7 +470,27 @@ impl Merge<'_> {
                 (bin, changed)
             });
 
+        // The settings the source changed later, as KeePass Merges them.
+        let changed = |meta: Option<&Element>, name: &str| {
+            meta.and_then(|meta| meta.child(name))
+                .and_then(|time| Timestamp::decode(&time.text()))
+        };
+        let settings: Vec<(&TimedSetting, Element, Element)> = TIMED_SETTINGS
+            .iter()
+            .filter(|setting| {
+                changed(Some(source), setting.changed) > changed(target, setting.changed)
+            })
+            .filter_map(|setting| {
+                let value = source.child(setting.name)?.clone();
+                Some((setting, value, source.child(setting.changed)?.clone()))
+            })
+            .collect();
+
         let meta = child_or_insert(&mut self.target.file.document, "Meta", &[]);
+        for (setting, value, time) in settings {
+            *child_or_insert(meta, setting.name, setting.after) = value;
+            *child_or_insert(meta, setting.changed, &[setting.name]) = time;
+        }
         if !icons.is_empty() {
             let custom_icons = child_or_insert(meta, "CustomIcons", &["MemoryProtection"]);
             custom_icons

@@ -20,6 +20,12 @@ use crate::{
 const PAIRING_KEY_PREFIX: &str = "KPXC_BROWSER_";
 /// KeePassXC records when a Pairing was made under this prefix plus the Pairing's name.
 const PAIRING_CREATED_PREFIX: &str = "_CREATED_";
+/// keefast records when a Pairing was last used under this prefix plus the Pairing's name, in
+/// ISO 8601 as `_CREATED_` has it. KeePassXC has no such record, so the key is keefast's own.
+const PAIRING_USED_PREFIX: &str = "keefast_PAIRING_USED_";
+/// How long a Pairing's last use in the Vault may be out of date, so that a browser asking
+/// often changes the Vault at most this often.
+pub const PAIRING_USE_PRECISION: i64 = 60 * 60;
 /// keefast records a revoked Pairing under this prefix plus the Pairing's key, timed, so that a
 /// Merge with a version of the Vault file that still holds the Pairing doesn't bring it back.
 /// KeePassXC has no such record, so the key is keefast's own.
@@ -153,6 +159,11 @@ pub struct Pairing {
     pub name: String,
     /// The extension's identification public key, Base64-encoded.
     pub key: String,
+    /// When the Pairing was made, if the Vault knows.
+    pub created: Option<Timestamp>,
+    /// When the browser last asked the Vault for anything, to within
+    /// [`PAIRING_USE_PRECISION`], if it has since keefast recorded it.
+    pub last_used: Option<Timestamp>,
 }
 
 impl Vault {
@@ -165,15 +176,53 @@ impl Vault {
 
     /// The Pairings stored in the Vault, in Vault file order.
     pub fn pairings(&self) -> Vec<Pairing> {
-        self.custom_data()
-            .filter_map(|(key, value)| {
-                let name = key.strip_prefix(PAIRING_KEY_PREFIX)?;
+        let items: Vec<&Element> = self.custom_data_items().collect();
+        let find = |key: String| items.iter().find(|item| item_text(item, "Key") == key);
+        items
+            .iter()
+            .filter_map(|item| {
+                let name = item_text(item, "Key")
+                    .strip_prefix(PAIRING_KEY_PREFIX)?
+                    .to_owned();
+                // keefast writes the creation time in ISO 8601; KeePassXC writes it in the
+                // system's date format, so then it is when that record was written, or else
+                // when the Pairing was.
+                let created = find(format!("{PAIRING_CREATED_PREFIX}{name}"));
+                let created = created
+                    .and_then(|created| Timestamp::from_iso_8601(&item_text(created, "Value")))
+                    .or_else(|| created.and_then(|created| item_modified(created)))
+                    .or_else(|| item_modified(item));
+                let last_used = find(format!("{PAIRING_USED_PREFIX}{name}"))
+                    .and_then(|used| Timestamp::from_iso_8601(&item_text(used, "Value")));
                 Some(Pairing {
-                    name: name.to_owned(),
-                    key: value,
+                    key: item_text(item, "Value"),
+                    name,
+                    created,
+                    last_used,
                 })
             })
             .collect()
+    }
+
+    /// Records that the browser of the Pairing named `name` asked the Vault for something, if
+    /// the Vault's record of it is more than [`PAIRING_USE_PRECISION`] old. Returns whether it
+    /// changed the Vault.
+    pub fn note_pairing_used(&mut self, name: &str, now: Timestamp) -> bool {
+        let Some(pairing) = self.pairings().into_iter().find(|p| p.name == name) else {
+            return false;
+        };
+        let recent = pairing.last_used.is_some_and(|used| {
+            (0..PAIRING_USE_PRECISION).contains(&(now.unix_seconds() - used.unix_seconds()))
+        });
+        if recent {
+            return false;
+        }
+        self.set_vault_custom_data(
+            &format!("{PAIRING_USED_PREFIX}{name}"),
+            &now.to_iso_8601(),
+            now,
+        );
+        true
     }
 
     /// Whether the Vault trusts the extension that identifies itself as `name` with `key`.
@@ -222,31 +271,19 @@ impl Vault {
     /// Removes the Pairings revoked after they were made, which a Merge may have brought back.
     /// A Pairing without a time, as KeePassXC writes them, was made before any revocation.
     pub(crate) fn drop_revoked_pairings(&mut self) {
-        let items: Vec<&Element> = self
-            .file
-            .document
-            .child("Meta")
-            .and_then(|meta| meta.child("CustomData"))
-            .into_iter()
-            .flat_map(|data| data.children_named("Item"))
-            .collect();
-        let text = |item: &Element, name| item.child(name).map(Element::text).unwrap_or_default();
-        let modified = |item: &Element| {
-            item.child("LastModificationTime")
-                .and_then(|time| Timestamp::decode(&time.text()))
-        };
+        let items: Vec<&Element> = self.custom_data_items().collect();
         let revoked: Vec<String> = items
             .iter()
             .filter_map(|item| {
-                let name = text(item, "Key")
+                let name = item_text(item, "Key")
                     .strip_prefix(PAIRING_KEY_PREFIX)?
                     .to_owned();
-                let revocation = format!("{REVOKED_PAIRING_PREFIX}{}", text(item, "Value"));
+                let revocation = format!("{REVOKED_PAIRING_PREFIX}{}", item_text(item, "Value"));
                 let revoked_at = items
                     .iter()
-                    .find(|other| text(other, "Key") == revocation)
-                    .map(|other| modified(other))?;
-                (modified(item) <= revoked_at).then_some(name)
+                    .find(|other| item_text(other, "Key") == revocation)
+                    .map(|other| item_modified(other))?;
+                (item_modified(item) <= revoked_at).then_some(name)
             })
             .collect();
         for name in revoked {
@@ -259,20 +296,23 @@ impl Vault {
         let custom_data = child_or_insert(meta, "CustomData", &[]);
         remove_custom_data(custom_data, &format!("{PAIRING_KEY_PREFIX}{name}"));
         remove_custom_data(custom_data, &format!("{PAIRING_CREATED_PREFIX}{name}"));
+        remove_custom_data(custom_data, &format!("{PAIRING_USED_PREFIX}{name}"));
     }
 
     /// The Vault's custom data, `Meta/CustomData`, as key and value pairs.
     pub(crate) fn custom_data(&self) -> impl Iterator<Item = (String, String)> {
+        self.custom_data_items()
+            .map(|item| (item_text(item, "Key"), item_text(item, "Value")))
+    }
+
+    /// The items of the Vault's custom data.
+    fn custom_data_items(&self) -> impl Iterator<Item = &Element> {
         self.file
             .document
             .child("Meta")
             .and_then(|meta| meta.child("CustomData"))
             .into_iter()
             .flat_map(|data| data.children_named("Item"))
-            .map(|item| {
-                let text = |name| item.child(name).map(Element::text).unwrap_or_default();
-                (text("Key"), text("Value"))
-            })
     }
 
     /// Sets an item of the Vault's custom data, with when it changed as KDBX 4.1 records it,
@@ -678,6 +718,36 @@ fn custom_data_item(key: &str, value: &str) -> Element {
     item
 }
 
+/// The text of a custom data item's `Key` or `Value`.
+fn item_text(item: &Element, name: &str) -> String {
+    item.child(name).map(Element::text).unwrap_or_default()
+}
+
+/// When a custom data item last changed, as KDBX 4.1 records it.
+fn item_modified(item: &Element) -> Option<Timestamp> {
+    item.child("LastModificationTime")
+        .and_then(|time| Timestamp::decode(&time.text()))
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CompositeKey, Encryption};
+
+    #[test]
+    fn a_pairing_made_in_keepassxc_dates_from_when_keepassxc_wrote_it() {
+        let made = Timestamp::from_unix_seconds(1_791_414_922);
+        let encryption = Encryption::default();
+        let mut vault =
+            Vault::create("Personal", &CompositeKey::password("pw"), &encryption, made).unwrap();
+        // KeePassXC writes `_CREATED_` in the system's date format, and times the item.
+        vault.set_vault_custom_data("KPXC_BROWSER_Laptop", "a2V5", made);
+        vault.set_vault_custom_data("_CREATED_Laptop", "07/10/2026 23:15", made);
+
+        assert_eq!(vault.pairings()[0].created, Some(made));
+    }
 }

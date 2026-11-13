@@ -5,6 +5,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use keefast_core::EditError;
 use keefast_workspace::{
@@ -13,7 +14,7 @@ use keefast_workspace::{
 };
 use serde_json::{Value, json};
 use support::extension::{FakeExtension, Sent};
-use support::{FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
+use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
 
 /// The fixture Vault's browser hash: SHA-256 of its root Group's UUID in hex.
 const FIXTURE_HASH: &str = "e664e0d1a663bc5bf6293d1955671b5b1c87d5d0cef01daf1fdbe87e477ed419";
@@ -455,6 +456,56 @@ mod connections {
         assert_eq!(denied.connection, SECOND);
         assert_eq!(parse(&denied.message)["errorCode"], "6");
         assert_eq!(workspace.pending_pairing(), None);
+    }
+
+    #[test]
+    fn a_pairing_is_used_whenever_its_browser_asks_and_the_vault_records_it_by_the_hour() {
+        // 2026-10-07 23:15:22 UTC.
+        let clock = Arc::new(FakeClock::at_unix_seconds(1_791_414_922));
+        let mut workspace = Workspace::with_clock(storage(), clock.clone());
+        let vault = workspace
+            .open_vault(&personal_vault(), &UnlockSecrets::password(PASSWORD))
+            .unwrap();
+        workspace.set_browser_integration(true);
+        let extension = connect(&mut workspace, FIRST);
+        request(&mut workspace, FIRST, &extension.associate());
+        let pending = workspace.pending_pairing().unwrap();
+        workspace.approve_pairing(pending.id, "Laptop").unwrap();
+        workspace.save_vault(vault).unwrap();
+        let laptop = |workspace: &Workspace| {
+            let pairings = workspace.pairings(vault).unwrap();
+            pairings.into_iter().find(|p| p.name == "Laptop").unwrap()
+        };
+        let paired = laptop(&workspace).created.unwrap();
+        assert_eq!(paired.unix_seconds(), 1_791_414_922);
+        assert_eq!(laptop(&workspace).last_used, None);
+        let id_key = extension.id_key();
+        let ask = |workspace: &mut Workspace| {
+            request(
+                workspace,
+                FIRST,
+                &extension.test_associate("Laptop", &id_key),
+            )
+            .unwrap();
+        };
+
+        clock.advance(Duration::from_secs(90));
+        ask(&mut workspace);
+        let first_use = laptop(&workspace).last_used.unwrap();
+        assert_eq!(first_use.unix_seconds(), 1_791_414_922 + 90);
+        clock.advance(Duration::from_secs(60));
+        ask(&mut workspace);
+
+        // To the second here, while the Vault keeps the first use of the hour, and isn't
+        // left with unsaved changes for it.
+        assert_eq!(
+            laptop(&workspace).last_used.unwrap().unix_seconds(),
+            1_791_414_922 + 150
+        );
+        let recorded = workspace.vault(vault).unwrap().vault().pairings();
+        let recorded = recorded.iter().find(|p| p.name == "Laptop").unwrap();
+        assert_eq!(recorded.last_used, Some(first_use));
+        assert!(!workspace.vault(vault).unwrap().has_unsaved_changes());
     }
 
     #[test]

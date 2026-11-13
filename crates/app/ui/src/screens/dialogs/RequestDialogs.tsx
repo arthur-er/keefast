@@ -226,8 +226,8 @@ function PairingDialog({ pairing }: { pairing: NonNullable<WorkspaceSnapshot["pe
             <div className="dg-known">
               Already paired:
               {known.map((known) => (
-                <span key={known} className="badge">
-                  {known}
+                <span key={known.name} className="badge">
+                  {known.name}
                 </span>
               ))}
             </div>

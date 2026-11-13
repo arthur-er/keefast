@@ -1,17 +1,20 @@
 //! A Vault's own settings: its master key and encryption, and its browser-integration settings,
 //! which live in the Vault file (ADR 0005).
 
-use keefast_core::DefaultAccessPolicy;
+use keefast_core::{DefaultAccessPolicy, KeyParts, Pairing};
+use keefast_workspace::VaultLocation;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use super::Core;
 use super::vaults::{EncryptionSettings, KeyInput};
 use super::workspace::{SaveState, SyncState};
 use crate::browser;
 use crate::core::Failures;
-use crate::dto::{GroupId, LocationView, VaultId};
-use crate::error::{ApiError, ApiResult};
+use crate::dto::{GroupId, LocationView, VaultId, seconds};
+use crate::error::{ApiError, ApiResult, ErrorKind};
 
 /// What a Vault answers a site asking for an Entry that has no Access decision for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -42,18 +45,63 @@ impl From<AccessPolicy> for DefaultAccessPolicy {
     }
 }
 
+/// What a Vault's master key is made of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum MasterKeyParts {
+    Password,
+    KeyFile,
+    PasswordAndKeyFile,
+}
+
+impl From<KeyParts> for MasterKeyParts {
+    fn from(parts: KeyParts) -> Self {
+        match parts {
+            KeyParts::Password => Self::Password,
+            KeyParts::KeyFile => Self::KeyFile,
+            KeyParts::PasswordAndKeyFile => Self::PasswordAndKeyFile,
+        }
+    }
+}
+
+/// A browser paired with a Vault.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingView {
+    pub name: String,
+    /// When it was paired, in seconds since 1970, if the Vault knows.
+    pub created: Option<f64>,
+    /// When the browser last asked the Vault for anything, in seconds since 1970, if it has
+    /// since keefast started recording it.
+    pub last_used: Option<f64>,
+}
+
+impl From<Pairing> for PairingView {
+    fn from(pairing: Pairing) -> Self {
+        Self {
+            name: pairing.name,
+            created: pairing.created.map(seconds),
+            last_used: pairing.last_used.map(seconds),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultSettings {
     pub vault: VaultId,
+    /// The Vault's name, or its Vault file's when it has none.
     pub name: String,
     pub location: LocationView,
     pub save_status: SaveState,
     pub sync_status: Option<SyncState>,
+    pub master_key: MasterKeyParts,
     pub encryption: EncryptionSettings,
+    /// Whether deleting moves Entries and Groups to the Recycle Bin.
+    pub recycle_bin_enabled: bool,
     pub default_access_policy: AccessPolicy,
-    /// The names of the browsers paired with the Vault, in Vault file order.
-    pub pairings: Vec<String>,
+    /// The browsers paired with the Vault, in Vault file order.
+    pub pairings: Vec<PairingView>,
     pub browser_group: Option<GroupId>,
     pub browser_group_name: Option<String>,
 }
@@ -90,13 +138,15 @@ pub async fn get_vault_settings(core: Core<'_>, vault: VaultId) -> ApiResult<Vau
             location: open.location().into(),
             save_status,
             sync_status: open.sync_status().map(Into::into),
+            master_key: open.vault().key_parts().into(),
             encryption: open.vault().encryption().into(),
+            recycle_bin_enabled: open.vault().recycle_bin_enabled(),
             default_access_policy: open.vault().default_access_policy().into(),
-            pairings: open
-                .vault()
-                .pairings()
+            pairings: workspace
+                .pairings(id)
+                .unwrap_or_default()
                 .into_iter()
-                .map(|pairing| pairing.name)
+                .map(Into::into)
                 .collect(),
             browser_group: browser_group.map(Into::into),
             browser_group_name: browser_group
@@ -129,6 +179,50 @@ pub async fn change_vault_key(
     let save = core.update(|workspace| workspace.begin_save(vault).ok());
     core.run_saves(save.into_iter().collect(), Failures::Announce);
     Ok(())
+}
+
+/// Renames the Vault. An empty name names it after its Vault file again.
+#[tauri::command]
+#[specta::specta]
+pub async fn rename_vault(core: Core<'_>, vault: VaultId, name: String) -> ApiResult<()> {
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.edit(|workspace| workspace.rename_vault(vault, &name))
+}
+
+/// Turns the Vault's Recycle Bin on or off: off, deleting deletes for good.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_recycle_bin_enabled(
+    core: Core<'_>,
+    vault: VaultId,
+    enabled: bool,
+) -> ApiResult<()> {
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.edit(|workspace| workspace.set_recycle_bin_enabled(vault, enabled))
+}
+
+/// Shows the Vault file in the system's file manager. Only a Vault file on this machine can be.
+#[tauri::command]
+#[specta::specta]
+pub async fn show_vault_file_in_folder(
+    app: AppHandle,
+    core: Core<'_>,
+    vault: VaultId,
+) -> ApiResult<()> {
+    let location = core.read(|workspace| {
+        let id = vault.resolve_open(workspace)?;
+        let open = workspace.vault(id).ok_or_else(ApiError::vault_not_found)?;
+        ApiResult::Ok(open.location().clone())
+    })?;
+    let VaultLocation::Local(path) = location else {
+        return Err(ApiError::invalid(
+            "Only a Vault file on this computer can be shown in a folder.",
+        ));
+    };
+    app.opener().reveal_item_in_dir(&path).map_err(|error| {
+        ApiError::new(ErrorKind::Unavailable, "The folder could not be shown.")
+            .with_detail(error.to_string())
+    })
 }
 
 /// Sets the Vault's Default access policy, answering the browser requests it settles.
