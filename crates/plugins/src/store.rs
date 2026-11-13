@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -686,8 +686,11 @@ fn read_state(path: &Path) -> Result<State, String> {
 fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp = path.with_extension("partial");
     let result = (|| {
-        fs::write(&temp, bytes)?;
-        fs::File::open(&temp)?.sync_all()?;
+        // Synced through the handle that wrote it: Windows refuses to flush a read-only one.
+        let mut file = fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&temp, path)
     })();
     if result.is_err() {
