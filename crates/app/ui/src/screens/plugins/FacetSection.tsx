@@ -1,7 +1,7 @@
 // A Plugin's facet on an Entry, such as its Card, as a section of the Entry detail's Overview
 // (card prototype variant A). Drawn with the kit from what the manifest declares and the labels
 // the Plugin derived: no Plugin code runs here (ADR 0009). Protected values show as the Plugin's
-// label or masked, and are revealed and copied as any custom field's, by index.
+// label or masked, and are revealed and copied as any custom field's, by name.
 
 import { useEffect, useState } from "react";
 import { CreditCard, Eye, EyeOff, Landmark, type LucideIcon, Puzzle } from "lucide-react";
@@ -48,7 +48,7 @@ export function FacetSection({
     }
     if (field.index === null) return;
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, field.index);
+      const value = await api.revealCustomField(entry.vault, entry.id, field.name);
       setRevealed((current) => ({ ...current, [field.key]: value }));
     } catch (error) {
       toast(errorMessage(error), { icon: "error" });
@@ -71,7 +71,7 @@ export function FacetSection({
               key={field.key}
               label={field.label}
               copied={copied === key}
-              onCopy={present && facet.canCopy ? () => void onCopy({ kind: "customField", index: field.index! }, field.name, key) : undefined}
+              onCopy={present && facet.canCopy ? () => void onCopy({ kind: "customField", name: field.name }, field.name, key) : undefined}
               actions={
                 present &&
                 field.protected && (

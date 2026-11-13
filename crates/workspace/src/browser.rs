@@ -133,6 +133,12 @@ impl AccessRequest {
         &self.query.site_host
     }
 
+    /// The host the site's form sends the Entries to, if it is another than the site's: the
+    /// decision is for it too, so the user must be shown it.
+    pub fn form_site(&self) -> Option<&str> {
+        self.query.form_host.as_deref()
+    }
+
     /// The Entries to decide on.
     pub fn entries(&self) -> &[(VaultId, EntryId)] {
         &self.undecided
@@ -241,7 +247,7 @@ pub struct BrowserSession {
     /// The Pairings the extension proved it holds, as name and key.
     proven: Vec<(String, String)>,
     /// The Entries the extension was last given for a site, each with that site. A site
-    /// turning an Entry down takes it back.
+    /// turning an Entry down takes it back, and a one-time Allow ends when its Vault locks.
     allowed: HashMap<(VaultId, EntryId), SiteQuery>,
 }
 
@@ -328,6 +334,7 @@ impl BrowserSession {
         answer: AccessAnswer,
     ) -> String {
         if answer.remember {
+            // The hosts the user was shown: the site's, and its form's if another.
             let hosts = access.query.hosts();
             // Only Entries the site may still be offered: not those of a Vault whose Pairing
             // was revoked meanwhile.
@@ -753,6 +760,9 @@ pub struct PendingAccess {
     pub id: AccessId,
     /// The host of the site asking.
     pub site: String,
+    /// The host the site's form sends the Entries to, if it is another than `site`. The
+    /// decision, remembered or not, is for both, so show both.
+    pub form_site: Option<String>,
     /// The Entries to decide on.
     pub entries: Vec<(VaultId, EntryId)>,
 }
@@ -898,6 +908,7 @@ impl Workspace {
             .map(|(id, _, request)| PendingAccess {
                 id: *id,
                 site: request.site().to_owned(),
+                form_site: request.form_site().map(str::to_owned),
                 entries: request.entries().to_vec(),
             })
     }
@@ -1231,8 +1242,10 @@ impl Workspace {
     }
 
     /// Answers the pending Pairing, Access and login requests that involve a Vault about to
-    /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked.
+    /// lock, as KeePassXC closes its dialogs on locking: the Vault is locked. The one-time
+    /// Allows given for its Entries end too.
     pub(crate) fn cut_off_browser_requests(&mut self, vault: VaultId) {
+        self.end_one_time_allows(vault);
         let browser = &mut self.browser;
         let pairings = take_where(&mut browser.pairings, |request| request.vault == vault);
         let accesses = take_where(&mut browser.accesses, |request| {
@@ -1266,6 +1279,25 @@ impl Workspace {
                     message,
                 });
             }
+        }
+    }
+
+    /// Takes back from every extension the Entries of `vault` it was given by a one-time Allow,
+    /// which lasts only until the Vault locks. Those allowed by a remembered decision or the
+    /// Vault's Default access policy are kept: the Vault keeps those decisions.
+    fn end_one_time_allows(&mut self, vault: VaultId) {
+        // Found among every open Vault: the Vault is marked as waiting to lock before this runs.
+        let open = self.vaults.iter().find(|open| open.id == vault);
+        let still_allowed = |entry: EntryId, query: &SiteQuery| {
+            open.and_then(|open| {
+                let entry = open.vault.entry(entry)?;
+                open.vault.access_decision(entry, &query.hosts())
+            }) == Some(AccessDecision::Allow)
+        };
+        for session in self.browser.sessions.values_mut() {
+            session
+                .allowed
+                .retain(|&(of, entry), query| of != vault || still_allowed(entry, query));
         }
     }
 

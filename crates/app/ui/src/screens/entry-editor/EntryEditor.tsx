@@ -6,6 +6,10 @@
 //
 // The editor stays on what it edits while the list's selection moves: moving away asks before
 // dropping unsaved changes, and otherwise just shows the newly selected Entry.
+//
+// A Merge can change the Entry while it is being edited. Saving is then refused, so the change
+// made elsewhere is never overwritten unseen: the user reloads the Entry, or keeps their edits,
+// which saves them over it and leaves the Merged version in History.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,7 +17,7 @@ import {
   ArrowUpRight, Check, ChevronRight, CircleAlert, Copy, Eye, EyeOff, Folder, History, Pencil, Plus, Timer, WandSparkles, X,
 } from "lucide-react";
 
-import { api, errorMessage } from "@/api";
+import { api, ApiError, errorMessage } from "@/api";
 import type { EntryDetail, EntryKey, TotpSetup } from "@/bindings";
 import { keys, useEntry, useFacets, useGroups, useWorkspace } from "@/api/queries";
 import { Badge, Button, GroupIcon, IconButton, Kbd, Switch, toast } from "@/kit";
@@ -125,14 +129,22 @@ interface FormHooks {
 
 function ExistingEditor({ entryKey, ...hooks }: { entryKey: EntryKey } & FormHooks) {
   const { actions } = useShell();
+  const client = useQueryClient();
   const entry = useEntry(entryKey.vault, entryKey.entry);
+  // Bumped to reload: the form starts again from the Entry as it is now.
+  const [loads, setLoads] = useState(0);
   useEffect(() => {
     if (!entry.error) return;
     toast(errorMessage(entry.error), { icon: "error" });
     actions.showEntry();
   }, [entry.error, actions]);
   if (!entry.data) return null;
-  return <EditorForm entry={entry.data} target={null} {...hooks} />;
+  const reload = async () => {
+    await client.refetchQueries({ queryKey: keys.entry(entryKey.vault, entryKey.entry) });
+    hooks.dirty.current = false;
+    setLoads((count) => count + 1);
+  };
+  return <EditorForm key={loads} entry={entry.data} target={null} onReload={reload} {...hooks} />;
 }
 
 function EditorForm({
@@ -142,7 +154,8 @@ function EditorForm({
   title,
   onDone,
   leave,
-}: { entry: EntryDetail | null; target: NewEntryTarget | null } & FormHooks) {
+  onReload,
+}: { entry: EntryDetail | null; target: NewEntryTarget | null; onReload?: () => Promise<void> } & FormHooks) {
   const { actions } = useShell();
   const client = useQueryClient();
   const keysActive = useKeysActive();
@@ -160,6 +173,10 @@ function EditorForm({
   const [tried, setTried] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The Entry's last-modified time as the editor last saw it: when it opened, or after a change
+  // the editor applied at once. A save is refused if the Entry changed since in any other way.
+  const seen = useRef(entry?.modified ?? null);
+  const [changedElsewhere, setChangedElsewhere] = useState(false);
   const titleField = useRef<HTMLInputElement>(null);
   const doc = useRef<HTMLDivElement>(null);
 
@@ -210,10 +227,9 @@ function EditorForm({
     }
   };
   const revealField = async (row: FieldRow) => {
-    const index = savedIndex(entry, row.original);
-    if (row.value !== null || !entry || index === null) return;
+    if (row.value !== null || !entry || row.original === null || savedIndex(entry, row.original) === null) return;
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, index);
+      const value = await api.revealCustomField(entry.vault, entry.id, row.original);
       setDraft((current) => ({
         ...current,
         fields: current.fields.map((r) => (r.key === row.key && r.value === null ? { ...r, value, savedValue: value } : r)),
@@ -225,14 +241,22 @@ function EditorForm({
 
   /** Fills an Owned field in from the backend, the first time the user wants it. */
   const revealOwned = async (row: OwnedRow) => {
-    const index = savedIndex(entry, row.original);
-    if (row.value !== null || !entry || index === null) return;
+    if (row.value !== null || !entry || row.original === null || savedIndex(entry, row.original) === null) return;
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, index);
+      const value = await api.revealCustomField(entry.vault, entry.id, row.original);
       updateFacets((facets) => withRevealed(facets, row.key, value));
     } catch (error) {
       toast(errorMessage(error), { icon: "error" });
     }
+  };
+  /** Runs a change that applies to the Entry at once (attachments, TOTP), and moves `seen` on
+   * past it, unless the Entry had changed elsewhere before it. */
+  const applyNow = async <T,>(run: () => Promise<T>): Promise<T> => {
+    if (!entry) return run();
+    const before = (await api.getEntry(entry.vault, entry.id)).modified;
+    const result = await run();
+    if (before === seen.current) seen.current = (await api.getEntry(entry.vault, entry.id)).modified;
+    return result;
   };
   const showRow = (key: number, show: boolean) =>
     setShownFields((current) => {
@@ -242,7 +266,8 @@ function EditorForm({
       return next;
     });
 
-  const save = async () => {
+  /** Saves the draft. `keep`: the user chose to keep their edits over a change Merged in. */
+  const save = async (keep = false) => {
     setTried(true);
     const wrong = problems(draft, hidden);
     if (wrong || ownedErrors.length > 0) {
@@ -260,7 +285,12 @@ function EditorForm({
       if (entry) {
         // The Entry as it is now: its attachments or TOTP may have changed while editing.
         const latest = await api.getEntry(entry.vault, entry.id);
-        await api.updateEntry(entry.vault, entry.id, toInput(draft, latest));
+        if (!keep && latest.modified !== seen.current) {
+          setChangedElsewhere(true);
+          return;
+        }
+        // The backend refuses it too if the Entry changes between reading it and saving.
+        await api.updateEntry(entry.vault, entry.id, toInput(draft, latest), latest.modified);
         // The detail shows the Entry as saved, not as it was a moment ago.
         await client.refetchQueries({ queryKey: keys.entry(entry.vault, entry.id) });
         toast(<>{draft.title || "(untitled)"} updated</>, { icon: "check" });
@@ -276,10 +306,16 @@ function EditorForm({
         onDone({ vault: target!.vault, entry: id });
       }
     } catch (error) {
-      setSaveError(errorMessage(error));
+      if (error instanceof ApiError && error.kind === "entryChanged") setChangedElsewhere(true);
+      else setSaveError(errorMessage(error));
     } finally {
       setBusy(false);
     }
+  };
+  const reload = async () => {
+    if (!onReload || !entry) return;
+    await onReload();
+    toast(<>Reloaded {entry.title}</>, { icon: "check" });
   };
   const cancel = () => {
     if (changed) toast("Changes discarded", { icon: X });
@@ -403,6 +439,21 @@ function EditorForm({
               onChange={(tags) => update({ tags })}
             />
           </div>
+          {changedElsewhere && (
+            <div className="ee-changed" role="alert">
+              <CircleAlert />
+              <div className="msg">
+                <b>This Entry changed while you were editing it</b>
+                <span>Changes made elsewhere were Merged into it. Reload it to see them, or keep your edits to save them over it: the Merged version stays in History.</span>
+              </div>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void reload()}>
+                Reload
+              </Button>
+              <Button size="sm" disabled={busy} onClick={() => void save(true)}>
+                Keep my edits
+              </Button>
+            </div>
+          )}
           {errors.length > 0 && (
             <div className="ee-errors" role="alert">
               {errors.map((error) => (
@@ -530,14 +581,14 @@ function EditorForm({
                   load={totpReady ? () => api.revealTotpSetup(entry.vault, entry.id) : undefined}
                   note="Saved to the Entry at once, encrypted like its password."
                   onSave={async (setup) => {
-                    await api.setTotp(entry.vault, entry.id, setup);
+                    await applyNow(() => api.setTotp(entry.vault, entry.id, setup));
                     setTotpOpen(false);
                     toast(entry.totp ? "TOTP settings saved" : `TOTP set up for ${entry.title}`, { icon: "check" });
                   }}
                   onRemove={
                     entry.totp
                       ? async () => {
-                          await api.removeTotp(entry.vault, entry.id);
+                          await applyNow(() => api.removeTotp(entry.vault, entry.id));
                           setTotpOpen(false);
                           toast(<>TOTP removed<span className="subtle"> · the earlier version keeps it in History</span></>, { icon: Timer });
                         }
@@ -679,7 +730,7 @@ function EditorForm({
                           size="sm"
                           label={kept ? "Copy" : "Copy the saved value: save first"}
                           disabled={!kept || !entry}
-                          onClick={() => entry && index !== null && void copyField(entry.vault, entry.id, { kind: "customField", index }, row.name)}
+                          onClick={() => entry && row.original !== null && void copyField(entry.vault, entry.id, { kind: "customField", name: row.original }, row.name)}
                         >
                           <Copy />
                         </IconButton>
@@ -709,7 +760,7 @@ function EditorForm({
             </div>
           </div>
 
-          <Attachments entry={entry} />
+          <Attachments entry={entry} applyNow={applyNow} />
 
           <div className="ee-hr" />
           <div className="ee-foot">

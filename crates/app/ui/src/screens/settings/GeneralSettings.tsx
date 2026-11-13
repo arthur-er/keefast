@@ -15,6 +15,7 @@ import { Button, Kbd, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, 
 import { comboFromEvent, comboLabel, DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, type ShortcutName, useShortcuts } from "@/lib/shortcuts";
 import { useOsDark } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { disconnectConfirmation, dropboxVaults } from "@/screens/dropbox/account";
 import { useShell } from "@/shell/state";
 
 import { GeneratorSettings } from "./GeneratorSettings";
@@ -435,6 +436,7 @@ function PluginsLink({ onManage }: { onManage: () => void }) {
 function DropboxAccount() {
   const client = useQueryClient();
   const status = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus });
+  const open = dropboxVaults(useWorkspace().data?.vaults ?? []);
   const { actions } = useShell();
   const [connecting, setConnecting] = useState(false);
   const refresh = () => client.invalidateQueries({ queryKey: keys.dropbox });
@@ -455,8 +457,7 @@ function DropboxAccount() {
   };
   const disconnect = () =>
     actions.confirm({
-      title: "Disconnect Dropbox?",
-      description: "keefast forgets its access to your Dropbox. Vaults in Dropbox open again once you connect it again.",
+      ...disconnectConfirmation(open),
       confirmLabel: "Disconnect",
       danger: true,
       onConfirm: () => api.dropboxDisconnect().then(refresh, (error) => void fail(error)),

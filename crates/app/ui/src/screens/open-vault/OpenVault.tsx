@@ -273,9 +273,10 @@ function UnlockPane({
     setBusy(true);
     setError(null);
     try {
-      await api.unlockVault({ provider: location.provider, path: location.path }, { password, keyFile });
+      const unlocked = await api.unlockVault({ provider: location.provider, path: location.path }, { password, keyFile });
       setPassword("");
-      onDone();
+      // `null`: the OS locked while the key was derived, so the Vault stays locked, to unlock again.
+      if (unlocked !== null) onDone();
     } catch (failure) {
       const apiError = failure instanceof ApiError ? failure : new ApiError({ kind: "unavailable", message: errorMessage(failure), detail: null });
       setError(apiError);

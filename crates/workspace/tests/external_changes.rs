@@ -6,10 +6,10 @@ mod support;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use keefast_core::{CompositeKey, EntryFields, EntryId, Timestamp, Vault};
+use keefast_core::{CompositeKey, EntryFields, EntryId, GroupId, Timestamp, Vault};
 use keefast_workspace::{
-    LocalStorage, MergeReport, SaveStatus, SaveVaultError, StorageError, StorageProvider,
-    UnlockSecrets, VaultId, VaultLocation, Workspace,
+    EntryScope, LocalStorage, MergeReport, SaveStatus, SaveVaultError, StorageError,
+    StorageProvider, UnlockSecrets, VaultId, VaultLocation, View, Workspace,
 };
 use secrecy::{ExposeSecret, SecretString};
 use support::{FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault, work_vault};
@@ -335,6 +335,121 @@ fn a_vault_file_that_cant_be_merged_is_not_overwritten() {
     h.workspace.save_vault(h.vault).unwrap();
     assert!(h.has_entry_titled(&h.other_device(), "Bank"));
     assert_eq!(h.workspace.save_status(), SaveStatus::Saved);
+}
+
+/// Deletes a Group for good, as another device does by emptying its Recycle Bin.
+fn delete_group_for_good(vault: &mut Vault, group: GroupId, now: Timestamp) {
+    while vault.group(group).is_some() {
+        vault.delete_group(group, now).unwrap();
+    }
+}
+
+impl Harness {
+    /// Makes a Group in `parent` (the root Group when `None`) and saves it to the Vault file.
+    fn saved_group(&mut self, parent: Option<GroupId>, name: &str) -> GroupId {
+        let root = self
+            .workspace
+            .vault(self.vault)
+            .unwrap()
+            .vault()
+            .root()
+            .id();
+        let group = self
+            .workspace
+            .create_group(self.vault, parent.unwrap_or(root), name)
+            .unwrap();
+        self.workspace.save_vault(self.vault).unwrap();
+        group
+    }
+
+    fn shows(&mut self, scope: EntryScope, entry: Option<EntryId>) {
+        self.workspace.show(View {
+            scope,
+            entry: entry.map(|entry| (self.vault, entry)),
+        });
+    }
+}
+
+#[test]
+fn a_merge_removing_the_group_shown_moves_the_view_to_its_nearest_surviving_parent() {
+    let mut h = harness();
+    let servers = h.saved_group(None, "Servers");
+    let staging = h.saved_group(Some(servers), "Staging");
+    let old = h.saved_group(Some(staging), "Old");
+    h.shows(EntryScope::Group(h.vault, old), None);
+
+    h.edit_elsewhere(|theirs| {
+        delete_group_for_good(theirs, staging, elsewhere_later());
+    });
+    h.handle_changes();
+
+    assert!(h.workspace.group(h.vault, staging).is_none(), "Merged in");
+    assert_eq!(
+        h.workspace.view(),
+        View::from(EntryScope::Group(h.vault, servers)),
+        "the Group shown and its parent are gone: their parent is shown"
+    );
+}
+
+#[test]
+fn a_merge_removing_the_group_shown_and_every_parent_shows_the_vault_root() {
+    let mut h = harness();
+    let servers = h.saved_group(None, "Servers");
+    let staging = h.saved_group(Some(servers), "Staging");
+    let github = h.github();
+    h.shows(EntryScope::Group(h.vault, staging), Some(github));
+
+    h.edit_elsewhere(|theirs| delete_group_for_good(theirs, servers, elsewhere_later()));
+    h.handle_changes();
+
+    assert_eq!(
+        h.workspace.view(),
+        View {
+            scope: EntryScope::Vault(h.vault),
+            entry: Some((h.vault, github)),
+        },
+        "the Entry selected is still there, so it stays selected"
+    );
+}
+
+#[test]
+fn a_merge_removing_the_entry_selected_leaves_no_entry_selected() {
+    let mut h = harness();
+    let github = h.github();
+    h.shows(EntryScope::Vault(h.vault), Some(github));
+
+    h.edit_elsewhere(|theirs| {
+        while theirs.entry(github).is_some() {
+            theirs.delete_entry(github, elsewhere_later()).unwrap();
+        }
+    });
+    h.handle_changes();
+
+    assert!(h.workspace.entry(h.vault, github).is_none(), "Merged in");
+    assert_eq!(h.workspace.view(), View::from(EntryScope::Vault(h.vault)));
+}
+
+#[test]
+fn a_merge_that_keeps_the_group_shown_leaves_the_view_alone() {
+    let mut h = harness();
+    let servers = h.saved_group(None, "Servers");
+    let staging = h.saved_group(Some(servers), "Staging");
+    let github = h.github();
+    let shown = View {
+        scope: EntryScope::Group(h.vault, staging),
+        entry: Some((h.vault, github)),
+    };
+    h.workspace.show(shown.clone());
+
+    h.edit_elsewhere(|theirs| {
+        set_password(theirs, "GitHub", "changed-elsewhere", elsewhere_later());
+        let root = theirs.root().id();
+        theirs.move_group(staging, root, elsewhere_later()).unwrap();
+    });
+    h.handle_changes();
+
+    assert_eq!(h.password(github), "changed-elsewhere", "Merged in");
+    assert_eq!(h.workspace.view(), shown);
 }
 
 #[test]

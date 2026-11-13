@@ -390,6 +390,56 @@ fn a_form_submitting_to_another_host_needs_that_host_allowed_too() {
 }
 
 #[test]
+fn remembering_covers_exactly_the_hosts_the_prompt_shows() {
+    let (mut browser, vault) = Browser::paired(storage());
+    let key = browser.key();
+    let (name, key) = (key.0.to_owned(), key.1.to_owned());
+    let sent = browser.get_logins_with(
+        EXAMPLE,
+        Some("https://collect.other.test/steal"),
+        &[(&name, &key)],
+    );
+
+    let pending = browser.ask(&sent);
+    assert_eq!(pending.site, "example.com");
+    assert_eq!(pending.form_site.as_deref(), Some("collect.other.test"));
+    let shown = [pending.site.clone(), pending.form_site.clone().unwrap()];
+    browser.answer_entries(&sent, REMEMBER_ALLOW);
+
+    let open = browser.workspace.vault(vault).unwrap().vault();
+    for &(_, entry) in &pending.entries {
+        let entry = open.entry(entry).unwrap();
+        let mut remembered: Vec<String> = entry
+            .remembered_access()
+            .into_iter()
+            .filter(|access| access.decision == AccessDecision::Allow)
+            .map(|access| access.host)
+            .collect();
+        remembered.sort();
+        let mut expected = shown.to_vec();
+        expected.sort();
+        assert_eq!(remembered, expected, "for {}", entry.title());
+    }
+}
+
+#[test]
+fn a_form_submitting_to_its_own_host_shows_only_the_site() {
+    let (mut browser, _) = Browser::paired(storage());
+    let key = browser.key();
+    let (name, key) = (key.0.to_owned(), key.1.to_owned());
+    let sent = browser.get_logins_with(
+        EXAMPLE,
+        Some("https://example.com/session"),
+        &[(&name, &key)],
+    );
+
+    let pending = browser.ask(&sent);
+
+    assert_eq!(pending.site, "example.com");
+    assert_eq!(pending.form_site, None);
+}
+
+#[test]
 fn an_unpaired_vault_is_invisible() {
     let (mut browser, personal) = Browser::paired(storage());
     // The work Vault holds the same Entries, but isn't paired with this browser.
