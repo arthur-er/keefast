@@ -36,6 +36,8 @@ import type {
   LoginTarget,
   MasterKeyParts,
   Scope,
+  SmartList,
+  SmartListCounts,
   TotpSetup,
   View,
   WorkspaceSnapshot,
@@ -52,6 +54,8 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { onSmartList } from "@/shell/smartLists";
+
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, SHORTCUTS, type ShortcutName } from "@/lib/shortcuts";
 
@@ -457,12 +461,17 @@ export function createMockBackend(): Backend & {
     return path;
   }
 
+  function groupIcon(g: MockGroup): IconView {
+    return { kind: "standard", number: g.icon ?? 48 };
+  }
+
   function groupNode(v: MockVault, g: MockGroup, bin: boolean): GroupNode {
     const isBin = g.id === v.recycleBin;
     const below = descendants(v, g.id);
     return {
       id: g.id,
       name: g.name,
+      icon: groupIcon(g),
       entryCount: v.entries.filter((e) => e.group === g.id).length,
       totalEntries: v.entries.filter((e) => below.has(e.group)).length,
       isRecycleBin: isBin,
@@ -474,6 +483,16 @@ export function createMockBackend(): Backend & {
 
   function readable(): MockVault[] {
     return state.vaults.filter((v) => !v.locked && state.pendingLock?.vault !== v.id);
+  }
+
+  function onList(list: SmartList, e: MockEntry): boolean {
+    const expired = e.expires !== null && e.expires <= now();
+    return onSmartList(list, { hasTotp: e.totp !== null, modified: e.modified, expired }, now());
+  }
+
+  function smartListCounts(v: MockVault): SmartListCounts {
+    const count = (list: SmartList) => (v.locked ? 0 : v.entries.filter((e) => !inBin(v, e.group) && onList(list, e)).length);
+    return { withTotp: count("withTotp"), recentlyModified: count("recentlyModified"), expired: count("expired") };
   }
 
   function scoped(scope: Scope): [MockVault, MockEntry][] {
@@ -493,6 +512,11 @@ export function createMockBackend(): Backend & {
             const below = descendants(v, scope.group);
             return v.entries.filter((e) => below.has(e.group)).map((e) => [v, e] as [MockVault, MockEntry]);
           });
+      case "smartList":
+        return readable()
+          .filter((v) => v.id === scope.vault)
+          .flatMap(outsideBin)
+          .filter(([, e]) => onList(scope.list, e));
       case "tag":
         return readable().flatMap(outsideBin).filter(([, e]) => e.tags.includes(scope.tag));
       case "color":
@@ -563,21 +587,22 @@ export function createMockBackend(): Backend & {
       const e = v?.entries.find((x) => x.id === entryId);
       return v && e ? [{ v, e }] : [];
     });
-    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, depth: 0 });
+    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, icon: null, depth: 0 });
     for (const { v, e } of updates) {
       options.push({
         target: { kind: "update", vault: v.id, entry: e.id },
         label: `${e.title || "(untitled)"} · ${e.username}`,
         detail: v.name,
+        icon: null,
         depth: 1,
       });
     }
-    options.push({ target: null, label: "Save as a new Entry in", detail: null, depth: 0 });
+    options.push({ target: null, label: "Save as a new Entry in", detail: null, icon: null, depth: 0 });
     for (const v of readable()) {
       const root = v.groups.find((g) => g.parent === null)!;
-      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, depth: 1 });
+      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, icon: null, depth: 1 });
       if (!v.browserGroup) {
-        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", depth: 2 });
+        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", icon: null, depth: 2 });
       }
       const walk = (parent: string, depth: number) => {
         for (const g of v.groups.filter((x) => x.parent === parent)) {
@@ -586,6 +611,7 @@ export function createMockBackend(): Backend & {
             target: { kind: "newEntry", vault: v.id, group: g.id },
             label: g.name,
             detail: v.browserGroup === g.id ? "Browser group" : null,
+            icon: groupIcon(g),
             depth,
           });
           walk(g.id, depth + 1);
@@ -620,6 +646,8 @@ export function createMockBackend(): Backend & {
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,
           browserGroup: hidden ? null : v.browserGroup,
+          smartLists: hidden ? { withTotp: 0, recentlyModified: 0, expired: 0 } : smartListCounts(v),
+          tagColors: hidden ? [] : Object.entries(v.tagColors ?? {}).map(([tag, color]) => ({ tag, color })),
         };
       }),
       view: state.view,
@@ -920,12 +948,14 @@ export function createMockBackend(): Backend & {
     }),
     listEntries: command(async (query: EntryQuery) => {
       const words = query.search.toLowerCase().split(/\s+/).filter(Boolean);
+      // Recently modified is newest first, whatever the sort.
+      const sort = query.scope.kind === "smartList" && query.scope.list === "recentlyModified" ? "modified" : query.sort;
       const listed = scoped(query.scope)
         .map(([v, e]) => ({ v, e, score: matches(e, words) }))
         .filter((x): x is { v: MockVault; e: MockEntry; score: number } => x.score !== null)
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
-          const [ka, kb] = [sortKey(a.e, query.sort), sortKey(b.e, query.sort)];
+          const [ka, kb] = [sortKey(a.e, sort), sortKey(b.e, sort)];
           return ka < kb ? -1 : ka > kb ? 1 : 0;
         })
         .map(({ v, e }) => labelled(summary(v, e), e));
@@ -1003,6 +1033,16 @@ export function createMockBackend(): Backend & {
       if (v.recycleBin && v.recycleBinEnabled && !inBin(v, e.group)) e.group = v.recycleBin;
       else v.entries = v.entries.filter((x) => x !== e);
       if (state.view.entry?.entry === entryId) state.view = { ...state.view, entry: null };
+      edited(v);
+      return null;
+    }),
+    setTagColor: command((id, tag, color) => {
+      const v = vault(id);
+      const colors = { ...v.tagColors };
+      if (colors[tag] === (color ?? undefined)) return null;
+      if (color) colors[tag] = color;
+      else delete colors[tag];
+      v.tagColors = colors;
       edited(v);
       return null;
     }),
@@ -1251,7 +1291,7 @@ export function createMockBackend(): Backend & {
         throw new MockError("invalid", "Set a master password, a Key file, or both.");
       }
       const kdf = input.encryption.kdf;
-      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs at least 1 iteration.");
+      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs 1 to 4294967295 iterations.");
       if (kdf.kind === "aesKdf" && kdf.rounds < 1) throw new MockError("invalid", "AES-KDF needs at least 1 round.");
       state.encryption.set(v.id, structuredClone(input.encryption));
       if (input.newKey) v.masterKey = keyParts(input.newKey);

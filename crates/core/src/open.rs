@@ -1,4 +1,4 @@
-use crate::{CompositeKey, Vault, kdbx};
+use crate::{CompositeKey, EncryptionError, Vault, kdbx};
 
 /// Why a Vault file could not be opened.
 #[derive(Debug, thiserror::Error)]
@@ -9,6 +9,10 @@ pub enum OpenError {
     Corrupt(String),
     #[error("this Vault file format is not supported: {0}")]
     Unsupported(String),
+    /// The Vault file's key derivation settings cost more than keefast runs, far more than
+    /// any client picks. Found before key derivation starts.
+    #[error("this Vault file's key derivation costs more than keefast runs: {0}")]
+    KdfOverLimit(EncryptionError),
 }
 
 impl Vault {

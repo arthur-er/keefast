@@ -3,8 +3,8 @@
 //! again changes nothing.
 
 use keefast_core::{
-    CompositeKey, DefaultAccessPolicy, Entry, EntryFields, EntryId, Group, GroupId, MergeSummary,
-    OpenError, Timestamp, Vault,
+    Attachment, CompositeKey, DefaultAccessPolicy, Entry, EntryFields, EntryId, Group, GroupId,
+    MergeSummary, OpenError, Timestamp, Vault,
 };
 use keepass::{Database, DatabaseKey};
 use secrecy::{ExposeSecret, SecretString};
@@ -601,4 +601,181 @@ fn a_browser_paired_again_after_its_revocation_stays_paired() {
 
     assert!(ours.is_paired_with("Home", "aG9tZQ=="));
     assert!(theirs.is_paired_with("Home", "aG9tZQ=="));
+}
+
+/// A KDBX 3.1 Vault file with an Entry, "Old laptop", whose second attachment refers to
+/// contents the file doesn't have, as files KeePass 2 damaged can, and with contents in its
+/// pool that nothing refers to.
+fn kdbx3_with_a_dangling_attachment() -> Vec<u8> {
+    use aes::Aes256;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use cipher::block_padding::Pkcs7;
+    use cipher::{BlockCipherEncrypt, BlockModeEncrypt, KeyInit, KeyIvInit};
+    use sha2::{Digest, Sha256};
+
+    let sha256 = |parts: &[&[u8]]| -> [u8; 32] {
+        let mut digest = Sha256::new();
+        for part in parts {
+            digest.update(part);
+        }
+        digest.finalize().into()
+    };
+    let base64 = |bytes: &[u8]| BASE64.encode(bytes);
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<KeePassFile><Meta><Generator>KeePass</Generator><Binaries>
+<Binary ID="4">{kept}</Binary><Binary ID="5">{unused}</Binary>
+</Binaries></Meta><Root><Group><UUID>{root}</UUID><Name>Old</Name>
+<Times><LastModificationTime>2020-01-01T00:00:00Z</LastModificationTime></Times>
+<Entry><UUID>{entry}</UUID>
+<Times><LastModificationTime>2020-01-01T00:00:00Z</LastModificationTime></Times>
+<String><Key>Title</Key><Value>Old laptop</Value></String>
+<Binary><Key>kept.txt</Key><Value Ref="4"/></Binary>
+<Binary><Key>gone.txt</Key><Value Ref="9"/></Binary>
+</Entry></Group></Root></KeePassFile>"#,
+        kept = base64(b"kept"),
+        unused = base64(b"nothing refers to this"),
+        root = base64(&[0x11; 16]),
+        entry = base64(&[0x22; 16]),
+    );
+
+    let (master_seed, transform_seed, iv, start_bytes) = ([1; 32], [2; 32], [3; 16], [4; 32]);
+    let rounds: u64 = 10;
+    let mut header = vec![0x03, 0xd9, 0xa2, 0x9a, 0x67, 0xfb, 0x4b, 0xb5, 1, 0, 3, 0];
+    let mut field = |id: u8, value: &[u8]| {
+        header.push(id);
+        header.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        header.extend_from_slice(value);
+    };
+    field(
+        2,
+        &0x31c1f2e6_bf71_4350_be58_05216afc5aff_u128.to_be_bytes(),
+    );
+    field(3, &0u32.to_le_bytes());
+    field(4, &master_seed);
+    field(5, &transform_seed);
+    field(6, &rounds.to_le_bytes());
+    field(7, &iv);
+    field(8, &[5; 32]);
+    field(9, &start_bytes);
+    field(10, &0u32.to_le_bytes());
+    field(0, b"\r\n\r\n");
+
+    let composite = sha256(&[&sha256(&[PASSWORD.as_bytes()])]);
+    let aes = Aes256::new_from_slice(&transform_seed).unwrap();
+    let mut halves = [composite[..16].to_vec(), composite[16..].to_vec()];
+    for half in &mut halves {
+        let mut block = cipher::Block::<Aes256>::try_from(&half[..]).unwrap();
+        for _ in 0..rounds {
+            aes.encrypt_block(&mut block);
+        }
+        half.copy_from_slice(&block);
+    }
+    let transformed = sha256(&[&halves[0], &halves[1]]);
+    let key = sha256(&[&master_seed, &transformed]);
+
+    let mut payload = start_bytes.to_vec();
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    payload.extend_from_slice(&sha256(&[xml.as_bytes()]));
+    payload.extend_from_slice(&(xml.len() as u32).to_le_bytes());
+    payload.extend_from_slice(xml.as_bytes());
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    payload.extend_from_slice(&[0; 32]);
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    let encrypted = cbc::Encryptor::<Aes256>::new_from_slices(&key, &iv)
+        .unwrap()
+        .encrypt_padded_vec::<Pkcs7>(&payload);
+    header.extend_from_slice(&encrypted);
+    header
+}
+
+/// An attachment's name and contents.
+type File = (String, Vec<u8>);
+
+/// Every Entry's attachments, by title.
+fn attachments_by_title(vault: &Vault) -> Vec<(String, Vec<File>)> {
+    let mut all: Vec<_> = vault
+        .root()
+        .all_entries()
+        .map(|entry| {
+            let files = entry
+                .attachments()
+                .iter()
+                .map(|attachment| (attachment.name.clone(), attachment.data().to_vec()))
+                .collect();
+            (entry.title().to_owned(), files)
+        })
+        .collect();
+    all.sort();
+    all
+}
+
+/// A Vault whose attachment pool holds more than the KDBX 3.1 file's.
+fn vault_with_attachments() -> Vault {
+    let mut vault = open(KEEPASSXC_KDBX4);
+    let github = entry_id(&vault, "GitHub");
+    let mut fields = EntryFields::from(vault.entry(github).unwrap());
+    for (name, data) in [
+        ("one.txt", "one"),
+        ("two.txt", "two"),
+        ("three.txt", "three"),
+    ] {
+        Attachment::new(name, data.as_bytes().to_vec()).add_to(&mut fields.attachments);
+    }
+    vault.update_entry(github, &fields, at(1)).unwrap();
+    vault
+}
+
+/// How many attachments' contents a Vault file's pool holds, as an independent reader sees it.
+fn pool_size(vault: &Vault) -> usize {
+    let bytes = vault.save().unwrap();
+    Database::open(&mut &bytes[..], DatabaseKey::new().with_password(PASSWORD))
+        .expect("keepass reads the merged Vault file")
+        .iter_all_attachments()
+        .count()
+}
+
+#[test]
+fn a_dangling_attachment_reference_merged_in_is_dropped_rather_than_pointing_at_another_attachment()
+{
+    let old = open(&kdbx3_with_a_dangling_attachment());
+    let mut ours = vault_with_attachments();
+    let before = attachments_by_title(&ours);
+
+    ours.merge(&old);
+
+    let laptop = vec![("kept.txt".to_owned(), b"kept".to_vec())];
+    let mut expected = before;
+    expected.push(("Old laptop".to_owned(), laptop));
+    expected.sort();
+    assert_eq!(attachments_by_title(&ours), expected);
+    assert_eq!(attachments_by_title(&open(&ours.save().unwrap())), expected);
+    assert!(!ours.merge(&old).changed(), "Merging again changes nothing");
+}
+
+#[test]
+fn a_vaults_own_dangling_reference_is_dropped_before_a_merge_fills_the_pool() {
+    let mut old = open(&kdbx3_with_a_dangling_attachment());
+    let theirs = vault_with_attachments();
+
+    old.merge(&theirs);
+
+    let mut expected = attachments_by_title(&theirs);
+    expected.push((
+        "Old laptop".to_owned(),
+        vec![("kept.txt".to_owned(), b"kept".to_vec())],
+    ));
+    expected.sort();
+    assert_eq!(attachments_by_title(&old), expected);
+}
+
+#[test]
+fn attachments_nothing_refers_to_are_dropped_after_a_merge() {
+    let mut old = open(&kdbx3_with_a_dangling_attachment());
+    let theirs = old.clone();
+
+    old.merge(&theirs);
+
+    assert_eq!(pool_size(&old), 1, "only kept.txt's contents are left");
 }

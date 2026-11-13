@@ -42,12 +42,17 @@ const DEFAULT_AES_ROUNDS = 2_000_000;
 const MAX_U32 = 4_294_967_295;
 const MAX_LANES = 0xff_ffff;
 const MIN_KIB_PER_LANE = 8;
+/** keefast's limits on key derivation (`Argon2::MAX_MEMORY` and `Argon2::MAX_COST` in core),
+ * in KiB: what it runs, and so what a Vault can be set to. */
+const MAX_MEMORY_KIB = 4 * 1024 * 1024;
+const MAX_COST_KIB = 128 * 1024 * 1024;
 
 export const MESSAGES = {
   number: "Enter whole numbers for the key derivation settings.",
-  iterations: "Argon2 needs at least 1 iteration.",
+  iterations: "Argon2 needs 1 to 4294967295 iterations.",
   parallelism: "Argon2's parallelism must be between 1 and 16777215.",
-  memory: "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 TiB.",
+  memory: "Argon2's memory must be at least 8 KiB per unit of parallelism, and at most 4 GiB.",
+  cost: "Argon2's memory times its iterations can't be more than 128 GiB. Lower one of them.",
   rounds: "AES-KDF needs at least 1 round.",
   roundsMax: "AES-KDF can't take more than 4294967295 rounds.",
 } as const;
@@ -92,7 +97,8 @@ export function checkEncryption(form: EncryptionForm, initial: EncryptionSetting
   if (parallelism < 1 || parallelism > MAX_LANES) return fail(MESSAGES.parallelism, "parallelism");
   const kept = initial.kdf.kind !== "aesKdf" && form.memoryMib.trim() === mebibytes(initial.kdf.memoryKib);
   const memoryKib = kept && initial.kdf.kind !== "aesKdf" ? initial.kdf.memoryKib : number("memoryMib") * 1024;
-  if (memoryKib < MIN_KIB_PER_LANE * parallelism || memoryKib > MAX_U32) return fail(MESSAGES.memory, "memoryMib");
+  if (memoryKib < MIN_KIB_PER_LANE * parallelism || memoryKib > MAX_MEMORY_KIB) return fail(MESSAGES.memory, "memoryMib");
+  if (memoryKib * iterations > MAX_COST_KIB) return fail(MESSAGES.cost, "iterations");
   return { ok: true, settings: { cipher: form.cipher, kdf: { kind: form.kdf, memoryKib, iterations, parallelism } } };
 }
 

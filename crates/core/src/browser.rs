@@ -300,7 +300,7 @@ impl Vault {
     }
 
     /// The Vault's custom data, `Meta/CustomData`, as key and value pairs.
-    fn custom_data(&self) -> impl Iterator<Item = (String, String)> {
+    pub(crate) fn custom_data(&self) -> impl Iterator<Item = (String, String)> {
         self.custom_data_items()
             .map(|item| (item_text(item, "Key"), item_text(item, "Value")))
     }
@@ -317,7 +317,7 @@ impl Vault {
 
     /// Sets an item of the Vault's custom data, with when it changed as KDBX 4.1 records it,
     /// so a Merge keeps the newest value.
-    fn set_vault_custom_data(&mut self, key: &str, value: &str, now: Timestamp) {
+    pub(crate) fn set_vault_custom_data(&mut self, key: &str, value: &str, now: Timestamp) {
         let meta = child_or_insert(&mut self.file.document, "Meta", &[]);
         let custom_data = child_or_insert(meta, "CustomData", &[]);
         let item = set_custom_data(custom_data, key, value);

@@ -222,8 +222,38 @@ impl From<Color> for EntryColor {
     }
 }
 
-/// What the Entry list shows: every open Vault, one Vault, one Group, or the Entries of every
-/// open Vault with a tag or colour (outside the Recycle Bin).
+/// A list of a Vault's Entries outside the Recycle Bin, by what they have: those with TOTP, those
+/// changed in the last 30 days (newest first, whatever the sort), or those expired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SmartList {
+    WithTotp,
+    RecentlyModified,
+    Expired,
+}
+
+impl From<ws::SmartList> for SmartList {
+    fn from(list: ws::SmartList) -> Self {
+        match list {
+            ws::SmartList::WithTotp => Self::WithTotp,
+            ws::SmartList::RecentlyModified => Self::RecentlyModified,
+            ws::SmartList::Expired => Self::Expired,
+        }
+    }
+}
+
+impl From<SmartList> for ws::SmartList {
+    fn from(list: SmartList) -> Self {
+        match list {
+            SmartList::WithTotp => Self::WithTotp,
+            SmartList::RecentlyModified => Self::RecentlyModified,
+            SmartList::Expired => Self::Expired,
+        }
+    }
+}
+
+/// What the Entry list shows: every open Vault, one Vault, one Group, one of a Vault's Smart
+/// lists, or the Entries of every open Vault with a tag or colour (outside the Recycle Bin).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "kind",
@@ -234,6 +264,7 @@ pub enum Scope {
     AllVaults,
     Vault { vault: VaultId },
     Group { vault: VaultId, group: GroupId },
+    SmartList { vault: VaultId, list: SmartList },
     Tag { tag: String },
     Color { color: Color },
 }
@@ -249,6 +280,10 @@ impl Scope {
                 vault: (*vault).into(),
                 group: (*group).into(),
             },
+            ws::EntryScope::Smart(vault, list) => Self::SmartList {
+                vault: (*vault).into(),
+                list: (*list).into(),
+            },
             ws::EntryScope::Tag(tag) => Self::Tag { tag: tag.clone() },
             ws::EntryScope::Color(color) => Self::Color {
                 color: (*color).into(),
@@ -262,6 +297,9 @@ impl Scope {
             Self::Vault { vault } => ws::EntryScope::Vault(vault.resolve(workspace)?),
             Self::Group { vault, group } => {
                 ws::EntryScope::Group(vault.resolve(workspace)?, group.resolve()?)
+            }
+            Self::SmartList { vault, list } => {
+                ws::EntryScope::Smart(vault.resolve(workspace)?, (*list).into())
             }
             Self::Tag { tag } => ws::EntryScope::Tag(tag.clone()),
             Self::Color { color } => ws::EntryScope::Color((*color).into()),
@@ -338,7 +376,25 @@ impl IconChoice {
 /// The standard icon of a key, KeePass's first, which a custom icon the Vault hasn't got shows as.
 const KEY_ICON: u32 = 0;
 
+/// The standard icon of a folder, which a Group's custom icon the Vault hasn't got shows as.
+const FOLDER_ICON: u32 = 48;
+
 pub fn icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) -> IconView {
+    icon_view_or(vault, icon, in_vault, KEY_ICON)
+}
+
+/// A Group's icon, as [`icon_view`] gives an Entry's.
+pub fn group_icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) -> IconView {
+    icon_view_or(vault, icon, in_vault, FOLDER_ICON)
+}
+
+/// The icon, served through `kficon:` when custom, or `missing` when the Vault hasn't got it.
+fn icon_view_or(
+    vault: ws::VaultId,
+    icon: EntryIcon,
+    in_vault: &core::Vault,
+    missing: u32,
+) -> IconView {
     match icon {
         EntryIcon::Standard(number) => IconView::Standard {
             number: number.min(core::STANDARD_ICON_COUNT - 1),
@@ -347,7 +403,7 @@ pub fn icon_view(vault: ws::VaultId, icon: EntryIcon, in_vault: &core::Vault) ->
             id: id.into(),
             url: crate::icon_protocol::custom_icon_url(vault, id),
         },
-        EntryIcon::Custom(_) => IconView::Standard { number: KEY_ICON },
+        EntryIcon::Custom(_) => IconView::Standard { number: missing },
     }
 }
 

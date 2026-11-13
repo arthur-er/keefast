@@ -21,7 +21,7 @@ export function useKeysActive(): boolean {
 }
 
 export const scopeVault = (scope: Scope): number | null =>
-  scope.kind === "vault" || scope.kind === "group" ? scope.vault : null;
+  scope.kind === "vault" || scope.kind === "group" || scope.kind === "smartList" ? scope.vault : null;
 
 /** The Vault the sidebar is about: the one shown, or the last shown while the list shows a tag,
  * a colour or every Vault, or else the first unlocked. */

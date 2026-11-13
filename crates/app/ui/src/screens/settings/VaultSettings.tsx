@@ -9,7 +9,7 @@ import { Check as CheckIcon, ChevronsUpDown, Folder, FolderOpen, Globe, Lock, Pl
 import { api, errorMessage } from "@/api";
 import type { AccessPolicy, GroupNode, PairingView, VaultId, VaultSettings, VaultSummary } from "@/bindings";
 import { useGroups, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
+import { Button, GroupIcon, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
@@ -268,11 +268,12 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
   const groups = useGroups(vault).data;
   const choices = groups ? browserGroupChoices(groups) : [];
   const bin = groups?.children.find((group) => group.isRecycleBin);
+  const chosen = choices.find(({ group }) => group.id === settings.browserGroup)?.group;
   return (
     <Menu>
       <MenuTrigger asChild>
         <button type="button" className="pick" aria-label={`Browser group: ${settings.browserGroupName ?? "not set"}`}>
-          <Folder className="ico-sm" />
+          {chosen ? <GroupIcon icon={chosen.icon} size={14} className="ico-sm" /> : <Folder className="ico-sm" />}
           <span className="truncate">{settings.browserGroupName ?? "Made on the first save"}</span>
           <ChevronsUpDown className="chev ico-sm" />
         </button>
@@ -290,7 +291,7 @@ function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: Vau
               className="menu-item outline-none data-[highlighted]:bg-bg-active"
               style={{ paddingLeft: 8 + depth * 12 }}
             >
-              <Folder />
+              <GroupIcon icon={group.icon} />
               <span className="truncate">{group.name}</span>
               <MenuPrimitive.ItemIndicator className="chk">
                 <CheckIcon />

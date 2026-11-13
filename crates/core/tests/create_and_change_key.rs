@@ -340,10 +340,26 @@ fn settings_key_derivation_cannot_run_with_are_refused_and_change_nothing() {
         // Argon2 needs 8 KiB per lane.
         (argon2(64 * 1024, 1, 16), EncryptionError::Memory),
         (argon2(1024 * 1024 + 1, 1, 1), EncryptionError::Memory),
+        // Over the limits keefast keeps key derivation to.
+        (argon2(1024 * 1024, 1 << 32, 1), EncryptionError::Iterations),
+        (
+            argon2(Argon2::MAX_MEMORY + 1024, 1, 1),
+            EncryptionError::Memory,
+        ),
+        (argon2(1024 * 1024 * 1024, 129, 4), EncryptionError::Cost),
         (
             Encryption {
                 cipher: Cipher::Aes256,
                 kdf: Kdf::AesKdf { rounds: 0 },
+            },
+            EncryptionError::Rounds,
+        ),
+        (
+            Encryption {
+                cipher: Cipher::Aes256,
+                kdf: Kdf::AesKdf {
+                    rounds: Kdf::MAX_AES_ROUNDS + 1,
+                },
             },
             EncryptionError::Rounds,
         ),

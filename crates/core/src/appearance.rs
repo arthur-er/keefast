@@ -1,13 +1,16 @@
-//! How an Entry is marked to find it in the list: its tags, colour and icon.
+//! How an Entry is marked to find it in the list: its tags, colour and icon, and the colours
+//! chosen for tags.
+
+use std::collections::BTreeMap;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use uuid::Uuid;
 
-use crate::Vault;
 use crate::edit::{EditError, child_or_insert, push, text_element};
 use crate::vault::{decode_uuid, encode_uuid};
 use crate::xml::Element;
+use crate::{Timestamp, Vault};
 
 /// The colours an Entry can be marked with, as KeeWeb offers them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -112,6 +115,9 @@ pub const STANDARD_ICON_COUNT: u32 = 69;
 /// The icon KeePass gives new Entries: a key.
 const DEFAULT_ICON: u32 = 0;
 
+/// The icon KeePass gives new Groups, and a Group without one shows: a folder.
+pub(crate) const FOLDER_ICON: u32 = 48;
+
 /// The largest custom icon keefast imports. KeePass scales icons down to 128 pixels, so an
 /// icon this big is far more than any client needs.
 pub const MAX_CUSTOM_ICON_BYTES: usize = 256 * 1024;
@@ -167,8 +173,14 @@ impl CustomIcon {
 }
 
 impl EntryIcon {
-    /// An Entry's or Group's icon: its custom icon if it has one, or its standard icon.
+    /// An Entry's icon: its custom icon if it has one, or its standard icon.
     pub(crate) fn read(element: &Element) -> Self {
+        Self::read_or(element, DEFAULT_ICON)
+    }
+
+    /// An Entry's or Group's icon: its custom icon if it has one, or its standard icon, or else
+    /// `default`.
+    pub(crate) fn read_or(element: &Element, default: u32) -> Self {
         let custom = element
             .child("CustomIconUUID")
             .and_then(|uuid| decode_uuid(&uuid.text()))
@@ -180,7 +192,7 @@ impl EntryIcon {
             .child("IconID")
             .and_then(|id| id.text().trim().parse().ok())
             .filter(|id| *id < STANDARD_ICON_COUNT)
-            .unwrap_or(DEFAULT_ICON);
+            .unwrap_or(default);
         EntryIcon::Standard(standard)
     }
 
@@ -275,6 +287,38 @@ pub fn parse_tags(text: &str) -> Vec<String> {
 /// Tags as KeePassXC and KeePass write them.
 pub(crate) fn join_tags(tags: &[String]) -> String {
     tags.join(";")
+}
+
+/// The colour chosen for a tag is in the Vault's custom data under this prefix plus the tag, as
+/// the `#RRGGBB` of [`EntryColor::hex`]; empty once the choice is undone. KDBX tags are plain
+/// text and no other client colours them, so the key is keefast's own.
+const TAG_COLOR_PREFIX: &str = "keefast_TAG_COLOR_";
+
+impl Vault {
+    /// The colours chosen for the Vault's tags, by tag. A tag without one is drawn in a colour
+    /// of the UI's choosing.
+    pub fn tag_colors(&self) -> BTreeMap<String, EntryColor> {
+        self.custom_data()
+            .filter_map(|(key, value)| {
+                let tag = key.strip_prefix(TAG_COLOR_PREFIX)?;
+                Some((tag.to_owned(), EntryColor::nearest(&value)?))
+            })
+            .collect()
+    }
+
+    /// Chooses the colour `tag` is drawn in, or with `None` undoes the choice. The choice is
+    /// timed, so a Merge keeps the newest, and an undone one is kept as empty so that a Merge
+    /// with a Vault file that still has it doesn't bring it back.
+    pub fn set_tag_color(&mut self, tag: &str, color: Option<EntryColor>, now: Timestamp) {
+        let key = format!("{TAG_COLOR_PREFIX}{tag}");
+        let current = self.custom_data().find(|(known, _)| *known == key);
+        let value = color.map_or("", EntryColor::hex);
+        match current {
+            Some((_, known)) if known == value => {}
+            None if color.is_none() => {}
+            _ => self.set_vault_custom_data(&key, value, now),
+        }
+    }
 }
 
 #[cfg(test)]

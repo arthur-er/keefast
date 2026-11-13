@@ -66,6 +66,8 @@ export interface MockGroup {
   id: string;
   name: string;
   parent: string | null;
+  /** Its standard icon; a folder when unset. */
+  icon?: number;
 }
 
 export interface MockPairing {
@@ -93,6 +95,8 @@ export interface MockVault {
   pairings: MockPairing[];
   policy: "ask" | "alwaysAllow" | "alwaysDeny";
   customIcons: { id: string; png: string }[];
+  /** The colours chosen for tags, by tag. */
+  tagColors?: Record<string, Color>;
 }
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
@@ -224,13 +228,13 @@ export function fakeVaults(): MockVault[] {
       location: { provider: "local", path: "~/Vaults/Personal.kdbx" },
       locked: false,
       groups: [
-        { id: "root", name: "Personal", parent: null },
-        { id: "email", name: "Email", parent: "root" },
-        { id: "finance", name: "Finance", parent: "root" },
-        { id: "social", name: "Social", parent: "root" },
-        { id: "home", name: "Home", parent: "root" },
-        { id: "browser", name: "Browser logins", parent: "root" },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "root", name: "Personal", parent: null, icon: 49 },
+        { id: "email", name: "Email", parent: "root", icon: 19 },
+        { id: "finance", name: "Finance", parent: "root", icon: 37 },
+        { id: "social", name: "Social", parent: "root", icon: 5 },
+        { id: "home", name: "Home", parent: "root", icon: 60 },
+        { id: "browser", name: "Browser logins", parent: "root", icon: 1 },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       recycleBinEnabled: true,
@@ -246,6 +250,7 @@ export function fakeVaults(): MockVault[] {
       ],
       policy: "ask",
       customIcons: [],
+      tagColors: { "2fa": "violet", email: "green", shared: "orange" },
       entries: [
         entry({ id: "e1", title: "GitHub", brand: "github", username: "arthur-er", password: "x7#Lq9!vR2mZ@pW4", url: "https://github.com", tags: ["dev", "2fa"], color: "violet", totp: "JBSWY3DPEHPK3PXP", notes: "Recovery codes in attachment.", attachments: [{ name: "github-recovery-codes.txt", text: RECOVERY_CODES, size: 1229 }], fields: [{ name: "PAT (ci)", value: "ghp_4fT9xQ2mZr8LbN0vKc7WdY1sHe3JpA6uGi5o", protected: true }], versions: GITHUB_VERSIONS, created: "2024-03-02T10:04:00", modified: "2026-10-07T14:32:00", access: [{ host: "github.com", allowed: true }] }),
         entry({ id: "e2", title: "Proton Mail", brand: "proton", username: "arthur-er@protonmail.com", password: "correct-horse-battery-staple-91", url: "https://account.proton.me", group: "email", tags: ["email", "2fa"], color: "blue", totp: "KRSXG5CTMVRXEZLU", history: 3, modified: "2026-09-30" }),
@@ -271,11 +276,11 @@ export function fakeVaults(): MockVault[] {
       location: { provider: "dropbox", path: "/Apps/keefast/Work.kdbx" },
       locked: false,
       groups: [
-        { id: "root", name: "Work", parent: null },
-        { id: "infra", name: "Infrastructure", parent: "root" },
-        { id: "servers", name: "Servers", parent: "infra" },
-        { id: "saas", name: "SaaS", parent: "root" },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "root", name: "Work", parent: null, icon: 49 },
+        { id: "infra", name: "Infrastructure", parent: "root", icon: 35 },
+        { id: "servers", name: "Servers", parent: "infra", icon: 3 },
+        { id: "saas", name: "SaaS", parent: "root", icon: 38 },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       recycleBinEnabled: true,
@@ -307,7 +312,7 @@ export function fakeVaults(): MockVault[] {
       locked: true,
       groups: [
         { id: "root", name: "Family", parent: null },
-        { id: "bin", name: "Recycle Bin", parent: "root" },
+        { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
       ],
       recycleBin: "bin",
       recycleBinEnabled: true,

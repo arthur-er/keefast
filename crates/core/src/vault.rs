@@ -6,7 +6,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
-use crate::appearance::{CustomIcon, custom_icons, parse_tags};
+use crate::appearance::{CustomIcon, FOLDER_ICON, custom_icons, parse_tags};
 use crate::attachment::{self, Attachment};
 use crate::edit::{is_standard_field, string_value};
 use crate::kdbx::{Binary, Key, VaultFile};
@@ -96,6 +96,7 @@ impl fmt::Debug for CustomField {
 pub struct Group {
     id: GroupId,
     name: String,
+    icon: EntryIcon,
     last_modified: Option<Timestamp>,
     pub(crate) custom_data: BTreeMap<String, String>,
     groups: Vec<Group>,
@@ -269,6 +270,7 @@ impl Group {
         Ok(Self {
             id: GroupId(uuid(group)?),
             name: group.child("Name").map(Element::text).unwrap_or_default(),
+            icon: EntryIcon::read_or(group, FOLDER_ICON),
             last_modified: last_modified(group),
             custom_data: custom_data(group),
             groups: group
@@ -292,6 +294,11 @@ impl Group {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The icon the Group is shown with: a folder unless it was given another.
+    pub fn icon(&self) -> EntryIcon {
+        self.icon
     }
 
     /// Direct child Groups, in Vault file order.
@@ -534,5 +541,23 @@ mod tests {
         assert_eq!(entry("<IconID>x</IconID>").icon(), EntryIcon::Standard(0));
         let nil = "<IconID>2</IconID><CustomIconUUID>AAAAAAAAAAAAAAAAAAAAAA==</CustomIconUUID>";
         assert_eq!(entry(nil).icon(), EntryIcon::Standard(2));
+    }
+
+    #[test]
+    fn a_group_without_an_icon_shows_a_folder() {
+        let group = |icon: &str| {
+            let xml = format!("<Group><UUID>AAAAAAAAAAAAAAAAAAAAAA==</UUID>{icon}</Group>");
+            Group::from_element(&xml::parse(&xml).unwrap(), &[])
+                .unwrap()
+                .icon()
+        };
+        assert_eq!(group(""), EntryIcon::Standard(FOLDER_ICON));
+        assert_eq!(
+            group("<IconID>x</IconID>"),
+            EntryIcon::Standard(FOLDER_ICON)
+        );
+        assert_eq!(group("<IconID>37</IconID>"), EntryIcon::Standard(37));
+        let custom = "<IconID>1</IconID><CustomIconUUID>AQEBAQEBAQEBAQEBAQEBAQ==</CustomIconUUID>";
+        assert!(matches!(group(custom), EntryIcon::Custom(_)));
     }
 }
