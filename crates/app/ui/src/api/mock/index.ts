@@ -27,6 +27,7 @@ import type {
   EntrySummary,
   EntryVersion,
   ErrorKind,
+  GeneratedPassword,
   GeneratorOptions,
   GroupNode,
   IconView,
@@ -35,6 +36,9 @@ import type {
   LoginOption,
   LoginTarget,
   Scope,
+  SmartList,
+  SmartListCounts,
+  StrengthView,
   TotpSetup,
   View,
   WorkspaceSnapshot,
@@ -51,8 +55,12 @@ import {
   type MockTotp,
   type MockVault,
 } from "./data";
+import { onSmartList } from "@/shell/smartLists";
+
 import { createMockPluginStore, PLUGIN_SCENES, PluginRefusal, type PluginScene } from "./plugin-store";
-import { facetsOf, facetTemplates, formatOwned, listLabel, validateOwned } from "./plugins";
+import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, SHORTCUTS, type ShortcutName } from "@/lib/shortcuts";
+
+import { facetsOf, facetTemplates, formatOwned, listLabel, shortcutsOf, validateOwned } from "./plugins";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: ApiError };
 
@@ -110,13 +118,32 @@ function monogram(entry: MockEntry): string | null {
 
 /** A TOTP code that changes every period, as a real one does (not RFC 6238). */
 function totpCode(totp: MockTotp, at = Date.now() / 1000) {
+  const step = (counter: number) => {
+    let hash = 2166136261;
+    for (const char of `${totp.secret}:${counter}`) {
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+    }
+    return String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
+  };
   const counter = Math.floor(at / totp.period);
-  let hash = 2166136261;
-  for (const char of `${totp.secret}:${counter}`) {
-    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
-  }
-  const code = String(hash % 10 ** totp.digits).padStart(totp.digits, "0");
-  return { code, remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+  return { code: step(counter), next: step(counter + 1), remaining: totp.period - (Math.floor(at) % totp.period), period: totp.period };
+}
+
+/** A strength from bits, scored as keefast-core scores it. */
+function strengthOf(bits: number): StrengthView {
+  return { bits: Math.round(bits), score: bits < 45 ? "weak" : bits < 64 ? "fair" : bits < 90 ? "good" : "strong" };
+}
+
+/** A rougher estimate than keefast-core's: the kinds of character used, with repeats and runs
+ * counting a bit each. */
+function estimateStrength(password: string): StrengthView {
+  const chars = [...password];
+  const pool = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].reduce((sum, kind, index) => sum + (kind.test(password) ? [26, 26, 10, 33][index]! : 0), 0);
+  const bits = chars.reduce((sum, char, index) => {
+    const follows = index > 0 && Math.abs(char.codePointAt(0)! - chars[index - 1]!.codePointAt(0)!) <= 1;
+    return sum + (follows ? 1 : Math.log2(Math.max(pool, 1)));
+  }, 0);
+  return strengthOf(bits);
 }
 
 function locationView(location: Location): LocationView {
@@ -164,12 +191,16 @@ const DEFAULT_GENERATOR: GeneratorOptions = {
 
 const WORDS = "amber anchor apple arrow autumn badge banjo basil beacon birch bison blanket bramble breeze cabin canyon cedar chalk cinder clover comet copper coral cosmos crane dawn delta denim dune ember fable falcon fern fiddle flint forest fossil galaxy garnet ginger glacier granite harbor hazel heron hollow indigo island ivory jasper juniper kettle lantern lemon lilac lotus maple marble meadow mesa mint moss nectar nickel nova oak oasis olive onyx orbit otter pebble pepper pine plume prairie quartz quill raven reef ripple river saffron sage sequoia shadow slate sparrow spruce summit thistle thunder tulip tundra velvet violet walnut willow zephyr".split(" ");
 
-function generate(options: GeneratorOptions): string {
+function generate(options: GeneratorOptions): GeneratedPassword {
   const random = (n: number) => crypto.getRandomValues(new Uint32Array(1))[0]! % n;
   if (options.mode === "passphrase") {
     const { words, separator } = options.passphrase;
     if (words < 1 || words > 40) throw new MockError("invalid", "The number of words must be between 1 and 40.");
-    return Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator);
+    // As strong as keefast's word list makes it, though the mock's list is shorter.
+    return {
+      password: Array.from({ length: words }, () => WORDS[random(WORDS.length)]).join(separator),
+      strength: strengthOf(words * Math.log2(7772)),
+    };
   }
   const c = options.characters;
   const lookalikes = "0O1Il|8B6G";
@@ -193,7 +224,7 @@ function generate(options: GeneratorOptions): string {
     const j = random(i + 1);
     [out[i], out[j]] = [out[j]!, out[i]!];
   }
-  return out.join("");
+  return { password: out.join(""), strength: strengthOf(c.length * Math.log2(all.length)) };
 }
 
 /** Where browser integration stands, as `get_settings` says it, by how registering went. */
@@ -257,6 +288,7 @@ function initialState(): MockState {
       downloadFavicons: true,
       generator: structuredClone(DEFAULT_GENERATOR),
       paneWidths: { sidebar: 232, entryList: 360 },
+      shortcuts: {},
     },
     pendingLock: null,
     pendingPairing: null,
@@ -469,12 +501,17 @@ export function createMockBackend(): Backend & {
     return path;
   }
 
+  function groupIcon(g: MockGroup): IconView {
+    return { kind: "standard", number: g.icon ?? 48 };
+  }
+
   function groupNode(v: MockVault, g: MockGroup, bin: boolean): GroupNode {
     const isBin = g.id === v.recycleBin;
     const below = descendants(v, g.id);
     return {
       id: g.id,
       name: g.name,
+      icon: groupIcon(g),
       entryCount: v.entries.filter((e) => e.group === g.id).length,
       totalEntries: v.entries.filter((e) => below.has(e.group)).length,
       isRecycleBin: isBin,
@@ -486,6 +523,16 @@ export function createMockBackend(): Backend & {
 
   function readable(): MockVault[] {
     return state.vaults.filter((v) => !v.locked && state.pendingLock?.vault !== v.id);
+  }
+
+  function onList(list: SmartList, e: MockEntry): boolean {
+    const expired = e.expires !== null && e.expires <= now();
+    return onSmartList(list, { hasTotp: e.totp !== null, modified: e.modified, expired }, now());
+  }
+
+  function smartListCounts(v: MockVault): SmartListCounts {
+    const count = (list: SmartList) => (v.locked ? 0 : v.entries.filter((e) => !inBin(v, e.group) && onList(list, e)).length);
+    return { withTotp: count("withTotp"), recentlyModified: count("recentlyModified"), expired: count("expired") };
   }
 
   function scoped(scope: Scope): [MockVault, MockEntry][] {
@@ -505,6 +552,11 @@ export function createMockBackend(): Backend & {
             const below = descendants(v, scope.group);
             return v.entries.filter((e) => below.has(e.group)).map((e) => [v, e] as [MockVault, MockEntry]);
           });
+      case "smartList":
+        return readable()
+          .filter((v) => v.id === scope.vault)
+          .flatMap(outsideBin)
+          .filter(([, e]) => onList(scope.list, e));
       case "tag":
         return readable().flatMap(outsideBin).filter(([, e]) => e.tags.includes(scope.tag));
       case "color":
@@ -575,21 +627,22 @@ export function createMockBackend(): Backend & {
       const e = v?.entries.find((x) => x.id === entryId);
       return v && e ? [{ v, e }] : [];
     });
-    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, depth: 0 });
+    if (updates.length > 0) options.push({ target: null, label: "Update an existing Entry", detail: null, icon: null, depth: 0 });
     for (const { v, e } of updates) {
       options.push({
         target: { kind: "update", vault: v.id, entry: e.id },
         label: `${e.title || "(untitled)"} · ${e.username}`,
         detail: v.name,
+        icon: null,
         depth: 1,
       });
     }
-    options.push({ target: null, label: "Save as a new Entry in", detail: null, depth: 0 });
+    options.push({ target: null, label: "Save as a new Entry in", detail: null, icon: null, depth: 0 });
     for (const v of readable()) {
       const root = v.groups.find((g) => g.parent === null)!;
-      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, depth: 1 });
+      options.push({ target: { kind: "newEntry", vault: v.id, group: root.id }, label: v.name, detail: null, icon: null, depth: 1 });
       if (!v.browserGroup) {
-        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", depth: 2 });
+        options.push({ target: { kind: "newEntry", vault: v.id, group: null }, label: "Browser (new Group)", detail: "Browser group", icon: null, depth: 2 });
       }
       const walk = (parent: string, depth: number) => {
         for (const g of v.groups.filter((x) => x.parent === parent)) {
@@ -598,6 +651,7 @@ export function createMockBackend(): Backend & {
             target: { kind: "newEntry", vault: v.id, group: g.id },
             label: g.name,
             detail: v.browserGroup === g.id ? "Browser group" : null,
+            icon: groupIcon(g),
             depth,
           });
           walk(g.id, depth + 1);
@@ -633,6 +687,8 @@ export function createMockBackend(): Backend & {
           rootGroup: hidden ? null : v.groups.find((g) => g.parent === null)!.id,
           recycleBin: hidden ? null : v.recycleBin,
           browserGroup: hidden ? null : v.browserGroup,
+          smartLists: hidden ? { withTotp: 0, recentlyModified: 0, expired: 0 } : smartListCounts(v),
+          tagColors: hidden ? [] : Object.entries(v.tagColors ?? {}).map(([tag, color]) => ({ tag, color })),
         };
       }),
       view: state.view,
@@ -766,6 +822,10 @@ export function createMockBackend(): Backend & {
       return { vault: v.id, group: g };
     }),
     defaultEncryption: command(() => structuredClone(DEFAULT_ENCRYPTION)),
+    // The prototype's rates: no key derivation runs in the browser.
+    estimateUnlockTime: command(({ kdf }: EncryptionSettings) =>
+      kdf.kind === "aesKdf" ? kdf.rounds / 2.4e6 : (kdf.memoryKib / 1024) * kdf.iterations / Math.max(kdf.parallelism, 1) / 420,
+    ),
     listPlugins: command(() => plugins.list()),
     choosePluginPackage: command(() => plugins.choose()),
     installPlugin: command((path: string, digest: string) => plugins.install(path, digest)),
@@ -936,12 +996,14 @@ export function createMockBackend(): Backend & {
     }),
     listEntries: command(async (query: EntryQuery) => {
       const words = query.search.toLowerCase().split(/\s+/).filter(Boolean);
+      // Recently modified is newest first, whatever the sort.
+      const sort = query.scope.kind === "smartList" && query.scope.list === "recentlyModified" ? "modified" : query.sort;
       const listed = scoped(query.scope)
         .map(([v, e]) => ({ v, e, score: matches(e, words) }))
         .filter((x): x is { v: MockVault; e: MockEntry; score: number } => x.score !== null)
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
-          const [ka, kb] = [sortKey(a.e, query.sort), sortKey(b.e, query.sort)];
+          const [ka, kb] = [sortKey(a.e, sort), sortKey(b.e, sort)];
           return ka < kb ? -1 : ka > kb ? 1 : 0;
         })
         .map(({ v, e }) => labelled(summary(v, e), e));
@@ -963,6 +1025,7 @@ export function createMockBackend(): Backend & {
           preview: a.text !== undefined ? "text" : a.image !== undefined ? "image" : "none",
         })),
         totp: e.totp && { status: "ready", digits: e.totp.digits, period: e.totp.period, algorithm: e.totp.algorithm, steam: false },
+        strength: e.password ? estimateStrength(e.password) : null,
         historyCount: e.history.length,
         rememberedAccess: e.access,
         groupPath: groupPath(v, e.group),
@@ -981,8 +1044,8 @@ export function createMockBackend(): Backend & {
       return problem;
     }),
     revealPassword: command((id, entryId) => entryOf(id, entryId)[1].password),
-    revealCustomField: command((id, entryId, index) => {
-      const field = entryOf(id, entryId)[1].fields[index];
+    revealCustomField: command((id, entryId, name) => {
+      const field = entryOf(id, entryId)[1].fields.find((f) => f.name === name);
       if (!field) throw notFound();
       return field.value;
     }),
@@ -999,11 +1062,23 @@ export function createMockBackend(): Backend & {
       edited(v);
       return made.id;
     }),
-    updateEntry: command((id, entryId, input) => {
+    updateEntry: command((id, entryId, input, seenModified) => {
       const [v, e] = entryOf(id, entryId);
+      if (seenModified !== null && e.modified !== seenModified) {
+        throw new MockError("entryChanged", "This Entry changed while you were editing it: changes made elsewhere were Merged into it.");
+      }
       const next = fieldsFrom(input, e);
       keepHistory(e);
       Object.assign(e, next);
+      edited(v);
+      return null;
+    }),
+    addTags: command((id, entryId, text) => {
+      const [v, e] = entryOf(id, entryId);
+      const added = [...new Set(text.split(/[,;:]/).map((tag) => tag.trim()))].filter((tag) => tag && !e.tags.includes(tag));
+      if (added.length === 0) return null;
+      keepHistory(e);
+      e.tags = [...e.tags, ...added];
       edited(v);
       return null;
     }),
@@ -1019,6 +1094,16 @@ export function createMockBackend(): Backend & {
       if (v.recycleBin && !inBin(v, e.group)) e.group = v.recycleBin;
       else v.entries = v.entries.filter((x) => x !== e);
       if (state.view.entry?.entry === entryId) state.view = { ...state.view, entry: null };
+      edited(v);
+      return null;
+    }),
+    setTagColor: command((id, tag, color) => {
+      const v = vault(id);
+      const colors = { ...v.tagColors };
+      if (colors[tag] === (color ?? undefined)) return null;
+      if (color) colors[tag] = color;
+      else delete colors[tag];
+      v.tagColors = colors;
       edited(v);
       return null;
     }),
@@ -1156,7 +1241,7 @@ export function createMockBackend(): Backend & {
         : field.kind === "password" ? e.password
         : field.kind === "url" ? e.url
         : field.kind === "totp" ? (e.totp ? totpCode(e.totp).code : "")
-        : (e.fields[field.index]?.value ?? "");
+        : (e.fields.find((f) => f.name === field.name)?.value ?? "");
       if (!text) throw new MockError("empty", "That field is empty, so nothing was copied.");
       void navigator.clipboard?.writeText(text).catch(() => {});
       const seconds = state.settings.clipboardClearSeconds;
@@ -1179,6 +1264,7 @@ export function createMockBackend(): Backend & {
       return null;
     }),
     generatePassword: command((settings) => generate(settings ?? state.settings.generator)),
+    estimateStrength: command((password) => estimateStrength(password)),
     getSettings: command((): AppSettings => {
       const { browserIntegration, ...settings } = state.settings;
       return {
@@ -1224,6 +1310,22 @@ export function createMockBackend(): Backend & {
       changed();
       return null;
     }),
+    // The checks of the backend's `shortcuts::check`, briefly.
+    setShortcut: command((name: string, keys: string | null) => {
+      const changedKeys = { ...state.settings.shortcuts };
+      if (keys === null) delete changedKeys[name];
+      else {
+        if (!(name in DEFAULT_SHORTCUTS) || FIXED_SHORTCUTS.includes(name as ShortcutName)) throw new MockError("invalid", "This shortcut can't be changed.");
+        const others = Object.entries(SHORTCUTS).filter(([other]) => other !== name).map(([, taken]) => ({ keys: taken }));
+        if (holderOf(keys, others)) throw new MockError("invalid", `${keys} is taken by another of keefast's shortcuts.`);
+        const held = [...shortcutsOf(plugins.runs).given.values()].map((taken) => ({ keys: [taken] }));
+        if (holderOf(keys, held)) throw new MockError("invalid", `${keys} is taken by the Card Plugin.`);
+        changedKeys[name] = [keys];
+      }
+      state.settings.shortcuts = changedKeys;
+      changed();
+      return null;
+    }),
     setPaneWidths: command((widths) => {
       state.settings.paneWidths = widths;
       return null;
@@ -1249,7 +1351,7 @@ export function createMockBackend(): Backend & {
         throw new MockError("invalid", "Set a master password, a Key file, or both.");
       }
       const kdf = input.encryption.kdf;
-      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs at least 1 iteration.");
+      if (kdf.kind !== "aesKdf" && kdf.iterations < 1) throw new MockError("invalid", "Argon2 needs 1 to 4294967295 iterations.");
       if (kdf.kind === "aesKdf" && kdf.rounds < 1) throw new MockError("invalid", "AES-KDF needs at least 1 round.");
       state.encryption.set(v.id, structuredClone(input.encryption));
       v.unsaved = true;
@@ -1281,6 +1383,9 @@ export function createMockBackend(): Backend & {
         };
       }).finally(() => (state.dropboxConnecting = null));
       state.dropboxAccount = { name: "Arthur Rezende", email: "arthur-er@protonmail.com" };
+      // Saves kept on this machine meanwhile upload at once.
+      for (const v of state.vaults) if (v.sync) v.sync = "synced";
+      changed();
       return state.dropboxAccount;
     }),
     dropboxConnectAnother: command(async () => {
@@ -1302,6 +1407,9 @@ export function createMockBackend(): Backend & {
     }),
     dropboxDisconnect: command(() => {
       state.dropboxAccount = null;
+      // Dropbox Vaults stay open, saving to the local cache until Dropbox is connected again.
+      for (const v of state.vaults) if (v.sync) v.sync = "offline";
+      changed();
       return null;
     }),
     dropboxListFolder: command(async (path: string) => {
@@ -1485,14 +1593,23 @@ export function createMockBackend(): Backend & {
         first.unsaved = true;
         state.pendingLock = { vault: first.id, canCancel: true };
         break;
-      case "merge":
+      case "merge": {
         if (!first) return;
+        // Changes the Entry selected (else the first), as a change made elsewhere would.
+        const selected = state.view.entry;
+        const merged = (selected && vault(selected.vault).entries.find((e) => e.id === selected.entry)) ?? first.entries[0];
+        if (merged) {
+          keepHistory(merged);
+          merged.username = `${merged.username || "someone"}.elsewhere`;
+          merged.modified += 60;
+        }
         emit("mergeNotice", {
           vault: first.id,
           vaultName: first.name,
           message: `Merged changes made elsewhere into ${first.name}: 1 Entry updated, 2 Entries added`,
         });
         break;
+      }
       case "saveFailed":
         if (!first) return;
         first.saveFailed = true;

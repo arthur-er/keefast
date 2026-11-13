@@ -8,11 +8,11 @@ import {
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { CopyTarget, EntryDetail as Entry } from "@/bindings";
-import { useTotpCode } from "@/api/queries";
+import type { CopyTarget, EntryDetail as Entry, TotpCodeView } from "@/bindings";
+import { useGroups, useTotpCode } from "@/api/queries";
 import {
-  Badge, Button, colorVar, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Tabs, TabsContent, TabsList,
-  TabsTrigger, toast,
+  Badge, Button, colorVar, GroupIcon, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, StrengthMeter, Tabs,
+  TabsContent, TabsList, TabsTrigger, toast,
 } from "@/kit";
 import { describeExpiry, formatDate, formatSize, hostOf } from "@/lib/format";
 import { SHORTCUTS } from "@/lib/shortcuts";
@@ -21,11 +21,13 @@ import { HistoryTab } from "@/screens/entry-history/HistoryTab";
 import { useShowHistoryCommand } from "@/screens/entry-history/open";
 import { FacetCommands } from "@/screens/plugins/commands";
 import { FacetSection } from "@/screens/plugins/FacetSection";
+import { splitCode } from "@/screens/totp/totp";
 import { TotpSetupPanel } from "@/screens/totp/TotpSetup";
 import { useAppCommand } from "@/shell/commands";
 import { useKeysActive } from "@/shell/hooks";
-import { COLOR_NAMES } from "@/shell/Sidebar";
+import { COLOR_NAMES, findGroup } from "@/shell/Sidebar";
 import { useShell } from "@/shell/state";
+import { useTagColor } from "@/shell/tagColors";
 
 import { copyField, deleteEntry, openUrl } from "./actions";
 import { EntryAvatar } from "./EntryList";
@@ -34,6 +36,7 @@ import { type CopyHandler, FieldRow } from "./FieldRow";
 const MASK = "••••••••••••";
 /** How long a copied field shows "Copied". */
 const FLASH_MS = 1200;
+const UNREADABLE_TOTP = "Can't be read · Set up again";
 
 type Tab = "overview" | "fields" | "files" | "history" | "access";
 
@@ -187,6 +190,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 copied={copied === "totp"}
                 onCopy={() => void copy({ kind: "totp" }, "TOTP code", "totp")}
                 open={totpSetup}
+                aside={totp.data && <NextTotpCode code={totp.data.next} />}
                 extra={
                   <button
                     type="button"
@@ -207,7 +211,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 type="button"
                 className={cn("C-qt is-setup is-action", totpSetup && "is-open")}
                 aria-expanded={totpSetup}
-                title={entry.totp?.status === "unreadable" ? entry.totp.reason : undefined}
+                title={entry.totp?.status === "unreadable" ? `${UNREADABLE_TOTP}\n${entry.totp.reason}` : undefined}
                 onClick={() => setTotpSetup(!totpSetup)}
               >
                 <span className="k">
@@ -215,7 +219,8 @@ export function EntryDetail({ entry }: { entry: Entry }) {
                 </span>
                 <span className="v subtle">
                   {entry.totp?.status === "unreadable" ? (
-                    "Can't be read · Set up again"
+                    // In a span of its own: the tile's ellipsis doesn't show on bare text in a flex box.
+                    <span className="truncate">{UNREADABLE_TOTP}</span>
                   ) : (
                     <>
                       <Plus className="ico-sm" /> Set up TOTP
@@ -248,7 +253,7 @@ export function EntryDetail({ entry }: { entry: Entry }) {
           )}
           <TabsList className="C-tabs mt-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="fields" count={entry.customFields.length}>Fields</TabsTrigger>
+            <TabsTrigger value="fields" count={shownCustomFields(entry).length}>Fields</TabsTrigger>
             <TabsTrigger value="files" count={entry.attachments.length}>Files</TabsTrigger>
             <TabsTrigger value="history" count={entry.historyCount}>History</TabsTrigger>
             <TabsTrigger value="access" count={entry.rememberedAccess.length}>Access</TabsTrigger>
@@ -307,6 +312,7 @@ function QuickTile({
   copied,
   onCopy,
   extra,
+  aside,
   open,
   children,
 }: {
@@ -316,6 +322,8 @@ function QuickTile({
   copied: boolean;
   onCopy?: () => void;
   extra?: ReactNode;
+  /** At the end of the label's line: the TOTP's next code. */
+  aside?: ReactNode;
   /** Its setup is expanded under the tiles. */
   open?: boolean;
   children: ReactNode;
@@ -341,6 +349,7 @@ function QuickTile({
     >
       <span className="k">
         {icon} {label} {onCopy && <Kbd combo={shortcut} />}
+        {aside}
       </span>
       <span className="v">{children}</span>
       {extra}
@@ -367,8 +376,19 @@ function TotpCode({ code, remaining, period }: { code: string; remaining: number
   );
 }
 
+/** The code after the one shown (TOTP B's "Next 771 204"), on the tile's label line: beside the
+ * countdown it would crowd the tile's settings button. */
+function NextTotpCode({ code }: Pick<TotpCodeView, "code">) {
+  return (
+    <span className="vb-totp-next" title="The code after this one">
+      Next <span className="mono">{splitCode(code).join(" ")}</span>
+    </span>
+  );
+}
+
 function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
   const expiry = describeExpiry(entry.expires, entry.expired);
+  const colorOf = useTagColor();
   return (
     <>
       {entry.facets.map((facet) => (
@@ -400,21 +420,18 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
         <div className="vb-fields px-3.5 py-1">
           <Prop label="Group">
             <span className="vb-chip">
-              <Folder />
+              <EntryGroupIcon entry={entry} />
               {entry.groupPath.length > 1 ? entry.groupPath[entry.groupPath.length - 1] : entry.vaultName}
             </span>
           </Prop>
           <Prop label="Tags">
-            {entry.tags.length ? (
-              entry.tags.map((tag) => (
-                <span key={tag} className="tag">
-                  <span className="dot" />
-                  {tag}
-                </span>
-              ))
-            ) : (
-              <span className="subtle">None</span>
-            )}
+            {entry.tags.map((tag) => (
+              <span key={tag} className="tag">
+                <span className="dot" style={{ background: colorVar(colorOf(entry.vault, tag)) }} />
+                {tag}
+              </span>
+            ))}
+            <AddTag entry={entry} />
           </Prop>
           <Prop label="Colour">
             {entry.color ? (
@@ -442,12 +459,78 @@ function Overview({ entry, copied, onCopy }: { entry: Entry; copied: string | nu
             )}
             {expiry.kind === "later" && expiry.date}
           </Prop>
+          <Prop label="Strength">
+            {entry.strength ? <StrengthMeter strength={entry.strength} className="vb-strength" /> : <span className="subtle">No password</span>}
+          </Prop>
           <Prop label="Modified">{entry.modified !== null ? formatDate(entry.modified) : <span className="subtle">Unknown</span>}</Prop>
           <Prop label="Created">{entry.created !== null ? formatDate(entry.created) : <span className="subtle">Unknown</span>}</Prop>
         </div>
       </div>
     </>
   );
+}
+
+/** The `+` after the tags: a small field that adds what is typed to the Entry's tags on Enter,
+ * without opening the editor. Commas separate several. */
+function AddTag({ entry }: { entry: Entry }) {
+  const [adding, setAdding] = useState(false);
+  const [text, setText] = useState("");
+  // Enter closes the field, which may blur it too: the tags are added once.
+  const open = useRef(false);
+  open.current = adding;
+  const close = () => {
+    open.current = false;
+    setAdding(false);
+    setText("");
+  };
+  const add = async () => {
+    const typed = text.trim();
+    if (!open.current) return;
+    close();
+    if (!typed) return;
+    try {
+      await api.addTags(entry.vault, entry.id, typed);
+    } catch (error) {
+      toast(errorMessage(error), { icon: "error" });
+    }
+  };
+  if (!adding) {
+    return (
+      <button type="button" className="btn ghost sm icon vb-tag-add" aria-label="Add tag" title="Add tag" onClick={() => setAdding(true)}>
+        <Plus />
+      </button>
+    );
+  }
+  return (
+    <label className="input vb-tag-input">
+      <input
+        autoFocus
+        aria-label="New tag"
+        placeholder="Tag"
+        value={text}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void add();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            close();
+          }
+        }}
+        onBlur={() => void add()}
+      />
+    </label>
+  );
+}
+
+/** The icon of the Group the Entry is in. */
+function EntryGroupIcon({ entry }: { entry: Entry }) {
+  const groups = useGroups(entry.vault).data;
+  const group = groups ? findGroup(groups, (group) => group.id === entry.group) : null;
+  return group ? <GroupIcon icon={group.icon} /> : <Folder />;
 }
 
 function Prop({ label, children }: { label: string; children: ReactNode }) {
@@ -468,47 +551,55 @@ function SectionHead({ title, count, children }: { title: string; count: number;
   );
 }
 
+/** The custom fields the Fields tab lists, by their index in the Entry: those TOTP settings are
+ * kept in are the TOTP tile's while the Entry has TOTP. */
+function shownCustomFields(entry: Entry) {
+  return entry.customFields.flatMap((field, index) => (entry.totp && field.totpStorage ? [] : [{ field, index }]));
+}
+
 function Fields({ entry, copied, onCopy }: { entry: Entry; copied: string | null; onCopy: CopyHandler }) {
-  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  // By field name: a Merge that adds or reorders fields doesn't reveal another one.
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
   useEffect(() => {
     const hide = () => setRevealed({});
     window.addEventListener("blur", hide);
     return () => window.removeEventListener("blur", hide);
   }, []);
-  const toggle = async (index: number) => {
-    if (index in revealed) {
+  const toggle = async (name: string) => {
+    if (name in revealed) {
       const next = { ...revealed };
-      delete next[index];
+      delete next[name];
       return setRevealed(next);
     }
     try {
-      const value = await api.revealCustomField(entry.vault, entry.id, index);
-      setRevealed((current) => ({ ...current, [index]: value }));
+      const value = await api.revealCustomField(entry.vault, entry.id, name);
+      setRevealed((current) => ({ ...current, [name]: value }));
     } catch (error) {
       toast(errorMessage(error), { icon: "error" });
     }
   };
+  const fields = shownCustomFields(entry);
   return (
     <>
-      <SectionHead title="Custom fields" count={entry.customFields.length} />
-      {entry.customFields.length === 0 ? (
+      <SectionHead title="Custom fields" count={fields.length} />
+      {fields.length === 0 ? (
         <div className="vb-notes empty">No custom fields.</div>
       ) : (
         <div className="vb-fields">
-          {entry.customFields.map((field, index) => {
-            const value = field.value ?? revealed[index];
+          {fields.map(({ field, index }) => {
+            const value = field.value ?? revealed[field.name];
             const key = `field:${index}`;
             return (
               <FieldRow
                 key={index}
                 label={field.name}
                 copied={copied === key}
-                onCopy={field.isEmpty ? undefined : () => void onCopy({ kind: "customField", index }, field.name, key)}
+                onCopy={field.isEmpty ? undefined : () => void onCopy({ kind: "customField", name: field.name }, field.name, key)}
                 actions={
                   field.protected &&
                   !field.isEmpty && (
-                    <button type="button" className="btn ghost sm icon" aria-label={index in revealed ? "Hide" : "Show"} title={index in revealed ? "Hide" : "Show"} onClick={() => void toggle(index)}>
-                      {index in revealed ? <EyeOff /> : <Eye />}
+                    <button type="button" className="btn ghost sm icon" aria-label={field.name in revealed ? "Hide" : "Show"} title={field.name in revealed ? "Hide" : "Show"} onClick={() => void toggle(field.name)}>
+                      {field.name in revealed ? <EyeOff /> : <Eye />}
                     </button>
                   )
                 }

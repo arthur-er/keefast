@@ -7,14 +7,14 @@ import type { FacetTemplate } from "@/bindings";
 // The backend, held in the test's hands: each reveal and each `format` answers when the test says,
 // in any order, as `?latency=` makes the mock do.
 const backend = vi.hoisted(() => ({
-  reveals: [] as { index: number; answer: (value: string) => void }[],
+  reveals: [] as { name: string; answer: (value: string) => void }[],
   formats: [] as { value: string; answer: (formatted: string) => void }[],
 }));
 
 vi.mock("@/api", () => ({
   api: {
-    revealCustomField: (_vault: number, _entry: string, index: number) =>
-      new Promise<string>((answer) => backend.reveals.push({ index, answer })),
+    revealCustomField: (_vault: number, _entry: string, name: string) =>
+      new Promise<string>((answer) => backend.reveals.push({ name, answer })),
     formatOwnedField: (_plugin: string, _facet: string, _key: string, value: string) =>
       new Promise<string>((answer) => backend.formats.push({ value, answer })),
   },
@@ -77,7 +77,7 @@ function Harness({ saved }: { saved: boolean }) {
       onFormatted={(key, typed, formatted) => setFacets((current) => withFormatted(current, key, typed, formatted))}
       onReveal={async (row) => {
         if (row.value !== null || row.original === null) return;
-        const value = await api.revealCustomField(1, "e1", facet.rows.indexOf(row));
+        const value = await api.revealCustomField(1, "e1", row.original);
         setFacets((current) => withRevealed(current, row.key, value));
       }}
       onRemove={() => {}}

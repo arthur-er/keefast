@@ -11,10 +11,14 @@ use std::fmt;
 /// keefast's own shortcuts: the UI's `SHORTCUTS`, from the file it reads them from, so every host
 /// keeps them from Plugins, in the app as in `keefast-plugin pack` and `verify`.
 pub fn keefast() -> Vec<String> {
-    let shortcuts: BTreeMap<String, Vec<String>> =
-        serde_json::from_str(include_str!("../../app/ui/src/lib/shortcuts.json"))
-            .expect("shortcuts.json lists keefast's shortcuts");
-    shortcuts.into_values().flatten().collect()
+    keefast_by_name().into_values().flatten().collect()
+}
+
+/// keefast's own shortcuts by name ("palette", "search"…), with their default keys, as
+/// `shortcuts.json` gives them before the user changes any in Settings.
+pub fn keefast_by_name() -> BTreeMap<String, Vec<String>> {
+    serde_json::from_str(include_str!("../../app/ui/src/lib/shortcuts.json"))
+        .expect("shortcuts.json lists keefast's shortcuts")
 }
 
 /// Keys every text field in the webview owns, which no Plugin may take even though keefast's

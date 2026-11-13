@@ -341,13 +341,14 @@ impl Dropbox {
         Ok((bytes, rev))
     }
 
-    /// Uploads a file, replacing revision `rev`, or whatever is there when `rev` is `None`.
-    /// Returns the new revision.
-    fn upload(&self, path: &str, bytes: &[u8], rev: Option<&str>) -> Result<String, DropboxError> {
+    /// Uploads a file, treating a file already there as `mode` says. Returns the new revision.
+    fn upload(&self, path: &str, bytes: &[u8], mode: Upload<'_>) -> Result<String, DropboxError> {
         let url = format!("{}/2/files/upload", self.config.content_url);
-        let mode = match rev {
-            Some(rev) => json!({ ".tag": "update", "update": rev }),
-            None => json!({ ".tag": "overwrite" }),
+        let mode = match mode {
+            Upload::Replace(rev) => json!({ ".tag": "update", "update": rev }),
+            Upload::Overwrite => json!({ ".tag": "overwrite" }),
+            // With `autorename` off, Dropbox refuses rather than add the file under another name.
+            Upload::New => json!({ ".tag": "add" }),
         };
         let arg = api_arg(&json!({
             "path": path,
@@ -489,6 +490,16 @@ impl Dropbox {
     }
 }
 
+/// How an upload treats a file already at its path.
+enum Upload<'a> {
+    /// Replaces the file only if it is at this revision.
+    Replace(&'a str),
+    /// Replaces whatever is there.
+    Overwrite,
+    /// Uploads only if no file is there.
+    New,
+}
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: Zeroizing<String>,
@@ -536,9 +547,25 @@ impl StorageProvider for Dropbox {
         expected: Option<&Revision>,
     ) -> Result<Revision, StorageError> {
         let path = self.location_path(location)?;
+        let mode = match expected {
+            Some(expected) => Upload::Replace(expected.as_str()),
+            None => Upload::Overwrite,
+        };
         let rev = self
-            .upload(path, bytes, expected.map(Revision::as_str))
+            .upload(path, bytes, mode)
             .map_err(|error| storage_error(error, location))?;
+        Ok(Revision::new(rev))
+    }
+
+    /// Uploads in Dropbox's add mode, which refuses when a file is there.
+    fn create(&self, location: &VaultLocation, bytes: &[u8]) -> Result<Revision, StorageError> {
+        let path = self.location_path(location)?;
+        let rev = self
+            .upload(path, bytes, Upload::New)
+            .map_err(|error| match error {
+                DropboxError::Conflict => StorageError::Exists(location.clone()),
+                error => storage_error(error, location),
+            })?;
         Ok(Revision::new(rev))
     }
 }

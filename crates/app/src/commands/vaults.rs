@@ -1,6 +1,7 @@
 //! Opening, creating, locking and saving Vaults, and the recent Vault files.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use keefast_core::{Argon2, Cipher, Encryption, Kdf};
 use keefast_workspace::{
@@ -187,6 +188,22 @@ pub async fn default_encryption() -> ApiResult<EncryptionSettings> {
     Ok(Encryption::default().into())
 }
 
+/// About how many seconds unlocking a Vault file encrypted with these settings takes on this
+/// machine, from a short run of their key derivation. One runs at a time, so that two don't slow
+/// each other down.
+#[tauri::command]
+#[specta::specta]
+pub async fn estimate_unlock_time(encryption: EncryptionSettings) -> ApiResult<f64> {
+    static RUNNING: Mutex<()> = Mutex::new(());
+    let kdf = encryption.to_core()?.kdf;
+    let time = blocking(move || {
+        let _one_at_a_time = RUNNING.lock().unwrap_or_else(PoisonError::into_inner);
+        kdf.unlock_time()
+    })
+    .await??;
+    Ok(time.as_secs_f64())
+}
+
 /// Asks the user for a Vault file to open.
 #[tauri::command]
 #[specta::specta]
@@ -249,10 +266,16 @@ fn directory_of(near: Option<&str>) -> Option<PathBuf> {
 }
 
 /// Opens a Vault file, or unlocks its Vault if it is locked, deriving the key off the main
-/// thread. A Vault file whose Vault is open already is just shown.
+/// thread. A Vault file whose Vault is open already is just shown. `None` when the OS locked or
+/// suspended while the key was derived: the Vault stays as it was, for the user to unlock
+/// again.
 #[tauri::command]
 #[specta::specta]
-pub async fn unlock_vault(core: Core<'_>, location: Location, key: KeyInput) -> ApiResult<VaultId> {
+pub async fn unlock_vault(
+    core: Core<'_>,
+    location: Location,
+    key: KeyInput,
+) -> ApiResult<Option<VaultId>> {
     let secrets = key.into_secrets();
     let location = location.to_workspace();
     let pending = core.read(|workspace| workspace.begin_open(location, secrets));
@@ -260,14 +283,14 @@ pub async fn unlock_vault(core: Core<'_>, location: Location, key: KeyInput) -> 
         Ok(pending) => pending,
         Err(OpenVaultError::AlreadyOpen(vault)) => {
             core.update(|workspace| workspace.show(View::from(EntryScope::Vault(vault))));
-            return Ok(vault.into());
+            return Ok(Some(vault.into()));
         }
         Err(error) => return Err(error.into()),
     };
     let unlocked = blocking(move || pending.unlock()).await??;
     Ok(core
         .update(|workspace| workspace.add_unlocked(unlocked))
-        .into())
+        .map(Into::into))
 }
 
 /// Writes a new Vault file, never over an existing file, deriving the key off the main thread,
@@ -294,6 +317,7 @@ pub async fn create_vault(core: Core<'_>, input: NewVaultInput) -> ApiResult<Vau
     let created = blocking(move || pending.create()).await??;
     Ok(core
         .update(|workspace| workspace.add_unlocked(created))
+        .expect("a Vault just created is always added")
         .into())
 }
 
@@ -389,7 +413,7 @@ mod tests {
         };
         assert_eq!(
             no_iterations.to_core().unwrap_err().message,
-            "Argon2 needs at least 1 iteration."
+            "Argon2 needs 1 to 4294967295 iterations."
         );
 
         let no_rounds = EncryptionSettings {

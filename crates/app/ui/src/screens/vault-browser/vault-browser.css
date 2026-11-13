@@ -22,10 +22,14 @@
   .C-row.is-selected { background: var(--bg-active); }
   .C-row.is-ctx, .C-row[data-state="open"] { box-shadow: inset 0 0 0 1px var(--border-strong); }
   .C-row .t { font-weight: 500; flex: none; max-width: 150px; }
+  .C-row .C-unsaved { flex: none; margin-left: -6px; color: var(--warn); }
   .C-row .u { color: var(--fg-2); font-size: var(--text-sm); flex: 1; }
   .C-row .m { display: flex; align-items: center; gap: 6px; flex: none; color: var(--fg-2); }
   .C-row .m svg.lucide { width: 12px; height: 12px; }
   .C-row .dot { width: 7px; height: 7px; }
+  .C-row .m .tag { height: 18px; padding: 0 6px; gap: 4px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+  .C-row .m .tag .dot { width: 6px; height: 6px; }
+  .C-row .more { font-size: var(--text-xs); }
 
   /* Entry pictures: a favicon, a custom icon, or a standard icon on a tile */
   .vb-avatar { display: inline-grid; place-items: center; flex: none; overflow: hidden; background: var(--bg-active); color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--border); }
@@ -64,6 +68,16 @@
   .vb-totp .left { font-size: var(--text-xs); color: var(--fg-2); font-variant-numeric: tabular-nums; width: 22px; }
   .vb-totp.is-low .code { color: var(--warn); }
   .vb-totp.is-low .ring { background: conic-gradient(var(--warn) calc(var(--p) * 360deg), var(--border-strong) 0); }
+  /* After the shortcut, which shows on hover: the next code stays at the end of the line. */
+  .vb-totp-next { margin-left: 2px; white-space: nowrap; }
+  .vb-totp-next .mono { color: var(--fg-1); letter-spacing: 0.04em; }
+  .C-qt.is-copied .vb-totp-next { display: none; }
+  /* The Details card's Strength row, and the + after its tags. */
+  .vb-strength { font-size: var(--text-sm); }
+  .vb-strength .strength { width: 36px; }
+  .vb-strength .lbl { color: var(--fg-0); font-weight: 400; }
+  .vb-tag-add { width: 22px; height: 22px; }
+  .vb-tag-input { width: 112px; height: 22px; padding: 0 8px; font-size: var(--text-xs); border-radius: var(--r-sm); }
   .vb-link { all: unset; color: var(--fg-0); display: inline-flex; align-items: center; gap: 6px; min-width: 0; cursor: default; }
   .vb-link svg.lucide { width: 12px; height: 12px; color: var(--fg-2); }
   .vb-link:hover { color: var(--accent-fg); }

@@ -12,6 +12,8 @@ use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use super::{Core, blocking};
+use crate::background;
+use crate::core::AppCore;
 use crate::dto::{Location, Provider, seconds as seconds_since_1970};
 use crate::error::{ApiError, ApiResult, ErrorKind};
 
@@ -147,7 +149,7 @@ pub async fn dropbox_connect(
 ) -> ApiResult<DropboxAccountView> {
     let dropbox = dropbox(&core)?;
     let authorization = dropbox.begin_connect()?;
-    connect(app, dropbox, authorization, &connecting).await
+    connect(app, &core, dropbox, authorization, &connecting).await
 }
 
 /// Connects another Dropbox account in place of the one connected: as `dropbox_connect`, but
@@ -162,12 +164,13 @@ pub async fn dropbox_connect_another(
 ) -> ApiResult<DropboxAccountView> {
     let dropbox = dropbox(&core)?;
     let authorization = dropbox.begin_connect_another()?;
-    connect(app, dropbox, authorization, &connecting).await
+    connect(app, &core, dropbox, authorization, &connecting).await
 }
 
 /// Opens Dropbox's page in the user's browser, and waits until Dropbox sends the browser back.
 async fn connect(
     app: AppHandle,
+    core: &Arc<AppCore>,
     dropbox: Arc<Dropbox>,
     authorization: Authorization,
     connecting: &Connecting,
@@ -180,7 +183,11 @@ async fn connect(
     }
     let connected = blocking(move || dropbox.finish_connect(authorization)).await?;
     *connecting.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
-    Ok(connected?.into())
+    let connected = connected?;
+    // Saves kept on this machine while the account was disconnected upload now, Merged with
+    // what Dropbox holds, without waiting for the next check.
+    background::sync_now(core);
+    Ok(connected.into())
 }
 
 /// Opens Dropbox's page again, while connecting.

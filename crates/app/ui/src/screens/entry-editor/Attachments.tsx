@@ -17,14 +17,21 @@ function fileIcon(attachment: AttachmentView) {
   return /\.(pub|key|pem|asc)$|^id_/i.test(attachment.name) ? FileKey : File;
 }
 
-/** `entry` is `null` for a new Entry, which has nowhere to attach files to yet. */
-export function Attachments({ entry }: { entry: EntryDetail | null }) {
+/** `entry` is `null` for a new Entry, which has nowhere to attach files to yet. `applyNow` runs
+ * the changes, which apply to the Entry at once, for the editor to know they are its own. */
+export function Attachments({
+  entry,
+  applyNow,
+}: {
+  entry: EntryDetail | null;
+  applyNow: <T>(run: () => Promise<T>) => Promise<T>;
+}) {
   const [previewing, setPreviewing] = useState<number | null>(null);
   const attachments = entry?.attachments ?? [];
   const add = async () => {
     if (!entry) return;
     try {
-      const added = await api.addAttachments(entry.vault, entry.id);
+      const added = await applyNow(() => api.addAttachments(entry.vault, entry.id));
       if (added.added.length) {
         toast(added.added.length === 1 ? `Attached ${added.added[0]}` : `Attached ${added.added.length} files`, { icon: Paperclip });
       }
@@ -36,7 +43,7 @@ export function Attachments({ entry }: { entry: EntryDetail | null }) {
   const remove = async (attachment: AttachmentView) => {
     if (!entry) return;
     try {
-      await api.removeAttachment(entry.vault, entry.id, attachment.index);
+      await applyNow(() => api.removeAttachment(entry.vault, entry.id, attachment.index));
       setPreviewing(null);
       toast(<>Removed {attachment.name}<span className="subtle"> · the earlier version keeps it in History</span></>, { icon: Trash2 });
     } catch (error) {

@@ -9,7 +9,7 @@ import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, LockOpen, Sh
 import { api, errorMessage } from "@/api";
 import type { AskedEntry, LoginOption, LoginTarget, VaultSummary, WorkspaceSnapshot } from "@/bindings";
 import { useEntry, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, toast } from "@/kit";
+import { Button, GroupIcon, toast } from "@/kit";
 import { timeAgo } from "@/lib/format";
 import { useNow } from "@/lib/now";
 import { cn } from "@/lib/utils";
@@ -468,11 +468,11 @@ function TargetRow({ option, target, on, onChoose }: { option: LoginOption; targ
     );
   }
   const { name, isNew } = splitNewGroup(option.label);
-  const Icon = isNew ? FolderPlus : Folder;
+  const icon = isNew ? <FolderPlus /> : option.icon ? <GroupIcon icon={option.icon} /> : <Folder />;
   return (
     <div className={cn("tl-row", on && "is-on")} style={{ paddingLeft: 8 + Math.max(0, option.depth - 1) * 20 }} {...common}>
       <span className={cn("radio", on && "is-on")} />
-      {option.depth <= 1 ? <VaultGlyph vault={target.vault} /> : <Icon />}
+      {option.depth <= 1 ? <VaultGlyph vault={target.vault} /> : icon}
       <span className={cn("lbl truncate", option.depth <= 1 && "font-medium")}>
         {name}
         {isNew && <span className="subtle"> (new Group)</span>}

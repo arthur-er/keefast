@@ -11,11 +11,15 @@ use keefast_core::{
     Timestamp, Vault,
 };
 use keefast_workspace::{
-    ChangeKeyError, CreateVaultError, EntryScope, NewKeyError, NewVault, SaveStatus,
-    SaveVaultError, UnlockSecrets, VaultId, VaultLocation, Workspace, write_new_key_file,
+    ChangeKeyError, CreateVaultError, EntryScope, LocalStorage, NewKeyError, NewVault, SaveStatus,
+    SaveVaultError, StorageError, StorageProvider, UnlockSecrets, VaultId, VaultLocation,
+    Workspace, write_new_key_file,
 };
 use secrecy::SecretString;
-use support::{FakeClipboard, FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD, personal_vault};
+use support::{
+    AppearsAfterCheck, FakeClipboard, FakeClock, FakeStorage, KEEPASSXC_KDBX4, PASSWORD,
+    personal_vault,
+};
 
 const START: u64 = 1_800_000_000;
 const NEW_PASSWORD: &str = "a brand new master password";
@@ -46,7 +50,7 @@ fn new_vault(name: &str, secrets: UnlockSecrets) -> NewVault {
 
 fn create(workspace: &mut Workspace, location: &VaultLocation, new: NewVault) -> VaultId {
     let pending = workspace.begin_create(location.clone(), new).unwrap();
-    workspace.add_unlocked(pending.create().unwrap())
+    workspace.add_unlocked(pending.create().unwrap()).unwrap()
 }
 
 fn fields(title: &str) -> EntryFields {
@@ -422,6 +426,56 @@ fn an_existing_file_is_never_replaced_with_a_new_vault() {
 
     assert!(matches!(result, Err(CreateVaultError::FileExists)));
     assert_eq!(stored(&storage), KEEPASSXC_KDBX4);
+}
+
+#[test]
+fn a_file_appearing_while_a_vault_is_created_is_never_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Personal.kdbx");
+    let location = VaultLocation::Local(path.clone());
+    let theirs = path.clone();
+    // Another app saves a file there just after keefast checked that none was.
+    let storage = AppearsAfterCheck::new(Arc::new(LocalStorage), move || {
+        std::fs::write(theirs, KEEPASSXC_KDBX4).unwrap();
+    });
+    let workspace = Workspace::new(Arc::new(storage));
+    let pending = workspace
+        .begin_create(
+            location,
+            new_vault("Personal", UnlockSecrets::password(NEW_PASSWORD)),
+        )
+        .unwrap();
+
+    let result = pending.create();
+
+    assert!(matches!(result, Err(CreateVaultError::FileExists)));
+    assert_eq!(std::fs::read(&path).unwrap(), KEEPASSXC_KDBX4);
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert_eq!(left.len(), 1, "no temporary file is left behind");
+}
+
+#[test]
+fn a_vault_file_created_on_disk_opens_with_its_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let location = VaultLocation::Local(dir.path().join("Personal.kdbx"));
+    let mut workspace = Workspace::new(Arc::new(LocalStorage));
+    let pending = workspace
+        .begin_create(
+            location.clone(),
+            new_vault("Personal", UnlockSecrets::password(NEW_PASSWORD)),
+        )
+        .unwrap();
+
+    let vault = workspace.add_unlocked(pending.create().unwrap()).unwrap();
+
+    assert!(workspace.vault(vault).is_some());
+    let stored = LocalStorage.read(&location).unwrap();
+    Vault::open(&stored.bytes, &CompositeKey::password(NEW_PASSWORD)).unwrap();
+    assert!(matches!(
+        LocalStorage.create(&location, b"another"),
+        Err(StorageError::Exists(_))
+    ));
+    assert_eq!(LocalStorage.read(&location).unwrap().bytes, stored.bytes);
 }
 
 #[test]

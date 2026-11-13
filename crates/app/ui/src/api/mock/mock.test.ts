@@ -34,6 +34,59 @@ describe("mock backend", () => {
     expect(await api.revealPassword(github.vault, github.id)).toBe("x7#Lq9!vR2mZ@pW4");
   });
 
+  it("says how strong a password is without revealing it", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const detail = await api.getEntry(github!.vault, github!.id);
+    expect(detail.strength?.score).toBe("strong");
+    expect((await api.estimateStrength("aaaa")).score).toBe("weak");
+    const generated = await api.generatePassword(null);
+    expect(generated.strength.bits).toBeGreaterThan(100);
+  });
+
+  it("adds tags from the detail once, keeping the version before", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const before = await api.getEntry(github!.vault, github!.id);
+    await api.addTags(github!.vault, github!.id, "work, dev");
+    await api.addTags(github!.vault, github!.id, "work");
+    const after = await api.getEntry(github!.vault, github!.id);
+    expect(after.tags).toEqual([...before.tags, "work"]);
+    expect(after.historyCount).toBe(before.historyCount + 1);
+  });
+
+  it("gives a TOTP code with the one after it", async () => {
+    const api = unwrap(createMockBackend().commands);
+    const [github] = await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" });
+    const code = (await api.getTotpCode(github!.vault, github!.id))!;
+    expect(code.next).toMatch(/^\d{6}$/);
+  });
+
+  it("refuses an edit of an Entry Merged since the editor read it, until the user keeps it", async () => {
+    const mock = createMockBackend();
+    const api = unwrap(mock.commands);
+    const found = (await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" }))[0]!;
+    await api.setView({ scope: { kind: "allVaults" }, entry: { vault: found.vault, entry: found.id } });
+    const opened = await api.getEntry(found.vault, found.id);
+    const input = (title: string) => ({
+      title, username: opened.username, password: null, url: opened.url, notes: opened.notes, customFields: [],
+      tags: opened.tags, color: opened.color, icon: { kind: "standard" as const, number: 0 }, expires: null,
+    });
+
+    mock.simulate("merge");
+    const merged = await api.getEntry(found.vault, found.id);
+    expect(merged.username).not.toBe(opened.username);
+    const refused = await api.updateEntry(found.vault, found.id, input("GitHub (edited)"), opened.modified).catch((e) => e);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused.kind).toBe("entryChanged");
+    expect((await api.getEntry(found.vault, found.id)).title).toBe("GitHub");
+
+    await api.updateEntry(found.vault, found.id, input("GitHub (edited)"), merged.modified);
+    expect((await api.getEntry(found.vault, found.id)).title).toBe("GitHub (edited)");
+    const history = await api.getEntryHistory(found.vault, found.id);
+    expect(history.at(-1)!.username).toBe(merged.username);
+  });
+
   it("tells the UI about every change with a higher revision", async () => {
     const mock = createMockBackend();
     const api = unwrap(mock.commands);
@@ -118,7 +171,7 @@ describe("mock backend", () => {
     ]);
     expect(JSON.stringify(entry.facets)).not.toMatch(/5162|481|8271/);
     const cvv = card.fields[3]!;
-    expect(await api.revealCustomField(entry.vault, entry.id, cvv.index!)).toBe("481");
+    expect(await api.revealCustomField(entry.vault, entry.id, cvv.name)).toBe("481");
 
     const github = (await api.listEntries({ scope: { kind: "allVaults" }, search: "github", sort: "title" }))[0]!;
     expect((await api.getEntry(github.vault, github.id)).facets).toEqual([]);

@@ -143,6 +143,14 @@ impl FakeDropbox {
         self.lock().access_tokens.clear();
     }
 
+    /// Dropbox stops letting keefast in, as when the user removes the app in their Dropbox
+    /// settings: every token stops working, the refresh tokens too.
+    pub fn revoke_access(&self) {
+        let mut state = self.lock();
+        state.access_tokens.clear();
+        state.refresh_tokens.clear();
+    }
+
     /// How many times an access token was renewed with a refresh token.
     pub fn refreshes(&self) -> usize {
         self.lock().refreshes

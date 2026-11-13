@@ -20,6 +20,7 @@ export function LockedVault({ vault }: { vault: VaultSummary }) {
     setBusy(true);
     setError(null);
     try {
+      // Unlocked, or still locked with no error when the OS locked while the key was derived.
       await api.unlockVault({ provider: vault.location.provider, path: vault.location.path }, { password, keyFile });
       setPassword("");
     } catch (failure) {

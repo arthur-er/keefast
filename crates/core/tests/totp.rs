@@ -108,6 +108,23 @@ fn a_code_says_how_long_it_stays_valid() {
 }
 
 #[test]
+fn a_code_comes_with_the_one_after_it() {
+    let totp = Totp::new(SHA1_SECRET, TotpAlgorithm::Sha1, 8, 30).unwrap();
+    // RFC 6238's SHA-1 vectors at 1111111109 and 1111111111, a step apart.
+    let now = totp.code(at(1_111_111_109));
+    assert_eq!((now.code(), now.next()), ("07081804", "14050471"));
+    // Whenever in its step it is asked, the next code is the one the next step starts with.
+    for seconds in [0, 1, 29, 30, 59, 1_800_000_000] {
+        let next_step = (seconds / 30 + 1) * 30;
+        assert_eq!(
+            totp.code(at(seconds)).next(),
+            code(&totp, next_step),
+            "at {seconds}"
+        );
+    }
+}
+
+#[test]
 fn secrets_by_hand_may_be_lowercase_spaced_and_unpadded() {
     let messy = Totp::new(
         "gezd gnbv gy3t qojq gezd-gnbv-gy3t-qojq",

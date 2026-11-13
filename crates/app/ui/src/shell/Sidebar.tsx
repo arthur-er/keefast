@@ -4,18 +4,23 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Check, ChevronsUpDown, ChevronUp, CircleHelp, Ellipsis, Folder, FolderOpen, Hash, LayoutGrid, LayoutList, Lock,
+  Check, ChevronsUpDown, ChevronUp, CircleHelp, Ellipsis, FolderOpen, LayoutGrid, LayoutList, Lock,
   MousePointerClick, Plus, Settings, Settings2, Trash2,
 } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { Color, GroupNode, Scope, VaultSummary } from "@/bindings";
 import { useEntries, useGroups, useWorkspace } from "@/api/queries";
-import { colorVar, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast, Tooltip } from "@/kit";
+import {
+  ColorDot, colorVar, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator,
+  ContextMenuTrigger, GroupIcon, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast, Tooltip,
+} from "@/kit";
 import { cn } from "@/lib/utils";
 import { GroupContextMenu, useDeleteGroupCommand } from "@/screens/dialogs/GroupActions";
 
 import { useCurrentVault } from "./hooks";
+import { SMART_LISTS } from "./smartLists";
+import { automaticTagColor, chosenTagColor, tagColor } from "./tagColors";
 import { useShell } from "./state";
 import { sameScope, useShowScope, useView } from "./view";
 import { VaultMark } from "./VaultMark";
@@ -166,6 +171,15 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
     <>
       <div className="nav-section">
         <NavItem scope={{ kind: "vault", vault: vault.id }} icon={<LayoutList />} label="All Entries" count={allCount} />
+        {SMART_LISTS.map(({ list, label, icon: Icon, count }) => (
+          <NavItem
+            key={list}
+            scope={{ kind: "smartList", vault: vault.id, list }}
+            icon={<Icon />}
+            label={label}
+            count={vault.smartLists[count] || ""}
+          />
+        ))}
       </div>
       <div className="nav-section">
         <div className="nav-head">
@@ -178,7 +192,7 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
         <div className="nav-section">
           <div className="nav-head">Tags</div>
           {tags.map(([tag, count]) => (
-            <NavItem key={tag} scope={{ kind: "tag", tag }} icon={<Hash />} label={tag} count={count} />
+            <TagItem key={tag} vault={vault} tag={tag} count={count} />
           ))}
           {tagCounts.length > TAGS_SHOWN && (
             <button type="button" className="nav-item vb-more w-full text-left" onClick={() => setAllTags(!allTags)}>
@@ -190,6 +204,47 @@ function OpenVaultNav({ vault }: { vault: VaultSummary }) {
       )}
       <ColorSection />
     </>
+  );
+}
+
+/** A tag in the sidebar, in its colour; right-click to choose the colour, kept in the Vault. */
+function TagItem({ vault, tag, count }: { vault: VaultSummary; tag: string; count: number }) {
+  const chosen = chosenTagColor(vault, tag);
+  const choose = (color: Color | null) => void api.setTagColor(vault.id, tag, color).catch(showError);
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div>
+          <NavItem
+            scope={{ kind: "tag", tag }}
+            icon={<span className="dot vb-tag-dot" style={{ background: colorVar(tagColor(vault, tag)) }} />}
+            label={tag}
+            count={count}
+          />
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-[200px]">
+        <ContextMenuLabel>Colour of {tag}</ContextMenuLabel>
+        {COLORS.map((color) => (
+          <ContextMenuItem
+            key={color}
+            icon={<ColorDot color={color} />}
+            trailing={chosen === color && <Check className="vb-menu-check" />}
+            onSelect={() => choose(color)}
+          >
+            {COLOR_NAMES[color]}
+          </ContextMenuItem>
+        ))}
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          icon={<ColorDot color={automaticTagColor(tag)} />}
+          trailing={chosen === null && <Check className="vb-menu-check" />}
+          onSelect={() => choose(null)}
+        >
+          Automatic
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -214,7 +269,7 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
   if (renaming) {
     return (
       <div className="nav-item is-selected" style={{ paddingLeft: 8 + depth * 16 }}>
-        <Folder />
+        <GroupIcon icon={group.icon} />
         <RenameField
           initial={group.name}
           onDone={(name) => {
@@ -237,7 +292,7 @@ function GroupItem({ vault, group, depth }: { vault: number; group: GroupNode; d
       <div onDoubleClick={() => actions.renameGroup(`${vault}:${group.id}`)}>
         <NavItem
           scope={{ kind: "group", vault, group: group.id }}
-          icon={<Folder />}
+          icon={<GroupIcon icon={group.icon} />}
           label={group.name}
           count={group.totalEntries || ""}
           depth={depth}

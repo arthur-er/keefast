@@ -23,12 +23,17 @@ const SYNC: Record<SyncState, { word: string; body: string }> = {
   error: { word: "Sync error", body: "The last sync with the Vault file in Dropbox failed." },
 };
 
+/** Offline because no account is connected, rather than out of reach. */
+const DISCONNECTED = "Dropbox isn't connected. Saves are kept on this machine and upload once you connect it again.";
+
 export function SyncDetail({ vault }: { vault: VaultSummary }) {
-  const account = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data?.account;
+  const status = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data;
+  const account = status?.account;
   const now = useNow();
   const sync = vault.syncStatus;
   if (!sync) return null;
-  const { word, body } = SYNC[sync];
+  const { word } = SYNC[sync];
+  const body = sync === "offline" && status && !account ? DISCONNECTED : SYNC[sync].body;
   return (
     <div className="dbx-sync">
       <div className={cn("ttl", sync)}>
