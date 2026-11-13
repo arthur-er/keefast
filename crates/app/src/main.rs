@@ -14,6 +14,7 @@ mod error;
 mod events;
 mod icon_protocol;
 mod merge_notice;
+mod shortcuts;
 
 use keefast_workspace::{BrowserHosts, NativeMessagingHosts};
 
