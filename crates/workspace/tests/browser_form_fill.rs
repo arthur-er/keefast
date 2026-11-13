@@ -57,6 +57,21 @@ struct Browser {
     pairing: (String, String),
 }
 
+/// A reply as text without its nonce and Entry uuids: they are random, so they may hold any
+/// digits a test checks a reply doesn't.
+fn without_random_ids(mut reply: Value) -> String {
+    if let Some(reply) = reply.as_object_mut() {
+        reply.remove("nonce");
+        reply.remove("uuid");
+    }
+    if let Some(entries) = reply.get_mut("entries").and_then(Value::as_array_mut) {
+        for entry in entries.iter_mut().filter_map(Value::as_object_mut) {
+            entry.remove("uuid");
+        }
+    }
+    reply.to_string()
+}
+
 impl Browser {
     /// Opens the personal Vault, adds the Cards, tells the Workspace the Card Plugin fills
     /// payment forms, and pairs an extension with the Vault as "Home".
@@ -227,7 +242,7 @@ fn picking_a_card_gives_its_fields_by_autocomplete_token_but_never_its_pin() {
             "cc-csc=737",
         ]
     );
-    assert!(!message.to_string().contains("4321"), "no PIN: {message}");
+    assert!(!without_random_ids(message).contains("4321"), "no PIN");
 }
 
 #[test]
@@ -351,7 +366,8 @@ fn a_plugin_filling_fewer_fields_gives_only_those() {
 
     let sent = browser.fill("Company Visa", None);
     let message = browser.send(&sent);
-    assert!(!message.to_string().contains("737"), "{message}");
+    let message = without_random_ids(message);
+    assert!(!message.contains("737"), "{message}");
 }
 
 #[test]
@@ -382,7 +398,7 @@ fn searching_for_a_payment_form_lists_the_cards_without_their_values() {
     let sent = browser
         .extension
         .search_form("payment", "", SHOP, &[browser.key()]);
-    let message = browser.send(&sent).to_string();
+    let message = without_random_ids(browser.send(&sent));
     for value in ["4111", "737", "4321", "Ada"] {
         assert!(!message.contains(value), "{value} in {message}");
     }
