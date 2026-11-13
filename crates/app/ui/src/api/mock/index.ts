@@ -29,6 +29,8 @@ import type {
   ErrorKind,
   GeneratedPassword,
   GeneratorOptions,
+  PaletteMatch,
+  PaletteMatches,
   GroupNode,
   IconView,
   Location,
@@ -592,6 +594,20 @@ export function createMockBackend(): Backend & {
     return score;
   }
 
+  /** Each word in `name` as typed, scored about as the backend scores a title. */
+  function nameMatch(name: string, words: string[]): PaletteMatch | null {
+    const lower = name.toLowerCase();
+    let score = 0;
+    const positions: number[] = [];
+    for (const word of words) {
+      const at = lower.indexOf(word);
+      if (at < 0) return null;
+      score += at === 0 ? 33 : /[\p{L}\p{N}]/u.test(lower[at - 1]!) ? 31 : 32;
+      for (let i = at; i < at + word.length; i++) positions.push(i);
+    }
+    return { score, positions: [...new Set(positions)].sort((a, b) => a - b) };
+  }
+
   function sortKey(e: MockEntry, sort: EntryQuery["sort"]): string | number {
     switch (sort) {
       case "title":
@@ -1013,6 +1029,20 @@ export function createMockBackend(): Backend & {
         })
         .map(({ v, e }) => labelled(summary(v, e), e));
       return Promise.all(listed);
+    }),
+    // A stand-in for the backend's fuzzy matching: each word must be in the name as typed.
+    searchPalette: command(async (search: string, names: string[]): Promise<PaletteMatches> => {
+      const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+      const found = scoped({ kind: "allVaults" })
+        .filter(([v, e]) => !inBin(v, e.group))
+        .map(([v, e]) => ({ v, e, score: matches(e, words), title: nameMatch(e.title, words) }))
+        .filter((x) => x.score !== null)
+        .sort((a, b) => (b.title?.score ?? b.score!) - (a.title?.score ?? a.score!) || a.e.title.localeCompare(b.e.title))
+        .slice(0, 5);
+      return {
+        names: names.map((name) => nameMatch(name, words)),
+        entries: await Promise.all(found.map(async ({ v, e, score, title }) => ({ entry: await labelled(summary(v, e), e), found: title ?? { score: score!, positions: [] } }))),
+      };
     }),
     getEntry: command(async (id, entryId): Promise<EntryDetail> => {
       const [v, e] = entryOf(id, entryId);

@@ -112,6 +112,8 @@ export const commands = {
 	 *  is let go of, so a slow `derive` never holds it.
 	 */
 	listEntries: (query: EntryQuery) => typedError<EntrySummary[], ApiError>(__TAURI_INVOKE("list_entries", { query })),
+	/**  The command palette's search: the names of its commands, and the Entries. */
+	searchPalette: (search: string, names: string[]) => typedError<PaletteMatches, ApiError>(__TAURI_INVOKE("search_palette", { search, names })),
 	/**  An Entry, without its password and protected custom fields. */
 	getEntry: (vault: VaultId, entry: EntryId) => typedError<EntryDetail, ApiError>(__TAURI_INVOKE("get_entry", { vault, entry })),
 	/**  An Entry's password, for the user to see. Copying doesn't need it: use `copy_field`. */
@@ -1051,6 +1053,35 @@ export type PairingView = {
 	 *  since keefast started recording it.
 	 */
 	lastUsed: number | null,
+};
+
+export type PaletteEntry = {
+	entry: EntrySummary,
+	/**  Its `positions` are empty when the search matched none of the title. */
+	found: PaletteMatch,
+};
+
+/**  How a name, or an Entry, matched. */
+export type PaletteMatch = {
+	/**  Higher is better. */
+	score: number,
+	/**
+	 *  The indexes, in UTF-16 code units, of the name's or title's characters matched, to
+	 *  highlight them.
+	 */
+	positions: number[],
+};
+
+/**
+ *  What the command palette lists for a search: how each of its commands' names matches, and
+ *  the best Entries outside the Recycle Bin of every unlocked Vault. The Entry search matches
+ *  both and scores them alike, so commands and Entries rank together.
+ */
+export type PaletteMatches = {
+	/**  For each name asked about, in order, how it matches, or `None` if it doesn't. */
+	names: (PaletteMatch | null)[],
+	/**  Best first, and equally good ones by title. */
+	entries: PaletteEntry[],
 };
 
 /**  How wide the Vault browser's sidebar and Entry list are, in logical pixels. */

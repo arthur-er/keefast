@@ -1,6 +1,6 @@
 //! Searching and sorting Entries: a query finds Entries by any field the user remembers, small
-//! typos included, best matches first; the Entry list sorts by title, username, URL, or when
-//! Entries were created or last modified.
+//! typos and the starts of words included, best matches first; the Entry list sorts by title,
+//! username, URL, or when Entries were created or last modified.
 
 use keefast_core::{
     CompositeKey, CustomField, Entry, EntryFields, EntrySearch, EntrySort, GroupId, Timestamp,
@@ -185,6 +185,21 @@ fn small_typos_still_find_the_entry() {
     assert_eq!(search(&vault, group, "octoccat"), ["GitHub"]);
     // Half-typed, with a typo.
     assert_eq!(search(&vault, group, "dorpb"), ["Dropbox"]);
+}
+
+#[test]
+fn the_starts_of_words_find_the_entry() {
+    let (vault, group) = vault_with(&[
+        entry("GitHub", "octocat", "https://github.com/login"),
+        entry("Work email", "alice", "https://mail.work.example"),
+        entry("Bank", "billing@rezende.dev", ""),
+    ]);
+
+    // camelCase humps start words too.
+    assert_eq!(search(&vault, group, "gh"), ["GitHub"]);
+    assert_eq!(search(&vault, group, "wem"), ["Work email"]);
+    // Letters scattered inside words don't.
+    assert!(search(&vault, group, "bdv").is_empty());
 }
 
 #[test]

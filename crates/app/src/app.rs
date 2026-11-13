@@ -54,6 +54,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::groups::deletes_group_for_good,
             commands::groups::set_browser_group,
             commands::entries::list_entries,
+            commands::entries::search_palette,
             commands::entries::get_entry,
             commands::entries::reveal_password,
             commands::entries::reveal_custom_field,

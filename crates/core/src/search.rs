@@ -1,5 +1,5 @@
-//! Finding Entries: a query matched against the fields the user remembers an Entry by, small
-//! typos included, and the orders the Entry list sorts in.
+//! Finding Entries: a query fuzzily matched (see `fuzzy`) against the fields the user remembers
+//! an Entry by, and the orders the Entry list sorts in.
 //!
 //! Passwords, protected custom fields and TOTP secrets are never searched: whether a query
 //! finds an Entry would otherwise tell what they hold.
@@ -8,6 +8,7 @@ use std::cmp::Reverse;
 
 use secrecy::ExposeSecret;
 
+use crate::fuzzy::{self, Found, Word};
 use crate::totp::TOTP_FIELDS;
 use crate::{Entry, Timestamp};
 
@@ -53,18 +54,11 @@ enum SortKey {
 }
 
 /// A search through Entries. Every word of the query must match one of an Entry's fields,
-/// though not all the same one; an empty query matches every Entry.
+/// though not all the same one; an empty query matches every Entry. The command palette matches
+/// commands with it too, as if they were Entries' titles.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntrySearch {
-    terms: Vec<Term>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Term {
-    text: String,
-    chars: Vec<char>,
-    /// How many typos it may have and still match.
-    typos: usize,
+    words: Vec<Word>,
 }
 
 /// The fields searched, most telling first, with how much a match in each counts.
@@ -76,56 +70,75 @@ enum Field {
     Other = 1,
 }
 
-/// How well a word of the query matches a field, worst first.
-#[derive(Clone, Copy)]
-enum Match {
-    Inside = 1,
-    WordStart = 2,
-    Start = 3,
-    Whole = 4,
+/// How a name matched a search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameMatch {
+    /// Higher is better, on the same scale as [`EntrySearch::relevance`].
+    pub score: u32,
+    /// The byte offsets in the name of the characters matched, in order, to highlight them.
+    pub positions: Vec<usize>,
 }
 
 impl EntrySearch {
     pub fn new(query: &str) -> Self {
-        let terms = query
-            .split_whitespace()
-            .map(|word| {
-                let text = word.to_lowercase();
-                let chars: Vec<char> = text.chars().collect();
-                let typos = match chars.len() {
-                    0..4 => 0,
-                    4..8 => 1,
-                    _ => 2,
-                };
-                Term { text, chars, typos }
-            })
-            .collect();
-        Self { terms }
+        Self {
+            words: fuzzy::words(query),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty()
+        self.words.is_empty()
     }
 
     /// How well the Entry matches, higher being better, or `None` if it doesn't. Every Entry
     /// matches an empty search equally.
     ///
-    /// A word found as typed counts by the field it is in and then by where in it: the whole
-    /// field, its start, a word's start, anywhere. A word found only allowing for a typo counts
-    /// less than any found as typed.
+    /// A word found as typed, or as the starts of a field's words, counts by the field it is in
+    /// and then by where in it: the whole field, its start, a word's start, anywhere, the
+    /// starts of words. A word found only allowing for a typo counts less than any of those.
     pub fn relevance(&self, entry: &Entry) -> Option<u32> {
-        if self.terms.is_empty() {
-            return Some(0);
-        }
         let fields = searched_fields(entry);
         let mut total = 0;
-        for term in &self.terms {
+        for word in &self.words {
             total += fields
                 .iter()
-                .filter_map(|(field, text)| term.score(*field, text))
+                .filter_map(|(field, text)| Some(score(*field, word.find(text)?.found)))
                 .max()?;
         }
         Some(total)
+    }
+
+    /// How `name` matches, scored as an Entry with it as its title would be, so commands and
+    /// Entries rank together; or `None` if a word of the query doesn't match it. Every name
+    /// matches an empty search equally.
+    pub fn match_name(&self, name: &str) -> Option<NameMatch> {
+        let mut score_total = 0;
+        let mut positions = Vec::new();
+        for word in &self.words {
+            let found = word.find(name)?;
+            score_total += score(Field::Title, found.found);
+            positions.extend(found.positions);
+        }
+        positions.sort_unstable();
+        positions.dedup();
+        Some(NameMatch {
+            score: score_total,
+            positions,
+        })
+    }
+
+    /// The byte offsets of the characters of `text` the query's words match, in order, to
+    /// highlight them; words that don't match it are left out.
+    pub fn highlights(&self, text: &str) -> Vec<usize> {
+        let mut positions: Vec<usize> = self
+            .words
+            .iter()
+            .filter_map(|word| word.find(text))
+            .flat_map(|found| found.positions)
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
     }
 
     /// The items whose Entry matches, best match first and equally good ones in `sort`
@@ -149,130 +162,77 @@ impl EntrySearch {
     }
 }
 
-/// The Entry's fields a search looks in, lowercased. Protected custom fields and those holding
-/// TOTP settings are searched by name only.
-fn searched_fields(entry: &Entry) -> Vec<(Field, String)> {
+/// What a word found in a field scores. A word found as typed or at word starts scores above
+/// every typo, which scores at most `Field::Title`; and by its field first, as the best `Found`
+/// adds less than a field's step.
+fn score(field: Field, found: Found) -> u32 {
+    const FOUND: u32 = 10;
+    const FIELD_STEP: u32 = 5;
+    let weight = field as u32;
+    match found {
+        Found::Typo => weight,
+        found => FOUND + weight * FIELD_STEP + found as u32 - Found::WordStarts as u32,
+    }
+}
+
+/// The Entry's fields a search looks in. Protected custom fields and those holding TOTP
+/// settings are searched by name only.
+fn searched_fields(entry: &Entry) -> Vec<(Field, &str)> {
     let mut fields = vec![
-        (Field::Title, entry.title().to_lowercase()),
-        (Field::UsernameOrUrl, entry.username().to_lowercase()),
-        (Field::UsernameOrUrl, entry.url().to_lowercase()),
-        (Field::Other, entry.notes().to_lowercase()),
+        (Field::Title, entry.title()),
+        (Field::UsernameOrUrl, entry.username()),
+        (Field::UsernameOrUrl, entry.url()),
+        (Field::Other, entry.notes()),
     ];
     for tag in entry.tags() {
-        fields.push((Field::Tag, tag.to_lowercase()));
+        fields.push((Field::Tag, tag.as_str()));
     }
     for field in entry.custom_fields() {
-        fields.push((Field::Other, field.name.to_lowercase()));
+        fields.push((Field::Other, field.name.as_str()));
         if !field.protected && !TOTP_FIELDS.contains(&field.name.as_str()) {
-            fields.push((Field::Other, field.value.expose_secret().to_lowercase()));
+            fields.push((Field::Other, field.value.expose_secret()));
         }
     }
     fields.retain(|(_, text)| !text.is_empty());
     fields
 }
 
-impl Term {
-    fn score(&self, field: Field, text: &str) -> Option<u32> {
-        // A word found as typed scores above every typo, which scores at most `Field::Title`;
-        // and by its field first, as the best `Match` adds less than a field's step.
-        const FOUND: u32 = 10;
-        const FIELD_STEP: u32 = 5;
-        let weight = field as u32;
-        if let Some(found) = self.find(text) {
-            return Some(FOUND + weight * FIELD_STEP + found as u32);
-        }
-        self.is_typo_of_a_word_in(text).then_some(weight)
-    }
-
-    fn find(&self, text: &str) -> Option<Match> {
-        if text == self.text {
-            return Some(Match::Whole);
-        }
-        if text.starts_with(&self.text) {
-            return Some(Match::Start);
-        }
-        let mut found = None;
-        for (index, _) in text.match_indices(&self.text) {
-            let after_word = text[..index]
-                .chars()
-                .next_back()
-                .is_some_and(|before| !before.is_alphanumeric());
-            if after_word {
-                return Some(Match::WordStart);
-            }
-            found = Some(Match::Inside);
-        }
-        found
-    }
-
-    /// Whether a word of `text`, or the start of one as if still being typed, is within this
-    /// term's typos of it.
-    fn is_typo_of_a_word_in(&self, text: &str) -> bool {
-        if self.typos == 0 {
-            return false;
-        }
-        text.split(|c: char| !c.is_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .any(|word| {
-                let word: Vec<char> = word.chars().collect();
-                let start = &word[..word.len().min(self.chars.len())];
-                self.within_typos(&word) || self.within_typos(start)
-            })
-    }
-
-    /// Whether `word` is at most this term's typos away from it, counting a letter added,
-    /// dropped or changed, or two next to each other swapped, as one typo each.
-    fn within_typos(&self, word: &[char]) -> bool {
-        if word.len().abs_diff(self.chars.len()) > self.typos {
-            return false;
-        }
-        edit_distance(&self.chars, word) <= self.typos
-    }
-}
-
-/// The optimal string alignment distance: the Levenshtein distance, with swapping two adjacent
-/// characters counting as one edit.
-fn edit_distance(a: &[char], b: &[char]) -> usize {
-    let width = b.len() + 1;
-    let mut rows = vec![0; (a.len() + 1) * width];
-    let at = |i: usize, j: usize| i * width + j;
-    for i in 0..=a.len() {
-        rows[at(i, 0)] = i;
-    }
-    for j in 0..=b.len() {
-        rows[at(0, j)] = j;
-    }
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            let cost = usize::from(a[i - 1] != b[j - 1]);
-            let mut best = (rows[at(i - 1, j)] + 1)
-                .min(rows[at(i, j - 1)] + 1)
-                .min(rows[at(i - 1, j - 1)] + cost);
-            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
-                best = best.min(rows[at(i - 2, j - 2)] + 1);
-            }
-            rows[at(i, j)] = best;
-        }
-    }
-    rows[at(a.len(), b.len())]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn distance(a: &str, b: &str) -> usize {
-        let chars = |s: &str| s.chars().collect::<Vec<_>>();
-        edit_distance(&chars(a), &chars(b))
+    #[test]
+    fn names_score_as_titles() {
+        let search = EntrySearch::new("copy pass");
+        let found = search.match_name("Copy Password").unwrap();
+        assert_eq!(found.positions, [0, 1, 2, 3, 5, 6, 7, 8]);
+        assert_eq!(
+            found.score,
+            score(Field::Title, Found::Start) + score(Field::Title, Found::WordStart)
+        );
+        assert_eq!(search.match_name("Copy username"), None);
+        assert_eq!(
+            EntrySearch::new("").match_name("Save all Vaults"),
+            Some(NameMatch {
+                score: 0,
+                positions: vec![]
+            })
+        );
     }
 
     #[test]
-    fn counts_edits_and_swaps() {
-        assert_eq!(distance("github", "github"), 0);
-        assert_eq!(distance("gihtub", "github"), 1);
-        assert_eq!(distance("gthub", "github"), 1);
-        assert_eq!(distance("githubb", "github"), 1);
-        assert_eq!(distance("gitlab", "github"), 2);
-        assert_eq!(distance("", "abc"), 3);
+    fn highlights_the_words_a_text_matches() {
+        let search = EntrySearch::new("github octocat");
+        assert_eq!(search.highlights("GitHub"), [0, 1, 2, 3, 4, 5]);
+        assert!(search.highlights("Bank").is_empty());
+    }
+
+    #[test]
+    fn word_starts_score_after_matches_as_typed_but_before_typos_in_a_field() {
+        let inside = score(Field::Title, Found::Inside);
+        let word_starts = score(Field::Title, Found::WordStarts);
+        assert!(word_starts < inside);
+        assert!(word_starts > score(Field::UsernameOrUrl, Found::Whole));
+        assert!(score(Field::Other, Found::WordStarts) > score(Field::Title, Found::Typo));
     }
 }
