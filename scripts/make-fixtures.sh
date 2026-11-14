@@ -110,6 +110,10 @@ node "$work/keeweb/keeweb.mjs" write keeweb-kdbx4.kdbx "$pw"
 python3 -I "$scripts/fixtures/unknown_xml.py" keepassxc-kdbx3.kdbx pykeepass-unknown-xml-kdbx3.kdbx "$pw"
 python3 -I "$scripts/fixtures/unknown_xml.py" keepass2-kdbx4.kdbx pykeepass-unknown-xml-kdbx4.kdbx "$pw"
 
+# KeePassXC benchmarks AES-KDF to millions of rounds; cut them so each open in the tests is quick
+# (scripts/fixtures/cheap_kdf.py keeps the rest of what KeePassXC wrote).
+python3 -I "$scripts/fixtures/cheap_kdf.py" 1000 "$pw" - ./*.kdbx
+
 ## Key files: one Vault file per KeePass key file format
 
 # Kept out of the top-level corpus, whose files all open with the password alone.
@@ -160,6 +164,14 @@ create keepassxc-any-file.kdbx any-file.txt yes
 MONO_PATH=$KEEPASSLIB mono "$work/keepass2.exe" write keepass2-xml-v2-kdbx4.kdbx "$pw" kdbx4 xml-v2.keyx
 # KeePass 2 can also combine an empty password with a key file, unlike a key file alone.
 MONO_PATH=$KEEPASSLIB mono "$work/keepass2.exe" write keepass2-empty-password-kdbx4.kdbx "" kdbx4 any-file.txt
+# KeePassXC benchmarks AES-KDF to millions of rounds; cut them so each open in the tests is quick
+# (scripts/fixtures/cheap_kdf.py keeps the rest of what KeePassXC wrote).
+cheap() { python3 -I "$scripts/fixtures/cheap_kdf.py" 1000 "$@"; }
+cheap - xml-v1.key keepassxc-xml-v1.kdbx
+cheap - raw-32.key keepassxc-raw-32.kdbx
+cheap - hex-64.key keepassxc-hex-64.kdbx
+cheap "$pw" xml-v2.keyx keepassxc-xml-v2.kdbx
+cheap "$pw" any-file.txt keepassxc-any-file.kdbx
 cd ..
 
 chmod 644 ./*.kdbx key-files/*
