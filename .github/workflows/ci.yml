@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request cancels its run still going, which would only hold one of the
+# runner's few slots. Runs on main always finish: they save the caches pull requests start from.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -23,7 +29,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # Saved from main only: pull requests restore main's, rather than each filling the
+      # repository's 10 GB of caches with its own and pushing main's out.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Tauri's system libraries
         if: runner.os == 'Linux'
@@ -85,18 +95,48 @@ jobs:
           path: crates/app/ui/dist-mock
           if-no-files-found: error
 
+  # Building the package compiles all of keefast again, so a pull request builds it only when it
+  # changes what Nix builds with: the flake, the package, the lockfiles, build scripts or the
+  # manifests. A change to the code alone is compiled by "Build and test"; main builds it always.
   nix:
     name: Nix package
     runs-on: ubuntu-4c
+    # The path filter reads the pull request's changed files.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dorny/paths-filter@v3
+        id: changes
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            nix:
+              - flake.nix
+              - flake.lock
+              - nix/**
+              - Cargo.toml
+              - Cargo.lock
+              - crates/*/Cargo.toml
+              - crates/*/build.rs
+              - crates/app/tauri.conf.json
+              - crates/app/ui/package.json
+              - crates/app/ui/pnpm-lock.yaml
+              - assets/**
+              - packaging/**
+              - .github/workflows/ci.yml
+
       - uses: cachix/install-nix-action@v31
+        if: steps.changes.outputs.nix != 'false'
 
       - name: Check the flake
+        if: steps.changes.outputs.nix != 'false'
         run: nix flake check
 
       - name: Build the package
+        if: steps.changes.outputs.nix != 'false'
         run: nix build .#keefast --print-build-logs
 
   # The Card Plugin's committed card.wasm must be what its source builds, byte for byte. It is
@@ -109,6 +149,22 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: cachix/install-nix-action@v31
+
+      # The dev shell's rustc, not rustup's, builds here, so the key is the flake's lock rather
+      # than a toolchain rust-cache could see. Saved from main only, as in "Build and test".
+      - name: Restore the Plugins' build cache
+        id: plugins-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            plugins/card/target
+            plugins/template/target
+          key: plugins-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'plugins/*/Cargo.lock') }}
+          restore-keys: plugins-${{ runner.os }}-
 
       - name: The Card Plugin's tests
         working-directory: plugins/card
@@ -133,6 +189,19 @@ jobs:
               -o "$RUNNER_TEMP/template.kfplugin"
             "$cli" verify "$RUNNER_TEMP/template.kfplugin"
           '
+
+      - name: Save the Plugins' build cache
+        if: github.ref == 'refs/heads/main' && steps.plugins-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            plugins/card/target
+            plugins/template/target
+          key: ${{ steps.plugins-cache.outputs.cache-primary-key }}
 
   extension:
     name: Companion extension
