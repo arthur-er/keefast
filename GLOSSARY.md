@@ -113,3 +113,37 @@ _Avoid_: Plugin field, plugin data
 **Card**:
 Payment card details kept on an Entry by the Card Plugin, beside anything else the Entry holds: number, cardholder, expiry, CVV and PIN.
 _Avoid_: Credit card, payment method
+
+### Agents
+
+**Agent**:
+An AI agent, or a gateway relaying for several, that reaches a Vault's secrets through keefast's MCP server or the `keefast-agent` command line. keefast knows it only by its Agent pairing.
+_Avoid_: Client, bot, integration, AI
+
+**Agent pairing**:
+The trust relationship between one Agent and one Vault: a name, the Agent group subgroups it may read, whether it may create Entries, and how it proves itself (a token, or an OAuth client). Created by the user and stored in that Vault. A gateway such as Executor is one Agent pairing, however many agents sit behind it.
+_Avoid_: Token, API key, connection, grant
+
+**Agent group**:
+The Group in a Vault whose Entries Agents may see. Each Agent pairing writes to a subgroup of its own, `Agent group/<pairing name>`, and may be given others to read. Entries outside it don't exist as far as Agents can tell.
+_Avoid_: Agent folder, shared secrets
+
+**Agent access decision**:
+The user's allow or deny answer to an Agent pairing using a specific Entry with a specific program or host, remembered on that Entry. Shells and interpreters are never remembered: they ask every time, as a reveal does.
+_Avoid_: Permission, grant, scope
+
+**Default agent policy**:
+A per-Vault setting (ask, always allow or always deny) applied when an Entry has no Agent access decision for the request. Starts as ask.
+_Avoid_: Global permission, auto-allow
+
+**Secret reference**:
+How an Agent names a value to use: an Entry's UUID or its path under the Agent group, and a field, such as `GitHub/token#password`. A path that matches two Entries is refused.
+_Avoid_: Secret ID, handle, placeholder
+
+**Headless host**:
+`keefast-agent serve`: keefast with no window, keeping one Vault unlocked on a server and serving it to Agents over HTTP. Someone has to unlock it after it starts.
+_Avoid_: Daemon, server mode, agent server
+
+**Approver**:
+A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied.
+_Avoid_: Admin, controller, remote UI
