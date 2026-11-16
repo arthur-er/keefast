@@ -13,3 +13,7 @@ Another local user is in scope for the link between the native host and keefast.
 ## Update 2026-11-16: Agents
 
 ADR 0012 lets AI Agents use secrets from the Agent group. A connected Agent that is prompt-injected or otherwise misbehaves is now in scope. It can use only what its Agent pairing reaches, gets values through `keefast-agent run` and `http_request` rather than seeing them where possible, and needs an Agent access decision for each Entry and program or host. Every use is logged. A Headless host adds anyone who can reach its address: it refuses to listen beyond loopback without TLS and has no unauthenticated mode. It runs as a user of its own, so Agents running as the operator on the same server are outside callers too. A Headless host unlocked unattended gives up protection at rest for its Vault, and says so when it is set up. Output redaction is not a defence against an Agent bent on leaking a value it was handed. The approval naming the program is.
+
+## Update 2026-11-16: keefast running hidden
+
+With Close to tray on, keefast keeps running, its Vaults unlocked, after the window closes; ADR 0013 says why the protections for an unattended machine still cover it.

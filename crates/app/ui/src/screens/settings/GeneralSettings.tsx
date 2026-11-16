@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { disconnectConfirmation, dropboxVaults } from "@/screens/dropbox/account";
 import { useShell } from "@/shell/state";
 
+import { CLOSE_TO_TRAY_SEARCH, CloseToTrayRow } from "./CloseToTray";
 import { GeneratorSettings } from "./GeneratorSettings";
 import { lastUsed, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection, useSearchQuery } from "./SettingsLayout";
@@ -58,6 +59,24 @@ export function GeneralSettings({ section }: { section?: string }) {
         id: "appearance",
         name: "Appearance",
         cards: [[{ id: "theme", search: "Theme System Dark Light appearance colour color mode System follows your desktop's light or dark mode", render: () => <ThemeBlock theme={settings.theme} onChange={(theme) => change({ theme }, () => api.setTheme(theme))} /> }]],
+      },
+      {
+        id: "window",
+        name: "Window & startup",
+        cards: [[
+          {
+            id: "closeToTray",
+            search: CLOSE_TO_TRAY_SEARCH,
+            render: () => (
+              <CloseToTrayRow
+                enabled={settings.closeToTray}
+                trayAvailable={settings.trayAvailable}
+                // Turned on, keefast looks for a Tray again; the settings it sends next say what it found.
+                onChange={(enabled) => change({ closeToTray: enabled }, () => api.setCloseToTray(enabled))}
+              />
+            ),
+          },
+        ]],
       },
       {
         id: "locking",
@@ -516,6 +535,7 @@ const KEYS: readonly [string, readonly KeyRow[]][] = [
     ["Save all Vaults", "save"],
     ["Lock all Vaults", "lockAll"],
     ["Settings", "settings"],
+    ["Quit keefast", "quit"],
     ["Close or go back", "close"],
   ]],
   ["Entries", [

@@ -10,13 +10,19 @@
 # The tarball is a prefix tree (bin/, share/), so it runs where it is unpacked, or installs with
 # `tar -xzf keefast-*.tar.gz --strip-components=1 -C ~/.local`. keefast finds its native host
 # next to itself, so the two binaries always ship together. It uses the system's WebKitGTK 4.1
-# (libwebkit2gtk-4.1-0 on Debian and Ubuntu, webkit2gtk4.1 on Fedora).
+# (libwebkit2gtk-4.1-0 on Debian and Ubuntu, webkit2gtk4.1 on Fedora), and for the Tray icon its
+# libayatana-appindicator (libayatana-appindicator3-1, libayatana-appindicator-gtk3).
 #
 # The AppImage is made by Tauri's bundler (`cargo tauri build`, from the devShell or
 # `cargo install tauri-cli --locked`), which bundles WebKitGTK with its helper processes, as plain
 # linuxdeploy can't. The native host goes into the image's bin next to keefast; keefast copies it
 # out when it registers it with the browsers, as the image is mounted somewhere new each run. The
 # bundler downloads its AppImage tools (linuxdeploy and its GTK plugin) itself.
+#
+# The Tray icon (ADR 0013) is drawn by libayatana-appindicator, which keefast loads at runtime
+# (dlopen) rather than links, so the bundler wouldn't see it: the script puts it in the image's
+# usr/lib itself, where linuxdeploy adds its own dependencies. It must be installed
+# (libayatana-appindicator3-1 on Debian and Ubuntu).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -52,13 +58,19 @@ echo "$out_dir/$name.tar.gz"
 
 # The AppImage. Tauri takes the host as an "external binary", named for the target triple.
 triple="$(rustc -vV | sed -n 's/^host: //p')"
+appindicator="$("$(command -v ldconfig || echo /sbin/ldconfig)" -p | awk '$1 == "libayatana-appindicator3.so.1" { print $NF; exit }')"
+[[ -n "$appindicator" ]] || {
+  echo "libayatana-appindicator3.so.1 is missing: install libayatana-appindicator3-1 for the Tray icon" >&2
+  exit 1
+}
+config="$(printf '{"build":{"beforeBuildCommand":""},"bundle":{"externalBin":["binaries/keefast-native-host"],"linux":{"appimage":{"files":{"/usr/lib/libayatana-appindicator3.so.1":"%s"}}}}}' "$(realpath "$appindicator")")"
 mkdir -p "$root/crates/app/binaries"
 install -m755 "$bin_dir/keefast-native-host" "$root/crates/app/binaries/keefast-native-host-$triple"
 (
   cd "$root/crates/app"
   # The web UI is already built; the bundler builds keefast again only if it changed.
   APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=true cargo tauri build --bundles appimage \
-    --config '{"build":{"beforeBuildCommand":""},"bundle":{"externalBin":["binaries/keefast-native-host"]}}'
+    --config "$config"
 )
 built="$(find "$root/target/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' -newer "$work" | head -n1)"
 [[ -n "$built" ]] || { echo "the bundler made no AppImage" >&2; exit 1; }

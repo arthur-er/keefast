@@ -19,6 +19,7 @@ pub mod settings;
 pub mod totp;
 pub mod vault_settings;
 pub mod vaults;
+pub mod window;
 pub mod workspace;
 
 use std::path::PathBuf;

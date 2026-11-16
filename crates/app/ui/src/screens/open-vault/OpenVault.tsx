@@ -2,7 +2,7 @@
 // one's unlock pane, or its New Vault state (`NewVault.tsx`). A Vault file in Dropbox is chosen
 // in Open from Dropbox A, a dialog over it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CircleAlert, Cloud, Eye, EyeOff, FileKey2, FileSearch, FolderOpen, HardDrive, KeyRound, LoaderCircle, Lock, Plus,
   Settings, ShieldCheck, X,
@@ -64,9 +64,12 @@ export function OpenVault({
   const dropbox = useQuery({ queryKey: keys.dropbox, queryFn: api.dropboxStatus }).data;
 
   // Starts on the Vault file the command line named, else the locked Vault to unlock, else the
-  // most recent Vault file.
+  // most recent Vault file. A later launch that named a Vault file (ADR 0013) moves to it.
+  const launchShown = useRef<number | null>(null);
   useEffect(() => {
-    if (chosen) return;
+    const laterLaunch = launch !== undefined && launchShown.current !== null && launch.number !== launchShown.current;
+    if (launch) launchShown.current = launch.number;
+    if (chosen && !laterLaunch) return;
     if (launch?.vaultFile) {
       const known = [...locked, ...recents].find((choice) => sameLocation(choice, launch.vaultFile));
       setChosen(known ?? locationOfPath(launch.vaultFile.path));

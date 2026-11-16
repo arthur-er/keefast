@@ -7,7 +7,7 @@
 // Driving it from the console or agent-browser, for states a screen must show:
 //   __keefastMock.simulate("pairing" | "access" | "access-form" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
-//     | "browserError" | "browserNone" | "browserServed" | "configError"
+//     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
 //     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build")   (the Plugin scenes: ./plugin-store.ts)
 //   __keefastMock.reset()
@@ -33,6 +33,7 @@ import type {
   PaletteMatches,
   GroupNode,
   IconView,
+  LaunchInfo,
   Location,
   LocationView,
   LoginOption,
@@ -252,7 +253,7 @@ interface MockState {
   recents: Location[];
   view: View;
   revision: number;
-  settings: Omit<AppSettings, "browser" | "configError"> & { browserIntegration: boolean };
+  settings: Omit<AppSettings, "browser" | "configError" | "trayAvailable"> & { browserIntegration: boolean };
   pendingLock: { vault: number; canCancel: boolean } | null;
   pendingPairing: { id: number; vault: number } | null;
   pendingAccess: { id: number; site: string; formSite: string | null; entries: [number, string][]; asked: number } | null;
@@ -276,6 +277,10 @@ interface MockState {
   browserHosts: "ok" | "failed" | "none" | "served";
   /** Why the app config couldn't be read or saved. */
   configError: string | null;
+  /** Whether the desktop "has a Tray": without one, closing to the Tray minimizes. */
+  trayAvailable: boolean;
+  /** What the "command line" asked to open: keefast's own launch, then later ones (ADR 0013). */
+  launch: LaunchInfo;
   nextId: number;
 }
 
@@ -296,6 +301,7 @@ function initialState(): MockState {
       generator: structuredClone(DEFAULT_GENERATOR),
       paneWidths: { sidebar: 232, entryList: 360 },
       shortcuts: {},
+      closeToTray: false,
     },
     pendingLock: null,
     pendingPairing: null,
@@ -308,6 +314,8 @@ function initialState(): MockState {
     encryption: new Map(),
     browserHosts: "ok",
     configError: null,
+    trayAvailable: true,
+    launch: { vaultFile: null, keyFile: null, number: 0 },
     nextId: 100,
   };
 }
@@ -336,6 +344,8 @@ export type MockScene =
   | "browserNone"
   | "browserServed"
   | "configError"
+  | "noTray"
+  | "launched"
   | PluginScene;
 
 export function createMockBackend(): Backend & {
@@ -824,7 +834,7 @@ export function createMockBackend(): Backend & {
 
   const commands: Commands = {
     getWorkspace: command(() => snapshot()),
-    getLaunch: command(() => ({ vaultFile: null, keyFile: null })),
+    getLaunch: command(() => structuredClone(state.launch)),
     setView: command((view: View) => {
       state.view = view;
       changed();
@@ -1305,6 +1315,7 @@ export function createMockBackend(): Backend & {
       return {
         ...structuredClone(settings),
         browser: browserIntegration ? BROWSER_STATUS[state.browserHosts] : { enabled: false, message: null, error: false, browsers: [] },
+        trayAvailable: state.trayAvailable,
         configError: state.configError,
       };
     }),
@@ -1340,6 +1351,13 @@ export function createMockBackend(): Backend & {
       changed();
       return null;
     }),
+    setCloseToTray: command((enabled) => {
+      state.settings.closeToTray = enabled;
+      changed();
+      return null;
+    }),
+    // A browser tab can't quit: the mock only answers.
+    quit: command(() => null),
     setDownloadFavicons: command((enabled) => {
       state.settings.downloadFavicons = enabled;
       changed();
@@ -1582,7 +1600,7 @@ export function createMockBackend(): Backend & {
   }
 
   const events = Object.fromEntries(
-    (["workspaceChanged", "mergeNotice", "browserRequest", "clipboardCleared", "saveFailed"] as const).map((name) => [
+    (["workspaceChanged", "mergeNotice", "browserRequest", "clipboardCleared", "saveFailed", "launched"] as const).map((name) => [
       name,
       {
         listen: async (callback: (event: { payload: never }) => void) => {
@@ -1699,6 +1717,14 @@ export function createMockBackend(): Backend & {
       case "configError":
         state.configError = "could not write ~/.config/keefast/config.json: Permission denied (os error 13)";
         break;
+      case "noTray":
+        state.trayAvailable = false;
+        break;
+      case "launched":
+        // keefast was launched again, naming a Vault file (ADR 0013).
+        state.launch = { vaultFile: { provider: "local", path: "/home/me/Documents/launched.kdbx" }, keyFile: null, number: state.launch.number + 1 };
+        emit("launched", {});
+        break;
       case "closed": {
         // The prototype's Open a Vault story: Family locked, the others recent Vault files.
         const closed = state.vaults.filter((v) => !v.locked);
@@ -1728,7 +1754,7 @@ export function createMockBackend(): Backend & {
     for (const scene of scenes?.split(",").filter(Boolean) ?? []) {
       // A scene that only sends an event waits for the UI to listen; the others set the state
       // the UI first reads.
-      if (scene === "merge" || scene === "saveFailed") setTimeout(() => simulate(scene), 1000);
+      if (scene === "merge" || scene === "saveFailed" || scene === "launched") setTimeout(() => simulate(scene), 1000);
       else simulate(scene as MockScene);
     }
   }

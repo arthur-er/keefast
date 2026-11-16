@@ -1,6 +1,8 @@
 //! The Tauri app: the Workspace constructed as the GPUI app did, the command and event API typed
 //! for the web UI, the background work, and the window.
 
+use std::ffi::OsString;
+use std::path::Path;
 use std::sync::Arc;
 
 use keefast_plugins::PluginStore;
@@ -15,9 +17,10 @@ use crate::args::Args;
 use crate::commands::{self, dropbox::Connecting, settings::apply_window_theme};
 use crate::core::{AppCore, Launch};
 use crate::events::{
-    AppEvent, BrowserRequest, ClipboardCleared, MergeNotice, Notifier, SaveFailed, WorkspaceChanged,
+    AppEvent, BrowserRequest, ClipboardCleared, Launched, MergeNotice, Notifier, SaveFailed,
+    WorkspaceChanged,
 };
-use crate::{background, browser, icon_protocol};
+use crate::{background, browser, icon_protocol, tray};
 
 /// The label of keefast's one window, as `tauri.conf.json` names it.
 pub const MAIN_WINDOW: &str = "main";
@@ -97,6 +100,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::settings::set_autosave,
             commands::settings::set_browser_integration,
             commands::settings::set_download_favicons,
+            commands::settings::set_close_to_tray,
             commands::settings::set_pane_widths,
             commands::settings::set_shortcut,
             commands::plugins::list_plugins,
@@ -123,6 +127,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::browser::answer_access,
             commands::browser::save_login,
             commands::browser::cancel_login,
+            commands::window::quit,
         ])
         .events(collect_events![
             WorkspaceChanged,
@@ -130,6 +135,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             BrowserRequest,
             ClipboardCleared,
             SaveFailed,
+            Launched,
         ])
 }
 
@@ -150,6 +156,7 @@ impl Notifier for TauriNotifier {
             AppEvent::BrowserRequest(event) => event.emit(app),
             AppEvent::ClipboardCleared(event) => event.emit(app),
             AppEvent::SaveFailed(event) => event.emit(app),
+            AppEvent::Launched(event) => event.emit(app),
         };
         if let Err(error) = emitted {
             eprintln!("keefast: can't tell the window: {error}");
@@ -157,11 +164,37 @@ impl Notifier for TauriNotifier {
     }
 
     fn bring_to_front(&self) {
-        if let Some(window) = self.0.get_webview_window(MAIN_WINDOW) {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+        show_main_window(&self.0);
+    }
+}
+
+/// Shows keefast's window, hidden in the Tray or minimized, and focuses it.
+pub fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// keefast was launched again: the running keefast gets that launch's command line (`argv`, run
+/// from `cwd`), and the launch exits.
+fn launched_again(app: &AppHandle, argv: Vec<String>, cwd: String) {
+    let cwd = Path::new(&cwd);
+    // Paths are relative to where the later launch ran, not to where keefast did.
+    let args = Args::parse(argv.into_iter().skip(1).map(|arg| {
+        if arg.starts_with("--") || Path::new(&arg).is_absolute() {
+            OsString::from(arg)
+        } else {
+            cwd.join(arg).into_os_string()
         }
+    }));
+    match app.try_state::<Arc<AppCore>>() {
+        Some(core) => core.launched_again(Launch {
+            vault_file: args.vault_file,
+            key_file: args.key_file,
+        }),
+        None => show_main_window(app),
     }
 }
 
@@ -217,10 +250,13 @@ pub fn run(args: Args) {
         key_file: args.key_file,
     };
     let app = tauri::Builder::default()
+        // First, so a later launch hands its command line over before anything else starts.
+        .plugin(tauri_plugin_single_instance::init(launched_again))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Connecting::default())
         .invoke_handler(builder.invoke_handler())
+        .on_window_event(tray::on_window_event)
         .register_uri_scheme_protocol(icon_protocol::SCHEME, |ctx, request| {
             match ctx.app_handle().try_state::<Arc<AppCore>>() {
                 Some(core) => icon_protocol::respond(&core, request.uri().path()),
@@ -236,6 +272,10 @@ pub fn run(args: Args) {
             }
             app.manage(Arc::clone(&core));
             apply_window_theme(&handle, core.read(Workspace::theme));
+            // Whether the desktop has a Tray, checked once at startup and again when Close to
+            // tray is turned on.
+            tray::check_tray();
+            tray::sync(&handle, core.read(Workspace::close_to_tray));
             background::start(&core);
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);

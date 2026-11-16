@@ -42,6 +42,9 @@ pub struct AppConfig {
     /// The keys the user gave keefast's shortcuts in Settings, by the shortcut's name in the UI's
     /// `shortcuts.json` ("search"), in place of its default keys.
     pub shortcuts: BTreeMap<String, Vec<String>>,
+    /// Whether closing the window hides keefast to the Tray instead of quitting, so the
+    /// Companion extension keeps working. Off unless the user turns it on (ADR 0013).
+    pub close_to_tray: bool,
 }
 
 /// How wide the Vault browser's sidebar and Entry list are, in logical pixels, as the user
@@ -117,6 +120,7 @@ impl Default for AppConfig {
             download_favicons: false,
             pane_widths: PaneWidths::default(),
             shortcuts: BTreeMap::new(),
+            close_to_tray: false,
         }
     }
 }
@@ -210,6 +214,7 @@ struct ConfigFile {
     dropbox_app_key: Option<String>,
     /// `[shortcuts]`, `search = ["Ctrl J"]`: only those the user changed.
     shortcuts: BTreeMap<String, Vec<String>>,
+    close_to_tray: bool,
 }
 
 impl Default for ConfigFile {
@@ -255,6 +260,7 @@ impl From<ConfigFile> for AppConfig {
                 entry_list: read_width(file.entry_list_width, PaneWidths::default().entry_list),
             },
             shortcuts: file.shortcuts,
+            close_to_tray: file.close_to_tray,
         }
     }
 }
@@ -280,6 +286,7 @@ impl From<&AppConfig> for ConfigFile {
             last_login_vault: config.last_login_vault.as_ref().and_then(write_location),
             dropbox_app_key: config.dropbox_app_key.clone(),
             shortcuts: config.shortcuts.clone(),
+            close_to_tray: config.close_to_tray,
         }
     }
 }

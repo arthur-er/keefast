@@ -90,13 +90,16 @@ windows-sys = { version = "0.61", features = [
 ] }
 winreg = "0.56"
 zbus = "5"
+# Whether the tray library Tauri loads at runtime (libayatana-appindicator) is there.
+libloading = "0.7"
 zeroize = "1"
 # The desktop app: a Tauri webview, with its commands, DTOs and events typed for the web UI by
 # tauri-specta (crates/app/ui/src/bindings.ts). specta and tauri-specta are pinned together.
-tauri = "2.12"
+tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-build = "2.7"
 tauri-plugin-dialog = "2.8"
 tauri-plugin-opener = "2.7"
+tauri-plugin-single-instance = "2"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }

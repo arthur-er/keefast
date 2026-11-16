@@ -172,6 +172,31 @@ fn favicon_download_is_off_until_turned_on() {
 }
 
 #[test]
+fn closing_to_the_tray_is_off_until_turned_on() {
+    assert!(!AppConfig::default().close_to_tray);
+    assert!(!load("").close_to_tray);
+    assert!(load("close_to_tray = true\n").close_to_tray);
+
+    let store = Arc::new(FakeConfigStore::default());
+    let (mut workspace, _) = workspace_with(store.clone());
+    assert!(!workspace.close_to_tray());
+
+    workspace.set_close_to_tray(true);
+
+    assert!(workspace.close_to_tray());
+    assert!(store.saved().unwrap().close_to_tray);
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileConfigStore::new(dir.path().join("config.toml"));
+    let config = AppConfig {
+        close_to_tray: true,
+        ..AppConfig::default()
+    };
+    store.save(&config).unwrap();
+    assert_eq!(store.load().unwrap(), config);
+}
+
+#[test]
 fn pane_widths_are_remembered_as_dragged() {
     let store = Arc::new(FakeConfigStore::default());
     let (mut workspace, _) = workspace_with(store.clone());

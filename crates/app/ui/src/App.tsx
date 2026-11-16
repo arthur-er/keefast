@@ -4,9 +4,10 @@
 
 import { useEffect } from "react";
 import { FileUp, FolderOpen, Lock, Plus, Puzzle, Save, Settings } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage, onEvent } from "@/api";
-import { useBackendEvents, useSettings, useWorkspace } from "@/api/queries";
+import { keys, useBackendEvents, useSettings, useWorkspace } from "@/api/queries";
 import { dismissToast, toast, Toaster } from "@/kit";
 import { useActivityReporting } from "@/lib/activity";
 import { setChangedShortcuts, SHORTCUTS, useShortcut } from "@/lib/shortcuts";
@@ -17,6 +18,7 @@ import { installFromFile } from "@/screens/plugins/InstallDialog";
 import { useAppCommand } from "@/shell/commands";
 import { hasPendingRequest } from "@/shell/hooks";
 import { Overlays } from "@/shell/Overlays";
+import { useQuitCommand } from "@/shell/quit";
 import { Shell } from "@/shell/Shell";
 import { ShellProvider, useShell } from "@/shell/state";
 
@@ -45,15 +47,21 @@ function Root() {
   const anyUnlocked = snapshot?.vaults.some((vault) => vault.state !== "locked") ?? false;
   const openVaultShown = !anyUnlocked || state.openVault !== null;
   const keysActive = state.overlay === null && !hasPendingRequest(snapshot);
+  const client = useQueryClient();
 
   useEffect(() => {
     const stops = [
+      // keefast was launched again with a Vault file: offer it to unlock (ADR 0013).
+      onEvent("launched", () => {
+        void client.invalidateQueries({ queryKey: keys.launch });
+        actions.showOpenVault("unlock");
+      }),
       onEvent("mergeNotice", actions.showMerge),
       onEvent("saveFailed", (failed) => toast(`${failed.vaultName}: ${failed.message}`, { icon: "error", duration: 8000 })),
       onEvent("clipboardCleared", () => dismissToast()),
     ];
     return () => stops.forEach((stop) => stop());
-  }, [actions]);
+  }, [actions, client]);
 
   const fail = (error: unknown) => toast(errorMessage(error), { icon: "error" });
   useShortcut(SHORTCUTS.palette, actions.togglePalette, { enabled: anyUnlocked && !openVaultShown && !hasPendingRequest(snapshot) });
@@ -64,6 +72,7 @@ function Root() {
   useAppCommand({ id: "newVault", title: "New Vault…", section: "Vaults", icon: Plus, shortcut: SHORTCUTS.newVault, run: () => actions.showOpenVault("new") }, keysActive);
   useAppCommand({ id: "settings", title: "Settings", section: "Go to", icon: Settings, shortcut: SHORTCUTS.settings, enabled: anyUnlocked, run: () => actions.openSettings() }, keysActive);
   useAppCommand({ id: "plugins", title: "Plugins", section: "Go to", icon: Puzzle, enabled: anyUnlocked, run: () => actions.openPlugins() }, keysActive);
+  useQuitCommand(keysActive);
   useAppCommand({ id: "installPlugin", title: "Install a Plugin…", section: "App", icon: FileUp, enabled: anyUnlocked, run: () => void installFromFile(actions) }, keysActive);
 
   if (!snapshot) {

@@ -59,6 +59,12 @@ pub struct SaveFailed {
     pub detail: Option<String>,
 }
 
+/// keefast was launched again with a Vault file to open, which `get_launch` now answers with.
+/// keefast came to the front.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct Launched {}
+
 /// Every event, for the notifier.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -67,6 +73,7 @@ pub enum AppEvent {
     BrowserRequest(BrowserRequest),
     ClipboardCleared(ClipboardCleared),
     SaveFailed(SaveFailed),
+    Launched(Launched),
 }
 
 /// Where events go: the webview in the app, a recorder in tests.

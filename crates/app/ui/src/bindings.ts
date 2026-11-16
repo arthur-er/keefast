@@ -10,7 +10,10 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 export const commands = {
 	/**  Everything the shell shows. Refetch it on `WorkspaceChanged`. */
 	getWorkspace: () => typedError<WorkspaceSnapshot, ApiError>(__TAURI_INVOKE("get_workspace")),
-	/**  What the command line asked to open first: a Vault file, and its Key file. */
+	/**
+	 *  What the command line asked to open first: a Vault file, and its Key file. After a later
+	 *  launch asked for a Vault file (`Launched`), what that launch asked.
+	 */
 	getLaunch: () => typedError<LaunchInfo, ApiError>(__TAURI_INVOKE("get_launch")),
 	/**
 	 *  Tells the Workspace where the user is, to return them there when a Vault they were in is
@@ -282,6 +285,11 @@ export const commands = {
 	setBrowserIntegration: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_browser_integration", { enabled })),
 	/**  Turns favicon download on or off. Turned off, the favicons downloaded are forgotten. */
 	setDownloadFavicons: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_download_favicons", { enabled })),
+	/**
+	 *  Turns Close to tray on or off, adding or removing the Tray icon at once. Turned on, keefast
+	 *  checks again whether the desktop has a Tray, which it may have gained since keefast started.
+	 */
+	setCloseToTray: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_close_to_tray", { enabled })),
 	/**  Remembers how wide the panes are. Changes nothing else, so the UI isn't told. */
 	setPaneWidths: (widths: PaneWidthsView) => typedError<null, ApiError>(__TAURI_INVOKE("set_pane_widths", { widths })),
 	/**
@@ -392,12 +400,15 @@ export const commands = {
 	saveLogin: (id: RequestId, target: LoginTarget) => typedError<null, ApiError>(__TAURI_INVOKE("save_login", { id, target })),
 	/**  Turns the captured login down: nothing is saved. */
 	cancelLogin: (id: RequestId) => typedError<null, ApiError>(__TAURI_INVOKE("cancel_login", { id })),
+	/**  Quits keefast, as the Tray's Quit does: what it copied is cleared on the way out. */
+	quit: () => typedError<null, ApiError>(__TAURI_INVOKE("quit")),
 };
 
 /** Events */
 export const events = {
 	browserRequest: makeEvent<BrowserRequest>("browser-request"),
 	clipboardCleared: makeEvent<ClipboardCleared>("clipboard-cleared"),
+	launched: makeEvent<Launched>("launched"),
 	mergeNotice: makeEvent<MergeNotice>("merge-notice"),
 	saveFailed: makeEvent<SaveFailed>("save-failed"),
 	workspaceChanged: makeEvent<WorkspaceChanged>("workspace-changed"),
@@ -444,6 +455,10 @@ export type AppSettings = {
 	 *  their defaults. Only those the user changed.
 	 */
 	shortcuts: { [key in string]: string[] },
+	/**  Whether closing the window keeps keefast running in the Tray (ADR 0013). */
+	closeToTray: boolean,
+	/**  Whether the desktop has a Tray, as last checked: without one, closing minimizes instead. */
+	trayAvailable: boolean,
 	/**  Why the app config couldn't be read or saved, if it couldn't. */
 	configError: string | null,
 };
@@ -925,7 +940,18 @@ export type KeyInput = {
 export type LaunchInfo = {
 	vaultFile: Location | null,
 	keyFile: string | null,
+	/**
+	 *  Which launch asked: 0 for keefast's own, then one more for each later launch that asked
+	 *  for a Vault file (ADR 0013).
+	 */
+	number: number,
 };
+
+/**
+ *  keefast was launched again with a Vault file to open, which `get_launch` now answers with.
+ *  keefast came to the front.
+ */
+export type Launched = Record<string, never>;
 
 /**  Where a Vault file is: a local path, or a path in the connected Dropbox. */
 export type Location = {

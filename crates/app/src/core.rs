@@ -11,15 +11,16 @@ use std::thread;
 
 use keefast_plugins::{PluginHost, PluginStore};
 use keefast_workspace::{
-    Clipboard, EditVaultError, FormFill, Outgoing, PendingFavicon, PendingSave, VaultId, Workspace,
+    Clipboard, EditVaultError, FormFill, Outgoing, PendingFavicon, PendingSave, VaultId,
+    VaultLocation, Workspace,
 };
 
 use crate::browser::BrowserBridge;
 use crate::clipboard::SystemClipboard;
 use crate::error::{ApiError, ApiResult};
 use crate::events::{
-    AppEvent, BrowserRequest, BrowserRequestKind, ClipboardCleared, MergeNotice, Notifier,
-    SaveFailed, WorkspaceChanged,
+    AppEvent, BrowserRequest, BrowserRequestKind, ClipboardCleared, Launched, MergeNotice,
+    Notifier, SaveFailed, WorkspaceChanged,
 };
 use crate::merge_notice;
 
@@ -51,7 +52,10 @@ pub struct AppCore {
     shown_requests: Mutex<Requests>,
     /// Counts copies, so only the latest copy's clipboard timer keeps running.
     copies: AtomicU64,
-    launch: Launch,
+    /// What the command line asked to open first: keefast's own, or a later launch's.
+    launch: Mutex<Launch>,
+    /// Counts the later launches that asked for a Vault file, so the UI can tell them apart.
+    launches: AtomicU32,
     /// The Plugins keefast runs: the enabled ones of `plugin_store`.
     plugins: RwLock<PluginHost>,
     /// The installed Plugins, and what the user agreed to for each. Locked before `plugins`.
@@ -162,7 +166,8 @@ impl AppCore {
             browser: Mutex::new(BrowserBridge::default()),
             shown_requests: Mutex::new(Requests::default()),
             copies: AtomicU64::new(0),
-            launch,
+            launch: Mutex::new(launch),
+            launches: AtomicU32::new(0),
             plugins: RwLock::new(plugins),
             plugin_store: Mutex::new(PluginStore::bundled_only()),
         })
@@ -192,8 +197,28 @@ impl AppCore {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn launch(&self) -> &Launch {
-        &self.launch
+    /// What the command line asked to open first, and which launch asked: 0 for keefast's own,
+    /// then one more for each later launch that asked for a Vault file.
+    pub fn launch(&self) -> (Launch, u32) {
+        let launch = self.launch.lock().unwrap_or_else(PoisonError::into_inner);
+        (launch.clone(), self.launches.load(Ordering::SeqCst))
+    }
+
+    /// keefast was launched again, and that launch handed over its command line, as keefast runs
+    /// once (ADR 0013). The window comes to the front; a Vault file it names is offered to
+    /// unlock, unless it is unlocked already.
+    pub fn launched_again(&self, launch: Launch) {
+        self.notifier.bring_to_front();
+        let Some(vault_file) = launch.vault_file.clone() else {
+            return;
+        };
+        let location = VaultLocation::Local(vault_file);
+        if self.read(|workspace| workspace.open_vault_at(&location).is_some()) {
+            return;
+        }
+        *self.launch.lock().unwrap_or_else(PoisonError::into_inner) = launch;
+        self.launches.fetch_add(1, Ordering::SeqCst);
+        self.notifier.emit(AppEvent::Launched(Launched {}));
     }
 
     pub fn plugins(&self) -> RwLockReadGuard<'_, PluginHost> {
@@ -494,6 +519,29 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(revisions, [1, 2]);
         assert_eq!(core.revision(), 2);
+    }
+
+    #[test]
+    fn a_later_launch_comes_to_the_front_and_offers_its_vault_file() {
+        let (core, recorder) = core();
+
+        core.launched_again(Launch::default());
+        assert_eq!(*recorder.fronts.lock().unwrap(), 1);
+        assert!(recorder.events.lock().unwrap().is_empty());
+        assert_eq!(core.launch().1, 0);
+
+        core.launched_again(Launch {
+            vault_file: Some(PathBuf::from("/vaults/work.kdbx")),
+            key_file: None,
+        });
+        assert_eq!(*recorder.fronts.lock().unwrap(), 2);
+        assert!(matches!(
+            recorder.events.lock().unwrap().as_slice(),
+            [AppEvent::Launched(_)]
+        ));
+        let (launch, number) = core.launch();
+        assert_eq!(launch.vault_file, Some(PathBuf::from("/vaults/work.kdbx")));
+        assert_eq!(number, 1);
     }
 
     #[test]

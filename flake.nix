@@ -60,6 +60,8 @@
               gdk-pixbuf
               atk
               dbus
+              # The Tray icon's library, which keefast loads at runtime (ADR 0013).
+              libayatana-appindicator
               # Links Plugins' WebAssembly components (`keefast-plugin build`, plugins/card/build.sh).
               lld
             ];
@@ -67,6 +69,7 @@
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
             # WebKitGTK's TLS and the GSettings schemas GTK's file dialogs need.
             GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.libayatana-appindicator ];
             shellHook = ''
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';

@@ -874,6 +874,17 @@ impl Workspace {
         self.save_config();
     }
 
+    /// Whether closing the window hides keefast to the Tray instead of quitting.
+    pub fn close_to_tray(&self) -> bool {
+        self.config.close_to_tray
+    }
+
+    /// Turns closing to the Tray on or off, and remembers it in the app config.
+    pub fn set_close_to_tray(&mut self, close_to_tray: bool) {
+        self.config.close_to_tray = close_to_tray;
+        self.save_config();
+    }
+
     pub fn pane_widths(&self) -> PaneWidths {
         self.config.pane_widths
     }
