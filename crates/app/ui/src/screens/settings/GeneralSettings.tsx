@@ -22,6 +22,7 @@ import { CLOSE_TO_TRAY_SEARCH, CloseToTrayRow } from "./CloseToTray";
 import { GeneratorSettings } from "./GeneratorSettings";
 import { lastUsed, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection, useSearchQuery } from "./SettingsLayout";
+import { START_ON_BOOT_SEARCH, StartOnBootRow } from "./StartOnBoot";
 import { CLIPBOARD_WAITS, describeWait, IDLE_LOCK_WAITS, type Wait, waitsWith } from "./waits";
 
 const CONFIG_ERROR = "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
@@ -76,6 +77,7 @@ export function GeneralSettings({ section }: { section?: string }) {
               />
             ),
           },
+          { id: "startOnBoot", search: START_ON_BOOT_SEARCH, render: () => <StartOnBootRow /> },
         ]],
       },
       {

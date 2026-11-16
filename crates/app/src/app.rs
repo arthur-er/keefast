@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, RunEvent};
 use tauri_specta::{Builder, Event, collect_commands, collect_events};
 
 use crate::args::Args;
+use crate::autostart::{self, HiddenLaunch};
 use crate::commands::{self, dropbox::Connecting, settings::apply_window_theme};
 use crate::core::{AppCore, Launch};
 use crate::events::{
@@ -103,6 +104,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::settings::set_close_to_tray,
             commands::settings::set_pane_widths,
             commands::settings::set_shortcut,
+            commands::settings::get_start_on_boot,
+            commands::settings::set_start_on_boot,
             commands::plugins::list_plugins,
             commands::plugins::choose_plugin_package,
             commands::plugins::install_plugin,
@@ -243,8 +246,31 @@ fn dropbox_config(workspace: &Workspace) -> Option<DropboxConfig> {
     Some(config)
 }
 
+/// Shows the window, which `tauri.conf.json` creates hidden so a `--hidden` launch never shows
+/// it, not even for a moment before it is minimized.
+fn show_window(app: &AppHandle, hidden: bool) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    if !hidden {
+        let _ = window.show();
+        return;
+    }
+    // TODO(#165 restack): pass the Close to tray setting and whether a tray is available.
+    match autostart::hidden_launch(false, false) {
+        // The tray icon shows the window when the user asks for it.
+        HiddenLaunch::TrayOnly => {}
+        // Minimized before it is shown, so it appears only in the taskbar.
+        HiddenLaunch::Minimized => {
+            let _ = window.minimize();
+            let _ = window.show();
+        }
+    }
+}
+
 pub fn run(args: Args) {
     let builder = specta_builder();
+    let hidden = args.hidden;
     let launch = Launch {
         vault_file: args.vault_file,
         key_file: args.key_file,
@@ -253,7 +279,11 @@ pub fn run(args: Args) {
         // First, so a later launch hands its command line over before anything else starts.
         .plugin(tauri_plugin_single_instance::init(launched_again))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    // Linux writes its own Start on boot entry (see `autostart`).
+    #[cfg(not(target_os = "linux"))]
+    let app = app.plugin(autostart::plugin());
+    let app = app
         .manage(Connecting::default())
         .invoke_handler(builder.invoke_handler())
         .on_window_event(tray::on_window_event)
@@ -280,6 +310,7 @@ pub fn run(args: Args) {
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }
+            show_window(&handle, hidden);
             Ok(())
         })
         .build(tauri::generate_context!())

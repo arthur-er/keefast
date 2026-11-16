@@ -25,6 +25,7 @@ export const keys = {
   workspace: ["workspace"] as const,
   launch: ["launch"] as const,
   settings: ["settings"] as const,
+  startOnBoot: ["startOnBoot"] as const,
   entries: (query: EntryQuery) => ["entries", query] as const,
   palette: (search: string, names: string[]) => ["palette", search, names] as const,
   entry: (vault: VaultId, entry: EntryId) => ["entry", vault, entry] as const,
@@ -71,6 +72,11 @@ export function useLaunch() {
 
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: api.getSettings });
+}
+
+/** Whether keefast is registered to start when the user logs in, as the OS has it. */
+export function useStartOnBoot() {
+  return useQuery({ queryKey: keys.startOnBoot, queryFn: api.getStartOnBoot });
 }
 
 export function usePlugins() {

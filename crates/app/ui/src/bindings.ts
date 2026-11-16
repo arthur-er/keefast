@@ -298,6 +298,13 @@ export const commands = {
 	 *  refused. Plugins loaded from now on can't have them either.
 	 */
 	setShortcut: (name: string, keys: string | null) => typedError<null, ApiError>(__TAURI_INVOKE("set_shortcut", { name, keys })),
+	/**
+	 *  Whether keefast starts when the user logs in, as the OS has it registered now: there is no
+	 *  setting for it, so an entry removed by hand reads as off.
+	 */
+	getStartOnBoot: () => typedError<boolean, ApiError>(__TAURI_INVOKE("get_start_on_boot")),
+	/**  Registers keefast to start, hidden, when the user logs in, or removes its registration. */
+	setStartOnBoot: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_start_on_boot", { enabled })),
 	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
 	/**
 	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
