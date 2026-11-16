@@ -4,6 +4,7 @@
 
 mod app;
 mod args;
+mod autostart;
 mod background;
 mod browser;
 mod clipboard;
@@ -23,23 +24,29 @@ use crate::args::Args;
 
 fn main() {
     let args = Args::parse(std::env::args_os().skip(1));
-    if args.unregister_browser_hosts {
-        unregister_browser_hosts();
+    if args.unregister {
+        unregister();
     }
     app::run(args);
 }
 
-/// Removes keefast's registrations of its native host and exits, without opening a window.
-/// Browser integration stays on in the app config, so reinstalling keefast registers it again.
-fn unregister_browser_hosts() -> ! {
-    let result = NativeMessagingHosts::for_current_user()
+/// Removes what keefast registered with the OS and exits, without opening a window: its native
+/// host's registrations with the browsers, and Start on boot. Browser integration stays on in
+/// the app config, so reinstalling keefast registers the native host again.
+fn unregister() -> ! {
+    let browsers = NativeMessagingHosts::for_current_user()
         .ok_or_else(|| std::io::Error::other("no data directory for the current user"))
         .and_then(|hosts| hosts.uninstall());
-    match result {
-        Ok(()) => std::process::exit(0),
-        Err(error) => {
-            eprintln!("keefast: couldn't unregister the native host: {error}");
-            std::process::exit(1)
-        }
+    if let Err(error) = &browsers {
+        eprintln!("keefast: couldn't unregister the native host: {error}");
     }
+    let start_on_boot = autostart::unregister();
+    if let Err(error) = &start_on_boot {
+        eprintln!("keefast: couldn't remove Start on boot: {error}");
+    }
+    std::process::exit(if browsers.is_ok() && start_on_boot.is_ok() {
+        0
+    } else {
+        1
+    })
 }

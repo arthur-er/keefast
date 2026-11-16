@@ -4,7 +4,8 @@
 
   It installs for the current user, without elevation, as browser integration is per user too:
   the app registers its native host under HKEY_CURRENT_USER, pointing at the keefast-native-host
-  installed next to it. Uninstalling asks the app to remove those registrations first.
+  installed next to it. Uninstalling asks the app to remove those registrations, and Start on
+  boot, first.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -68,20 +69,21 @@
     </StandardDirectory>
 
     <!--
-      Uninstalling removes the browsers' registrations of keefast's native host, and only
-      keefast's: the app knows which are its own, as KeePassXC registers under the same host name.
+      Uninstalling removes what the app registered for the user: the browsers' registrations of
+      keefast's native host, and only keefast's (the app knows which are its own, as KeePassXC
+      registers under the same host name), and Start on boot.
       It is skipped when an upgrade removes the old version, so integration stays on, and
       uninstalling goes on even if it fails.
     -->
     <CustomAction
-      Id="UnregisterBrowserHosts"
+      Id="Unregister"
       FileRef="keefast.exe"
-      ExeCommand="--unregister-browser-hosts"
+      ExeCommand="--unregister"
       Execute="deferred"
       Impersonate="yes"
       Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="UnregisterBrowserHosts" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="Unregister" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

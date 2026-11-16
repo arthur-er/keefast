@@ -281,6 +281,8 @@ interface MockState {
   trayAvailable: boolean;
   /** What the "command line" asked to open: keefast's own launch, then later ones (ADR 0013). */
   launch: LaunchInfo;
+  /** Whether keefast is "registered with the OS" to start on boot. */
+  startOnBoot: boolean;
   nextId: number;
 }
 
@@ -316,6 +318,7 @@ function initialState(): MockState {
     configError: null,
     trayAvailable: true,
     launch: { vaultFile: null, keyFile: null, number: 0 },
+    startOnBoot: false,
     nextId: 100,
   };
 }
@@ -1358,6 +1361,11 @@ export function createMockBackend(): Backend & {
     }),
     // A browser tab can't quit: the mock only answers.
     quit: command(() => null),
+    getStartOnBoot: command(() => state.startOnBoot),
+    setStartOnBoot: command((enabled) => {
+      state.startOnBoot = enabled;
+      return null;
+    }),
     setDownloadFavicons: command((enabled) => {
       state.settings.downloadFavicons = enabled;
       changed();

@@ -97,6 +97,10 @@ zeroize = "1"
 # tauri-specta (crates/app/ui/src/bindings.ts). specta and tauri-specta are pinned together.
 tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-build = "2.7"
+# Start on boot on Windows (crates/app/src/autostart.rs); auto-launch is what it registers with,
+# used directly only to unregister without a window. On Linux keefast writes its own entry.
+tauri-plugin-autostart = "2.7"
+auto-launch = "0.6"
 tauri-plugin-dialog = "2.8"
 tauri-plugin-opener = "2.7"
 tauri-plugin-single-instance = "2"

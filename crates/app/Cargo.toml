@@ -38,5 +38,12 @@ zeroize.workspace = true
 libloading.workspace = true
 zbus.workspace = true
 
+# Linux has its own Start on boot entry (src/autostart.rs says why).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-autostart.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+auto-launch.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

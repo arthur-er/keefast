@@ -12,10 +12,9 @@ use tauri::{AppHandle, Manager};
 
 use super::Core;
 use super::generator::GeneratorOptions;
-use crate::browser;
 use crate::core::AppCore;
-use crate::error::ApiResult;
-use crate::{shortcuts, tray};
+use crate::error::{ApiError, ApiResult, ErrorKind};
+use crate::{autostart, browser, shortcuts, tray};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -298,4 +297,32 @@ pub async fn set_shortcut(core: Core<'_>, name: String, keys: Option<String>) ->
     core.change_plugins(|_, host| host.reserve_shortcuts(&[&keys]));
     core.update(|workspace| workspace.set_shortcut(&name, Some(vec![keys])));
     Ok(())
+}
+
+/// Whether keefast starts when the user logs in, as the OS has it registered now: there is no
+/// setting for it, so an entry removed by hand reads as off.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_start_on_boot(app: AppHandle) -> ApiResult<bool> {
+    autostart::is_enabled(&app).map_err(|error| {
+        ApiError::new(
+            ErrorKind::Io,
+            "keefast couldn't tell whether it starts on boot.",
+        )
+        .with_detail(error.to_string())
+    })
+}
+
+/// Registers keefast to start, hidden, when the user logs in, or removes its registration.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_start_on_boot(app: AppHandle, enabled: bool) -> ApiResult<()> {
+    autostart::set_enabled(&app, enabled).map_err(|error| {
+        let message = if enabled {
+            "keefast couldn't set itself to start on boot."
+        } else {
+            "keefast couldn't stop starting on boot."
+        };
+        ApiError::new(ErrorKind::Io, message).with_detail(error.to_string())
+    })
 }
