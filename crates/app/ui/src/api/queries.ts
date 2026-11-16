@@ -74,9 +74,10 @@ export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: api.getSettings });
 }
 
-/** Whether keefast is registered to start when the user logs in, as the OS has it. */
+/** Whether keefast is registered to start when the user logs in, as the OS has it. Read again
+ * each time it is shown, as the user may have removed the entry by hand meanwhile. */
 export function useStartOnBoot() {
-  return useQuery({ queryKey: keys.startOnBoot, queryFn: api.getStartOnBoot });
+  return useQuery({ queryKey: keys.startOnBoot, queryFn: api.getStartOnBoot, refetchOnMount: "always" });
 }
 
 export function usePlugins() {
