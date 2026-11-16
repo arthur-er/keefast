@@ -2,6 +2,8 @@
 
 keefast becomes a vault for AI Agents. An Agent connects to an MCP server that keefast serves, sees what secrets exist, and uses them without the value passing through the model wherever we can manage it. The server runs in the desktop app for Agents on the same machine, or as a Headless host on a server for Agents anywhere. The design borrows the central idea of agentes-chat's vault (its ADR 0144): agents get metadata and *uses* of a secret, not the secret, and every use is checked and logged. It differs where keefast already differs. There is no server-wide key: a Vault opens only with its Master key, and only a person can enter that.
 
+The full spec, with user stories and testing decisions, is [docs/specs/agents.md](../specs/agents.md).
+
 ## Where it runs
 
 - **One core, two hosts.** A new `agent` crate holds the MCP tools, Agent pairings, policy and the audit log, on top of `workspace`. One `keefast-agent` binary (built with `rmcp`, the official Rust MCP SDK) has the subcommands `mcp`, `run`, `store`, `serve`, `unlock`, `pairing` and `log`. It ships beside `keefast` and `keefast-native-host` in every package, the Windows MSI included, and never links Tauri or WebKit.
