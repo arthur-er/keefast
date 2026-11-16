@@ -94,4 +94,7 @@ EOF
 
 rm -f keepassxc-browser.kdbx
 printf '%s\n%s\n' "$pw" "$pw" | keepassxc-cli import -q -p -t 100 "$work/draft.xml" keepassxc-browser.kdbx
+# KeePassXC benchmarks AES-KDF to millions of rounds; cut them so each open in the tests is quick
+# (scripts/fixtures/cheap_kdf.py keeps the rest of what KeePassXC wrote).
+python3 -I "$scripts/fixtures/cheap_kdf.py" 1000 "$pw" - keepassxc-browser.kdbx
 chmod 644 keepassxc-browser.kdbx
