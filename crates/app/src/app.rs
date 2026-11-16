@@ -192,6 +192,10 @@ fn launched_again(app: &AppHandle, argv: Vec<String>, cwd: String) {
             cwd.join(arg).into_os_string()
         }
     }));
+    // Start on boot while keefast runs already: it stays as it is.
+    if args.hidden {
+        return;
+    }
     match app.try_state::<Arc<AppCore>>() {
         Some(core) => core.launched_again(Launch {
             vault_file: args.vault_file,
@@ -247,8 +251,9 @@ fn dropbox_config(workspace: &Workspace) -> Option<DropboxConfig> {
 }
 
 /// Shows the window, which `tauri.conf.json` creates hidden so a `--hidden` launch never shows
-/// it, not even for a moment before it is minimized.
-fn show_window(app: &AppHandle, hidden: bool) {
+/// it, not even for a moment before it is minimized. `close_to_tray` is the setting, and the
+/// Tray icon already exists when it is on and the desktop has a Tray.
+fn show_window(app: &AppHandle, hidden: bool, close_to_tray: bool) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         return;
     };
@@ -256,9 +261,8 @@ fn show_window(app: &AppHandle, hidden: bool) {
         let _ = window.show();
         return;
     }
-    // TODO(#165 restack): pass the Close to tray setting and whether a tray is available.
-    match autostart::hidden_launch(false, false) {
-        // The tray icon shows the window when the user asks for it.
+    match autostart::hidden_launch(close_to_tray, tray::tray_available()) {
+        // The Tray icon shows the window when the user asks for it.
         HiddenLaunch::TrayOnly => {}
         // Minimized before it is shown, so it appears only in the taskbar.
         HiddenLaunch::Minimized => {
@@ -310,7 +314,7 @@ pub fn run(args: Args) {
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }
-            show_window(&handle, hidden);
+            show_window(&handle, hidden, core.read(Workspace::close_to_tray));
             Ok(())
         })
         .build(tauri::generate_context!())
