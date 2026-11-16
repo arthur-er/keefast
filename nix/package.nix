@@ -15,6 +15,7 @@
   glib-networking,
   gtk3,
   librsvg,
+  libayatana-appindicator,
 }:
 
 let
@@ -84,6 +85,7 @@ rustPlatform.buildRustPackage {
     glib-networking
     gtk3
     librsvg
+    libayatana-appindicator
   ];
 
   # The web UI first: the release build serves it from inside the binary.
@@ -103,10 +105,11 @@ rustPlatform.buildRustPackage {
 
   # keefast finds keefast-native-host next to itself; wrapGAppsHook3 gives keefast what
   # WebKitGTK needs at runtime (GIO modules, GSettings schemas), and only keefast: the host is
-  # started by browsers and needs none of it.
+  # started by browsers and needs none of it. The Tray icon's library (ADR 0013) is loaded at
+  # runtime (dlopen), not linked, so the wrapper puts it on the library path.
   dontWrapGApps = true;
   postFixup = ''
-    wrapGApp $out/bin/keefast
+    wrapGApp $out/bin/keefast --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libayatana-appindicator ]}
   '';
   postInstall = ''
     install -Dm644 packaging/linux/keefast.desktop -t $out/share/applications

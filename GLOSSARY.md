@@ -96,6 +96,16 @@ _Avoid_: Autofill button, inline menu
 The palette the Companion extension opens over a page to pick an Entry to fill, the site's or any found by searching the paired Vaults, to fill a generated password, or to pick an Entry with a Card to fill a payment form. Not the desktop app's command palette.
 _Avoid_: Inline menu, overlay
 
+### The desktop app
+
+**Tray**:
+The icon keefast keeps in the desktop's system tray (the notification area on Windows, a StatusNotifierItem on Linux) while Close to tray is on, so it runs with its window closed. Its menu shows keefast, locks all Vaults, or quits.
+_Avoid_: System tray icon, status icon, menu bar
+
+**Start on boot**:
+keefast registered with the OS to start, hidden, when the user logs in: in the Tray when Close to tray is on and there is a Tray, else minimized. It never unlocks a Vault.
+_Avoid_: Autostart, launch at login, run at startup
+
 ### Plugins
 
 **Plugin**:

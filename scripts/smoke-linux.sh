@@ -2,7 +2,8 @@
 # Smoke-checks a keefast build on X11 and on Wayland: starts it on a headless X server (Xvfb)
 # and on a headless Wayland compositor (sway), and fails unless it is still running a few
 # seconds later on both. With browser integration on, it also checks that keefast registered a
-# native host that is there to start, which for an AppImage means a copy outside the image.
+# native host that is there to start, which for an AppImage means a copy outside the image, and
+# that an AppImage carries the library the Tray icon is drawn with.
 #
 #   scripts/smoke-linux.sh <keefast binary or AppImage> [screenshot dir]
 #
@@ -41,6 +42,7 @@ check() {
   env "$@" "$app" >"$work/$display.log" 2>&1 &
   local pid=$!
   pids+=("$pid")
+  running="$pid"
   sleep "$wait_seconds"
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "keefast exited on $display:" >&2
@@ -84,6 +86,19 @@ if timeout 5 "$host" chrome-extension://smoke/ </dev/null >/dev/null 2>"$work/ho
   exit 1
 fi
 echo "keefast registered its native host at $host"
+
+if [[ "$app" == *.AppImage ]]; then
+  (cd "$work" && "$app" --appimage-extract 'usr/lib/libayatana-appindicator3.so.1' >/dev/null)
+  [[ -e "$work/squashfs-root/usr/lib/libayatana-appindicator3.so.1" ]] || {
+    echo "the AppImage has no libayatana-appindicator, so it can't show a Tray icon" >&2
+    exit 1
+  }
+  echo "the AppImage carries libayatana-appindicator"
+fi
+
+# keefast runs once per user (ADR 0013): the X11 one goes before the Wayland one starts.
+kill "$running"
+wait "$running" 2>/dev/null || true
 
 # Sway rather than Weston: GTK needs a seat, which headless Weston doesn't have.
 printf 'output HEADLESS-1 resolution 1280x800\n' >"$work/sway.config"

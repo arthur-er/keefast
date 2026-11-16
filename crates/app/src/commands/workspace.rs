@@ -300,6 +300,9 @@ pub struct LoginOption {
 pub struct LaunchInfo {
     pub vault_file: Option<Location>,
     pub key_file: Option<String>,
+    /// Which launch asked: 0 for keefast's own, then one more for each later launch that asked
+    /// for a Vault file (ADR 0013).
+    pub number: u32,
 }
 
 /// A Group of a Vault, as where new Entries and Groups go.
@@ -529,12 +532,14 @@ pub async fn get_workspace(core: Core<'_>) -> ApiResult<WorkspaceSnapshot> {
     Ok(core.read(|workspace| snapshot(workspace, core.revision())))
 }
 
-/// What the command line asked to open first: a Vault file, and its Key file.
+/// What the command line asked to open first: a Vault file, and its Key file. After a later
+/// launch asked for a Vault file (`Launched`), what that launch asked.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_launch(core: Core<'_>) -> ApiResult<LaunchInfo> {
-    let launch = core.launch();
+    let (launch, number) = core.launch();
     Ok(LaunchInfo {
+        number,
         vault_file: launch
             .vault_file
             .clone()

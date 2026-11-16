@@ -13,6 +13,7 @@
   "deleteEntry": ["Delete"],
   "save": ["Ctrl S"],
   "lockAll": ["Ctrl L"],
+  "quit": ["Ctrl Q"],
   "settings": ["Ctrl ,"],
   "newVault": ["Ctrl Shift N"],
   "openVault": ["Ctrl O"],

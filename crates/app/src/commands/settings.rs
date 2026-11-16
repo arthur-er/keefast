@@ -15,7 +15,7 @@ use super::generator::GeneratorOptions;
 use crate::browser;
 use crate::core::AppCore;
 use crate::error::ApiResult;
-use crate::shortcuts;
+use crate::{shortcuts, tray};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +84,10 @@ pub struct AppSettings {
     /// The keys the user gave keefast's shortcuts, by name (`shortcuts.json`'s), in place of
     /// their defaults. Only those the user changed.
     pub shortcuts: BTreeMap<String, Vec<String>>,
+    /// Whether closing the window keeps keefast running in the Tray (ADR 0013).
+    pub close_to_tray: bool,
+    /// Whether the desktop has a Tray, as last checked: without one, closing minimizes instead.
+    pub tray_available: bool,
     /// Why the app config couldn't be read or saved, if it couldn't.
     pub config_error: Option<String>,
 }
@@ -172,6 +176,8 @@ pub async fn get_settings(core: Core<'_>) -> ApiResult<AppSettings> {
                 entry_list: widths.entry_list,
             },
             shortcuts: workspace.shortcuts().clone(),
+            close_to_tray: workspace.close_to_tray(),
+            tray_available: tray::tray_available(),
             config_error: workspace.config_error().map(ToString::to_string),
         }
     }))
@@ -235,6 +241,19 @@ pub async fn set_autosave(core: Core<'_>, enabled: bool) -> ApiResult<()> {
 #[specta::specta]
 pub async fn set_browser_integration(core: Core<'_>, enabled: bool) -> ApiResult<()> {
     browser::set_enabled(core.inner(), enabled);
+    Ok(())
+}
+
+/// Turns Close to tray on or off, adding or removing the Tray icon at once. Turned on, keefast
+/// checks again whether the desktop has a Tray, which it may have gained since keefast started.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_close_to_tray(app: AppHandle, core: Core<'_>, enabled: bool) -> ApiResult<()> {
+    if enabled {
+        tray::check_tray();
+    }
+    core.update(|workspace| workspace.set_close_to_tray(enabled));
+    tray::sync(&app, enabled);
     Ok(())
 }
 
