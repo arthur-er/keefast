@@ -64,6 +64,9 @@ The Cargo workspace lives in `crates/`:
 - `app`: the desktop app (the `keefast` binary): a Tauri 2 window whose web UI, in
   `crates/app/ui/` (React, TypeScript, Tailwind), talks to the Workspace through typed commands
   (ADR 0008). See [`crates/app/ui/README.md`](crates/app/ui/README.md) for working on it.
+- `agent`: Agents (ADR 0012), on top of `workspace`: the Agent settings kept in the Vault, and
+  the `keefast-agent` command with its Headless host. No Tauri, no WebKit. See
+  [Running a Headless host](docs/headless-host.md).
 - `native-host`: the native-messaging host Chromium starts for the browser extension
   (`keefast-native-host`). It relays messages to the running app over a local socket.
 - `plugins`: the Plugin host (`keefast-plugins`), which runs Plugins in wasmtime and installs
