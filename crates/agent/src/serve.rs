@@ -239,14 +239,18 @@ fn approver(host: &HeadlessHost, headers: &HeaderMap) -> Option<String> {
 
 /// Streams a paired Approver's prompts, from the ones waiting now, until it disconnects.
 async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderMap) -> Response {
-    if approver(&host, &headers).is_none() {
+    let Some(name) = approver(&host, &headers) else {
         return unauthorized_approver();
-    }
+    };
     let (send, receive) = tokio::sync::mpsc::unbounded_channel();
-    let connection = host.approvers().connect(move |event: &ApproverEvent| {
-        // Fails only once the stream is gone, and the connection with it.
-        let _ = send.send(event.clone());
-    });
+    // `send` lives only in the hub: when the Approver is revoked, the hub lets go of it and the
+    // stream ends.
+    let connection = host
+        .approvers()
+        .connect_named(&name, move |event: &ApproverEvent| {
+            // Fails only once the stream is gone, and the connection with it.
+            let _ = send.send(event.clone());
+        });
     let events = UnboundedReceiverStream::new(receive).map(move |event| {
         // The connection lasts as long as the stream: dropping it disconnects the Approver.
         let _connected = &connection;

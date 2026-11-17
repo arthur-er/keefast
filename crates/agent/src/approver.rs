@@ -185,10 +185,16 @@ pub struct ApproverHub {
 /// How the hub tells one connected Approver of an event.
 type Tell = Arc<dyn Fn(&ApproverEvent) + Send + Sync>;
 
+/// A connected Approver: its paired name, if it has one, and how to tell it.
+struct Connected {
+    name: Option<String>,
+    tell: Tell,
+}
+
 #[derive(Default)]
 struct HubState {
     next: u64,
-    approvers: HashMap<u64, Tell>,
+    approvers: HashMap<u64, Connected>,
     waiting: HashMap<String, Waiting>,
     consents: HashMap<String, OfferedConsent>,
 }
@@ -248,6 +254,32 @@ impl ApproverHub {
         self: &Arc<Self>,
         tell: impl Fn(&ApproverEvent) + Send + Sync + 'static,
     ) -> ApproverConnection {
+        self.connect_as(None, tell)
+    }
+
+    /// [`Self::connect`]s the Approver paired as `name`, which [`Self::disconnect`] can cut
+    /// off when it is revoked.
+    pub fn connect_named(
+        self: &Arc<Self>,
+        name: &str,
+        tell: impl Fn(&ApproverEvent) + Send + Sync + 'static,
+    ) -> ApproverConnection {
+        self.connect_as(Some(name.to_owned()), tell)
+    }
+
+    /// Disconnects every connection of the Approver paired as `name`: the hub lets go of how
+    /// it tells them, which ends their event streams, and asks them nothing more.
+    pub fn disconnect(&self, name: &str) {
+        self.state()
+            .approvers
+            .retain(|_, connected| connected.name.as_deref() != Some(name));
+    }
+
+    fn connect_as(
+        self: &Arc<Self>,
+        name: Option<String>,
+        tell: impl Fn(&ApproverEvent) + Send + Sync + 'static,
+    ) -> ApproverConnection {
         let mut state = self.state();
         for (id, waiting) in &state.waiting {
             tell(&self.prompt_event(id, waiting));
@@ -259,7 +291,13 @@ impl ApproverHub {
         }
         state.next += 1;
         let id = state.next;
-        state.approvers.insert(id, Arc::new(tell));
+        state.approvers.insert(
+            id,
+            Connected {
+                name,
+                tell: Arc::new(tell),
+            },
+        );
         ApproverConnection {
             hub: Arc::clone(self),
             id,
@@ -360,8 +398,8 @@ fn whole_seconds(left: Duration) -> u32 {
 }
 
 fn broadcast(state: &HubState, event: &ApproverEvent) {
-    for tell in state.approvers.values() {
-        tell(event);
+    for connected in state.approvers.values() {
+        (connected.tell)(event);
     }
 }
 

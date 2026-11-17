@@ -686,6 +686,43 @@ async fn only_a_paired_approvers_token_opens_the_prompt_stream_even_while_locked
     assert_eq!(served.answer(&served.claude, "any", true, false).await, 401);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_an_approver_closes_its_prompt_stream_at_once_and_it_stops_being_asked() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let (_, stream) = served.approver_stream(&laptop).await;
+    let mut stream = stream.unwrap();
+    assert!(served.host.approvers().is_connected());
+
+    let host = Arc::clone(&served.host);
+    let reply = tokio::task::spawn_blocking(move || {
+        keefast_agent::admin::handle(
+            &host,
+            keefast_agent::admin::AdminRequest::ApproverRevoke {
+                name: "laptop".to_owned(),
+            },
+        )
+    })
+    .await
+    .unwrap();
+    assert!(matches!(reply, keefast_agent::admin::AdminReply::Approvers { .. }));
+
+    let end = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match stream.response.chunk().await {
+                Ok(Some(_)) => continue,
+                ended => return ended.map(|_| ()),
+            }
+        }
+    })
+    .await;
+    assert!(end.is_ok(), "the stream is closed within 5 s, not kept open");
+    assert!(!served.host.approvers().is_connected());
+    // With nobody to ask, run is refused rather than left waiting for the revoked desktop.
+    let (status, body) = served.run_gh_later().await.unwrap();
+    assert_eq!((status, body["error"].as_str()), (403, Some("not_allowed")));
+}
+
 /// A desktop keefast's [`ApproverClient`] connected to `served` with `token`, and what it hears.
 fn approver_client(
     served: &Served,

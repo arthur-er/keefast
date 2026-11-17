@@ -274,7 +274,7 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
         AdminRequest::ApproverList => AdminReply::Approvers {
             approvers: host.approver_credentials().list(),
         },
-        AdminRequest::ApproverRevoke { name } => match host.approver_credentials().unpair(&name) {
+        AdminRequest::ApproverRevoke { name } => match host.revoke_approver(&name) {
             Ok(()) => AdminReply::Approvers {
                 approvers: host.approver_credentials().list(),
             },
