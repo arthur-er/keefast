@@ -23,6 +23,7 @@ import { GeneratorSettings } from "./GeneratorSettings";
 import { lastUsed, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection, useSearchQuery } from "./SettingsLayout";
 import { START_ON_BOOT_SEARCH, StartOnBootRow } from "./StartOnBoot";
+import { CheckForUpdatesRow, UPDATES_SEARCH, UpdateStatusRow } from "./Updates";
 import { CLIPBOARD_WAITS, describeWait, IDLE_LOCK_WAITS, type Wait, waitsWith } from "./waits";
 
 const CONFIG_ERROR = "keefast's settings file could not be read or saved, so recent Vault files may be forgotten.";
@@ -78,6 +79,14 @@ export function GeneralSettings({ section }: { section?: string }) {
             ),
           },
           { id: "startOnBoot", search: START_ON_BOOT_SEARCH, render: () => <StartOnBootRow /> },
+        ]],
+      },
+      {
+        id: "updates",
+        name: "Updates",
+        cards: [[
+          { id: "checkForUpdates", search: UPDATES_SEARCH, render: () => <CheckForUpdatesRow enabled={settings.checkForUpdates} /> },
+          { id: "version", search: "Version update available check now install release", render: () => <UpdateStatusRow /> },
         ]],
       },
       {

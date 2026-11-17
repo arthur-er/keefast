@@ -87,8 +87,20 @@
       Execute="deferred"
       Impersonate="yes"
       Return="ignore" />
+
+    <!--
+      The in-app updater (ADR 0014) exits keefast and runs this installer with AUTOLAUNCHAPP set,
+      as for an installer Tauri makes: keefast starts again once the update is installed, with the
+      arguments it ran with (LAUNCHAPPARGS).
+    -->
+    <CustomAction
+      Id="LaunchAfterUpdate"
+      FileRef="keefast.exe"
+      ExeCommand="[LAUNCHAPPARGS]"
+      Return="asyncNoWait" />
     <InstallExecuteSequence>
       <Custom Action="Unregister" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="LaunchAfterUpdate" After="InstallFinalize" Condition="AUTOLAUNCHAPP AND NOT Installed" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

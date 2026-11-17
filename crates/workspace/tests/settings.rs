@@ -197,6 +197,37 @@ fn closing_to_the_tray_is_off_until_turned_on() {
 }
 
 #[test]
+fn checking_for_updates_waits_for_the_user_to_be_asked() {
+    assert_eq!(AppConfig::default().check_for_updates, None);
+    assert_eq!(load("").check_for_updates, None);
+    assert_eq!(
+        load("check_for_updates = false\n").check_for_updates,
+        Some(false)
+    );
+
+    let store = Arc::new(FakeConfigStore::default());
+    let (mut workspace, _) = workspace_with(store.clone());
+    assert_eq!(workspace.check_for_updates(), None);
+
+    workspace.set_check_for_updates(true);
+
+    assert_eq!(workspace.check_for_updates(), Some(true));
+    assert_eq!(store.saved().unwrap().check_for_updates, Some(true));
+
+    // Unasked is left out of the file, and each answer is read back.
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileConfigStore::new(dir.path().join("config.toml"));
+    for answer in [None, Some(true), Some(false)] {
+        let config = AppConfig {
+            check_for_updates: answer,
+            ..AppConfig::default()
+        };
+        store.save(&config).unwrap();
+        assert_eq!(store.load().unwrap(), config);
+    }
+}
+
+#[test]
 fn pane_widths_are_remembered_as_dragged() {
     let store = Arc::new(FakeConfigStore::default());
     let (mut workspace, _) = workspace_with(store.clone());

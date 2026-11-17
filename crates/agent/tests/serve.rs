@@ -80,6 +80,7 @@ impl Served {
 
     /// The host serving the Vault file, locked, asking `approvers`.
     async fn start(listen: &Listen, approvers: Arc<keefast_agent::ApproverHub>) -> Self {
+        support::install_tls_provider();
         let (file, claude, codex) = vault_file();
         let (host, _) = HeadlessHost::start(
             Workspace::new(Arc::new(LocalStorage)),

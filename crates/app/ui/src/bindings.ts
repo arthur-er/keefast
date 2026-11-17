@@ -305,6 +305,18 @@ export const commands = {
 	getStartOnBoot: () => typedError<boolean, ApiError>(__TAURI_INVOKE("get_start_on_boot")),
 	/**  Registers keefast to start, hidden, when the user logs in, or removes its registration. */
 	setStartOnBoot: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_start_on_boot", { enabled })),
+	/**  Turns checking for updates once a day on or off; turned on, keefast checks soon. */
+	setCheckForUpdates: (enabled: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_check_for_updates", { enabled })),
+	getUpdates: () => typedError<UpdateState, ApiError>(__TAURI_INVOKE("get_updates")),
+	/**  Checks for an update now, as the user asked: whether or not automatic checks are on. */
+	checkForUpdatesNow: () => typedError<UpdateState, ApiError>(__TAURI_INVOKE("check_for_updates_now")),
+	/**
+	 *  Downloads and installs the update found, then restarts keefast. Returns once the download
+	 *  starts; its progress comes as `UpdateState` events.
+	 */
+	installUpdate: () => typedError<null, ApiError>(__TAURI_INVOKE("install_update")),
+	/**  Opens the update's release page in the browser, or the latest release's. */
+	openReleasePage: () => typedError<null, ApiError>(__TAURI_INVOKE("open_release_page")),
 	listPlugins: () => typedError<PluginList, ApiError>(__TAURI_INVOKE("list_plugins")),
 	/**
 	 *  Asks the user for a Plugin package and says what installing it would do; `None` if they
@@ -479,6 +491,7 @@ export const events = {
 	launched: makeEvent<Launched>("launched"),
 	mergeNotice: makeEvent<MergeNotice>("merge-notice"),
 	saveFailed: makeEvent<SaveFailed>("save-failed"),
+	updateState: makeEvent<UpdateState>("update-state"),
 	workspaceChanged: makeEvent<WorkspaceChanged>("workspace-changed"),
 };
 
@@ -620,6 +633,8 @@ export type AppSettings = {
 	closeToTray: boolean,
 	/**  Whether the desktop has a Tray, as last checked: without one, closing minimizes instead. */
 	trayAvailable: boolean,
+	/**  Whether keefast checks for updates on its own; `None` until the user is asked. */
+	checkForUpdates: boolean | null,
 	/**  Why the app config couldn't be read or saved, if it couldn't. */
 	configError: string | null,
 };
@@ -648,6 +663,13 @@ export type AttachmentView = {
 	/**  In bytes. */
 	size: number,
 	preview: PreviewKind,
+};
+
+/**  A newer release than the one running. */
+export type AvailableUpdate = {
+	version: string,
+	/**  The release's page, with what changed and its packages. */
+	releasePage: string,
 };
 
 /**
@@ -1639,6 +1661,33 @@ export type TotpState = "none" | "set" |
  *  `get_totp_code`.
  */
 export type TotpView = { status: "ready"; digits: number; period: number; algorithm: TotpAlgorithmChoice; steam: boolean } | { status: "unreadable"; reason: string };
+
+/**
+ *  keefast's version, whether this install updates itself, and where updating stands. Sent to
+ *  the UI whenever it changes.
+ */
+export type UpdateState = {
+	currentVersion: string,
+	/**
+	 *  Whether keefast can install an update itself: the AppImage and the Windows installer's
+	 *  install can. Others are pointed at the release's page.
+	 */
+	installsUpdates: boolean,
+	status: UpdateStatus,
+};
+
+/**  Where checking for and installing an update stands. */
+export type UpdateStatus = 
+/**  Not checked since keefast started. */
+{ kind: "unchecked" } | { kind: "checking" } | { kind: "upToDate"; 
+/**  When, in seconds since 1970. */
+checkedAt: number | null } | { kind: "available"; update: AvailableUpdate } | 
+/**  Downloading `update`; once downloaded, it is installed and keefast restarts. */
+{ kind: "downloading"; update: AvailableUpdate; 
+/**  How much is downloaded, from 0 to 1, when the size is known. */
+progress: number | null } | 
+/**  Checking failed, or installing `update` did. */
+{ kind: "failed"; message: string; update: AvailableUpdate | null };
 
 /**  A Vault, unlocked or locked, by the number it keeps while the app runs. */
 export type VaultId = number;

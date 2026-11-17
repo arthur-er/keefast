@@ -13,6 +13,13 @@ use std::time::{Duration, SystemTime};
 use keefast_workspace::{Clock, LocalStorage, UnlockSecrets, VaultId, VaultLocation, Workspace};
 use tempfile::TempDir;
 
+/// Install rustls's ring provider for the whole test process, once. reqwest, which the MCP and
+/// HTTP clients in these tests use, panics without one when it is built beside the app: there it
+/// also gets tauri-plugin-updater's `rustls-no-provider` feature. A second install fails harmlessly.
+pub fn install_tls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// The fixtures' Master key.
 pub const PASSWORD: &str = "fixture-password";
 /// A KeePassXC KDBX 4 Vault from the fixture corpus.

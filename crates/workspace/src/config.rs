@@ -45,6 +45,9 @@ pub struct AppConfig {
     /// Whether closing the window hides keefast to the Tray instead of quitting, so the
     /// Companion extension keeps working. Off unless the user turns it on (ADR 0013).
     pub close_to_tray: bool,
+    /// Whether keefast checks for updates on its own: `None` until the user is asked, as keefast
+    /// makes no network requests they haven't agreed to (ADR 0014).
+    pub check_for_updates: Option<bool>,
 }
 
 /// How wide the Vault browser's sidebar and Entry list are, in logical pixels, as the user
@@ -121,6 +124,7 @@ impl Default for AppConfig {
             pane_widths: PaneWidths::default(),
             shortcuts: BTreeMap::new(),
             close_to_tray: false,
+            check_for_updates: None,
         }
     }
 }
@@ -215,6 +219,9 @@ struct ConfigFile {
     /// `[shortcuts]`, `search = ["Ctrl J"]`: only those the user changed.
     shortcuts: BTreeMap<String, Vec<String>>,
     close_to_tray: bool,
+    /// Left out until the user is asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    check_for_updates: Option<bool>,
 }
 
 impl Default for ConfigFile {
@@ -261,6 +268,7 @@ impl From<ConfigFile> for AppConfig {
             },
             shortcuts: file.shortcuts,
             close_to_tray: file.close_to_tray,
+            check_for_updates: file.check_for_updates,
         }
     }
 }
@@ -287,6 +295,7 @@ impl From<&AppConfig> for ConfigFile {
             dropbox_app_key: config.dropbox_app_key.clone(),
             shortcuts: config.shortcuts.clone(),
             close_to_tray: config.close_to_tray,
+            check_for_updates: config.check_for_updates,
         }
     }
 }

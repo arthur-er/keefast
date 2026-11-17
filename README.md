@@ -58,6 +58,26 @@ Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is
 that uninstalling removes keefast and its browser registrations but leaves another program's
 alone. Pull requests that change the installer run that workflow too.
 
+## Updates
+
+keefast asks once whether to check for updates. Agreed, it asks GitHub for its latest release
+when it starts and once a day after; General Settings > Updates turns that off, and has Check now
+either way. Nothing but the request is sent, though GitHub sees your IP address. An update is
+only ever installed when you click Update and restart: the AppImage replaces itself and the
+Windows install runs the new MSI, then keefast restarts. Installs that don't update themselves
+(the tarball, Nix, a build of your own) link to the release instead. keefast won't update while a
+Vault has unsaved changes.
+
+Updates are signed: keefast installs only a package signed with its update key, whose public key
+is in `crates/app/tauri.conf.json` (ADR 0014). A release signs the AppImage and the MSI with it
+(`scripts/sign-update.sh`), and attaches `latest.json` (`scripts/update-manifest.sh`) to the
+draft release. Installed keefasts see it only once the draft is published. The release workflows
+need the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
+from `cargo tauri signer generate -w ~/.tauri/keefast-updater.key`; keep a copy of the key
+offline, as without it no installed keefast can be updated again. To try an update without a
+release, run keefast with `KEEFAST_UPDATE_URL` pointing at a `latest.json` of your own, signed
+with a key whose public key keefast was built with; a debug build accepts plain HTTP.
+
 ## Development
 
 The Cargo workspace lives in `crates/`:
@@ -139,7 +159,7 @@ of their sections and the open Vaults. **General** holds the preferences kept on
 `keefast/config.toml` in the OS config directory: the theme (Dark, Light, or System, following
 the OS's light/dark setting; KeeWeb's themes from earlier versions read as the nearer), the idle lock
 and locking with the OS, how long copied secrets stay on the clipboard, autosave, the password
-generator, browser integration and favicon download. Each Vault's page (also reached by clicking
+generator, browser integration, favicon download and updates. Each Vault's page (also reached by clicking
 it in the footer) saves or locks it, changes its master key, and holds its Default access policy
 and Pairings. Tab moves between the settings and Enter or Space picks one; Escape closes them.
 

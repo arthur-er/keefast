@@ -1,16 +1,21 @@
 # Builds the Linux tarball and AppImage, smoke-checks them on X11 and Wayland, and uploads them
-# as the `linux-<arch>` artifacts. Called by the release workflow; run it by hand to try a build.
+# as the `linux-<arch>` artifacts; a release also signs the AppImage as an update (ADR 0014).
+# Called by the release workflow; run it by hand to try a build.
 name: Package for Linux
 
 on:
   workflow_call:
     inputs:
       release:
-        description: Bundle Plugins signed with keefast's release key, failing without it.
+        description: Bundle Plugins signed with keefast's release key and sign the AppImage as an update, failing without the keys.
         type: boolean
         default: false
     secrets:
       KEEFAST_PLUGIN_SIGNING_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
         required: false
   workflow_dispatch:
 
@@ -89,10 +94,20 @@ jobs:
       - name: Smoke check the AppImage on X11 and Wayland
         run: scripts/smoke-linux.sh dist/keefast-*.AppImage
 
+      # The in-app updater installs only an AppImage signed with keefast's update key. The tarball
+      # doesn't update itself, so it isn't signed.
+      - name: Sign the AppImage as an update
+        if: inputs.release
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: scripts/sign-update.sh dist/keefast-*.AppImage
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: |
             dist/*.tar.gz
             dist/*.AppImage
+            dist/*.AppImage.sig
           if-no-files-found: error

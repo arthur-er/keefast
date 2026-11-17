@@ -885,6 +885,17 @@ impl Workspace {
         self.save_config();
     }
 
+    /// Whether keefast checks for updates on its own; `None` until the user is asked.
+    pub fn check_for_updates(&self) -> Option<bool> {
+        self.config.check_for_updates
+    }
+
+    /// Turns checking for updates on or off, and remembers it in the app config.
+    pub fn set_check_for_updates(&mut self, check: bool) {
+        self.config.check_for_updates = Some(check);
+        self.save_config();
+    }
+
     pub fn pane_widths(&self) -> PaneWidths {
         self.config.pane_widths
     }

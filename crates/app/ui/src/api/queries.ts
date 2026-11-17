@@ -26,6 +26,7 @@ export const keys = {
   launch: ["launch"] as const,
   settings: ["settings"] as const,
   startOnBoot: ["startOnBoot"] as const,
+  updates: ["updates"] as const,
   entries: (query: EntryQuery) => ["entries", query] as const,
   palette: (search: string, names: string[]) => ["palette", search, names] as const,
   entry: (vault: VaultId, entry: EntryId) => ["entry", vault, entry] as const,
@@ -57,6 +58,8 @@ export function useBackendEvents() {
       }),
     [client],
   );
+  // Each change in updating comes whole, download progress included.
+  useEffect(() => onEvent("updateState", (state) => client.setQueryData(keys.updates, state)), [client]);
 }
 
 export function useWorkspace() {
@@ -85,6 +88,11 @@ export function useStartOnBoot() {
 /** The Agent hosts this desktop is an Approver for, and how each connection stands. */
 export function useAgentHosts() {
   return useQuery({ queryKey: keys.agentHosts, queryFn: api.getAgentHosts });
+}
+
+/** Where updating stands (ADR 0014); the backend sends each change. */
+export function useUpdates() {
+  return useQuery({ queryKey: keys.updates, queryFn: api.getUpdates });
 }
 
 export function usePlugins() {

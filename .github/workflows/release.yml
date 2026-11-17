@@ -1,5 +1,7 @@
 # Pushing a `v<version>` tag builds every package and attaches them to a draft GitHub release,
-# to be checked and published by hand. Packaging lives in one reusable workflow per platform.
+# to be checked and published by hand. Publishing it is what offers the update to installed
+# keefasts: they read latest.json from the latest published release (ADR 0014). Packaging lives
+# in one reusable workflow per platform.
 name: Release
 
 on:
@@ -29,6 +31,8 @@ jobs:
       release: true
     secrets:
       KEEFAST_PLUGIN_SIGNING_KEY: ${{ secrets.KEEFAST_PLUGIN_SIGNING_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
   windows:
     needs: version
@@ -37,6 +41,8 @@ jobs:
       release: true
     secrets:
       KEEFAST_PLUGIN_SIGNING_KEY: ${{ secrets.KEEFAST_PLUGIN_SIGNING_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
   # The Companion extension is the same on every platform, so it ships once, as its own zip,
   # rather than inside each platform's package.
@@ -74,10 +80,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
       - uses: actions/download-artifact@v4
         with:
           path: assets
           merge-multiple: true
+      - name: Update manifest
+        run: |
+          scripts/update-manifest.sh "${GITHUB_REF_NAME#v}" assets \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME" > latest.json
+          mv latest.json assets/
       - name: Checksums
         working-directory: assets
         run: sha256sum -- * > SHA256SUMS

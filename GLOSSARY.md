@@ -106,6 +106,10 @@ _Avoid_: System tray icon, status icon, menu bar
 keefast registered with the OS to start, hidden, when the user logs in: in the Tray when Close to tray is on and there is a Tray, else minimized. It never unlocks a Vault.
 _Avoid_: Autostart, launch at login, run at startup
 
+**Update**:
+A newer keefast release, offered to the user once keefast finds it in GitHub's latest published release and installed only when they say so. It is signed with keefast's update key; the AppImage and the Windows installer's install update themselves and restart, other installs are pointed at the release's page. keefast checks for one daily only once the user has agreed to it.
+_Avoid_: Upgrade, auto-update, patch
+
 ### Plugins
 
 **Plugin**:

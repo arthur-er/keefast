@@ -8,6 +8,7 @@
 //   __keefastMock.simulate("pairing" | "access" | "access-form" | "login" | "lockUnsaved" | "merge" | "saveFailed"
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
+//     | "updates-asked" | "update-available" | "update-manual" | "update-failed"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
 //     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
 //     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-http" | "agentPrompt-reveal"
@@ -53,6 +54,7 @@ import type {
   TotpSetup,
   View,
   WorkspaceSnapshot,
+  UpdateState,
 } from "@/bindings";
 
 import type { Backend, Commands, EventPayloads, Events } from "../backend";
@@ -294,6 +296,9 @@ interface MockState {
   agentHosts: AgentHostView[];
   agentPrompts: (Omit<PendingAgentPrompt, "more">)[];
   agentConsents: (Omit<PendingAgentConsent, "more">)[];
+  updates: UpdateState;
+  /** The version the mock's update endpoint offers, if any. */
+  release: string | null;
   nextId: number;
 }
 
@@ -315,6 +320,7 @@ function initialState(): MockState {
       paneWidths: { sidebar: 232, entryList: 360 },
       shortcuts: {},
       closeToTray: false,
+      checkForUpdates: null,
     },
     pendingLock: null,
     pendingPairing: null,
@@ -333,8 +339,14 @@ function initialState(): MockState {
     agentPrompts: [],
     agentConsents: [],
     startOnBoot: false,
+    updates: { currentVersion: "0.1.0", installsUpdates: true, status: { kind: "unchecked" } },
+    release: null,
     nextId: 100,
   };
+}
+
+function mockRelease(version: string) {
+  return { version, releasePage: `https://github.com/arthur-er/keefast/releases/tag/v${version}` };
 }
 
 /** Who the mock's browser requests come from: the Pairing's name. */
@@ -386,6 +398,10 @@ export type MockScene =
   | "agentPrompt-many"
   | "agentConsent"
   | "agentConsent-again"
+  | "updates-asked"
+  | "update-available"
+  | "update-manual"
+  | "update-failed"
   | PluginScene;
 
 /** The code the mock's consent pages show. */
@@ -1403,6 +1419,33 @@ export function createMockBackend(): Backend & {
     }),
     // A browser tab can't quit: the mock only answers.
     quit: command(() => null),
+    setCheckForUpdates: command((enabled: boolean) => {
+      state.settings.checkForUpdates = enabled;
+      changed();
+      return null;
+    }),
+    getUpdates: command(() => structuredClone(state.updates)),
+    checkForUpdatesNow: command(async () => {
+      setUpdates({ kind: "checking" });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      setUpdates(state.release ? { kind: "available", update: mockRelease(state.release) } : { kind: "upToDate", checkedAt: Date.now() / 1000 });
+      return structuredClone(state.updates);
+    }),
+    // Downloads in a few steps, then "restarts" into the new version.
+    installUpdate: command(() => {
+      const status = state.updates.status;
+      if (status.kind !== "available" && status.kind !== "failed") throw new MockError("notFound", "There's no update to install.");
+      if (!state.updates.installsUpdates) throw new MockError("unavailable", "This copy of keefast doesn't update itself: download the new version from its release page.");
+      const update = mockRelease(state.release ?? "0.2.0");
+      [0, 0.25, 0.5, 0.75, 1].forEach((progress, step) => setTimeout(() => setUpdates({ kind: "downloading", update, progress }), step * 500));
+      setTimeout(() => {
+        state.updates = { ...state.updates, currentVersion: update.version };
+        state.release = null;
+        setUpdates({ kind: "upToDate", checkedAt: Date.now() / 1000 });
+      }, 3000);
+      return null;
+    }),
+    openReleasePage: command(() => null),
     getStartOnBoot: command(() => state.startOnBoot),
     setStartOnBoot: command((enabled) => {
       state.startOnBoot = enabled;
@@ -1832,7 +1875,7 @@ export function createMockBackend(): Backend & {
   }
 
   const events = Object.fromEntries(
-    (["workspaceChanged", "mergeNotice", "browserRequest", "clipboardCleared", "saveFailed", "launched"] as const).map((name) => [
+    (["workspaceChanged", "mergeNotice", "browserRequest", "clipboardCleared", "saveFailed", "launched", "updateState"] as const).map((name) => [
       name,
       {
         listen: async (callback: (event: { payload: never }) => void) => {
@@ -1920,6 +1963,11 @@ export function createMockBackend(): Backend & {
       state.agentConsents = state.agentConsents.filter((c) => c.id !== consent.id);
       changed();
     }, 600_000);
+  }
+
+  function setUpdates(status: UpdateState["status"]) {
+    state.updates = { ...state.updates, status };
+    emit("updateState", structuredClone(state.updates));
   }
 
   function simulate(scene: MockScene) {
@@ -2063,6 +2111,21 @@ export function createMockBackend(): Backend & {
         // keefast was launched again, naming a Vault file (ADR 0013).
         state.launch = { vaultFile: { provider: "local", path: "/home/me/Documents/launched.kdbx" }, keyFile: null, number: state.launch.number + 1 };
         emit("launched", {});
+        break;
+      case "updates-asked":
+        state.settings.checkForUpdates = true;
+        break;
+      case "update-available":
+      case "update-manual":
+        state.settings.checkForUpdates = true;
+        state.release = "0.2.0";
+        state.updates.installsUpdates = scene === "update-available";
+        setUpdates({ kind: "available", update: mockRelease(state.release) });
+        break;
+      case "update-failed":
+        state.settings.checkForUpdates = true;
+        state.release = "0.2.0";
+        setUpdates({ kind: "failed", message: "keefast couldn't download the update: error sending request", update: mockRelease(state.release) });
         break;
       case "closed": {
         // The prototype's Open a Vault story: Family locked, the others recent Vault files.

@@ -47,6 +47,7 @@ impl Served {
     }
 
     async fn start_with(oauth: OAuthServer) -> Self {
+        support::install_tls_provider();
         let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
         {
             let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
