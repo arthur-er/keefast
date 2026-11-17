@@ -14,7 +14,11 @@ use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use keefast_agent::{AgentDecision, AgentSettingsExt, AgentUse};
+use keefast_agent::approver::ApproverAnswer;
+use keefast_agent::approver_client::{
+    AgentHost, ApproverClient, ApproverClientEvent, answer_prompt,
+};
+use keefast_agent::{AgentDecision, AgentPrompt, AgentSettingsExt, AgentUse};
 use keefast_core::EntryFields;
 use secrecy::SecretString;
 use support::{FakeClock, KEEPASSXC_KDBX4, PASSWORD, VaultFile};
@@ -459,4 +463,82 @@ fn run_is_denied_until_the_desktop_app_allows_it_and_the_log_shows_both() {
     assert!(log.contains("with printenv  denied"), "{log}");
     assert!(log.contains("with printenv  allowed"), "{log}");
     assert!(!log.contains("ghp_the-real-token-value"), "{log}");
+}
+
+/// A desktop keefast paired with the host as an Approver, connected, answering every prompt it
+/// hears with `answer`; and the prompts it heard.
+fn approver_answering(
+    socket: &Path,
+    url: &str,
+    answer: ApproverAnswer,
+) -> (ApproverClient, std::sync::mpsc::Receiver<AgentPrompt>) {
+    let paired = run(socket, &["pairing", "approver", "desktop"], "");
+    let token = String::from_utf8_lossy(&paired.stdout).trim().to_owned();
+    let host = AgentHost {
+        url: url.to_owned(),
+        token: zeroize::Zeroizing::new(token),
+    };
+    let (heard, prompts) = std::sync::mpsc::channel();
+    let (connected, is_connected) = std::sync::mpsc::channel();
+    let answering = host.clone();
+    let client = ApproverClient::start(host, move |event| match event {
+        ApproverClientEvent::Connected => {
+            let _ = connected.send(());
+        }
+        ApproverClientEvent::Prompt { id, prompt, .. } => {
+            let _ = heard.send(prompt);
+            // Answered from another thread, as the desktop's user would, while the stream reads on.
+            let answering = answering.clone();
+            thread::spawn(move || answer_prompt(&answering, &id, answer));
+        }
+        _ => {}
+    });
+    is_connected.recv_timeout(Duration::from_secs(10)).unwrap();
+    (client, prompts)
+}
+
+#[test]
+fn run_against_a_remote_host_prompts_the_approver_and_a_remembered_allow_skips_the_prompt() {
+    let (file, token) = vault_with_a_github_token();
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+    let allow = ApproverAnswer {
+        allow: true,
+        remember: true,
+    };
+    let (_desktop, prompts) = approver_answering(&served.socket, &url, allow);
+
+    let first = run_with_token(&url, &token);
+    let second = run_with_token(&url, &token);
+
+    assert!(first.status.success(), "{}", text(&first));
+    assert!(second.status.success(), "{}", text(&second));
+    let heard: Vec<AgentPrompt> = prompts.try_iter().collect();
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert_eq!(heard[0].command, ["printenv", "GH_TOKEN"]);
+    let log = text(&run(&served.socket, &["log"], ""));
+    assert!(
+        log.contains("with printenv  allowed: allowed and remembered at a prompt"),
+        "{log}"
+    );
+}
+
+#[test]
+fn run_is_denied_when_the_approver_denies() {
+    let (file, token) = vault_with_a_github_token();
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+    let deny = ApproverAnswer {
+        allow: false,
+        remember: false,
+    };
+    let (_desktop, prompts) = approver_answering(&served.socket, &url, deny);
+
+    let denied = run_with_token(&url, &token);
+
+    assert_eq!(denied.status.code(), Some(125), "{}", text(&denied));
+    assert!(text(&denied).contains("doesn't allow"), "{}", text(&denied));
+    assert_eq!(prompts.try_iter().count(), 1);
 }
