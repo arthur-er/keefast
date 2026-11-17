@@ -132,6 +132,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::agent_hosts::add_agent_host,
             commands::agent_hosts::remove_agent_host,
             commands::agent_hosts::answer_agent_prompt,
+            commands::agent_hosts::answer_agent_consent,
             commands::dropbox::dropbox_status,
             commands::dropbox::dropbox_connect,
             commands::dropbox::dropbox_connect_another,

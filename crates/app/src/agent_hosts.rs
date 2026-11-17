@@ -8,16 +8,22 @@
 //! prompt; the window comes to the front for each new one. A prompt leaves when it is answered
 //! here, or when the host says to dismiss it: another Approver answered first, or nobody did in
 //! time. A dropped stream takes its host's prompts with it, since they can't be answered.
+//!
+//! A host also asks its Approvers to approve MCP clients pairing by OAuth (ADR 0012 update
+//! 2026-11-17 "OAuth"): those consents wait here too, after the prompts, since a use blocks an
+//! Agent for at most a minute and a consent waits ten. Approving one needs the code its consent
+//! page shows, which the user types; a wrong code leaves it waiting.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 
-use keefast_agent::AgentPrompt;
 use keefast_agent::approver::{APPROVER_TOKEN_PREFIX, ApproverAnswer};
 use keefast_agent::approver_client::{
-    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent, answer_prompt,
+    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent, answer_consent,
+    answer_prompt,
 };
+use keefast_agent::{AgentPrompt, ConsentAnswer, ConsentPrompt};
 use keefast_workspace::SecretStore;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -33,6 +39,7 @@ pub struct AgentHosts {
     secrets: Arc<dyn SecretStore>,
     hosts: Vec<Host>,
     prompts: Vec<WaitingPrompt>,
+    consents: Vec<WaitingConsent>,
     /// The prompt last put to the user, so each new one brings keefast to the front once.
     shown: Option<String>,
     /// Whether hosts are connected to; tests hand prompts in themselves.
@@ -80,6 +87,17 @@ pub struct WaitingPrompt {
     pub expires: SystemTime,
 }
 
+/// An OAuth client's consent from a host, waiting for the user to approve its code.
+#[derive(Debug, Clone)]
+pub struct WaitingConsent {
+    pub host: String,
+    pub host_name: String,
+    pub id: String,
+    pub consent: ConsentPrompt,
+    /// When the host forgets it if nobody approves it.
+    pub expires: SystemTime,
+}
+
 /// A host as Settings shows it: never its token.
 #[derive(Debug, Clone)]
 pub struct HostView {
@@ -98,6 +116,7 @@ impl AgentHosts {
             connects: false,
             hosts: Vec::new(),
             prompts: Vec::new(),
+            consents: Vec::new(),
             shown: None,
         }
     }
@@ -127,6 +146,21 @@ impl AgentHosts {
     /// How many prompts wait, the front one with them.
     pub fn waiting(&self) -> usize {
         self.prompts.len()
+    }
+
+    /// The consent to put to the user once no prompt waits: the oldest still waiting.
+    pub fn front_consent(&self) -> Option<&WaitingConsent> {
+        let now = SystemTime::now();
+        self.consents.iter().find(|consent| consent.expires > now)
+    }
+
+    /// How many consents wait, the front one with them.
+    pub fn consents_waiting(&self) -> usize {
+        let now = SystemTime::now();
+        self.consents
+            .iter()
+            .filter(|consent| consent.expires > now)
+            .count()
     }
 
     fn save(&self) -> ApiResult<()> {
@@ -162,6 +196,7 @@ impl AgentHosts {
             ApproverClientEvent::Disconnected(why) => {
                 self.hosts[at].connection = Connection::Disconnected(why);
                 self.prompts.retain(|prompt| prompt.host != host);
+                self.consents.retain(|consent| consent.host != host);
             }
             ApproverClientEvent::Prompt {
                 id,
@@ -180,16 +215,37 @@ impl AgentHosts {
                     expires: SystemTime::now() + Duration::from_secs(seconds_left.into()),
                 });
             }
+            ApproverClientEvent::Consent {
+                id,
+                seconds_left,
+                consent,
+            } => {
+                if self.consents.iter().any(|known| known.id == id) {
+                    return false;
+                }
+                self.consents.push(WaitingConsent {
+                    host: host.to_owned(),
+                    host_name: self.hosts[at].saved.name.clone(),
+                    id,
+                    consent,
+                    expires: SystemTime::now() + Duration::from_secs(seconds_left.into()),
+                });
+            }
             ApproverClientEvent::Dismissed { id } => {
                 self.prompts.retain(|prompt| prompt.id != id);
+                self.consents.retain(|consent| consent.id != id);
             }
         }
         true
     }
 
-    /// Whether the front prompt is one the user hasn't been shown, noting that they have.
+    /// Whether the front prompt or consent is one the user hasn't been shown, noting that they
+    /// have.
     fn news(&mut self) -> bool {
-        let front = self.front().map(|prompt| prompt.id.clone());
+        let front = self
+            .front()
+            .map(|prompt| prompt.id.clone())
+            .or_else(|| self.front_consent().map(|consent| consent.id.clone()));
         let news = front.is_some() && front != self.shown;
         self.shown = front;
         news
@@ -399,6 +455,7 @@ pub fn remove(core: &AppCore, id: &str) -> ApiResult<()> {
         };
         let removed = hosts.hosts.remove(at);
         hosts.prompts.retain(|prompt| prompt.host != id);
+        hosts.consents.retain(|consent| consent.host != id);
         let _ = hosts.secrets.delete(&secret_name(id));
         hosts.save()?;
         hosts.news();
@@ -454,7 +511,84 @@ pub fn answer(core: &AppCore, host: &str, id: &str, allow: bool, remember: bool)
             "The Agent host couldn't be reached, so it will deny the request.",
         )
         .with_detail(why),
+        AnswerPromptError::Refused(why) => ApiError::invalid(why),
     })
+}
+
+/// Answers the OAuth consent `id` from the host `host`. It blocks while the answer travels.
+/// Approving needs the `code` its consent page shows, and makes the Agent pairing `answer`
+/// names. A wrong code, or a pairing the host can't make, leaves it waiting, to try again.
+pub fn answer_agent_consent(
+    core: &AppCore,
+    host: &str,
+    id: &str,
+    answer: &ConsentAnswer,
+) -> ApiResult<()> {
+    let agent_host = {
+        let hosts = core.agent_hosts();
+        if !hosts
+            .consents
+            .iter()
+            .any(|consent| consent.id == id && consent.host == host)
+        {
+            return Err(gone_consent());
+        }
+        let host = hosts
+            .hosts
+            .iter()
+            .find(|known| known.saved.id == host)
+            .ok_or_else(gone_consent)?;
+        AgentHost {
+            url: host.saved.url.clone(),
+            token: host.token.clone(),
+        }
+    };
+    let answered = answer_consent(&agent_host, id, answer);
+    let done = !matches!(
+        answered,
+        Err(AnswerPromptError::Refused(_) | AnswerPromptError::Unreachable(_))
+    );
+    if done {
+        let news = {
+            let mut hosts = core.agent_hosts();
+            hosts.consents.retain(|consent| consent.id != id);
+            hosts.news()
+        };
+        core.agent_hosts_changed(news);
+    }
+    answered.map_err(|error| match error {
+        AnswerPromptError::Gone => gone_consent(),
+        AnswerPromptError::Refused(why) => ApiError::invalid(sentence(&why)),
+        AnswerPromptError::Unpaired => ApiError::new(
+            ErrorKind::Unavailable,
+            "The Agent host no longer knows this desktop as an Approver: pair it again.",
+        ),
+        AnswerPromptError::Unreachable(why) => ApiError::new(
+            ErrorKind::Unavailable,
+            "The Agent host couldn't be reached. Try again.",
+        )
+        .with_detail(why),
+    })
+}
+
+/// The host's reason, which reads as a command line's does, as a sentence for the dialog.
+fn sentence(why: &str) -> String {
+    let mut chars = why.chars();
+    let mut sentence: String = chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    if !sentence.ends_with('.') {
+        sentence.push('.');
+    }
+    sentence
+}
+
+fn gone_consent() -> ApiError {
+    ApiError::new(
+        ErrorKind::Conflict,
+        "That request was answered already, or it expired: connect again from the MCP client.",
+    )
 }
 
 fn gone() -> ApiError {
@@ -644,6 +778,90 @@ pub(crate) mod tests {
             (loopback.name.as_str(), loopback.url.as_str()),
             ("localhost:7807", "http://localhost:7807")
         );
+    }
+
+    fn consent_offered(id: &str) -> ApproverClientEvent {
+        ApproverClientEvent::Consent {
+            id: id.to_owned(),
+            seconds_left: 600,
+            consent: ConsentPrompt {
+                client: "Executor".to_owned(),
+                redirect: "executor.sh".to_owned(),
+                subgroups: vec!["shared".to_owned()],
+                paired_as: None,
+            },
+        }
+    }
+
+    #[test]
+    fn an_oauth_consent_waits_behind_the_prompts_and_goes_when_dismissed() {
+        let (core, recorder) = core();
+        let host = added(&core);
+        let fronts = *recorder.fronts.lock().unwrap();
+
+        heard(&core, &host, consent_offered("c1"));
+        heard(&core, &host, prompted("one", "gh"));
+        let with_a_prompt = core.agent_hosts().front().map(|front| front.id.clone());
+        heard(
+            &core,
+            &host,
+            ApproverClientEvent::Dismissed {
+                id: "one".to_owned(),
+            },
+        );
+        let consent = core.agent_hosts().front_consent().cloned().unwrap();
+        heard(
+            &core,
+            &host,
+            ApproverClientEvent::Dismissed {
+                id: "c1".to_owned(),
+            },
+        );
+
+        assert_eq!(with_a_prompt.as_deref(), Some("one"));
+        assert_eq!(consent.consent.client, "Executor");
+        assert_eq!(consent.host_name, "build server");
+        assert!(core.agent_hosts().front_consent().is_none());
+        // The consent, then the prompt, then the consent again once the prompt went.
+        assert_eq!(*recorder.fronts.lock().unwrap(), fronts + 3);
+    }
+
+    #[test]
+    fn approving_a_consent_on_a_host_that_cant_be_reached_keeps_it_to_try_again() {
+        let (core, _) = core();
+        let host = added(&core);
+        heard(&core, &host, consent_offered("c1"));
+
+        let error = answer_agent_consent(
+            &core,
+            &host,
+            "c1",
+            &ConsentAnswer {
+                approve: true,
+                code: "ABCD-EFGH".to_owned(),
+                name: "executor".to_owned(),
+                reads: vec![],
+                can_create: false,
+            },
+        )
+        .unwrap_err();
+        let gone = answer_agent_consent(
+            &core,
+            &host,
+            "nope",
+            &ConsentAnswer {
+                approve: false,
+                code: String::new(),
+                name: String::new(),
+                reads: vec![],
+                can_create: false,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, ErrorKind::Unavailable);
+        assert!(core.agent_hosts().front_consent().is_some());
+        assert_eq!(gone.kind, ErrorKind::Conflict);
     }
 
     #[test]
