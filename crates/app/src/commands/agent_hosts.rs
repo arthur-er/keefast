@@ -217,3 +217,76 @@ pub async fn answer_agent_consent(
     };
     blocking(move || agent_hosts::answer_agent_consent(&core, &host, &id, &answer)).await?
 }
+
+/// Whether an Agent's request went through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentActivityOutcome {
+    Allowed,
+    Denied,
+}
+
+/// One record of a Headless host's audit log: something an Agent did, or was refused. It
+/// never holds a value.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActivityRecord {
+    /// When, in seconds since 1970 UTC.
+    pub time: f64,
+    /// The Agent pairing's name, as it was then.
+    pub pairing: String,
+    /// `list`, `use`, `http_request`, `create`, `store` or `reveal`; later hosts may add more.
+    pub action: String,
+    pub entry_uuid: Option<String>,
+    pub entry_title: Option<String>,
+    /// The program a `use` was for.
+    pub program: Option<String>,
+    /// An `http_request`'s method and host.
+    pub method: Option<String>,
+    pub http_host: Option<String>,
+    /// The field a `store` set or a `reveal` showed, by name.
+    pub field: Option<String>,
+    pub outcome: AgentActivityOutcome,
+    /// What decided it, such as "allowed once at a prompt", when the host says.
+    pub reason: Option<String>,
+}
+
+impl From<keefast_agent::AuditRecord> for AgentActivityRecord {
+    fn from(record: keefast_agent::AuditRecord) -> Self {
+        let (entry_uuid, entry_title) = match record.entry {
+            Some(entry) => (Some(entry.uuid), Some(entry.title)),
+            None => (None, None),
+        };
+        Self {
+            time: record.time as f64,
+            pairing: record.pairing,
+            action: record.action,
+            entry_uuid,
+            entry_title,
+            program: record.program,
+            method: record.method,
+            http_host: record.host,
+            field: record.field,
+            outcome: match record.outcome {
+                keefast_agent::AuditOutcome::Allowed => AgentActivityOutcome::Allowed,
+                keefast_agent::AuditOutcome::Denied => AgentActivityOutcome::Denied,
+            },
+            reason: record.reason,
+        }
+    }
+}
+
+/// The Activity of the Agent host `host`: its audit log's latest records, newest first.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_agent_activity(
+    core: Core<'_>,
+    host: String,
+) -> ApiResult<Vec<AgentActivityRecord>> {
+    let core = std::sync::Arc::clone(&core);
+    let records = blocking(move || {
+        agent_hosts::activity(&core, &host, keefast_agent::approver::ACTIVITY_LINES)
+    })
+    .await??;
+    Ok(records.into_iter().rev().map(Into::into).collect())
+}

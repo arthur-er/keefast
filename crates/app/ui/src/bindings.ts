@@ -421,6 +421,8 @@ export const commands = {
 	 *  away.
 	 */
 	answerAgentConsent: (host: string, id: string, approve: boolean, code: string, name: string, reads: string[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_consent", { host, id, approve, code, name, reads, canCreate })),
+	/**  The Activity of the Agent host `host`: its audit log's latest records, newest first. */
+	getAgentActivity: (host: string) => typedError<AgentActivityRecord[], ApiError>(__TAURI_INVOKE("get_agent_activity", { host })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -486,6 +488,34 @@ export type AccessPolicy = "ask" | "alwaysAllow" | "alwaysDeny";
 export type AddedAttachments = {
 	added: string[],
 	errors: string[],
+};
+
+/**  Whether an Agent's request went through. */
+export type AgentActivityOutcome = "allowed" | "denied";
+
+/**
+ *  One record of a Headless host's audit log: something an Agent did, or was refused. It
+ *  never holds a value.
+ */
+export type AgentActivityRecord = {
+	/**  When, in seconds since 1970 UTC. */
+	time: number | null,
+	/**  The Agent pairing's name, as it was then. */
+	pairing: string,
+	/**  `list`, `use`, `http_request`, `create`, `store` or `reveal`; later hosts may add more. */
+	action: string,
+	entryUuid: string | null,
+	entryTitle: string | null,
+	/**  The program a `use` was for. */
+	program: string | null,
+	/**  An `http_request`'s method and host. */
+	method: string | null,
+	httpHost: string | null,
+	/**  The field a `store` set or a `reveal` showed, by name. */
+	field: string | null,
+	outcome: AgentActivityOutcome,
+	/**  What decided it, such as "allowed once at a prompt", when the host says. */
+	reason: string | null,
 };
 
 /**

@@ -19,6 +19,7 @@
 // password is anything but "wrong".
 
 import type {
+  AgentActivityRecord,
   AgentHostView,
   ApiError,
   AppSettings,
@@ -1696,6 +1697,12 @@ export function createMockBackend(): Backend & {
       return null;
     }),
     getAgentHosts: command(() => structuredClone(state.agentHosts)),
+    getAgentActivity: command((host) => {
+      const found = state.agentHosts.find((h) => h.id === host);
+      if (!found) throw new MockError("notFound", "That Agent host is gone.");
+      if (found.state === "disconnected") throw new MockError("unavailable", "The Agent host couldn't be reached, so its Activity can't be shown.");
+      return mockActivity();
+    }),
     addAgentHost: command((name, url, token) => {
       const address = url.trim().replace(/\/+$/, "");
       if (token.trim().startsWith("kfa_"))
@@ -1830,6 +1837,21 @@ export function createMockBackend(): Backend & {
       },
     ]),
   ) as unknown as Events;
+
+  /** The build server's audit log, newest first: a run, an http_request, a create, a denied reveal. */
+  function mockActivity(): AgentActivityRecord[] {
+    const now = Math.floor(Date.now() / 1000);
+    const at = (minutesAgo: number) => now - minutesAgo * 60;
+    const base = { pairing: "claude", entryUuid: "e1", program: null, method: null, httpHost: null, field: null, reason: null } as const;
+    return [
+      { ...base, time: at(2), action: "reveal", entryTitle: "Wallet seed", field: "password", outcome: "denied", reason: "denied once at a prompt" },
+      { ...base, time: at(9), action: "create", entryTitle: "Fly.io deploy", outcome: "allowed" },
+      { ...base, time: at(14), action: "http_request", entryTitle: "deploy token", method: "GET", httpHost: "api.github.com", outcome: "allowed", reason: "allowed once at a prompt" },
+      { ...base, time: at(15), action: "use", entryTitle: "deploy token", program: "gh", outcome: "allowed", reason: "allowed and remembered at a prompt" },
+      { ...base, pairing: "codex", time: at(40), action: "use", entryTitle: "publish", program: "bash", outcome: "denied", reason: "nobody answered the prompt in time" },
+      { ...base, time: at(41), action: "list", entryUuid: null, entryTitle: null, outcome: "allowed" },
+    ];
+  }
 
   /** Two Agent hosts: one connected, one that can't be reached. */
   function mockAgentHosts() {
