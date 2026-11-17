@@ -40,6 +40,7 @@ export const keys = {
   unlockTime: (kdf: KdfChoice) => ["unlockTime", kdf] as const,
   dropbox: ["dropbox"] as const,
   plugins: ["plugins"] as const,
+  agentHosts: ["agentHosts"] as const,
   facets: ["facets"] as const,
 };
 
@@ -79,6 +80,11 @@ export function useSettings() {
  * each time it is shown, as the user may have removed the entry by hand meanwhile. */
 export function useStartOnBoot() {
   return useQuery({ queryKey: keys.startOnBoot, queryFn: api.getStartOnBoot, refetchOnMount: "always" });
+}
+
+/** The Agent hosts this desktop is an Approver for, and how each connection stands. */
+export function useAgentHosts() {
+  return useQuery({ queryKey: keys.agentHosts, queryFn: api.getAgentHosts });
 }
 
 export function usePlugins() {
