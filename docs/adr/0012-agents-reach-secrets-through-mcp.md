@@ -1,5 +1,9 @@
 # Agents reach secrets through an MCP server and `keefast-agent run`, and the model rarely sees a value
 
+## Update 2026-11-17: Gateways resolve values
+
+ADR 0015 adds a second kind of pairing, the Gateway pairing, for another program's vault, such as agentes-chat's, that resolves values for its own agents. It reaches only the Headless host, through its own API rather than MCP, and gets every value in its subgroups without a prompt. "The model rarely sees a value" holds for Agent pairings. For a Gateway pairing it is the gateway's promise, not keefast's.
+
 keefast becomes a vault for AI Agents. An Agent connects to an MCP server that keefast serves, sees what secrets exist, and uses them without the value passing through the model wherever we can manage it. The server runs in the desktop app for Agents on the same machine, or as a Headless host on a server for Agents anywhere. The design borrows the central idea of agentes-chat's vault (its ADR 0144): agents get metadata and *uses* of a secret, not the secret, and every use is checked and logged. It differs where keefast already differs. There is no server-wide key: a Vault opens only with its Master key, and only a person can enter that.
 
 The full spec, with user stories and testing decisions, is [docs/specs/agents.md](../specs/agents.md).

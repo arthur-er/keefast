@@ -1,6 +1,6 @@
 # Spec: Agents — keefast as an MCP vault for agent secrets
 
-Decisions: [ADR 0012](../adr/0012-agents-reach-secrets-through-mcp.md), with updates to [ADR 0004](../adr/0004-threat-model.md) and [ADR 0005](../adr/0005-browser-settings-live-in-the-vault.md). Terms: the Agents section of [GLOSSARY.md](../../GLOSSARY.md). Tracking issue: [#152](https://github.com/arthur-er/keefast/issues/152).
+Decisions: [ADR 0012](../adr/0012-agents-reach-secrets-through-mcp.md), with updates to [ADR 0004](../adr/0004-threat-model.md) and [ADR 0005](../adr/0005-browser-settings-live-in-the-vault.md). Terms: the Agents section of [GLOSSARY.md](../../GLOSSARY.md). Tracking issue: [#152](https://github.com/arthur-er/keefast/issues/152). Gateway pairings, for vaults like agentes-chat's that resolve values: [ADR 0015](../adr/0015-gateways-resolve-values-for-another-vault.md) and [gateways.md](gateways.md).
 
 ## Problem Statement
 
@@ -219,6 +219,7 @@ Any MCP client can pair, with a bearer token or with MCP's own OAuth 2.1 flow, w
 - Sending approval prompts to phones or anything other than a desktop keefast Approver.
 - Unlocking a Headless host from the desktop or any web page.
 - Verifying the identity of individual agents behind a gateway.
+- Handing values to another program's vault. That is a Gateway pairing's job, specced in [gateways.md](gateways.md).
 - Secret leases, expiry or automatic rotation.
 - Any unauthenticated mode.
 - Exposing notes or attachments to Agents.
@@ -228,4 +229,4 @@ Any MCP client can pair, with a bearer token or with MCP's own OAuth 2.1 flow, w
 
 - **Slices**: the work is split into eleven slices tracked as sub-issues of #152 (#153–#163), each blocked by the one before. The Headless host comes first, and the in-app host comes last.
 - **Before Approvers land (#157)**, *ask* on a Headless host means deny, and uses are allowed ahead of time in the desktop app.
-- **Design reference**: agentes-chat's vault (its ADR 0144). keefast keeps that vault's rule that the model rarely sees a value, but doesn't adopt its server-wide encryption key. A Vault opens only with its Master key.
+- **Design reference**: agentes-chat's vault (its ADR 0144). keefast keeps that vault's rule that the model rarely sees a value, but doesn't adopt its server-wide encryption key. A Vault opens only with its Master key. keefast is also one of that vault's sources, through a Gateway pairing ([gateways.md](gateways.md)).
