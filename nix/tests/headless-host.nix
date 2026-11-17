@@ -28,7 +28,53 @@ pkgs.testers.runNixOSTest {
         extraGroups = [ "keefast-operators" ];
       };
       users.users.stranger.isNormalUser = true;
-      environment.systemPackages = [ pkgs.curl ];
+      environment.systemPackages = [
+        pkgs.curl
+        (pkgs.python3.withPackages (python: [ python.pykeepass ]))
+      ];
+      # An intranet service an http_request may reach because its Entry allows it by name.
+      networking.hosts."127.0.0.2" = [ "intranet.example" ];
+      environment.etc."intranet.py".text = ''
+        import http.server
+
+        class Echo(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                print("authorization:", self.headers.get("authorization"), flush=True)
+                self.send_response(200)
+                self.send_header("content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"hello from the intranet")
+
+        http.server.HTTPServer(("127.0.0.2", 8080), Echo).serve_forever()
+      '';
+      # Gives an Entry of the Agent's subgroup a password and allows intranet.example for it,
+      # with the Default agent policy Allow: no CLI sets allowed hosts, so the test writes the
+      # Vault while the host is locked. Prints the Entry's UUID.
+      environment.etc."allow-intranet.py".text = ''
+        import sys
+        from lxml import etree
+        from pykeepass import PyKeePass
+
+        vault, password, subgroup = sys.argv[1:]
+        kp = PyKeePass(vault, password=password)
+        group = kp.find_groups(path=["Agents", subgroup])
+        entry = kp.add_entry(group, "intranet", "agent", "s3cret-intranet-value")
+        data = kp.tree.find("Meta/CustomData")
+        if data is None:
+            data = etree.SubElement(kp.tree.find("Meta"), "CustomData")
+        for key, value in [
+            ("keefast_AGENT_HOSTS_" + entry.uuid.hex, '["intranet.example"]'),
+            ("keefast_DEFAULT_AGENT_POLICY", "allow"),
+        ]:
+            item = next((i for i in data.findall("Item") if i.findtext("Key") == key), None)
+            if item is None:
+                item = etree.SubElement(data, "Item")
+                etree.SubElement(item, "Key").text = key
+                etree.SubElement(item, "Value")
+            item.find("Value").text = value
+        kp.save()
+        print(entry.uuid.hex)
+      '';
     };
 
     unattended = {
@@ -123,6 +169,58 @@ pkgs.testers.runNixOSTest {
         ))
         assert machine.succeed(mcp + f" -H 'authorization: Bearer {tokens['access_token']}'") == "200"
         print(machine.succeed("stat -c '%a %U' /var/lib/keefast-agent/oauth.json"))
+
+    with subtest("an http_request reaches a host its Entry allows by name, resolved by the service"):
+        machine.succeed("systemd-run --unit intranet python3 /etc/intranet.py")
+        machine.wait_for_open_port(8080, "127.0.0.2")
+        web = machine.succeed(
+            as_user("operator", "keefast-agent pairing create web --agent-group Agents 2>/dev/null")
+        ).strip()
+        machine.succeed(as_user("operator", "keefast-agent lock"))
+        entry = machine.succeed(
+            "python3 /etc/allow-intranet.py ${vault} ${password} web"
+        ).strip()
+        machine.succeed(as_user("operator", "keefast-agent unlock", "${password}\\n"))
+
+        def mcp_call(session, message):
+            headers = (
+                "-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' "
+                f"-H 'authorization: Bearer {web}'"
+            )
+            if session:
+                headers += f" -H 'mcp-session-id: {session}' -H 'mcp-protocol-version: 2025-06-18'"
+            body = json.dumps(message)
+            return machine.succeed(
+                f"curl -s -D /tmp/mcp-headers {headers} http://127.0.0.1:7807/mcp --data '{body}'"
+            )
+
+        def reply(text):
+            data = [line[5:] for line in text.splitlines() if line.startswith("data:") and line[5:].strip()]
+            return json.loads(data[-1] if data else text)
+
+        mcp_call(None, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "vm", "version": "1"},
+        }})
+        found = re.search(
+            r"(?im)^mcp-session-id:\s*(\S+)", machine.succeed("cat /tmp/mcp-headers")
+        )
+        assert found is not None
+        session = found.group(1)
+        mcp_call(session, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        sent = reply(mcp_call(session, {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "http_request",
+            "arguments": {
+                "method": "GET",
+                "url": "http://intranet.example:8080/whoami",
+                "headers": {"Authorization": f"Bearer {{{{secret:{entry}#password}}}}"},
+            },
+        }}))
+        text = sent["result"]["content"][0]["text"]
+        assert not sent["result"].get("isError"), text
+        assert "hello from the intranet" in text and '"status": 200' in text, text
+        machine.succeed("journalctl -u intranet | grep 'authorization: Bearer s3cret-intranet-value'")
+        machine.succeed(as_user("operator", "keefast-agent log") + " | grep http_request")
 
     with subtest("an operator pairs an Approver"):
         approver = machine.succeed(

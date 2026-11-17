@@ -821,7 +821,7 @@ async fn the_authorization_endpoint_needs_pkce_s256_and_a_registered_redirect() 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_access_token_works_while_live_and_its_expiry_asks_for_a_refresh_even_while_locked() {
     let served =
-        Served::start_with(OAuthServer::in_memory().with_access_lifetime(Duration::from_secs(1)))
+        Served::start_with(OAuthServer::in_memory().with_access_lifetime(Duration::from_secs(3)))
             .await;
     let client = served.register("Executor").await;
     let (access, refresh) = served.paired_tokens(&client, "executor").await;
@@ -832,7 +832,7 @@ async fn an_access_token_works_while_live_and_its_expiry_asks_for_a_refresh_even
         .await
         .unwrap();
     let live_while_locked = served.mcp_status(Some(&access)).await.0;
-    tokio::time::sleep(Duration::from_millis(2100)).await;
+    tokio::time::sleep(Duration::from_millis(3100)).await;
     let expired_while_locked = served.mcp_status(Some(&access)).await.0;
     let (refreshed, _) = served
         .token(&[

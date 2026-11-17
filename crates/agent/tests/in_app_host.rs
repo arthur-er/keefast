@@ -55,14 +55,12 @@ impl ServesAgents for FakeApp {
         }
         match request {
             AgentRequest::ListSecrets => Ok(AgentReply::Secrets(vec![listing()])),
-            AgentRequest::UseSecrets(used) if !used.command.is_empty() => {
-                Ok(AgentReply::Values(
-                    used.references
-                        .into_iter()
-                        .map(|reference| SecretValue::new(reference, Zeroizing::new(VALUE.into())))
-                        .collect(),
-                ))
-            }
+            AgentRequest::UseSecrets(used) if !used.command.is_empty() => Ok(AgentReply::Values(
+                used.references
+                    .into_iter()
+                    .map(|reference| SecretValue::new(reference, Zeroizing::new(VALUE.into())))
+                    .collect(),
+            )),
             AgentRequest::Store(_) => Ok(AgentReply::Written(WrittenEntry {
                 reference: listing().reference,
                 created: true,
