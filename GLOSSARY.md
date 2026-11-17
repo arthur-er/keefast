@@ -142,6 +142,10 @@ _Avoid_: Agent folder, shared secrets
 The user's allow or deny answer to an Agent pairing using a specific Entry with a specific program or host, remembered on that Entry. Shells and interpreters are never remembered: they ask every time, as a reveal does.
 _Avoid_: Permission, grant, scope
 
+**Allowed hosts**:
+The hosts an Entry's secrets may be sent to by `http_request`: host names, IP addresses, or `*.` and a domain for its subdomains. Empty until the user adds one, so a secret goes nowhere by default. A host named exactly is *allowed by name*, and only then may it be at a private, loopback or link-local address.
+_Avoid_: Allow-list, whitelist, domains
+
 **Default agent policy**:
 A per-Vault setting (ask, always allow or always deny) applied when an Entry has no Agent access decision for the request. Starts as ask.
 _Avoid_: Global permission, auto-allow
