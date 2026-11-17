@@ -8,10 +8,14 @@
 pub mod admin;
 pub mod host;
 pub mod listen;
+mod session;
 mod settings;
 
+pub use session::{
+    AgentError, AgentReply, AgentRequest, AgentSession, SecretListing, SecretReference,
+};
 pub use settings::{
     AgentAccessDecision, AgentCredential, AgentDecision, AgentPairing, AgentPairingId,
-    AgentSettings, AgentSettingsError, AgentSettingsExt, AgentUse, DefaultAgentPolicy,
-    NewAgentPairing,
+    AgentSettings, AgentSettingsError, AgentSettingsExt, AgentUse, CreatedAgentPairing,
+    DefaultAgentPolicy, NewAgentPairing, TOKEN_PREFIX,
 };

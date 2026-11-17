@@ -10,12 +10,15 @@
 
 use std::collections::BTreeMap;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use keefast_core::{EntryId, GroupId, Vault};
 use keefast_workspace::{EditVaultError, VaultId, Workspace};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 /// The Agent group, as its UUID in hex.
 const AGENT_GROUP_KEY: &str = "keefast_AGENT_GROUP";
@@ -123,8 +126,14 @@ fn decision_key(entry: EntryId, pairing: &AgentPairingId, agent_use: &AgentUse) 
 pub enum AgentSettingsError {
     #[error("an Agent pairing needs a name")]
     PairingNameEmpty,
+    #[error("an Agent pairing's name can't have a / in it: it names its subgroup")]
+    PairingNameHasSlash,
+    #[error("an Agent pairing called {0} exists already")]
+    PairingNameTaken(String),
     #[error("the Vault has no such Agent pairing")]
     PairingNotFound,
+    #[error("the Vault has no Agent group yet: choose one first")]
+    NoAgentGroup,
     #[error(transparent)]
     Vault(#[from] EditVaultError),
 }
@@ -217,6 +226,27 @@ pub struct NewAgentPairing {
     /// Whether it may create Entries in its own subgroup.
     pub can_create: bool,
     pub credential: AgentCredential,
+}
+
+/// A pairing just created, with its token: the only time the token is known, since the Vault
+/// keeps only its hash.
+#[derive(Debug)]
+pub struct CreatedAgentPairing {
+    pub pairing: AgentPairing,
+    pub token: Zeroizing<String>,
+}
+
+/// The prefix of every token keefast makes, so a leaked one is easy to recognise.
+pub const TOKEN_PREFIX: &str = "kfa_";
+
+/// A new random bearer token: 256 bits, in URL-safe base64.
+fn new_token() -> Zeroizing<String> {
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    getrandom::fill(bytes.as_mut()).expect("the OS random number generator is available");
+    Zeroizing::new(format!(
+        "{TOKEN_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(bytes.as_ref())
+    ))
 }
 
 /// An Agent pairing a Vault keeps.
@@ -445,6 +475,26 @@ pub trait AgentSettingsExt {
         pairing: NewAgentPairing,
     ) -> Result<AgentPairing, AgentSettingsError>;
 
+    /// Creates an Agent pairing called `name` with a new bearer token, and its own subgroup of
+    /// the Agent group by the same name, unless one is there already, such as one a revoked
+    /// pairing left. It reads `readable` too, and creates Entries if `can_create`.
+    fn create_agent_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_create: bool,
+    ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+
+    /// Sets which other subgroups an Agent pairing reads, and whether it creates Entries.
+    fn set_agent_pairing_access(
+        &mut self,
+        vault: VaultId,
+        pairing: &AgentPairingId,
+        readable: Vec<GroupId>,
+        can_create: bool,
+    ) -> Result<(), AgentSettingsError>;
+
     /// Revokes an Agent pairing for good: no copy of the Vault Merged in later brings it back.
     /// The Entries it created stay where they are.
     fn revoke_agent_pairing(
@@ -508,6 +558,77 @@ impl AgentSettingsExt for Workspace {
         let json = serde_json::to_string(&stored).expect("a pairing is plain JSON");
         self.set_vault_custom_data(vault, &[item(format!("{PAIRING_PREFIX}{}", id.0), json)])?;
         Ok(AgentPairing { id, stored })
+    }
+
+    fn create_agent_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_create: bool,
+    ) -> Result<CreatedAgentPairing, AgentSettingsError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AgentSettingsError::PairingNameEmpty);
+        }
+        if name.contains('/') {
+            return Err(AgentSettingsError::PairingNameHasSlash);
+        }
+        let settings = self
+            .agent_settings(vault)
+            .ok_or(EditVaultError::VaultNotOpen)?;
+        if settings
+            .pairings()
+            .iter()
+            .any(|pairing| pairing.name() == name)
+        {
+            return Err(AgentSettingsError::PairingNameTaken(name.to_owned()));
+        }
+        let agent_group = settings
+            .agent_group()
+            .ok_or(AgentSettingsError::NoAgentGroup)?;
+        let existing = self
+            .readable_vault(vault)
+            .and_then(|open| open.vault().group(agent_group))
+            .and_then(|group| group.groups().iter().find(|child| child.name() == name))
+            .map(|group| group.id());
+        let group = match existing {
+            Some(group) => group,
+            None => self.create_group(vault, agent_group, name)?,
+        };
+        let token = new_token();
+        let pairing = self.add_agent_pairing(
+            vault,
+            NewAgentPairing {
+                name: name.to_owned(),
+                group,
+                readable,
+                can_create,
+                credential: AgentCredential::token(&token),
+            },
+        )?;
+        Ok(CreatedAgentPairing { pairing, token })
+    }
+
+    fn set_agent_pairing_access(
+        &mut self,
+        vault: VaultId,
+        pairing: &AgentPairingId,
+        readable: Vec<GroupId>,
+        can_create: bool,
+    ) -> Result<(), AgentSettingsError> {
+        let settings = self
+            .agent_settings(vault)
+            .ok_or(EditVaultError::VaultNotOpen)?;
+        let pairing = settings
+            .pairing(pairing)
+            .ok_or(AgentSettingsError::PairingNotFound)?;
+        let mut stored = pairing.stored.clone();
+        stored.readable = readable;
+        stored.create = can_create;
+        let json = serde_json::to_string(&stored).expect("a pairing is plain JSON");
+        let key = format!("{PAIRING_PREFIX}{}", pairing.id.0);
+        Ok(self.set_vault_custom_data(vault, &[item(key, json)])?)
     }
 
     fn revoke_agent_pairing(
