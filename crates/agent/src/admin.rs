@@ -231,25 +231,29 @@ mod socket {
                 }
                 fs::remove_file(path)?;
             }
-            // So the socket is never open to others, not even before its mode is set.
-            // SAFETY: umask has no preconditions.
-            let umask = unsafe { libc::umask(0o177) };
-            let bound = UnixListener::bind(path);
-            // SAFETY: as above.
-            unsafe { libc::umask(umask) };
-            let listener = bound?;
-            let socket = Self {
-                listener,
-                path: path.to_owned(),
-            };
-            match group {
-                Some(group) => {
-                    chown_group(path, group)?;
-                    fs::set_permissions(path, fs::Permissions::from_mode(0o660))?;
+            // Bound in a directory only this user can enter, its mode set, then moved into
+            // place: so the socket is never open to others, not even for a moment. (A umask
+            // would do too, but it is the whole process's, and other threads make files.)
+            let staging = staging_dir(path)?;
+            let staged = staging.join("admin.sock");
+            let bound = (|| -> io::Result<UnixListener> {
+                let listener = UnixListener::bind(&staged)?;
+                match group {
+                    Some(group) => {
+                        chown_group(&staged, group)?;
+                        fs::set_permissions(&staged, fs::Permissions::from_mode(0o660))?;
+                    }
+                    None => fs::set_permissions(&staged, fs::Permissions::from_mode(0o600))?,
                 }
-                None => fs::set_permissions(path, fs::Permissions::from_mode(0o600))?,
-            }
-            Ok(socket)
+                fs::rename(&staged, path)?;
+                Ok(listener)
+            })();
+            let _ = fs::remove_file(&staged);
+            let _ = fs::remove_dir(&staging);
+            Ok(Self {
+                listener: bound?,
+                path: path.to_owned(),
+            })
         }
 
         /// Answers requests for `host` on a thread of its own, each connection on its own
@@ -299,6 +303,16 @@ mod socket {
         BufReader::new(stream).read_line(&mut line)?;
         serde_json::from_str(&line)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+
+    /// A new directory beside `path` that only this user can enter.
+    fn staging_dir(path: &Path) -> io::Result<PathBuf> {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
+        let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let dir = path.with_file_name(format!(".keefast-agent-{name}"));
+        fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        Ok(dir)
     }
 
     fn chown_group(path: &Path, group: AdminGroup) -> io::Result<()> {

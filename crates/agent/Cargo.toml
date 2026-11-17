@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 base64.workspace = true
+dirs.workspace = true
 getrandom.workspace = true
 keefast-core.workspace = true
 keefast-workspace.workspace = true
