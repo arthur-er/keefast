@@ -5,6 +5,7 @@
 //!                     [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
 //!                     [--admin-group <group>] [--state-dir <dir>]
 //!                     [--unattended-key-file <path>] [--unattended-password]
+//!                     [--log-max-size <size>] [--log-keep <n>]
 //! keefast-agent unlock [--key-file <path>] [--no-password] [--remember] [--admin-socket <path>]
 //! keefast-agent lock [--admin-socket <path>]
 //! keefast-agent status [--admin-socket <path>]
@@ -48,13 +49,16 @@ usage:
                       [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
                       [--admin-group <group>] [--state-dir <dir>]
                       [--unattended-key-file <path>] [--unattended-password]
+                      [--log-max-size <size>] [--log-keep <n>]
       Serves the Vault file as a Headless host. It starts locked: unlock it with
       `keefast-agent unlock`. Agents reach its MCP endpoint, /mcp, at --listen (127.0.0.1:7807
       by default) with an Agent pairing's token; an address other machines can reach needs
       TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this
       user, or also to --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
       at startup, from that Key file and the password `unlock --remember` kept in the OS secret
-      store, and the Vault loses its protection at rest.
+      store, and the Vault loses its protection at rest. The audit log, audit.log in
+      --state-dir, is rotated when it would grow past --log-max-size (4M by default; K, M and G
+      suffixes), keeping --log-keep older files (4 by default; 0 keeps none).
 
   keefast-agent unlock [--key-file <path>] [--no-password] [--remember] [--admin-socket <path>]
       Unlocks the Headless host with the Master key: the password, read from the terminal
@@ -201,6 +205,7 @@ mod operator {
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_agent::oauth::OAuthServer;
     use keefast_agent::serve::McpEndpoint;
+    use keefast_agent::audit::parse_log_size;
     use keefast_agent::{ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord};
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
@@ -272,6 +277,8 @@ mod operator {
                     "--admin-group",
                     "--state-dir",
                     "--unattended-key-file",
+                    "--log-max-size",
+                    "--log-keep",
                 ],
             )?),
             "unlock" => unlock(&Flags::new(
@@ -319,6 +326,18 @@ mod operator {
                 .ok_or("there is no state directory: name one with --state-dir")?
                 .join("keefast-agent"),
         };
+        let log_max_size = match flags.value("--log-max-size") {
+            Some(size) => {
+                parse_log_size(size).map_err(|error| format!("--log-max-size {error}"))?
+            }
+            None => AuditLog::MAX_BYTES,
+        };
+        let log_keep = match flags.value("--log-keep") {
+            Some(keep) => keep
+                .parse()
+                .map_err(|_| format!("--log-keep {keep}: give a number of files"))?,
+            None => AuditLog::KEEP,
+        };
         let workspace = workspace(&location, &state_dir)?;
         let unattended = (flags.has("--unattended-password")
             || flags.value("--unattended-key-file").is_some())
@@ -345,7 +364,11 @@ mod operator {
                 location: location.clone(),
                 unattended,
                 secret_store: Arc::new(OsSecretStore),
-                audit_log: Arc::new(AuditLog::new(state_dir.join("audit.log"))),
+                audit_log: Arc::new(AuditLog::with_limits(
+                    state_dir.join("audit.log"),
+                    log_max_size,
+                    log_keep,
+                )),
                 approvers: ApproverHub::new(),
                 approver_credentials,
                 oauth,

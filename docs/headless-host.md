@@ -250,15 +250,28 @@ keeps showing prompts, which it can no longer answer, until it reconnects (withi
 
 ## The audit log
 
-Every list, use, `create_entry` and `store` is recorded, with the time, the pairing, the Entry,
-the program (or an HTTP request's method and host, or the field stored) and whether it was
-allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
-append-only, readable only by the host's user, and rotated at 4 MiB, keeping four older files
-(`audit.log.1` … `audit.log.4`). Read it over the admin socket:
+Every list, use, `http_request`, `create_entry`, `store` and `reveal_secret` is recorded, with
+the time, the pairing, the Entry, the program (or an HTTP request's method and host, or the
+field stored or revealed), whether it was allowed and what decided it (a prompt's answer, a
+remembered decision, the Default agent policy), never a value, in `audit.log` in the state
+directory (`--state-dir`). It is append-only and readable only by the host's user. Read it over
+the admin socket:
 
 ```sh
 keefast-agent log              # the last 50 records
 keefast-agent log --lines 500
+```
+
+or in keefast on an [Approver](#approvers), under **Settings → Agent hosts → Activity**, which
+filters it by pairing, Entry and outcome.
+
+The log is rotated by size: when it would grow past `--log-max-size` (4M by default; a number of
+bytes, or with a K, M or G suffix) it becomes `audit.log.1`, the older ones move up, and only
+`--log-keep` of them are kept (4 by default; 0 keeps none). The two together bound the log's
+disk use and how far back it reaches:
+
+```sh
+keefast-agent serve --vault /srv/agents.kdbx --log-max-size 64M --log-keep 30
 ```
 
 ## Unattended unlock
@@ -327,6 +340,8 @@ unlock` finds the host by itself.
 | `tls.certFile`, `tls.keyFile` | `null` | PEM certificate chain and private key for built-in TLS. Both or neither. |
 | `adminGroup` | `null` | A group whose members may `unlock`, `lock`, `status` and `pairing` the host over its admin socket; made if missing. Without one, only root and `keefast-agent` can (`sudo keefast-agent unlock`). |
 | `unattendedUnlock.keyFile` | `null` | Unlock at startup from this Key file, for a Vault whose Master key is the Key file alone. The Vault loses its protection at rest, and the host warns about it each time it starts. |
+| `auditLog.maxSize` | `"4M"` | The size the [audit log](#the-audit-log) is rotated at (`--log-max-size`). |
+| `auditLog.keep` | `4` | How many rotated audit log files are kept (`--log-keep`). |
 | `openFirewall` | `false` | Opens `listen`'s port. |
 | `extraArgs` | `[ ]` | More arguments for `keefast-agent serve`. |
 

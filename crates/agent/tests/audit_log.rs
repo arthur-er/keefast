@@ -57,3 +57,17 @@ fn a_full_log_is_rotated_and_the_oldest_files_dropped() {
     assert!(std::fs::metadata(&path).unwrap().len() <= line * 2);
     assert!(!dir.path().join("audit.log.3").exists());
 }
+
+#[test]
+fn an_operator_gives_the_log_size_in_bytes_or_with_a_binary_suffix() {
+    use keefast_agent::audit::parse_log_size;
+
+    assert_eq!(parse_log_size("65536"), Ok(65536));
+    assert_eq!(parse_log_size("512K"), Ok(512 << 10));
+    assert_eq!(parse_log_size("16M"), Ok(16 << 20));
+    assert_eq!(parse_log_size("16MiB"), Ok(16 << 20));
+    assert_eq!(parse_log_size("1g"), Ok(1 << 30));
+    for bad in ["", "M", "16 parsecs", "-1M", "1K", "99999999999G"] {
+        assert!(parse_log_size(bad).is_err(), "{bad}");
+    }
+}

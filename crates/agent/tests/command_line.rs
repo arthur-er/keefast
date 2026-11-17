@@ -210,6 +210,22 @@ fn serve_refuses_a_listen_address_it_cannot_read() {
 }
 
 #[test]
+fn serve_refuses_an_audit_log_retention_it_cannot_read() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+
+    for (flag, value) in [
+        ("--log-max-size", "lots"),
+        ("--log-max-size", "1K"),
+        ("--log-keep", "-1"),
+    ] {
+        let refused = serve_with(&file, &["--listen", "127.0.0.1:0", flag, value]);
+
+        assert!(!refused.status.success(), "{flag} {value}: {}", text(&refused));
+        assert!(text(&refused).contains(flag), "{}", text(&refused));
+    }
+}
+
+#[test]
 fn serve_listens_on_loopback_without_tls() {
     let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
     let dir = tempfile::tempdir().unwrap();
