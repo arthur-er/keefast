@@ -61,6 +61,35 @@ Three ways to publish the host:
 - **Built-in TLS**: listen on the network with `--tls-cert` and `--tls-key`, PEM files of a
   certificate chain and its private key, from ACME or your own CA.
 
+## Pairing Agents
+
+An Agent needs an **Agent pairing** to reach the host: a name, its own subgroup of the Vault's
+Agent group, the other subgroups it may read, and a bearer token. Make one on the host, with the
+Vault unlocked:
+
+```sh
+keefast-agent pairing create claude --agent-group Agents   # the first time: makes Agents the Agent group
+keefast-agent pairing create codex --reads shared          # also reads the subgroup "shared"
+keefast-agent pairing list
+keefast-agent pairing revoke codex                         # its token stops working at once
+```
+
+`create` makes the subgroup `Agents/claude` (or uses one already there) and prints the token,
+**once**: the Vault keeps only its hash. `--agent-group <path>` is needed only while the Vault
+has no Agent group; it makes the Group at that path if it is missing. The desktop app does the
+same under Vault settings → Agents. Revoking leaves the subgroup and its Entries where they are.
+
+Give the token to the Agent. For Claude Code:
+
+```sh
+claude mcp add --transport http keefast https://agents.example.com/mcp \
+    --header "Authorization: Bearer kfa_…"
+```
+
+The Agent then sees, through `list_secrets`, the Entries in its subgroup and the subgroups it
+reads: titles, usernames, URLs, tags, field names and Secret references, and the last four
+characters of a long password. Never values, never notes, and nothing outside the Agent group.
+
 ## Unattended unlock
 
 By default a reboot leaves the host locked until someone unlocks it. To have it unlock by
@@ -125,7 +154,7 @@ unlock` finds the host by itself.
 | `vault` | (required) | The Vault file: a path, or `dropbox:/path`. The `keefast-agent` user must read and write it; outside `/var/lib/keefast-agent` its directory is made writable to the service. |
 | `listen` | `"127.0.0.1:7807"` | The address and port Agents reach the host on. Anything but loopback needs `tls`: the system refuses to build without it, as `serve` refuses to start. |
 | `tls.certFile`, `tls.keyFile` | `null` | PEM certificate chain and private key for built-in TLS. Both or neither. |
-| `adminGroup` | `null` | A group whose members may `unlock`, `lock` and `status` the host over its admin socket; made if missing. Without one, only root and `keefast-agent` can (`sudo keefast-agent unlock`). |
+| `adminGroup` | `null` | A group whose members may `unlock`, `lock`, `status` and `pairing` the host over its admin socket; made if missing. Without one, only root and `keefast-agent` can (`sudo keefast-agent unlock`). |
 | `unattendedUnlock.keyFile` | `null` | Unlock at startup from this Key file, for a Vault whose Master key is the Key file alone. The Vault loses its protection at rest, and the host warns about it each time it starts. |
 | `openFirewall` | `false` | Opens `listen`'s port. |
 | `extraArgs` | `[ ]` | More arguments for `keefast-agent serve`. |

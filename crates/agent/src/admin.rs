@@ -4,6 +4,10 @@
 //! It is a unix socket that only the service's user can open, or a group the operator chooses,
 //! so the Master key typed into `unlock` over ssh never travels through the network, a web page
 //! or the MCP endpoint. Each connection carries one request and one reply, each a line of JSON.
+//!
+//! Agent pairings are made and revoked here too (`keefast-agent pairing`), so an operator with
+//! only a shell on the host can pair an Agent: the token is printed once, on the operator's
+//! terminal, and the Vault keeps only its hash.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -11,9 +15,11 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use keefast_workspace::UnlockSecrets;
+use keefast_core::{Group, GroupId, Vault};
+use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 
 use crate::host::{HeadlessHost, HostStatus, UnlockError};
+use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
 
 /// The longest request the admin socket reads: a password and a Key file fit many times over.
 #[cfg(unix)]
@@ -26,6 +32,47 @@ pub enum AdminRequest {
     Unlock(UnlockRequest),
     Lock,
     Status,
+    /// Creates an Agent pairing, with its own subgroup of the Agent group and a new token.
+    PairingCreate(PairingCreate),
+    PairingList,
+    PairingRevoke {
+        name: String,
+    },
+}
+
+/// An Agent pairing to create, as `keefast-agent pairing create` names it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingCreate {
+    pub name: String,
+    /// The names of the other subgroups of the Agent group it reads.
+    #[serde(default)]
+    pub reads: Vec<String>,
+    #[serde(default)]
+    pub can_create: bool,
+    /// The Group, by its path from the root, to make the Agent group if the Vault has none
+    /// yet. It is made if it isn't there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_group: Option<String>,
+}
+
+/// An Agent pairing, as `keefast-agent pairing list` shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingSummary {
+    pub name: String,
+    /// The names of the other subgroups of the Agent group it reads.
+    pub reads: Vec<String>,
+    pub can_create: bool,
+}
+
+/// A bearer token, which `Debug` doesn't show.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Token(pub Zeroizing<String>);
+
+impl std::fmt::Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Token(..)")
+    }
 }
 
 impl AdminRequest {
@@ -67,6 +114,16 @@ impl std::fmt::Debug for UnlockRequest {
 pub enum AdminReply {
     /// Done: how the host stands now.
     Status(HostStatus),
+    /// The Vault's Agent group, by its path, and its Agent pairings.
+    Pairings {
+        agent_group: Option<String>,
+        pairings: Vec<PairingSummary>,
+    },
+    /// A pairing made, with its token: the only time anyone sees it.
+    PairingCreated {
+        pairing: PairingSummary,
+        token: Token,
+    },
     Error {
         kind: AdminErrorKind,
         message: String,
@@ -84,6 +141,10 @@ pub enum AdminErrorKind {
     SecretStore,
     Save,
     BadRequest,
+    /// The Vault is locked, and Agent pairings live in it.
+    Locked,
+    /// The Agent pairing can't be made or found as asked.
+    Pairing,
 }
 
 impl AdminReply {
@@ -141,7 +202,188 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
             Err(error) => AdminReply::error(AdminErrorKind::Save, error),
         },
         AdminRequest::Status => AdminReply::Status(host.status()),
+        AdminRequest::PairingList => host
+            .with_vault(|workspace, vault| pairings(workspace, vault))
+            .unwrap_or_else(locked),
+        AdminRequest::PairingCreate(create) => edit(host, |workspace, vault| {
+            create_pairing(workspace, vault, create)
+        }),
+        AdminRequest::PairingRevoke { name } => edit(host, |workspace, vault| {
+            let settings = workspace.agent_settings(vault).ok_or_else(locked_error)?;
+            let pairing = settings
+                .pairings()
+                .iter()
+                .find(|pairing| pairing.name() == name)
+                .ok_or_else(|| {
+                    AdminReply::error(
+                        AdminErrorKind::Pairing,
+                        format!("there is no Agent pairing called {name}"),
+                    )
+                })?;
+            workspace
+                .revoke_agent_pairing(vault, pairing.id())
+                .map_err(|error| AdminReply::error(AdminErrorKind::Pairing, error))?;
+            Ok(pairings(workspace, vault))
+        }),
     }
+}
+
+fn locked_error() -> AdminReply {
+    AdminReply::error(
+        AdminErrorKind::Locked,
+        "the Vault is locked, and Agent pairings are kept in it: unlock it first",
+    )
+}
+
+fn locked() -> AdminReply {
+    locked_error()
+}
+
+/// Runs `f` on the unlocked Vault and saves it; the reply is `f`'s, unless the save failed.
+fn edit(
+    host: &HeadlessHost,
+    f: impl FnOnce(&mut Workspace, VaultId) -> Result<AdminReply, AdminReply>,
+) -> AdminReply {
+    match host.edit(f) {
+        None => locked(),
+        Some((Err(reply), _)) => reply,
+        Some((Ok(_), Err(error))) => AdminReply::error(AdminErrorKind::Save, error),
+        Some((Ok(reply), Ok(()))) => reply,
+    }
+}
+
+fn pairings(workspace: &Workspace, vault: VaultId) -> AdminReply {
+    let Some(open) = workspace.readable_vault(vault) else {
+        return locked();
+    };
+    let vault = open.vault();
+    let settings = AgentSettings::of(vault);
+    AdminReply::Pairings {
+        agent_group: settings
+            .agent_group()
+            .and_then(|group| group_path(vault, group)),
+        pairings: settings
+            .pairings()
+            .iter()
+            .map(|pairing| summary(vault, pairing))
+            .collect(),
+    }
+}
+
+fn summary(vault: &Vault, pairing: &AgentPairing) -> PairingSummary {
+    PairingSummary {
+        name: pairing.name().to_owned(),
+        reads: pairing
+            .readable()
+            .iter()
+            .filter_map(|group| vault.group(*group))
+            .map(|group| group.name().to_owned())
+            .collect(),
+        can_create: pairing.can_create(),
+    }
+}
+
+/// `group`'s path from the root Group, which it leaves out.
+fn group_path(vault: &Vault, group: GroupId) -> Option<String> {
+    fn find(at: &Group, group: GroupId, names: &mut Vec<String>) -> bool {
+        at.groups().iter().any(|child| {
+            names.push(child.name().to_owned());
+            if child.id() == group || find(child, group, names) {
+                return true;
+            }
+            names.pop();
+            false
+        })
+    }
+    let mut names = Vec::new();
+    find(vault.root(), group, &mut names).then(|| names.join("/"))
+}
+
+fn create_pairing(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    create: PairingCreate,
+) -> Result<AdminReply, AdminReply> {
+    let failed = |error: AgentSettingsError| AdminReply::error(AdminErrorKind::Pairing, error);
+    let settings = workspace.agent_settings(vault).ok_or_else(locked_error)?;
+    let agent_group = match (settings.agent_group(), &create.agent_group) {
+        (Some(group), _) => group,
+        (None, None) => {
+            return Err(AdminReply::error(
+                AdminErrorKind::Pairing,
+                "the Vault has no Agent group yet: name one with --agent-group, or choose one \
+                 in keefast's Vault settings, under Agents",
+            ));
+        }
+        (None, Some(path)) => {
+            let group = group_at_path(workspace, vault, path).map_err(failed)?;
+            workspace.set_agent_group(vault, group).map_err(failed)?;
+            group
+        }
+    };
+    let open = workspace.readable_vault(vault).ok_or_else(locked_error)?;
+    let subgroups = open
+        .vault()
+        .group(agent_group)
+        .map(|group| group.groups().to_vec())
+        .unwrap_or_default();
+    let reads = create
+        .reads
+        .iter()
+        .map(|name| {
+            subgroups
+                .iter()
+                .find(|group| group.name() == name)
+                .map(|group| group.id())
+                .ok_or_else(|| {
+                    AdminReply::error(
+                        AdminErrorKind::Pairing,
+                        format!("the Agent group has no subgroup called {name}"),
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let created = workspace
+        .create_agent_pairing(vault, &create.name, reads, create.can_create)
+        .map_err(failed)?;
+    let vault = workspace
+        .readable_vault(vault)
+        .ok_or_else(locked_error)?
+        .vault();
+    Ok(AdminReply::PairingCreated {
+        pairing: summary(vault, &created.pairing),
+        token: Token(created.token),
+    })
+}
+
+/// The Group at `path` from the root Group, made where it is missing.
+fn group_at_path(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    path: &str,
+) -> Result<GroupId, AgentSettingsError> {
+    let mut at = workspace
+        .readable_vault(vault)
+        .ok_or(EditVaultError::VaultNotOpen)?
+        .vault()
+        .root()
+        .id();
+    for name in path
+        .split('/')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let found = workspace
+            .readable_vault(vault)
+            .and_then(|open| open.vault().group(at))
+            .and_then(|group| group.groups().iter().find(|child| child.name() == name))
+            .map(|group| group.id());
+        at = match found {
+            Some(group) => group,
+            None => workspace.create_group(vault, at, name)?,
+        };
+    }
+    Ok(at)
 }
 
 #[cfg(unix)]
