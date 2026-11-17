@@ -35,7 +35,8 @@ fn serve(file: &VaultFile) -> Serve {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("admin.sock");
     let child = Command::new(AGENT)
-        .args(["serve", "--vault"])
+        // Port 0, as tests run side by side: the default port would be taken.
+        .args(["serve", "--listen", "127.0.0.1:0", "--vault"])
         .arg(&file.path)
         .arg("--admin-socket")
         .arg(&socket)
@@ -187,7 +188,7 @@ fn serve_listens_on_loopback_without_tls() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("admin.sock");
     let mut child = Command::new(AGENT)
-        .args(["serve", "--listen", "[::1]:7807", "--vault"])
+        .args(["serve", "--listen", "[::1]:0", "--vault"])
         .arg(&file.path)
         .arg("--admin-socket")
         .arg(&socket)

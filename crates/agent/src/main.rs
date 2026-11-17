@@ -23,9 +23,10 @@ usage:
                       [--admin-group <group>] [--state-dir <dir>]
                       [--unattended-key-file <path>] [--unattended-password]
       Serves the Vault file as a Headless host. It starts locked: unlock it with
-      `keefast-agent unlock`. Agents reach it at --listen (127.0.0.1:7807 by default); an
-      address other machines can reach needs TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this user, or also to
-      --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
+      `keefast-agent unlock`. Agents reach its MCP endpoint, /mcp, at --listen (127.0.0.1:7807
+      by default) with an Agent pairing's token; an address other machines can reach needs
+      TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this
+      user, or also to --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
       at startup, from that Key file and the password `unlock --remember` kept in the OS secret
       store, and the Vault loses its protection at rest.
 
@@ -78,13 +79,13 @@ mod operator {
     use std::io::{self, BufRead, IsTerminal, Write};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::thread;
 
     use keefast_agent::admin::{self, AdminGroup, AdminReply, AdminRequest, AdminSocket};
     use keefast_agent::host::{
         HeadlessHost, HostConfig, HostState, UnattendedUnlock, describe, parse_location,
     };
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
+    use keefast_agent::serve::McpEndpoint;
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -168,7 +169,7 @@ mod operator {
         let vault = flags.value("--vault").ok_or("serve needs --vault")?;
         let location = parse_location(vault);
         // Checked before anything else, so a host that would hand out tokens in the clear
-        // never starts. Nothing listens there yet: the MCP endpoint comes with Agent pairings.
+        // never starts.
         let listen = Listen::new(
             flags.value("--listen").unwrap_or(DEFAULT_LISTEN),
             flags.value("--tls-cert").map(PathBuf::from),
@@ -210,19 +211,29 @@ mod operator {
             eprintln!("keefast-agent: warning: {warning}");
         }
         let state = host.status().state;
+        // The MCP endpoint runs on Tokio; the rest of the host on plain threads, as the
+        // workspace is synchronous.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|error| format!("can't start the MCP endpoint: {error}"))?;
+        let endpoint = runtime
+            .block_on(McpEndpoint::start(Arc::clone(&host), &listen))
+            .map_err(|error| error.to_string())?;
         socket.serve(Arc::clone(&host));
         eprintln!(
-            "keefast-agent: serving {}, {}; admin socket {}; Agents' address {listen}",
+            "keefast-agent: serving {}, {}; admin socket {}; Agents connect to {}",
             describe(&location),
             match state {
                 HostState::Unlocked => "unlocked",
                 _ => "locked until `keefast-agent unlock`",
             },
-            socket_path.display()
+            socket_path.display(),
+            endpoint.url(),
         );
-        loop {
-            thread::park();
-        }
+        runtime.block_on(std::future::pending::<()>());
+        Ok(())
     }
 
     /// The Workspace a Headless host opens its Vault file through: local files, and Dropbox

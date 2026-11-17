@@ -43,8 +43,14 @@ keefast-agent serve --vault /srv/agents.kdbx --listen '[::]:7807' \
     --tls-cert /etc/ssl/agents/fullchain.pem --tls-key /etc/ssl/agents/key.pem
 ```
 
-(Agents' MCP endpoint comes with Agent pairings; for now `serve` checks the address and its TLS
-but nothing listens there yet.) Three ways to publish the host:
+Agents talk MCP (Streamable HTTP) to `/mcp` on that address, as
+`http://127.0.0.1:7807/mcp`, or `https://…/mcp` with TLS. Every request needs an Agent pairing's
+token as `Authorization: Bearer <token>`: one without, or with a token no pairing has (or a
+revoked one), gets 401. While the Vault is locked, the host can't check tokens, since it keeps
+their hashes in the Vault: every call then answers that keefast is locked, and Agents tell their
+user to unlock it. The host doesn't check the `Host` header, so a proxy can forward its own name.
+
+Three ways to publish the host:
 
 - **Tailscale**: keep the host on loopback and let `tailscale serve` give it a tailnet name
   and a certificate: `tailscale serve --bg --https=443 http://127.0.0.1:7807`. Agents on your

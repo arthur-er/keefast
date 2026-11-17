@@ -8,6 +8,8 @@
 pub mod admin;
 pub mod host;
 pub mod listen;
+#[cfg(feature = "serve")]
+pub mod serve;
 mod session;
 mod settings;
 
