@@ -12,6 +12,11 @@
 //! bearer check: the values go to that command, which puts them in a program's environment,
 //! and never through MCP to the model.
 //!
+//! Approvers, desktop keefasts paired with the host by `keefast-agent pairing approver`, hold
+//! a stream of server-sent events open at [`APPROVER_EVENTS_PATH`] with their own token, and
+//! answer prompts at [`APPROVER_PROMPTS_PATH`]. The first answer wins; every Approver is then
+//! told to dismiss the prompt.
+//!
 //! The endpoint listens where [`Listen`] says: loopback in the clear, anywhere else only with
 //! TLS, from the operator's PEM files. It doesn't check the `Host` header against a list, as
 //! rmcp does by default against DNS rebinding: the bearer token, which a web page doesn't have,
@@ -19,16 +24,17 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::service::TowerToHyperService;
 use rmcp::handler::server::common::Extension;
@@ -41,9 +47,12 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+use crate::approver::{ApproverAnswer, ApproverEvent};
 use crate::host::HeadlessHost;
 use crate::listen::{Listen, TlsFiles};
 use crate::run::USE_SECRETS_PATH;
@@ -143,13 +152,88 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
         Arc::new(LocalSessionManager::default()),
         config,
     );
-    Router::new()
+    let agents = Router::new()
         .nest_service("/mcp", mcp)
         .route(
             USE_SECRETS_PATH,
             post(use_secrets).with_state(Arc::clone(&host)),
         )
-        .layer(middleware::from_fn_with_state(host, require_bearer))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&host),
+            require_bearer,
+        ));
+    // Approvers hold their own tokens, kept in the host's state rather than the Vault, so they
+    // connect while it is locked too.
+    let approvers = Router::new()
+        .route(APPROVER_EVENTS_PATH, get(approver_events))
+        .route(
+            &format!("{APPROVER_PROMPTS_PATH}/{{id}}"),
+            post(answer_prompt),
+        )
+        .with_state(host);
+    agents.merge(approvers)
+}
+
+/// Where a connected Approver's prompts stream from, as server-sent events: `prompt` and
+/// `dismissed`, each with an [`ApproverEvent`] as JSON.
+pub const APPROVER_EVENTS_PATH: &str = "/approver/events";
+/// Where an Approver POSTs its [`ApproverAnswer`] to a prompt, at `/approver/prompts/<id>`.
+pub const APPROVER_PROMPTS_PATH: &str = "/approver/prompts";
+
+/// The Approver whose token a request carries, by name.
+fn approver(host: &HeadlessHost, headers: &HeaderMap) -> Option<String> {
+    let token = bearer(headers)?;
+    host.approver_credentials().approver_with_token(&token)
+}
+
+/// Streams a paired Approver's prompts, from the ones waiting now, until it disconnects.
+async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderMap) -> Response {
+    if approver(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let (send, receive) = tokio::sync::mpsc::unbounded_channel();
+    let connection = host.approvers().connect(move |event: &ApproverEvent| {
+        // Fails only once the stream is gone, and the connection with it.
+        let _ = send.send(event.clone());
+    });
+    let events = UnboundedReceiverStream::new(receive).map(move |event| {
+        // The connection lasts as long as the stream: dropping it disconnects the Approver.
+        let _connected = &connection;
+        let name = match &event {
+            ApproverEvent::Prompt { .. } => "prompt",
+            ApproverEvent::Dismissed { .. } => "dismissed",
+        };
+        let json = serde_json::to_string(&event).expect("an event is plain JSON");
+        Ok::<_, std::convert::Infallible>(Event::default().event(name).data(json))
+    });
+    // Proxies close a quiet connection: a comment every 15 s keeps it open.
+    Sse::new(events)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
+}
+
+/// Takes a paired Approver's answer to the prompt `id`: 204, or 409 if another Approver
+/// answered first or it timed out.
+async fn answer_prompt(
+    State(host): State<Arc<HeadlessHost>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if approver(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let Ok(answer) = serde_json::from_slice::<ApproverAnswer>(&body) else {
+        return refusal(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "keefast expected {\"allow\": bool, \"remember\": bool}".to_owned(),
+        );
+    };
+    match host.approvers().answer(&id, answer) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => refusal(StatusCode::CONFLICT, "gone", error.to_string()),
+    }
 }
 
 async fn accept(
@@ -200,7 +284,7 @@ where
 
 /// The TLS the endpoint serves with, from the operator's PEM files.
 fn tls_acceptor(files: &TlsFiles) -> Result<TlsAcceptor, ServeError> {
-    let read_error = |path: &Path, error: rustls::pki_types::pem::Error| {
+    let read_error = |path: &std::path::Path, error: rustls::pki_types::pem::Error| {
         ServeError::TlsFile(path.display().to_string(), error.to_string())
     };
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(&files.cert)

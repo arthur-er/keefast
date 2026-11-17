@@ -192,7 +192,9 @@ impl ApproverHub {
         let left = self.timeout.saturating_sub(waiting.asked.elapsed());
         ApproverEvent::Prompt {
             id: id.to_owned(),
-            seconds_left: u32::try_from(left.as_secs()).unwrap_or(u32::MAX),
+            // Rounded up: a prompt just asked has the whole minute.
+            seconds_left: u32::try_from(left.as_secs() + u64::from(left.subsec_nanos() > 0))
+                .unwrap_or(u32::MAX),
             prompt: waiting.prompt.clone(),
         }
     }

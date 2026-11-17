@@ -10,7 +10,7 @@ repository.workspace = true
 default = ["serve"]
 # The Headless host's MCP endpoint, over HTTP: `keefast-agent serve` needs it, the desktop app,
 # which only reads and changes Agent settings, doesn't.
-serve = ["dep:axum", "dep:hyper-util", "dep:rmcp", "dep:rustls", "dep:tokio", "dep:tokio-rustls", "dep:tokio-util"]
+serve = ["dep:axum", "dep:hyper-util", "dep:rmcp", "dep:rustls", "dep:tokio", "dep:tokio-rustls", "dep:tokio-stream", "dep:tokio-util"]
 
 [[bin]]
 name = "keefast-agent"
@@ -35,6 +35,7 @@ subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, optional = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 # `keefast-agent run` asks the Headless host for values over HTTPS.
 ureq.workspace = true

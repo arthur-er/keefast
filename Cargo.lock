@@ -2929,6 +2929,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
  "tokio-util",
  "ureq",
  "zeroize",
