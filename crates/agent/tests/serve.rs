@@ -236,13 +236,34 @@ async fn a_revoked_token_is_refused_at_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_call_answers_locked_until_the_host_is_unlocked() {
     let served = Served::locked(&loopback()).await;
-    let client = served.connect(&served.claude).await;
 
-    let locked = list_secrets(&client).await;
-    assert_eq!(locked.is_error, Some(true));
-    assert!(text(&locked).contains("locked"), "{}", text(&locked));
+    // Locked, the host can't tell a pairing's token from any other string: whatever it is,
+    // the answer is "locked", and no MCP session opens.
+    for token in [served.claude.as_str(), "anything-at-all"] {
+        let response = reqwest::Client::new()
+            .post(served.endpoint.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {token}"))
+            .body(INITIALIZE)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.headers().get("mcp-session-id").is_none());
+        let answer: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(answer["id"], 1);
+        assert!(
+            answer["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("locked"),
+            "{answer}"
+        );
+        assert!(answer.get("result").is_none());
+    }
 
     served.unlock().await;
+    let client = served.connect(&served.claude).await;
     let listed = list_secrets(&client).await;
     assert!(text(&listed).contains("claude token"), "{}", text(&listed));
 }

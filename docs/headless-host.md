@@ -47,8 +47,8 @@ Agents talk MCP (Streamable HTTP) to `/mcp` on that address, as
 `http://127.0.0.1:7807/mcp`, or `https://…/mcp` with TLS. Every request needs an Agent pairing's
 token as `Authorization: Bearer <token>`: one without, or with a token no pairing has (or a
 revoked one), gets 401. While the Vault is locked, the host can't check tokens, since it keeps
-their hashes in the Vault: every call then answers that keefast is locked, and Agents tell their
-user to unlock it. The host doesn't check the `Host` header, so a proxy can forward its own name.
+their hashes in the Vault: any bearer token then gets only the answer that keefast is locked (no MCP
+session opens), and Agents tell their user to unlock it. The host doesn't check the `Host` header, so a proxy can forward its own name.
 
 Three ways to publish the host:
 

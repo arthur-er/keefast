@@ -429,11 +429,50 @@ async fn require_bearer(
     let owner = tokio::task::spawn_blocking(move || host.token_owner(&checked))
         .await
         .unwrap_or(TokenOwner::Unknown);
-    if owner == TokenOwner::Unknown {
-        return unauthorized(request.headers(), request.uri(), tls, true);
+    match owner {
+        TokenOwner::Unknown => unauthorized(request.headers(), request.uri(), tls, true),
+        TokenOwner::Locked => locked(request).await,
+        TokenOwner::Pairing(_) => {
+            request.extensions_mut().insert(Bearer(token));
+            next.run(request).await
+        }
     }
-    request.extensions_mut().insert(Bearer(token));
-    next.run(request).await
+}
+
+/// The answer to every request with a bearer token while the Vault is locked. The host can't
+/// tell a pairing's token from any other string then, so it answers "locked" and nothing
+/// else: no MCP session opens, and no tool is listed. An MCP request gets a JSON-RPC error
+/// with its own id, which MCP clients show; `run` and `store` get their usual refusal.
+async fn locked(request: Request) -> Response {
+    let message = AgentError::Locked.to_string();
+    if !request.uri().path().starts_with("/mcp") {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "locked", message);
+    }
+    if request.method() != axum::http::Method::POST {
+        return (StatusCode::SERVICE_UNAVAILABLE, format!("{message}\n")).into_response();
+    }
+    let body = axum::body::to_bytes(request.into_body(), 1 << 20)
+        .await
+        .unwrap_or_default();
+    let id = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|message| message.get("id").cloned());
+    match id {
+        // A notification or a response wants no answer.
+        None => StatusCode::ACCEPTED.into_response(),
+        Some(id) => {
+            let answer = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32000, "message": message },
+            });
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                answer.to_string(),
+            )
+                .into_response()
+        }
+    }
 }
 
 fn unauthorized(headers: &HeaderMap, uri: &axum::http::Uri, tls: bool, invalid: bool) -> Response {
