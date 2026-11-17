@@ -122,7 +122,7 @@ fn source(peer: std::net::IpAddr, headers: &HeaderMap) -> std::net::IpAddr {
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
         .filter_map(|address| address.trim().parse().ok())
-        .last()
+        .next_back()
         .unwrap_or(peer)
 }
 
