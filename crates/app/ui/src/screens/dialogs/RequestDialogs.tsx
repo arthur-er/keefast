@@ -9,6 +9,7 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   Bot,
   CircleAlert,
+  Eye,
   Plug,
   Folder,
   FolderPlus,
@@ -351,10 +352,13 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
   );
 }
 
-/** An Agent host asks whether an Agent pairing may use an Entry's secret to run a command. Allow
- * or Deny, remembered for the program as an Agent access decision in the Vault if the user wants,
- * except for shells and interpreters, which ask every time. Escape denies; nothing on the keyboard
- * allows. The host denies it by itself once the countdown runs out, and the dialog goes. */
+/** An Agent host asks whether an Agent pairing may use an Entry's secret to run a command, send it
+ * in an HTTP request, or have it revealed. Allow or Deny, remembered for the program or host as an
+ * Agent access decision in the Vault if the user wants, except for shells and interpreters, and
+ * reveals, which ask every time. A reveal is the one use that hands the value to the Agent's model,
+ * so its prompt says so, in place of a command, and its button says Reveal. Escape denies; nothing
+ * on the keyboard allows. The host denies it by itself once the countdown runs out, and the dialog
+ * goes. */
 function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["pendingAgentPrompt"]> }) {
   const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -370,8 +374,16 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
       .then(() =>
         toast(
           <>
-            {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b>{" "}
-            {prompt.httpHost ? "at" : "with"} <b>{prompt.program}</b>
+            {prompt.reveal ? (
+              <>
+                {allow ? "Revealed" : "Didn't reveal"} <b>{prompt.entryTitle}</b> to <b>{prompt.pairing}</b>
+              </>
+            ) : (
+              <>
+                {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b>{" "}
+                {prompt.httpHost ? "at" : "with"} <b>{prompt.program}</b>
+              </>
+            )}
             {remembered && <span className="subtle"> · remembered</span>}
           </>,
           { icon: allow ? "check" : Shield },
@@ -390,7 +402,9 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
           {[`${prompt.pairing} on ${prompt.hostName}`, "Agent request", ...(prompt.more > 0 ? [`${prompt.more} more waiting`] : [])]}
         </Kicker>
       }
-      title={`Let ${prompt.pairing} use “${prompt.entryTitle}”?`}
+      title={
+        prompt.reveal ? `Reveal “${prompt.entryTitle}” to ${prompt.pairing}?` : `Let ${prompt.pairing} use “${prompt.entryTitle}”?`
+      }
       onEscape={() => answer(false)}
       hint={
         <>
@@ -403,8 +417,8 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
           <Button disabled={busy} onClick={() => answer(false)} shortcut="Esc">
             Deny
           </Button>
-          <Button variant="primary" disabled={!armed || busy} onClick={() => answer(true)}>
-            Allow
+          <Button variant={prompt.reveal ? "danger" : "primary"} disabled={!armed || busy} onClick={() => answer(true)}>
+            {prompt.reveal ? "Reveal" : "Allow"}
           </Button>
         </>
       }
@@ -418,7 +432,16 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
           <div className="u truncate">{prompt.reference}</div>
         </div>
       </div>
-      {prompt.httpHost ? (
+      {prompt.reveal ? (
+        <div className="dg-reveal" role="note">
+          <Eye />
+          <span>
+            An Agent paired as <b>{prompt.pairing}</b> on <b>{prompt.hostName}</b> asks to see this secret. If you
+            reveal it, <b>the value itself goes to the Agent and into its model's context</b>, where keefast can no
+            longer hide or take it back. Reveal only a secret that must be written somewhere, and only if you expect it.
+          </span>
+        </div>
+      ) : prompt.httpHost ? (
         <>
           <div className="dg-command" aria-label="Request">
             <span className="prompt" aria-hidden>
@@ -456,7 +479,13 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
         <p className="dg-note m-0">
           <Info />
           <span>
-            <b>{prompt.program}</b> can run anything, so keefast asks every time it is used.
+            {prompt.reveal ? (
+              "This answer is never remembered: keefast asks every time a value is revealed."
+            ) : (
+              <>
+                <b>{prompt.program}</b> can run anything, so keefast asks every time it is used.
+              </>
+            )}
           </span>
         </p>
       )}

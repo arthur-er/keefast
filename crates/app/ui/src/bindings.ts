@@ -400,6 +400,8 @@ export const commands = {
 	 *  lower case, without schemes or paths, without repeats. Refused whole if one isn't a host.
 	 */
 	setEntryAllowedHosts: (vault: VaultId, entry: EntryId, hosts: string[]) => typedError<string[], ApiError>(__TAURI_INVOKE("set_entry_allowed_hosts", { vault, entry, hosts })),
+	/**  Marks the Entry "Agents may reveal", or takes the mark off. Each reveal still asks. */
+	setEntryAgentsMayReveal: (vault: VaultId, entry: EntryId, mayReveal: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_entry_agents_may_reveal", { vault, entry, mayReveal })),
 	getAgentHosts: () => typedError<AgentHostView[], ApiError>(__TAURI_INVOKE("get_agent_hosts")),
 	/**
 	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
@@ -760,6 +762,11 @@ export type EntryAgentAccess = {
 	 *  `*.` and a domain for its subdomains.
 	 */
 	allowedHosts: string[],
+	/**
+	 *  Whether it is marked "Agents may reveal": `reveal_secret` may hand its values to a
+	 *  model, when the user allows it at the prompt, every time.
+	 */
+	agentsMayReveal: boolean,
 };
 
 /**  Everything about an Entry the detail shows, except its secrets. */
@@ -1329,6 +1336,11 @@ export type PendingAgentPrompt = {
 	 *  placeholders where the secrets go.
 	 */
 	httpHost: string | null,
+	/**
+	 *  For a `reveal_secret`: allowing it hands the value to the Agent, and so to the model
+	 *  behind it. It can never be remembered.
+	 */
+	reveal: boolean,
 	/**  When the host denies it unanswered, in seconds since 1970 UTC. */
 	expires: number | null,
 	/**  How many prompts wait besides this one. */

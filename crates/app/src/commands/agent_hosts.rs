@@ -69,6 +69,9 @@ pub struct PendingAgentPrompt {
     /// For an `http_request`, the host it goes to; `command` is then its method and URL, with
     /// placeholders where the secrets go.
     pub http_host: Option<String>,
+    /// For a `reveal_secret`: allowing it hands the value to the Agent, and so to the model
+    /// behind it. It can never be remembered.
+    pub reveal: bool,
     /// When the host denies it unanswered, in seconds since 1970 UTC.
     pub expires: f64,
     /// How many prompts wait besides this one.
@@ -89,6 +92,7 @@ impl PendingAgentPrompt {
             command: prompt.command.clone(),
             can_remember: prompt.can_remember,
             http_host: prompt.host.clone(),
+            reveal: prompt.reveal,
             expires: waiting
                 .expires
                 .duration_since(std::time::UNIX_EPOCH)

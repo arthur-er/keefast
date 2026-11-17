@@ -77,6 +77,7 @@ const agent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentPromp
       command: ["gh", "pr", "create", "--title", "Fix the login"],
       canRemember: true,
       httpHost: null,
+      reveal: false,
       expires: NOW / 1000 + 60,
       more: 0,
       ...changes,
@@ -263,6 +264,28 @@ describe("an Agent host's prompt", () => {
     expect(screen.queryByLabelText("Command")).toBeNull();
     expect(screen.getByText(/send this request to/)).toBeTruthy();
     expect(screen.getByRole("checkbox").textContent).toContain("Remember this decision for api.github.com");
+  });
+
+  it("says plainly that a reveal hands the value to the model, and never offers to remember it", () => {
+    show(
+      agent({
+        program: "reveal_secret",
+        command: ["reveal_secret", "claude/Wallet#password"],
+        canRemember: false,
+        reveal: true,
+      }),
+    );
+
+    expect(screen.getByRole("alertdialog", { name: "Reveal “deploy token” to claude?" })).toBeTruthy();
+    expect(screen.getByText(/the value itself goes to the Agent and into its model's context/)).toBeTruthy();
+    expect(screen.getByText(/keefast asks every time a value is revealed/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByLabelText("Command")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", true, false);
   });
 
   it("counts down to when the host denies it", () => {

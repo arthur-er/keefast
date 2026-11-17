@@ -44,6 +44,10 @@
   .dg-code input { font-family: var(--font-mono); font-size: var(--text-xl); letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
   .dg-code { height: auto; padding-block: 6px; }
   .dg-command code { font: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+  /* A reveal hands the value to the Agent's model: said in the warning colour, not as a footnote. */
+  .dg-reveal { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-md); background: var(--warn-bg); color: var(--fg-1); font-size: var(--text-sm); line-height: 1.45; }
+  .dg-reveal svg.lucide { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--warn); }
+  .dg-reveal b { color: var(--fg-0); font-weight: 600; }
   .dg-note { display: flex; align-items: flex-start; gap: 8px; font-size: var(--text-sm); color: var(--fg-2); }
   .dg-note svg.lucide { width: 14px; height: 14px; flex: none; margin-top: 2px; }
   .dg-note b { color: var(--fg-1); font-weight: 500; }

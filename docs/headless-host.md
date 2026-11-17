@@ -182,6 +182,16 @@ program. Limits: 1 MiB request and response bodies (a longer response is cut off
 five redirects, 30 seconds a hop. The host makes these requests from its own network, so a
 firewall in front of it applies.
 
+## Revealing a secret
+
+Rarely, a value must itself reach the model, such as a secret it has to write into a config file.
+The `reveal_secret` MCP tool returns one value, but only for an Entry you marked **Agents may
+reveal** in the desktop app (open the Entry, then **Agents → Agents may reveal**). Any other
+Entry is refused at once, without asking you. A reveal of a marked Entry asks an Approver every
+time, whatever decisions or Default agent policy say, and the answer is never remembered; with no
+Approver online it is refused, and a Default agent policy of deny refuses it too. The log records
+it as `reveal`, with the Entry and field, never the value.
+
 ## Creating secrets
 
 A pairing made with `--can-create` (or with **Creates Entries in its own subgroup** checked in

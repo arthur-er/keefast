@@ -2,8 +2,10 @@
 // Entry, one per Agent pairing and program (`keefast-agent run`) or host (`http_request`), and a
 // way to allow or deny one ahead of time, so a Headless host doesn't have to ask an Approver.
 // Answers remembered at an Approver's prompt show here too. Below them, the hosts
-// `http_request` may send this Entry's secrets to at all: none until the user adds one. Both are
-// kept in the Vault, not in the Entry, so each change applies at once and makes no Entry history.
+// `http_request` may send this Entry's secrets to at all: none until the user adds one. Last, the
+// "Agents may reveal" mark, which lets `reveal_secret` hand a value to a model, asking each time.
+// All are kept in the Vault, not in the Entry, so each change applies at once and makes no Entry
+// history.
 
 import { useState } from "react";
 import { Bot, Globe, Plus, X } from "lucide-react";
@@ -11,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
 import type { AgentDecisionView, AgentUseKind, EntryDetail, EntryAgentAccess } from "@/bindings";
-import { Badge, Button, Input, Select, toast } from "@/kit";
+import { Badge, Button, Input, Select, Switch, toast } from "@/kit";
 
 export const entryAgentAccessKey = (entry: EntryDetail) => ["entryAgentAccess", entry.vault, entry.id] as const;
 
@@ -24,8 +26,8 @@ export function AgentAccess({ entry }: { entry: EntryDetail | null }) {
     enabled: entry !== null,
   });
   if (!entry || !access.data) return null;
-  const { pairings, decisions, allowedHosts } = access.data;
-  if (pairings.length === 0 && decisions.length === 0 && allowedHosts.length === 0) return null;
+  const { pairings, decisions, allowedHosts, agentsMayReveal } = access.data;
+  if (pairings.length === 0 && decisions.length === 0 && allowedHosts.length === 0 && !agentsMayReveal) return null;
   return <AgentAccessSection entry={entry} access={access.data} />;
 }
 
@@ -48,6 +50,7 @@ export function AgentAccessSection({ entry, access }: { entry: EntryDetail; acce
   const forget = (decision: AgentDecisionView) =>
     run(() => api.forgetAgentDecision(entry.vault, entry.id, decision.pairing, decision.kind, decision.name));
   const setHosts = (hosts: string[]) => run(() => api.setEntryAllowedHosts(entry.vault, entry.id, hosts));
+  const setMayReveal = (mayReveal: boolean) => run(() => api.setEntryAgentsMayReveal(entry.vault, entry.id, mayReveal));
 
   return (
     <div className="ee-sec">
@@ -104,6 +107,16 @@ export function AgentAccessSection({ entry, access }: { entry: EntryDetail; acce
         />
       )}
       <AllowedHosts hosts={access.allowedHosts} onChange={setHosts} />
+      <div className="ee-agent-reveal">
+        <div className="min-w-0">
+          <div className="ee-agent-hosts-head">Agents may reveal</div>
+          <div className="ee-agent-note">
+            Lets an Agent ask to see a value, for a secret that must be written into a file. Each time, keefast asks you,
+            and if you allow it, the value itself reaches the model. Never remembered.
+          </div>
+        </div>
+        <Switch label="Agents may reveal" checked={access.agentsMayReveal} onCheckedChange={(on) => void setMayReveal(on)} />
+      </div>
       <div className="ee-agent-note">
         Agents use this Entry with <code>keefast-agent run</code>, or ask keefast to send it in an HTTP request, only to the
         hosts above. Shells and interpreters, such as bash or python, are never remembered: they ask every time.

@@ -69,6 +69,9 @@ pub enum AgentRequest {
     /// A value for one field of an Entry in the pairing's own subgroup, for `keefast-agent
     /// store`, which creates the Entry if needed.
     Store(StoreSecret),
+    /// The value a Secret reference names, handed to the Agent and so to the model behind it:
+    /// only for Entries marked "Agents may reveal", and only when the user allows it, each time.
+    Reveal(String),
 }
 
 /// What `keefast-agent run` asks for: the values `references` name, to run `command` with.
@@ -229,6 +232,17 @@ pub enum AgentError {
     EntryExists(String),
     #[error("keefast won't write this Entry: {0}")]
     BadEntry(String),
+    #[error(
+        "the Entry {0} names isn't marked \"Agents may reveal\", so its values never reach the \
+         model: use the secret without seeing it, with keefast-agent run or http_request"
+    )]
+    NotRevealable(String),
+    #[error(
+        "revealing {0} needs the user's say each time, and there is no Approver to ask them now: \
+         ask them to open keefast on their desktop, paired with this host as an Approver, then \
+         try again"
+    )]
+    NoApproverToReveal(String),
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name
@@ -278,12 +292,17 @@ pub struct AgentSession {
     transport: Arc<dyn HttpTransport>,
 }
 
-/// What a use is for: the program `keefast-agent run` starts, or the host an `http_request`
-/// goes to, with its method.
+/// What a use is for: the program `keefast-agent run` starts, the host an `http_request`
+/// goes to, with its method, or a reveal of one field to the Agent itself.
 enum UseFor<'a> {
     Program(&'a str),
     Http { method: &'a str, host: &'a str },
+    Reveal { field: &'a str },
 }
+
+/// What a reveal is called where a program or host would be named: in its prompt, and in what
+/// the Agent is told when it is refused.
+const REVEAL: &str = "reveal_secret";
 
 impl UseFor<'_> {
     /// The program or host, as the Agent is told it.
@@ -291,13 +310,16 @@ impl UseFor<'_> {
         match self {
             Self::Program(program) => program,
             Self::Http { host, .. } => host,
+            Self::Reveal { .. } => REVEAL,
         }
     }
 
-    fn agent_use(&self) -> AgentUse {
+    /// What an answer to this use is remembered for; a reveal's never is.
+    fn agent_use(&self) -> Option<AgentUse> {
         match self {
-            Self::Program(program) => AgentUse::Program((*program).to_owned()),
-            Self::Http { host, .. } => AgentUse::Host((*host).to_owned()),
+            Self::Program(program) => Some(AgentUse::Program((*program).to_owned())),
+            Self::Http { host, .. } => Some(AgentUse::Host((*host).to_owned())),
+            Self::Reveal { .. } => None,
         }
     }
 
@@ -312,6 +334,10 @@ impl UseFor<'_> {
                 record.action = "http_request".to_owned();
                 record.method = Some((*method).to_owned());
                 record.host = Some((*host).to_owned());
+            }
+            Self::Reveal { field } => {
+                record.action = "reveal".to_owned();
+                record.field = Some((*field).to_owned());
             }
         }
         record
@@ -389,6 +415,7 @@ impl AgentSession {
             AgentRequest::Http(request) => self.http_request(vault, request),
             AgentRequest::CreateEntry(request) => self.create_entry(vault, request),
             AgentRequest::Store(request) => self.store(vault, request),
+            AgentRequest::Reveal(reference) => self.reveal(vault, reference),
         }
     }
 
@@ -478,6 +505,7 @@ impl AgentSession {
                             command: request.command.clone(),
                             can_remember: !is_shell_or_interpreter(program),
                             host: None,
+                            reveal: false,
                         },
                         entry: entry.id(),
                     });
@@ -619,9 +647,13 @@ impl AgentSession {
                 ),
                 Approval::NoApprover => (
                     "no Approver to ask",
-                    Some(AgentError::NotAllowed {
-                        reference,
-                        program: name.clone(),
+                    Some(match used_for {
+                        // Nothing allows a reveal ahead of time, so the user can only be asked.
+                        UseFor::Reveal { .. } => AgentError::NoApproverToReveal(reference),
+                        _ => AgentError::NotAllowed {
+                            reference,
+                            program: name.clone(),
+                        },
                     }),
                 ),
             };
@@ -653,8 +685,10 @@ impl AgentSession {
                 break;
             }
         }
-        if !remember.is_empty() {
-            self.remember(vault, &used_for.agent_use(), &remember);
+        if let Some(agent_use) = used_for.agent_use()
+            && !remember.is_empty()
+        {
+            self.remember(vault, &agent_use, &remember);
         }
         refused.map_or(Ok(()), Err)
     }
@@ -710,7 +744,9 @@ impl AgentSession {
             method: &template.method,
             host: &host,
         };
-        let agent_use = used_for.agent_use();
+        let agent_use = used_for
+            .agent_use()
+            .expect("an http_request is remembered by its host");
         let mut asking = Vec::new();
         for used in &prepared.used {
             let refused = match decide(&settings, used.id, pairing.id(), &agent_use) {
@@ -727,6 +763,7 @@ impl AgentSession {
                             command: vec![template.method.clone(), template.request.url.clone()],
                             can_remember: true,
                             host: Some(host.clone()),
+                            reveal: false,
                         },
                         entry: used.id,
                     });
@@ -1056,6 +1093,114 @@ impl AgentSession {
         });
         record.reason = Some(reason.to_owned());
         self.audit.record(record);
+    }
+}
+
+/// `reveal_secret`: the one way a value reaches the model. Only an Entry marked "Agents may
+/// reveal" is revealed, and only once the user allows it at a prompt that says so, every time:
+/// no Agent access decision or Default agent policy allows it, though a policy of deny refuses
+/// it, as it does a shell.
+impl AgentSession {
+    fn reveal(
+        &self,
+        vault: &impl VaultAccess,
+        reference: String,
+    ) -> Result<AgentReply, AgentError> {
+        let (asking, first_time) = vault
+            .read(|workspace, id| self.decide_reveal(workspace, id, &reference))
+            .unwrap_or(Err(AgentError::Locked))?;
+        let field = reference.rsplit_once('#').map_or("", |(_, field)| field);
+        self.ask(vault, vec![asking], first_time, &UseFor::Reveal { field })?;
+        // The value is read afresh, and the mark checked again: either may have changed while
+        // the user was asked.
+        vault
+            .read(|workspace, id| {
+                let vault = workspace
+                    .readable_vault(id)
+                    .ok_or(AgentError::Locked)?
+                    .vault();
+                let settings = AgentSettings::of(vault);
+                let pairing = settings
+                    .pairing(&self.pairing)
+                    .ok_or(AgentError::NotPaired)?;
+                let readable = readable_entries(vault, &settings, pairing);
+                let (entry, value) = resolve(&readable, &reference)?;
+                if !settings.agents_may_reveal(entry.id()) {
+                    return Err(AgentError::NotRevealable(reference.clone()));
+                }
+                Ok(AgentReply::Values(vec![SecretValue::new(
+                    reference.clone(),
+                    value,
+                )]))
+            })
+            .unwrap_or(Err(AgentError::Locked))
+    }
+
+    /// Refuses, and audits, a reveal of an unmarked Entry, or one the Default agent policy
+    /// denies; otherwise returns the prompt to ask, with the time it was checked.
+    fn decide_reveal(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+        reference: &str,
+    ) -> Result<(Asking, i64), AgentError> {
+        let vault = workspace
+            .readable_vault(id)
+            .ok_or(AgentError::Locked)?
+            .vault();
+        let settings = AgentSettings::of(vault);
+        let pairing = settings
+            .pairing(&self.pairing)
+            .ok_or(AgentError::NotPaired)?;
+        let readable = readable_entries(vault, &settings, pairing);
+        let (entry, _) = resolve(&readable, reference)?;
+        let refusal = if !settings.agents_may_reveal(entry.id()) {
+            Some((
+                "not marked Agents may reveal",
+                AgentError::NotRevealable(reference.to_owned()),
+            ))
+        } else if settings.default_agent_policy() == DefaultAgentPolicy::Deny {
+            Some((
+                "denied",
+                AgentError::Denied {
+                    reference: reference.to_owned(),
+                    program: REVEAL.to_owned(),
+                },
+            ))
+        } else {
+            None
+        };
+        if let Some((reason, error)) = refusal {
+            let field = reference.rsplit_once('#').map_or("", |(_, field)| field);
+            let mut record = UseFor::Reveal { field }.audited(self.record(
+                workspace,
+                pairing,
+                "",
+                AuditOutcome::Denied,
+            ));
+            record.entry = Some(AuditEntry {
+                uuid: entry.id().to_hex(),
+                title: entry.title().to_owned(),
+            });
+            record.reason = Some(reason.to_owned());
+            self.audit.record(record);
+            return Err(error);
+        }
+        let asking = Asking {
+            prompt: AgentPrompt {
+                pairing: pairing.name().to_owned(),
+                entry_uuid: entry.id().to_hex(),
+                entry_title: entry.title().to_owned(),
+                reference: reference.to_owned(),
+                program: REVEAL.to_owned(),
+                command: vec![REVEAL.to_owned(), reference.to_owned()],
+                can_remember: false,
+                host: None,
+                reveal: true,
+            },
+            entry: entry.id(),
+        };
+        Ok((asking, workspace.now().unix_seconds()))
     }
 }
 

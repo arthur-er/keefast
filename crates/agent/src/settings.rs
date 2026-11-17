@@ -39,6 +39,9 @@ const DECISION_PREFIX: &str = "keefast_AGENT_DECISION_";
 /// Each Entry's allowed hosts, under this prefix plus its UUID, as a JSON array of hosts; an
 /// empty array once emptied. One item per Entry: the newest list wins a Merge whole.
 const HOSTS_PREFIX: &str = "keefast_AGENT_HOSTS_";
+/// Each Entry's "Agents may reveal" mark, under this prefix plus its UUID: `true`, or `false`
+/// once taken off. One item per Entry, so the newest wins a Merge.
+const REVEAL_PREFIX: &str = "keefast_AGENT_REVEAL_";
 
 /// What an Agent uses an Entry with: the program `keefast-agent run` starts, by its
 /// executable's name, or the host an `http_request` goes to.
@@ -384,6 +387,7 @@ pub struct AgentSettings {
     pairings: Vec<AgentPairing>,
     decisions: Vec<AgentAccessDecision>,
     allowed_hosts: HashMap<EntryId, Vec<String>>,
+    revealable: Vec<EntryId>,
 }
 
 impl AgentSettings {
@@ -430,6 +434,11 @@ impl AgentSettings {
                     Some((entry, hosts))
                 })
                 .collect(),
+            revealable: items
+                .iter()
+                .filter(|(_, value)| value.as_str() == "true")
+                .filter_map(|(key, _)| EntryId::from_hex(key.strip_prefix(REVEAL_PREFIX)?))
+                .collect(),
         }
     }
 
@@ -462,6 +471,12 @@ impl AgentSettings {
             .get(&entry)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    /// Whether `entry` is marked "Agents may reveal": whether `reveal_secret` may hand its
+    /// values to a model, each time the user allows it.
+    pub fn agents_may_reveal(&self, entry: EntryId) -> bool {
+        self.revealable.contains(&entry)
     }
 
     /// The Agent pairings, revoked ones left out, by name.
@@ -579,6 +594,14 @@ pub trait AgentSettingsExt {
         entry: EntryId,
         hosts: &[String],
     ) -> Result<Vec<String>, AgentSettingsError>;
+
+    /// Marks `entry` "Agents may reveal", or takes the mark off.
+    fn set_agents_may_reveal(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        may_reveal: bool,
+    ) -> Result<(), AgentSettingsError>;
 
     /// Forgets the decision for `pairing` using `entry` with `agent_use`, so it asks again,
     /// or follows the Default agent policy.
@@ -729,6 +752,23 @@ impl AgentSettingsExt for Workspace {
             self.set_vault_custom_data(vault, &[item(key, json)])?;
         }
         Ok(kept)
+    }
+
+    fn set_agents_may_reveal(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        may_reveal: bool,
+    ) -> Result<(), AgentSettingsError> {
+        let settings = self
+            .agent_settings(vault)
+            .ok_or(EditVaultError::VaultNotOpen)?;
+        // Never marked and still not: nothing to write.
+        if settings.agents_may_reveal(entry) != may_reveal {
+            let key = format!("{REVEAL_PREFIX}{}", entry.to_hex());
+            self.set_vault_custom_data(vault, &[item(key, may_reveal.to_string())])?;
+        }
+        Ok(())
     }
 
     fn forget_agent_decision(

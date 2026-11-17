@@ -146,6 +146,10 @@ _Avoid_: Permission, grant, scope
 The hosts an Entry's secrets may be sent to by `http_request`: host names, IP addresses, or `*.` and a domain for its subdomains. Empty until the user adds one, so a secret goes nowhere by default. A host named exactly is *allowed by name*, and only then may it be at a private, loopback or link-local address.
 _Avoid_: Allow-list, whitelist, domains
 
+**Agents may reveal**:
+A mark on an Entry, set in its Agents section, that lets `reveal_secret` hand one of its values to an Agent, and so to the model behind it, for a secret that must be written somewhere. Each reveal asks the user and is never remembered; an unmarked Entry is never revealed.
+_Avoid_: Exposable, readable, show secret
+
 **Default agent policy**:
 A per-Vault setting (ask, always allow or always deny) applied when an Entry has no Agent access decision for the request. Starts as ask.
 _Avoid_: Global permission, auto-allow

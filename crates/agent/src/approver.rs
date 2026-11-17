@@ -53,6 +53,10 @@ pub struct AgentPrompt {
     /// rather than the secrets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// For a `reveal_secret`, true: allowing it hands the value to the Agent, and so to the
+    /// model behind it. Its `program` is then `reveal_secret`, and it can't be remembered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reveal: bool,
 }
 
 /// What an Approver is asked when an MCP client pairs by OAuth: approve the code its consent

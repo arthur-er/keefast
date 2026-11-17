@@ -19,5 +19,6 @@ Every Agent setting is a Vault-level custom data item of keefast's own, timed li
 - `keefast_AGENT_REVOKED_PAIRING_<id>`: marks a pairing revoked, for good. The pairing's own item is left as it is, so a Merge with a copy of the Vault that still has the pairing can't bring it back.
 - `keefast_AGENT_DECISION_<Entry UUID>_<pairing id>_<program:name | host:name>`: one Agent access decision, `allow` or `deny`, left empty once forgotten.
 - `keefast_AGENT_HOSTS_<Entry UUID>`: an Entry's allowed hosts, as a JSON array, `[]` once emptied. One item per Entry rather than per host: the list is edited as a whole, and the newest list wins a Merge.
+- `keefast_AGENT_REVEAL_<Entry UUID>`: an Entry's "Agents may reveal" mark, `true`, or `false` once taken off.
 
 Agent access decisions are "on each Entry" as far as the user sees them, but they are not kept in the Entry's own custom data, as KeePassXC-Browser's Access decisions are. An Entry is Merged whole, newest version winning, so two Approvers remembering decisions on the same Entry at once would lose one of them to Entry history. One timed Vault-level item per decision keeps both, and remembering a decision doesn't add an Entry history version.

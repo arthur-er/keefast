@@ -60,6 +60,7 @@ const agent = {
   command: ["gh", "auth", "status"],
   canRemember: true,
   httpHost: null,
+  reveal: false,
   expires: 1_900_000_060,
   more: 0,
 };

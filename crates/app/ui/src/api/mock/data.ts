@@ -104,6 +104,8 @@ export interface MockVault {
   agentDecisions?: MockAgentDecision[];
   /** Each Entry's allowed hosts for `http_request`, by Entry id. */
   agentAllowedHosts?: Record<string, string[]>;
+  /** The Entries marked "Agents may reveal", by id. */
+  agentsMayReveal?: string[];
 }
 
 export interface MockAgentDecision {
