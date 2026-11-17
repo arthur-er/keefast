@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
+use keefast_agent::installed::AgentCommand;
 use keefast_plugins::PluginStore;
 use keefast_workspace::{
     Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons, LocalStorage,
@@ -231,6 +232,22 @@ fn workspace() -> Workspace {
     workspace
 }
 
+/// Copies `keefast-agent` out of an AppImage to where Agents find it between runs (spec story
+/// 83), off the main thread: it is a few megabytes, and nothing waits for it.
+fn install_agent_command() {
+    let Some(command) = AgentCommand::for_current_user() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        if let Err(error) = command.install() {
+            eprintln!(
+                "keefast: couldn't copy keefast-agent to {}: {error}",
+                command.path().display()
+            );
+        }
+    });
+}
+
 /// Which Dropbox app keefast connects as: the app key from the `KEEFAST_DROPBOX_APP_KEY`
 /// environment variable, else the app config's `dropbox_app_key`, else the one keefast was built
 /// with (`KEEFAST_DROPBOX_APP_KEY` at build time). Without one, Dropbox isn't offered. The
@@ -316,6 +333,7 @@ pub fn run(args: Args) {
             tray::check_tray();
             tray::sync(&handle, core.read(Workspace::close_to_tray));
             background::start(&core);
+            install_agent_command();
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }

@@ -5,7 +5,9 @@
   It installs for the current user, without elevation, as browser integration is per user too:
   the app registers its native host under HKEY_CURRENT_USER, pointing at the keefast-native-host
   installed next to it. Uninstalling asks the app to remove those registrations, and Start on
-  boot, first.
+  boot, first. keefast-agent, the command Agents run (`keefast-agent run`, ADR 0012), is
+  installed beside them, and the install folder is added to the user's PATH so Agents can call
+  it by name.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -56,6 +58,9 @@
       <File Id="keefast.exe" Source="$(var.BinDir)\keefast.exe" />
       <!-- The app looks for the native host next to itself when it registers it. -->
       <File Id="keefast_native_host.exe" Source="$(var.BinDir)\keefast-native-host.exe" />
+      <!-- Agents run it as `keefast-agent run` from their shells. -->
+      <File Id="keefast_agent.exe" Source="$(var.BinDir)\keefast-agent.exe" />
+      <Environment Id="UserPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" Permanent="no" />
       <RegistryValue Root="HKCU" Key="Software\keefast\Installer" Name="Binaries" Type="integer" Value="1" KeyPath="yes" />
       <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
       <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />

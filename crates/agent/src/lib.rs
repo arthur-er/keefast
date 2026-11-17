@@ -8,6 +8,7 @@
 pub mod admin;
 pub mod audit;
 pub mod host;
+pub mod installed;
 pub mod listen;
 pub mod programs;
 pub mod run;
