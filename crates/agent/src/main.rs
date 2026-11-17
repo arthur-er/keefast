@@ -10,6 +10,8 @@
 //! keefast-agent status [--admin-socket <path>]
 //! keefast-agent pairing create <name> [--reads <subgroup>]... [--can-create]
 //!                       [--agent-group <path>] [--admin-socket <path>]
+//! keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+//!                        [--admin-socket <path>]
 //! keefast-agent pairing list [--admin-socket <path>]
 //! keefast-agent pairing revoke <name> [--admin-socket <path>]
 //! keefast-agent pairing approver <name> [--admin-socket <path>]
@@ -64,6 +66,13 @@ usage:
       prints its bearer token, once. It reads its own subgroup and each --reads subgroup.
       --can-create lets it create Entries in its own subgroup. If the Vault has no Agent group
       yet, --agent-group makes the Group at that path (such as Agents) the Agent group.
+
+  keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+                                [--admin-socket <path>]
+      Approves an MCP client pairing by OAuth, whose consent page shows <code>: makes its
+      Agent pairing, called <name> or else as the client calls itself, with its subgroup of
+      the Agent group, reading each --reads subgroup too. The page then sends the browser back
+      to the client, which gets its tokens. A client paired already is just let in again.
 
   keefast-agent pairing list [--admin-socket <path>]
       Lists the Vault's Agent pairings.
@@ -146,9 +155,11 @@ mod operator {
         self, AdminGroup, AdminReply, AdminRequest, AdminSocket, PairingCreate, PairingSummary,
     };
     use keefast_agent::host::{
-        HeadlessHost, HostConfig, HostState, UnattendedUnlock, describe, parse_location,
+        HeadlessHost, HostConfig, HostState, PairingChoice, UnattendedUnlock, describe,
+        parse_location,
     };
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
+    use keefast_agent::oauth::OAuthServer;
     use keefast_agent::serve::McpEndpoint;
     use keefast_agent::{ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord};
     use keefast_workspace::{
@@ -286,6 +297,8 @@ mod operator {
             .map_err(|error| format!("can't listen at {}: {error}", socket_path.display()))?;
         let approver_credentials = ApproverCredentials::open(state_dir.join("approvers.json"))
             .map_err(|error| error.to_string())?;
+        let oauth =
+            OAuthServer::open(state_dir.join("oauth.json")).map_err(|error| error.to_string())?;
         let (host, warnings) = HeadlessHost::start(
             workspace,
             HostConfig {
@@ -295,6 +308,7 @@ mod operator {
                 audit_log: Arc::new(AuditLog::new(state_dir.join("audit.log"))),
                 approvers: ApproverHub::new(),
                 approver_credentials,
+                oauth,
             },
         );
         for warning in warnings {
@@ -328,7 +342,7 @@ mod operator {
 
     fn pairing(args: &[String]) -> Result<(), String> {
         let (action, rest) = args.split_first().ok_or(
-            "pairing needs create, list, revoke, approver, approvers or revoke-approver: see \
+            "pairing needs create, approve, list, revoke, approver, approvers or revoke-approver: see \
                  keefast-agent --help",
         )?;
         match action.as_str() {
@@ -360,6 +374,26 @@ mod operator {
                     }
                     other => show(other, ""),
                 }
+            }
+            "approve" => {
+                let (code, rest) = rest
+                    .split_first()
+                    .filter(|(code, _)| !code.starts_with("--"))
+                    .ok_or("pairing approve needs the code the consent page shows")?;
+                let flags = Flags::new(
+                    rest,
+                    &["--can-create"],
+                    &["--name", "--reads", "--admin-socket"],
+                )?;
+                let request = AdminRequest::PairingApprove {
+                    code: code.clone(),
+                    pairing: PairingChoice {
+                        name: flags.value("--name").unwrap_or_default().to_owned(),
+                        reads: flags.values("--reads"),
+                        can_create: flags.has("--can-create"),
+                    },
+                };
+                show(ask(&flags, &request)?, "")
             }
             "list" => {
                 let flags = Flags::new(rest, &[], &["--admin-socket"])?;
@@ -411,8 +445,8 @@ mod operator {
                 )
             }
             other => Err(format!(
-                "unknown pairing command {other}: it is create, list, revoke, approver, \
-                 approvers or revoke-approver"
+                "unknown pairing command {other}: it is create, approve, list, revoke, \
+                 approver, approvers or revoke-approver"
             )),
         }
     }
@@ -553,6 +587,18 @@ mod operator {
             }
             AdminReply::ApproverPaired { approver, .. } => {
                 println!("paired the Approver {}", approver.name);
+                Ok(())
+            }
+            AdminReply::ConsentApproved {
+                client,
+                pairing,
+                again,
+            } => {
+                if again {
+                    println!("let {client} in again, as the Agent pairing {pairing}");
+                } else {
+                    println!("approved {client} as the Agent pairing {pairing}");
+                }
                 Ok(())
             }
             AdminReply::PairingCreated { pairing, .. } => {

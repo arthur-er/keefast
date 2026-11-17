@@ -403,6 +403,13 @@ export const commands = {
 	 *  decision saved in the Vault.
 	 */
 	answerAgentPrompt: (host: string, id: string, allow: boolean, remember: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_prompt", { host, id, allow, remember })),
+	/**
+	 *  Answers the OAuth consent `id` from `host`. Approving needs the `code` its consent page
+	 *  shows, and makes the Agent pairing `name` (or as the client calls itself, if empty), reading
+	 *  the subgroups `reads` too and creating Entries if `can_create`. Denying sends the client
+	 *  away.
+	 */
+	answerAgentConsent: (host: string, id: string, approve: boolean, code: string, name: string, reads: string[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_consent", { host, id, approve, code, name, reads, canCreate })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -1251,6 +1258,29 @@ export type PendingAccess = {
 };
 
 /**
+ *  An MCP client pairing with a Headless host by OAuth, which this Approver may let in by
+ *  typing the code its consent page shows: the oldest one waiting, once no prompt does.
+ */
+export type PendingAgentConsent = {
+	id: string,
+	/**  The Agent host asking, by its id and the name the user gave it. */
+	host: string,
+	hostName: string,
+	/**  The name the client registered with: its own claim. */
+	client: string,
+	/**  Where the browser goes back to once approved, by its host. */
+	redirect: string,
+	/**  The Agent group's subgroups the new pairing may also read. */
+	subgroups: string[],
+	/**  The Agent pairing the client has already, which approving lets in again. */
+	pairedAs: string | null,
+	/**  When the host forgets it, in seconds since 1970 UTC. */
+	expires: number | null,
+	/**  How many consents wait besides this one. */
+	more: number,
+};
+
+/**
  *  An Agent's use of a secret that a Headless host asks this Approver about: the oldest one
  *  waiting.
  */
@@ -1626,6 +1656,8 @@ export type WorkspaceSnapshot = {
 	pendingLogin: PendingLogin | null,
 	/**  The oldest use of a secret an Agent host asks this Approver about. */
 	pendingAgentPrompt: PendingAgentPrompt | null,
+	/**  The oldest MCP client an Agent host asks this Approver to let in by OAuth. */
+	pendingAgentConsent: PendingAgentConsent | null,
 	/**  Seconds until what keefast copied is cleared from the clipboard, if it will be. */
 	clipboardClearsIn: number | null,
 	/**  Whether this build can reach Dropbox (it has an app key). */

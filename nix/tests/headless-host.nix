@@ -95,6 +95,35 @@ pkgs.testers.runNixOSTest {
         machine.succeed(as_user("operator", "keefast-agent pairing revoke claude"))
         assert machine.succeed(mcp + f" -H 'authorization: Bearer {token}'") == "401"
 
+    with subtest("an MCP client pairs by OAuth, approved with pairing approve"):
+        import base64, hashlib, json, re, urllib.parse
+        base = "http://127.0.0.1:7807"
+        redirect = "http://127.0.0.1:4444/cb"
+        client = json.loads(machine.succeed(
+            f"curl -s -X POST {base}/oauth/register -H 'content-type: application/json' "
+            f"--data '{{\"client_name\":\"Executor\",\"redirect_uris\":[\"{redirect}\"]}}'"
+        ))["client_id"]
+        verifier = "v" * 64
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        query = urllib.parse.urlencode({
+            "response_type": "code", "client_id": client, "redirect_uri": redirect,
+            "code_challenge": challenge, "code_challenge_method": "S256", "state": "vm",
+        })
+        page = machine.succeed(f"curl -s -o /dev/null -w '%{{redirect_url}}' '{base}/oauth/authorize?{query}'")
+        shown = re.search(r"<b>([A-Z0-9]{4}-[A-Z0-9]{4})</b>", machine.succeed(f"curl -s '{page}'"))
+        assert shown is not None
+        code = shown.group(1)
+        machine.succeed(as_user("operator", f"keefast-agent pairing approve {code} --name executor"))
+        back = machine.succeed(f"curl -s -o /dev/null -w '%{{redirect_url}}' '{page}'")
+        auth_code = urllib.parse.parse_qs(urllib.parse.urlparse(back).query)["code"][0]
+        tokens = json.loads(machine.succeed(
+            f"curl -s -X POST {base}/oauth/token --data-urlencode grant_type=authorization_code "
+            f"--data-urlencode code={auth_code} --data-urlencode redirect_uri={redirect} "
+            f"--data-urlencode client_id={client} --data-urlencode code_verifier={verifier}"
+        ))
+        assert machine.succeed(mcp + f" -H 'authorization: Bearer {tokens['access_token']}'") == "200"
+        print(machine.succeed("stat -c '%a %U' /var/lib/keefast-agent/oauth.json"))
+
     with subtest("an operator pairs an Approver"):
         approver = machine.succeed(
             as_user("operator", "keefast-agent pairing approver laptop 2>/dev/null")
@@ -117,6 +146,13 @@ pkgs.testers.runNixOSTest {
         )
         assert machine.succeed(events(approver)) == "200"
         assert machine.succeed(events("kfapprover_nobodys")) == "401"
+
+    with subtest("the OAuth client's refresh token survives the restart"):
+        refreshed = json.loads(machine.succeed(
+            f"curl -s -X POST {base}/oauth/token --data-urlencode grant_type=refresh_token "
+            f"--data-urlencode refresh_token={tokens['refresh_token']} --data-urlencode client_id={client}"
+        ))
+        assert refreshed["access_token"].startswith("kfo_"), refreshed
 
     with subtest("the service is hardened"):
         print(machine.succeed("systemd-analyze security keefast-agent.service | tail -1"))

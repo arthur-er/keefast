@@ -53,7 +53,7 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::approver::{APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, ApproverAnswer, ApproverEvent};
-use crate::host::HeadlessHost;
+use crate::host::{HeadlessHost, TokenOwner};
 use crate::listen::{Listen, TlsFiles};
 use crate::run::USE_SECRETS_PATH;
 use crate::{AgentError, AgentRequest, SecretListing, UseSecrets};
@@ -111,7 +111,7 @@ impl McpEndpoint {
             .local_addr()
             .map_err(|error| ServeError::Bind(listen.address, error))?;
         let stop = CancellationToken::new();
-        let app = router(host, stop.child_token());
+        let app = router(host, stop.child_token(), listen.tls.is_some());
         tokio::spawn(accept(listener, acceptor, app, stop.clone()));
         Ok(Self {
             address,
@@ -142,7 +142,7 @@ impl Drop for McpEndpoint {
     }
 }
 
-fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
+fn router(host: Arc<HeadlessHost>, stop: CancellationToken, tls: bool) -> Router {
     let config = StreamableHttpServerConfig::default()
         .with_cancellation_token(stop)
         .disable_allowed_hosts();
@@ -159,7 +159,7 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
             post(use_secrets).with_state(Arc::clone(&host)),
         )
         .layer(middleware::from_fn_with_state(
-            Arc::clone(&host),
+            (Arc::clone(&host), tls),
             require_bearer,
         ));
     // Approvers hold their own tokens, kept in the host's state rather than the Vault, so they
@@ -170,8 +170,10 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
             &format!("{APPROVER_PROMPTS_PATH}/{{id}}"),
             post(answer_prompt),
         )
-        .with_state(host);
-    agents.merge(approvers)
+        .with_state(Arc::clone(&host));
+    agents
+        .merge(approvers)
+        .merge(crate::oauth_endpoint::router(host, tls))
 }
 
 /// The Approver whose token a request carries, by name.
@@ -183,7 +185,7 @@ fn approver(host: &HeadlessHost, headers: &HeaderMap) -> Option<String> {
 /// Streams a paired Approver's prompts, from the ones waiting now, until it disconnects.
 async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderMap) -> Response {
     if approver(&host, &headers).is_none() {
-        return unauthorized();
+        return unauthorized_approver();
     }
     let (send, receive) = tokio::sync::mpsc::unbounded_channel();
     let connection = host.approvers().connect(move |event: &ApproverEvent| {
@@ -195,6 +197,7 @@ async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderM
         let _connected = &connection;
         let name = match &event {
             ApproverEvent::Prompt { .. } => "prompt",
+            ApproverEvent::Consent { .. } => "consent",
             ApproverEvent::Dismissed { .. } => "dismissed",
         };
         let json = serde_json::to_string(&event).expect("an event is plain JSON");
@@ -215,7 +218,7 @@ async fn answer_prompt(
     body: Bytes,
 ) -> Response {
     if approver(&host, &headers).is_none() {
-        return unauthorized();
+        return unauthorized_approver();
     }
     let Ok(answer) = serde_json::from_slice::<ApproverAnswer>(&body) else {
         return refusal(
@@ -308,7 +311,7 @@ fn tls_acceptor(files: &TlsFiles) -> Result<TlsAcceptor, ServeError> {
 #[derive(Clone)]
 struct Bearer(Arc<Zeroizing<String>>);
 
-fn bearer(headers: &HeaderMap) -> Option<Zeroizing<String>> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<Zeroizing<String>> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = value.split_once(' ')?;
     let token = token.trim();
@@ -316,36 +319,48 @@ fn bearer(headers: &HeaderMap) -> Option<Zeroizing<String>> {
         .then(|| Zeroizing::new(token.to_owned()))
 }
 
-/// Refuses a request without a bearer token, or, while the Vault is unlocked, with one no Agent
-/// pairing has.
+/// Refuses a request without a bearer token, or with one that is nobody's: one no Agent
+/// pairing has while the Vault is unlocked, or an OAuth access token that expired or whose
+/// pairing is gone. The refusal says where an MCP client learns to get a token by OAuth.
 async fn require_bearer(
-    State(host): State<Arc<HeadlessHost>>,
+    State((host, tls)): State<(Arc<HeadlessHost>, bool)>,
     mut request: Request,
     next: Next,
 ) -> Response {
     let Some(token) = bearer(request.headers()) else {
-        return unauthorized();
+        return unauthorized(request.headers(), request.uri(), tls, false);
     };
     let token = Arc::new(token);
     let checked = Arc::clone(&token);
-    let paired = tokio::task::spawn_blocking(move || {
-        host.agent_settings()
-            .map(|settings| settings.pairing_with_token(&checked).is_some())
-    })
-    .await
-    .unwrap_or(Some(false));
-    if paired == Some(false) {
-        return unauthorized();
+    let owner = tokio::task::spawn_blocking(move || host.token_owner(&checked))
+        .await
+        .unwrap_or(TokenOwner::Unknown);
+    if owner == TokenOwner::Unknown {
+        return unauthorized(request.headers(), request.uri(), tls, true);
     }
     request.extensions_mut().insert(Bearer(token));
     next.run(request).await
 }
 
-fn unauthorized() -> Response {
+fn unauthorized(headers: &HeaderMap, uri: &axum::http::Uri, tls: bool, invalid: bool) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(
+            header::WWW_AUTHENTICATE,
+            crate::oauth_endpoint::challenge(headers, uri, tls, invalid),
+        )],
+        "keefast needs an Agent pairing's token: Authorization: Bearer <token>, from \
+         `keefast-agent pairing create` or by OAuth\n",
+    )
+        .into_response()
+}
+
+/// Refuses a request to the Approvers' endpoints without a paired Approver's token.
+pub(crate) fn unauthorized_approver() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Bearer")],
-        "keefast needs an Agent pairing's token: Authorization: Bearer <token>\n",
+        "keefast needs a paired Approver's token: Authorization: Bearer <token>\n",
     )
         .into_response()
 }
@@ -400,7 +415,7 @@ async fn use_secrets(
     }
 }
 
-fn refusal(status: StatusCode, kind: &str, message: String) -> Response {
+pub(crate) fn refusal(status: StatusCode, kind: &str, message: String) -> Response {
     let body = serde_json::json!({ "error": kind, "message": message });
     (
         status,

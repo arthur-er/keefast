@@ -12,6 +12,9 @@ pub mod audit;
 pub mod host;
 pub mod installed;
 pub mod listen;
+pub mod oauth;
+#[cfg(feature = "serve")]
+mod oauth_endpoint;
 pub mod programs;
 pub mod run;
 #[cfg(feature = "serve")]
@@ -19,7 +22,10 @@ pub mod serve;
 mod session;
 mod settings;
 
-pub use approver::{AgentPrompt, Approval, Approver, ApproverCredentials, ApproverHub, NoApprover};
+pub use approver::{
+    AgentPrompt, Approval, Approver, ApproverCredentials, ApproverHub, ConsentAnswer,
+    ConsentPrompt, NoApprover,
+};
 pub use audit::{AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, SecretListing, SecretReference,

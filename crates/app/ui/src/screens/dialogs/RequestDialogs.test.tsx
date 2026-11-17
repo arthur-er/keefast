@@ -9,6 +9,7 @@ vi.mock("@/api", () => ({
   api: {
     answerAccess: vi.fn(() => new Promise(() => {})),
     answerAgentPrompt: vi.fn(() => new Promise(() => {})),
+    answerAgentConsent: vi.fn(() => Promise.resolve(null)),
     approvePairing: vi.fn(() => new Promise(() => {})),
     denyPairing: vi.fn(() => new Promise(() => {})),
     getEntry: () => new Promise(() => {}),
@@ -40,6 +41,7 @@ function snapshot(pending: Partial<WorkspaceSnapshot>): WorkspaceSnapshot {
     pendingAccess: null,
     pendingLogin: null,
     pendingAgentPrompt: null,
+    pendingAgentConsent: null,
     clipboardClearsIn: null,
     dropboxAvailable: false,
     configError: null,
@@ -80,6 +82,22 @@ const agent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentPromp
     },
   });
 
+const consent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentConsent"]>> = {}) =>
+  snapshot({
+    pendingAgentConsent: {
+      id: "c1",
+      host: "h1",
+      hostName: "Build server",
+      client: "Executor",
+      redirect: "executor.sh",
+      subgroups: ["shared", "deploy"],
+      pairedAs: null,
+      expires: NOW / 1000 + 600,
+      more: 0,
+      ...changes,
+    },
+  });
+
 const pairing = snapshot({ pendingPairing: { id: 3, vault: 0, vaultName: "Personal" } });
 
 function show(shown: WorkspaceSnapshot) {
@@ -97,6 +115,7 @@ beforeEach(() => {
   vi.useFakeTimers({ now: NOW });
   vi.mocked(api.answerAccess).mockClear();
   vi.mocked(api.answerAgentPrompt).mockClear();
+  vi.mocked(api.answerAgentConsent).mockClear();
   vi.mocked(api.approvePairing).mockClear();
 });
 
@@ -235,5 +254,63 @@ describe("an Agent host's prompt", () => {
     act(() => vi.advanceTimersByTime(15_000));
 
     expect(screen.getByText(/Denied in 45 s/)).toBeTruthy();
+  });
+});
+
+describe("an MCP client pairing with an Agent host by OAuth", () => {
+  const code = () => screen.getByLabelText<HTMLInputElement>("Code on the consent page");
+
+  it("names the client, where it returns to and the host, and asks for the code its page shows", () => {
+    show(consent());
+
+    expect(screen.getByRole("alertdialog", { name: "Pair “Executor” as an Agent?" })).toBeTruthy();
+    expect(screen.getByText("Returns to executor.sh")).toBeTruthy();
+    expect(screen.getByText(/Build server/)).toBeTruthy();
+    expect(screen.getByText(/Expires in 10 min/)).toBeTruthy();
+    expect(document.activeElement).toBe(code());
+  });
+
+  it("approves only with the whole code, once armed, with the pairing's name and what it reads", () => {
+    show(consent());
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+
+    fireEvent.change(code(), { target: { value: "abcd-efg" } });
+    expect(button(/^Approve/).disabled).toBe(true);
+    fireEvent.change(code(), { target: { value: "abcd-efgh" } });
+    expect(code().value).toBe("ABCD-EFGH");
+    fireEvent.change(screen.getByLabelText("Agent pairing name"), { target: { value: "executor" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "shared" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /May create Entries/ }));
+    fireEvent.click(button(/^Approve/));
+
+    expect(api.answerAgentConsent).toHaveBeenCalledWith("h1", "c1", true, "ABCDEFGH", "executor", ["shared"], true);
+  });
+
+  it("denies with Escape", () => {
+    show(consent());
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    expect(api.answerAgentConsent).toHaveBeenCalledWith("h1", "c1", false, "", "", [], false);
+  });
+
+  it("says a wrong code is wrong and keeps the dialog to try again", async () => {
+    vi.mocked(api.answerAgentConsent).mockRejectedValueOnce("that isn't the code the consent page shows");
+    show(consent());
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+
+    fireEvent.change(code(), { target: { value: "ZZZZZZZZ" } });
+    await act(async () => fireEvent.click(button(/^Approve/)));
+
+    expect(screen.getByText("that isn't the code the consent page shows")).toBeTruthy();
+    expect(code().getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("lets a client paired already in again, without asking for a name", () => {
+    show(consent({ pairedAs: "executor" }));
+
+    expect(screen.getByRole("alertdialog", { name: "Let “Executor” in again?" })).toBeTruthy();
+    expect(screen.queryByLabelText("Agent pairing name")).toBeNull();
+    expect(screen.getByText(/paired already as/)).toBeTruthy();
   });
 });

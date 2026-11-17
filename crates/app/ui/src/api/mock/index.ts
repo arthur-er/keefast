@@ -10,7 +10,8 @@
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
 //     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
-//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-many")
+//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-many"
+//     | "agentConsent" | "agentConsent-again")   (an MCP client pairing by OAuth; its code is ABCD-EFGH)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
@@ -36,6 +37,7 @@ import type {
   GroupNode,
   IconView,
   LaunchInfo,
+  PendingAgentConsent,
   PendingAgentPrompt,
   Location,
   LocationView,
@@ -289,6 +291,7 @@ interface MockState {
   /** The Agent hosts this desktop is "an Approver for", and their prompts, oldest first. */
   agentHosts: AgentHostView[];
   agentPrompts: (Omit<PendingAgentPrompt, "more">)[];
+  agentConsents: (Omit<PendingAgentConsent, "more">)[];
   nextId: number;
 }
 
@@ -326,6 +329,7 @@ function initialState(): MockState {
     launch: { vaultFile: null, keyFile: null, number: 0 },
     agentHosts: [],
     agentPrompts: [],
+    agentConsents: [],
     startOnBoot: false,
     nextId: 100,
   };
@@ -361,7 +365,12 @@ export type MockScene =
   | "agentPrompt"
   | "agentPrompt-shell"
   | "agentPrompt-many"
+  | "agentConsent"
+  | "agentConsent-again"
   | PluginScene;
+
+/** The code the mock's consent pages show. */
+export const MOCK_CONSENT_CODE = "ABCDEFGH";
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
@@ -785,6 +794,7 @@ export function createMockBackend(): Backend & {
           : { kind: "newEntry", vault: readable()[0]?.id ?? 0, group: readable()[0]?.browserGroup ?? null },
       },
       pendingAgentPrompt: state.agentPrompts[0] ? { ...state.agentPrompts[0], more: state.agentPrompts.length - 1 } : null,
+      pendingAgentConsent: state.agentConsents[0] ? { ...state.agentConsents[0], more: state.agentConsents.length - 1 } : null,
       clipboardClearsIn: state.clipboardClearsAt === null ? null : Math.max(0, state.clipboardClearsAt - Date.now() / 1000),
       dropboxAvailable: true,
       configError: state.configError,
@@ -1648,6 +1658,7 @@ export function createMockBackend(): Backend & {
     removeAgentHost: command((id) => {
       state.agentHosts = state.agentHosts.filter((h) => h.id !== id);
       state.agentPrompts = state.agentPrompts.filter((p) => p.host !== id);
+      state.agentConsents = state.agentConsents.filter((c) => c.host !== id);
       changed();
       return null;
     }),
@@ -1656,6 +1667,15 @@ export function createMockBackend(): Backend & {
       state.agentPrompts = state.agentPrompts.filter((p) => !(p.host === host && p.id === id));
       changed();
       if (state.agentPrompts.length === before) throw new MockError("conflict", "Another Approver answered first, or the request timed out.");
+      return null;
+    }),
+    answerAgentConsent: command((host, id, approve, code, name) => {
+      const consent = state.agentConsents.find((c) => c.host === host && c.id === id);
+      if (!consent) throw new MockError("conflict", "That request was answered already, or it expired: connect again from the MCP client.");
+      if (approve && code !== MOCK_CONSENT_CODE) throw new MockError("invalid", "That isn't the code the consent page shows.");
+      if (approve && !consent.pairedAs && name.trim() === "") throw new MockError("invalid", "An Agent pairing needs a name.");
+      state.agentConsents = state.agentConsents.filter((c) => c !== consent);
+      changed();
       return null;
     }),
     answerAccess: command((id, allow, remember) => {
@@ -1790,6 +1810,26 @@ export function createMockBackend(): Backend & {
     }, 60_000);
   }
 
+  /** An MCP client asking the build server to pair by OAuth, forgotten after ten minutes. */
+  function agentConsent(pairedAs: string | null) {
+    mockAgentHosts();
+    const consent = {
+      id: `c${state.nextId++}`,
+      host: "h-build",
+      hostName: "Build server",
+      client: "Executor",
+      redirect: "executor.sh",
+      subgroups: ["shared", "deploy"],
+      pairedAs,
+      expires: Date.now() / 1000 + 600,
+    };
+    state.agentConsents.push(consent);
+    setTimeout(() => {
+      state.agentConsents = state.agentConsents.filter((c) => c.id !== consent.id);
+      changed();
+    }, 600_000);
+  }
+
   function simulate(scene: MockScene) {
     if ((PLUGIN_SCENES as readonly string[]).includes(scene)) {
       plugins.simulate(scene as PluginScene);
@@ -1807,6 +1847,12 @@ export function createMockBackend(): Backend & {
         break;
       case "agentPrompt-shell":
         agentPrompt(["bash", "-c", "curl -fsS -H \"Authorization: Bearer $NPM_TOKEN\" https://registry.npmjs.org/-/whoami"], "npm/publish#password", "publish");
+        break;
+      case "agentConsent":
+        agentConsent(null);
+        break;
+      case "agentConsent-again":
+        agentConsent("executor");
         break;
       case "agentPrompt-many":
         agentPrompt(["gh", "release", "create", "v2.4.0"], "GitHub/deploy token#password", "deploy token");
