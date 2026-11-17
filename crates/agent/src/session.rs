@@ -18,6 +18,9 @@
 //! [`Approver`] is asked, without holding the Workspace, for up to a minute; with nobody to ask,
 //! the use is refused at once, saying how to allow it ahead of time in the desktop app. Every
 //! list and use goes to the audit log, never with a value.
+//!
+//! A pairing with the create right also writes, only directly in its own subgroup: see
+//! [`writes`].
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -38,6 +41,10 @@ use crate::http::{
 };
 use crate::programs::{is_shell_or_interpreter, program_name};
 use crate::run::Redactor;
+pub use writes::{CreateEntry, StoreSecret, WrittenEntry};
+
+mod writes;
+
 use crate::{
     AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentSettingsExt, AgentUse,
     DefaultAgentPolicy,
@@ -57,6 +64,11 @@ pub enum AgentRequest {
     UseSecrets(UseSecrets),
     /// An HTTP request keefast sends with secrets put in, to their Entries' allowed hosts.
     Http(HttpRequest),
+    /// A new Entry in the pairing's own subgroup, perhaps with a password keefast generates.
+    CreateEntry(CreateEntry),
+    /// A value for one field of an Entry in the pairing's own subgroup, for `keefast-agent
+    /// store`, which creates the Entry if needed.
+    Store(StoreSecret),
 }
 
 /// What `keefast-agent run` asks for: the values `references` name, to run `command` with.
@@ -76,6 +88,8 @@ pub enum AgentReply {
     Values(Vec<SecretValue>),
     /// What an `http_request` got back, its secrets redacted.
     Http(HttpResponse),
+    /// The Entry a `create_entry` or `store` wrote.
+    Written(WrittenEntry),
 }
 
 impl AgentReply {
@@ -92,6 +106,14 @@ impl AgentReply {
         match self {
             Self::Values(values) => values,
             _ => Vec::new(),
+        }
+    }
+
+    /// The Entry written in reply to [`AgentRequest::CreateEntry`] or [`AgentRequest::Store`].
+    pub fn into_written(self) -> Option<WrittenEntry> {
+        match self {
+            Self::Written(written) => Some(written),
+            _ => None,
         }
     }
 
@@ -190,6 +212,23 @@ pub enum AgentError {
     TooManyRedirects(usize),
     #[error("the request failed: {0}")]
     HttpFailed(String),
+    #[error(
+        "this Agent pairing may not create or change Entries: ask the user to allow it to create \
+         Entries in keefast's Vault settings, under Agents"
+    )]
+    NoCreateRight,
+    #[error(
+        "{0} is outside this Agent pairing's own subgroup: Agents create and change Entries only \
+         directly in their own subgroup, and list_secrets shows its path"
+    )]
+    NotOwnEntry(String),
+    #[error(
+        "{0} is already an Entry: set a field on it with keefast-agent store, or choose another \
+         title"
+    )]
+    EntryExists(String),
+    #[error("keefast won't write this Entry: {0}")]
+    BadEntry(String),
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name
@@ -211,7 +250,7 @@ pub struct SecretListing {
 }
 
 /// The two ways an Agent can name an Entry in a Secret reference, before `#<field>`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretReference {
     /// The Entry's UUID in hex: never ambiguous, and stable across renames.
     pub uuid: String,
@@ -348,6 +387,8 @@ impl AgentSession {
                 .unwrap_or(Err(AgentError::Locked)),
             AgentRequest::UseSecrets(request) => self.use_secrets(vault, request),
             AgentRequest::Http(request) => self.http_request(vault, request),
+            AgentRequest::CreateEntry(request) => self.create_entry(vault, request),
+            AgentRequest::Store(request) => self.store(vault, request),
         }
     }
 
@@ -529,6 +570,7 @@ impl AgentSession {
             program: None,
             method: None,
             host: None,
+            field: None,
             outcome,
             reason: None,
         }
@@ -598,6 +640,7 @@ impl AgentSession {
                 program: None,
                 method: None,
                 host: None,
+                field: None,
                 outcome: if refusal.is_some() {
                     AuditOutcome::Denied
                 } else {

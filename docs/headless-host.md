@@ -70,6 +70,7 @@ Vault unlocked:
 ```sh
 keefast-agent pairing create claude --agent-group Agents   # the first time: makes Agents the Agent group
 keefast-agent pairing create codex --reads shared          # also reads the subgroup "shared"
+keefast-agent pairing create ci --can-create               # may create Entries in Agents/ci
 keefast-agent pairing list
 keefast-agent pairing revoke codex                         # its token stops working at once
 ```
@@ -181,6 +182,27 @@ program. Limits: 1 MiB request and response bodies (a longer response is cut off
 five redirects, 30 seconds a hop. The host makes these requests from its own network, so a
 firewall in front of it applies.
 
+## Creating secrets
+
+A pairing made with `--can-create` (or with **Creates Entries in its own subgroup** checked in
+the desktop app's Vault settings → Agents) can save secrets in its own subgroup without seeing
+them. With MCP, the `create_entry` tool makes an Entry there, with a title, username, URL, tags
+and non-secret custom fields, and can have keefast generate its password, which is never
+returned. With a shell, `keefast-agent store` saves a value it reads from its input:
+
+```sh
+mint-token | keefast-agent store ci/deploy-token#token
+```
+
+It sets that field (`password`, `username`, `url`, or a custom field, stored protected) on the
+Entry `ci/deploy-token`, creating the Entry if it isn't there, and prints its Secret references,
+never the value. The one line break ending the input is dropped. It reaches the host as `run`
+does, through `KEEFAST_AGENT_URL` and `KEEFAST_AGENT_TOKEN`, at `/agent/store`.
+
+Agents write only Entries directly in their own subgroup, never one they merely read, and never
+delete. A changed Entry keeps its previous version in its history, so you can see and restore
+what an Agent changed in the desktop app.
+
 ## Approvers
 
 An Approver is a desktop keefast paired with the host, which shows its prompts: the pairing, the
@@ -218,8 +240,9 @@ keeps showing prompts, which it can no longer answer, until it reconnects (withi
 
 ## The audit log
 
-Every list and use is recorded, with the time, the pairing, the Entry, the program (or an HTTP
-request's method and host) and whether it was allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
+Every list, use, `create_entry` and `store` is recorded, with the time, the pairing, the Entry,
+the program (or an HTTP request's method and host, or the field stored) and whether it was
+allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
 append-only, readable only by the host's user, and rotated at 4 MiB, keeping four older files
 (`audit.log.1` … `audit.log.4`). Read it over the admin socket:
 

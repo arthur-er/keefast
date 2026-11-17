@@ -19,6 +19,7 @@
 //! keefast-agent pairing revoke-approver <name> [--admin-socket <path>]
 //! keefast-agent log [--lines <n>] [--admin-socket <path>]
 //! keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
+//! keefast-agent store <Secret reference>#<field> < value
 //! ```
 //!
 //! docs/headless-host.md is the operator's guide.
@@ -35,6 +36,13 @@ usage:
       output. It reaches keefast at $KEEFAST_AGENT_URL with the Agent pairing's token in
       $KEEFAST_AGENT_TOKEN. It exits with the program's exit code, or 125 if keefast refused
       or couldn't be reached.
+
+  keefast-agent store <Secret reference>#<field>
+      Saves the value on its input to that field of an Entry in the Agent pairing's own
+      subgroup, creating the Entry if needed, such as `mint-token | keefast-agent store
+      claude/new#token`. The one line break ending the value is dropped. keefast answers with
+      the Entry's Secret reference, never the value. The pairing needs the right to create
+      Entries. It reaches keefast as run does.
 
   keefast-agent serve --vault <path | dropbox:/path> [--listen <address:port>]
                       [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
@@ -106,6 +114,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("run") => run(&args[1..]),
+        Some("store") => store(&args[1..]),
         #[cfg(unix)]
         Some(command @ ("serve" | "unlock" | "lock" | "status" | "pairing" | "log")) => {
             match operator::run(command, &args[1..]) {
@@ -141,6 +150,37 @@ fn run(args: &[String]) -> ExitCode {
         Err(error) => {
             eprintln!("keefast-agent: {error}");
             ExitCode::from(FAILED)
+        }
+    }
+}
+
+fn store(args: &[String]) -> ExitCode {
+    use keefast_agent::run::Connection;
+    use keefast_agent::store;
+
+    let stored = store::parse(args).and_then(|reference| {
+        let connection = Connection::from_env()?;
+        let value = store::read_value(std::io::stdin().lock())?;
+        let written = store::store(&connection, &reference, value)?;
+        Ok((reference, written))
+    });
+    match stored {
+        Ok((reference, written)) => {
+            let field = reference.rsplit_once('#').map_or("", |(_, field)| field);
+            let how = if written.created {
+                "a new Entry"
+            } else {
+                "the Entry"
+            };
+            println!(
+                "Saved to {how} {}, field {field}. Its UUID is {}: use {}#{field} to refer to it.",
+                written.reference.path, written.reference.uuid, written.reference.path
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("keefast-agent: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -627,6 +667,9 @@ mod operator {
         }
         if let Some(program) = &record.program {
             line += &format!(" with {program}");
+        }
+        if let Some(field) = &record.field {
+            line += &format!(" field {field}");
         }
         line += match record.outcome {
             AuditOutcome::Allowed => "  allowed",

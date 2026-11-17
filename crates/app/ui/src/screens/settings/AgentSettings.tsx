@@ -1,6 +1,6 @@
 // Vault settings → Agents (ADR 0012): the Agent group, whose subgroups are all Agents ever see,
-// and the Agent pairings: each owns a subgroup by its name and may read others. Pairing an Agent
-// shows its bearer token once; the Vault keeps only its hash.
+// and the Agent pairings: each owns a subgroup by its name, may read others, and may create
+// Entries in its own. Pairing an Agent shows its bearer token once; the Vault keeps only its hash.
 
 import { type ReactNode, useState } from "react";
 import { Bot, Copy, Plus } from "lucide-react";
@@ -16,13 +16,16 @@ const fail = (error: unknown) => toast(errorMessage(error), { icon: "error" });
 
 const SECTION_NOTE = "AI agents reach this Vault through keefast's MCP server. They see only Entries in the Agent group's subgroups, and never their notes.";
 const GROUP_NOTE = "Each Agent gets a subgroup of it. Entries anywhere else never reach an Agent.";
+const CREATE_LABEL = "Creates Entries in its own subgroup";
+const CREATE_NOTE = "It can save secrets it mints, and set their fields. It never deletes, and its changes stay in each Entry's history.";
 
 /** The names of the subgroups a pairing reads, its own first. */
 export function readsText(pairing: AgentPairingView, settings: AgentSettingsView): string {
   const name = (id: GroupId) => settings.subgroups.find((group) => group.id === id)?.name;
   const own = name(pairing.group) ?? pairing.name;
   const others = pairing.reads.map(name).filter((n): n is string => n !== undefined);
-  return others.length > 0 ? `Reads ${own}, ${others.join(", ")}` : `Reads ${own}`;
+  const reads = others.length > 0 ? `Reads ${own}, ${others.join(", ")}` : `Reads ${own}`;
+  return pairing.canCreate ? `${reads} · creates Entries` : reads;
 }
 
 export function agentsSection(vault: VaultId, settings: AgentSettingsView): SettingsSection {
@@ -60,7 +63,7 @@ export function agentsSection(vault: VaultId, settings: AgentSettingsView): Sett
       settings.pairings.length > 0
         ? settings.pairings.map((pairing) => ({
             id: `agent-${pairing.id}`,
-            search: `${pairing.name} Agent pairing reads subgroups revoke`,
+            search: `${pairing.name} Agent pairing reads subgroups creates entries revoke`,
             render: () => <AgentPairingRow vault={vault} settings={settings} pairing={pairing} />,
           }))
         : [{
@@ -129,6 +132,7 @@ function ReadsChecklist({
 export function PairAgentDialog({ vault, settings, onClose }: { vault: VaultId; settings: AgentSettingsView; onClose: () => void }) {
   const [name, setName] = useState("");
   const [reads, setReads] = useState<GroupId[]>([]);
+  const [canCreate, setCanCreate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -138,7 +142,7 @@ export function PairAgentDialog({ vault, settings, onClose }: { vault: VaultId; 
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createAgentPairing(vault, name, reads.filter((id) => id !== own));
+      const created = await api.createAgentPairing(vault, name, reads.filter((id) => id !== own), canCreate);
       setToken(created.token);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -210,12 +214,26 @@ export function PairAgentDialog({ vault, settings, onClose }: { vault: VaultId; 
         <Field label="Also reads">
           <ReadsChecklist settings={settings} except={own} reads={reads} onChange={setReads} />
         </Field>
+        <CreateCheck checked={canCreate} onChange={setCanCreate} />
       </form>
     </Dialog>
   );
 }
 
-/** A paired Agent: what it reads, which the user can change, and Revoke once confirmed. */
+/** Whether a pairing creates Entries in its own subgroup, with what that lets it do. */
+function CreateCheck({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Check checked={checked} onCheckedChange={onChange}>
+        {CREATE_LABEL}
+      </Check>
+      <div className="hint">{CREATE_NOTE}</div>
+    </div>
+  );
+}
+
+/** A paired Agent: what it reads and whether it creates Entries, which the user can change, and
+ * Revoke once confirmed. */
 function AgentPairingRow({ vault, settings, pairing }: { vault: VaultId; settings: AgentSettingsView; pairing: AgentPairingView }) {
   const [reading, setReading] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -238,7 +256,7 @@ function AgentPairingRow({ vault, settings, pairing }: { vault: VaultId; setting
         <Popover open={reading} onOpenChange={setReading}>
           <PopoverTrigger asChild>
             <Button size="sm" variant="ghost">
-              Reads…
+              Access…
             </Button>
           </PopoverTrigger>
           <PopoverContent side="top" align="end" className="confirm-pop" onEscapeKeyDown={(event) => keepPage(event, () => setReading(false))}>
@@ -248,7 +266,11 @@ function AgentPairingRow({ vault, settings, pairing }: { vault: VaultId; setting
               settings={settings}
               except={pairing.group}
               reads={pairing.reads}
-              onChange={(reads) => void api.setAgentPairingReads(vault, pairing.id, reads).catch(fail)}
+              onChange={(reads) => void api.setAgentPairingAccess(vault, pairing.id, reads, pairing.canCreate).catch(fail)}
+            />
+            <CreateCheck
+              checked={pairing.canCreate}
+              onChange={(on) => void api.setAgentPairingAccess(vault, pairing.id, pairing.reads, on).catch(fail)}
             />
           </PopoverContent>
         </Popover>

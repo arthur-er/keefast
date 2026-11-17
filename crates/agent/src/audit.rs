@@ -37,7 +37,8 @@ pub struct AuditRecord {
     /// The Agent pairing's name, as it was then.
     pub pairing: String,
     pub pairing_id: String,
-    /// `list`, `use` or `http_request`; later keefasts add more, such as `create` and `reveal`.
+    /// `list`, `use`, `http_request`, `create` or `store`; later keefasts add more, such as
+    /// `reveal`.
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<AuditEntry>,
@@ -50,6 +51,9 @@ pub struct AuditRecord {
     /// The host an `http_request` went to, or was refused for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// The field a `store` set, or was refused for: its name, never its value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
     pub outcome: AuditOutcome,
     /// Why it was denied.
     #[serde(default, skip_serializing_if = "Option::is_none")]

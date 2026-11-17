@@ -13,7 +13,7 @@ vi.mock("@/api", () => ({
 const { PairAgentDialog, readsText } = await import("./AgentSettings");
 const { api } = await import("@/api");
 
-const claude: AgentPairingView = { id: "p1", name: "claude", group: "claude", reads: ["shared"] };
+const claude: AgentPairingView = { id: "p1", name: "claude", group: "claude", reads: ["shared"], canCreate: false };
 
 const settings: AgentSettingsView = {
   agentGroup: "agents",
@@ -33,7 +33,7 @@ afterEach(() => {
 describe("Pair an Agent", () => {
   it("pairs the Agent with the subgroups it also reads, then shows its token once", async () => {
     vi.mocked(api.createAgentPairing).mockResolvedValue({
-      pairing: { id: "p2", name: "codex", group: "codex", reads: ["shared"] },
+      pairing: { id: "p2", name: "codex", group: "codex", reads: ["shared"], canCreate: false },
       token: "kfa_secret-token",
     });
     const onClose = vi.fn();
@@ -44,12 +44,27 @@ describe("Pair an Agent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pair" }));
 
     const token = await screen.findByLabelText("Token");
-    expect(api.createAgentPairing).toHaveBeenCalledWith(1, "codex", ["shared"]);
+    expect(api.createAgentPairing).toHaveBeenCalledWith(1, "codex", ["shared"], false);
     expect((token as HTMLInputElement).value).toBe("kfa_secret-token");
     expect(screen.getByText(/shows it only now/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("lets the Agent create Entries in its own subgroup when asked to", async () => {
+    vi.mocked(api.createAgentPairing).mockResolvedValue({
+      pairing: { id: "p2", name: "codex", group: "codex", reads: [], canCreate: true },
+      token: "kfa_secret-token",
+    });
+    render(<PairAgentDialog vault={1} settings={settings} onClose={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "codex" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Creates Entries in its own subgroup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pair" }));
+
+    await screen.findByLabelText("Token");
+    expect(api.createAgentPairing).toHaveBeenCalledWith(1, "codex", [], true);
   });
 
   it("doesn't offer an Agent its own subgroup to read as well", () => {
@@ -74,8 +89,9 @@ describe("Pair an Agent", () => {
 });
 
 describe("an Agent pairing's row", () => {
-  it("says which subgroups it reads, its own first", () => {
+  it("says which subgroups it reads, its own first, and whether it creates Entries", () => {
     expect(readsText(claude, settings)).toBe("Reads claude, shared");
     expect(readsText({ ...claude, reads: [] }, settings)).toBe("Reads claude");
+    expect(readsText({ ...claude, canCreate: true }, settings)).toBe("Reads claude, shared · creates Entries");
   });
 });

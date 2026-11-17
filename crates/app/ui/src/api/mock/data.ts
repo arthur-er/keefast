@@ -120,6 +120,7 @@ export interface MockAgentPairing {
   name: string;
   group: string;
   reads: string[];
+  canCreate: boolean;
 }
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */

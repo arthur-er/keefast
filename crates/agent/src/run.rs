@@ -105,15 +105,32 @@ impl Connection {
         })
     }
 
-    /// The use-secrets endpoint: the URL given may be the host's own or its MCP endpoint's.
-    fn endpoint(&self) -> String {
+    /// The endpoint at `path` beside the MCP endpoint: the URL given may be the host's own or
+    /// its MCP endpoint's.
+    fn endpoint(&self, path: &str) -> String {
         let base = self.url.trim_end_matches('/');
         let base = base.strip_suffix("/mcp").unwrap_or(base);
-        format!("{base}{USE_SECRETS_PATH}")
+        format!("{base}{path}")
     }
 
     /// The values for `request`, in the order of its references.
     pub fn use_secrets(&self, request: &UseSecrets) -> Result<Vec<SecretValue>, String> {
+        #[derive(Deserialize)]
+        struct Values {
+            values: Vec<SecretValue>,
+        }
+        let body = Zeroizing::new(serde_json::to_string(request).expect("a request is plain JSON"));
+        let values: Values = self.post(USE_SECRETS_PATH, &body)?;
+        Ok(values.values)
+    }
+
+    /// POSTs `body`, JSON, to the endpoint at `path`, and reads its JSON answer, or the message
+    /// of keefast's refusal.
+    pub(crate) fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &str,
+    ) -> Result<T, String> {
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
@@ -121,12 +138,12 @@ impl Connection {
                 .timeout_global(Some(Duration::from_secs(90)))
                 .build(),
         );
-        let endpoint = self.endpoint();
+        let endpoint = self.endpoint(path);
         let mut response = agent
             .post(&endpoint)
             .header("Authorization", &format!("Bearer {}", self.token.as_str()))
             .header("Content-Type", "application/json")
-            .send(serde_json::to_string(request).expect("a request is plain JSON"))
+            .send(body)
             .map_err(|error| format!("can't reach keefast at {endpoint}: {error}"))?;
         let status = response.status();
         let body = Zeroizing::new(
@@ -138,13 +155,8 @@ impl Connection {
                 .map_err(|error| format!("keefast's answer couldn't be read: {error}"))?,
         );
         if status.is_success() {
-            #[derive(Deserialize)]
-            struct Values {
-                values: Vec<SecretValue>,
-            }
-            let values: Values = serde_json::from_str(&body)
-                .map_err(|error| format!("keefast's answer couldn't be read: {error}"))?;
-            return Ok(values.values);
+            return serde_json::from_str(&body)
+                .map_err(|error| format!("keefast's answer couldn't be read: {error}"));
         }
         #[derive(Deserialize)]
         struct Refusal {

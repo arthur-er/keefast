@@ -1510,7 +1510,7 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
-    createAgentPairing: command((id, name, reads) => {
+    createAgentPairing: command((id, name, reads, canCreate) => {
       const v = vault(id);
       const trimmed = name.trim();
       if (!trimmed) throw new MockError("invalid", "Give this Agent a name.");
@@ -1523,17 +1523,18 @@ export function createMockBackend(): Backend & {
         own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };
         v.groups.push(own);
       }
-      const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads] };
+      const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads], canCreate };
       pairings.push(pairing);
       edited(v);
       const token = `kfa_${Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
       return { pairing: { ...pairing, reads: [...reads] }, token };
     }),
-    setAgentPairingReads: command((id, pairingId, reads) => {
+    setAgentPairingAccess: command((id, pairingId, reads, canCreate) => {
       const v = vault(id);
       const pairing = v.agentPairings?.find((p) => p.id === pairingId);
       if (!pairing) throw new MockError("invalid", "This Agent pairing was revoked.");
       pairing.reads = [...reads];
+      pairing.canCreate = canCreate;
       edited(v);
       return null;
     }),
