@@ -907,3 +907,64 @@ async fn a_desktops_approver_client_hears_the_consent_and_approves_it_with_the_c
             .any(|p| p.name() == "executor" && p.can_create())
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_source_can_keep_only_two_consents_waiting_so_it_cant_crowd_out_the_others() {
+    let served = Served::start().await;
+    let client = served.register("Executor").await;
+
+    let mut from_one = Vec::new();
+    for _ in 0..3 {
+        from_one.push(served.authorize_from("203.0.113.7", &client).await);
+    }
+    let from_another = served.authorize_from("198.51.100.9", &client).await;
+
+    assert_eq!(from_one[0].status(), 303);
+    assert!(location(&from_one[0]).starts_with("/oauth/consent/"));
+    assert!(location(&from_one[1]).starts_with("/oauth/consent/"));
+    assert_eq!(
+        query(&location(&from_one[2]), "error").as_deref(),
+        Some("temporarily_unavailable")
+    );
+    assert!(location(&from_another).starts_with("/oauth/consent/"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_web_page_elsewhere_may_read_registration_or_token_answers() {
+    // MCP clients register and fetch tokens from their own processes or servers, never from a
+    // web page, so the host lets no other origin's page read the answers.
+    let served = Served::start().await;
+    let register = http()
+        .post(served.url("/oauth/register"))
+        .header("origin", "https://attacker.example")
+        .json(&json!({ "client_name": "page", "redirect_uris": [REDIRECT] }))
+        .send()
+        .await
+        .unwrap();
+    let token = http()
+        .post(served.url("/oauth/token"))
+        .header("origin", "https://attacker.example")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(encode(&[("grant_type", "refresh_token"), ("refresh_token", "kfor_nobody")]))
+        .send()
+        .await
+        .unwrap();
+    let preflight = http()
+        .request(reqwest::Method::OPTIONS, served.url("/oauth/token"))
+        .header("origin", "https://attacker.example")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .unwrap();
+
+    for response in [&register, &token, &preflight] {
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "{} lets other origins read it",
+            response.url()
+        );
+    }
+}

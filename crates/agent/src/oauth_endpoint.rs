@@ -43,17 +43,17 @@ pub(crate) fn router(host: Arc<HeadlessHost>, tls: bool) -> Router {
     Router::new()
         .route(
             PROTECTED_RESOURCE_PATH,
-            get(protected_resource).options(preflight),
+            get(protected_resource),
         )
         .route(
             &format!("{PROTECTED_RESOURCE_PATH}/mcp"),
-            get(protected_resource).options(preflight),
+            get(protected_resource),
         )
         .route(
             AUTHORIZATION_SERVER_PATH,
-            get(authorization_server).options(preflight),
+            get(authorization_server),
         )
-        .route(REGISTER_PATH, post(register).options(preflight))
+        .route(REGISTER_PATH, post(register))
         .route(AUTHORIZE_PATH, get(authorize))
         .route(&format!("{CONSENT_PATH}/{{page}}"), get(consent))
         .route(
@@ -61,8 +61,8 @@ pub(crate) fn router(host: Arc<HeadlessHost>, tls: bool) -> Router {
             get(consent_status),
         )
         .route(&format!("{CONSENT_PATH}/{{page}}/cancel"), post(cancel))
-        .route(TOKEN_PATH, post(token).options(preflight))
-        .route(REVOKE_PATH, post(revoke).options(preflight))
+        .route(TOKEN_PATH, post(token))
+        .route(REVOKE_PATH, post(revoke))
         .route(
             &format!("{APPROVER_CONSENTS_PATH}/{{id}}"),
             post(answer_consent),
@@ -115,33 +115,31 @@ pub(crate) fn challenge(headers: &HeaderMap, uri: &Uri, tls: bool, invalid: bool
     .unwrap_or_else(|_| HeaderValue::from_static("Bearer"))
 }
 
+/// Where a request came from: the peer, or when the peer is a reverse proxy on this machine,
+/// such as `tailscale serve`, the address it says it forwarded for (the last in
+/// `X-Forwarded-For`, the one it added itself).
+fn source(peer: std::net::IpAddr, headers: &HeaderMap) -> std::net::IpAddr {
+    if !peer.is_loopback() {
+        return peer;
+    }
+    headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|address| address.trim().parse().ok())
+        .last()
+        .unwrap_or(peer)
+}
+
 fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
     (
         status,
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::CACHE_CONTROL, "no-store"),
-            // Metadata, registration and tokens are for any client, a browser-based one too;
-            // none of them rides on a cookie.
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
         ],
         body.to_string(),
-    )
-        .into_response()
-}
-
-async fn preflight() -> Response {
-    (
-        StatusCode::NO_CONTENT,
-        [
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-            (header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS"),
-            (
-                header::ACCESS_CONTROL_ALLOW_HEADERS,
-                "authorization, content-type, mcp-protocol-version",
-            ),
-            (header::ACCESS_CONTROL_MAX_AGE, "86400"),
-        ],
     )
         .into_response()
 }
