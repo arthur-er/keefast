@@ -3,18 +3,19 @@
 // Browser group), its Pairings, its Agent group and Agent pairings, and its master key and encryption. Same page as General
 // Settings C; leaves when the Vault locks.
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderOpen, Globe, Lock, PlugZap, Save, Shield } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AccessPolicy, PairingView, VaultId, VaultSettings, VaultSummary } from "@/bindings";
 import { useAgentSettings, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
+import { Button, Popover, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
 import { vaultStatus } from "@/shell/vaultStatus";
 
 import { agentsSection } from "./AgentSettings";
+import { ConfirmPop } from "./ConfirmPop";
 import { GroupPicker } from "./GroupPicker";
 import { pairedText, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
@@ -305,37 +306,12 @@ function PairingRow({ vault, pairing }: { vault: VaultId; pairing: PairingView }
           <PopoverTrigger asChild>
             <Button size="sm">Revoke</Button>
           </PopoverTrigger>
-          <PopoverContent
-            side="top"
-            align="end"
-            className="confirm-pop"
-            onEscapeKeyDown={(event) => {
-              // Escape closes the popover, not the page under it.
-              event.preventDefault();
-              setOpen(false);
-            }}
-          >
-            <ConfirmRevoke name={name} onCancel={() => setOpen(false)} onRevoke={revoke} />
-          </PopoverContent>
+          <ConfirmPop title={`Revoke the Pairing “${name}”?`} action="Revoke" onCancel={() => setOpen(false)} onConfirm={revoke}>
+            It must pair again to fill Entries.
+          </ConfirmPop>
         </Popover>
       </div>
     </div>
   );
 }
 
-function ConfirmRevoke({ name, onCancel, onRevoke }: { name: string; onCancel: () => void; onRevoke: () => void }): ReactNode {
-  return (
-    <>
-      <h4>Revoke the Pairing “{name}”?</h4>
-      <p>It must pair again to fill Entries.</p>
-      <div className="hstack justify-end">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" variant="danger" autoFocus onClick={onRevoke}>
-          Revoke
-        </Button>
-      </div>
-    </>
-  );
-}

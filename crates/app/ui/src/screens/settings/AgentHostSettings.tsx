@@ -11,8 +11,9 @@ import { Info, Plus, RefreshCw, Server } from "lucide-react";
 import { api, errorMessage } from "@/api";
 import type { AgentActivityRecord, AgentHostView, VaultId } from "@/bindings";
 import { useAgentHosts } from "@/api/queries";
-import { Badge, Button, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, Segmented, Select, toast } from "@/kit";
+import { Badge, Button, Dialog, Field, Input, Popover, PopoverTrigger, Segmented, Select, toast } from "@/kit";
 
+import { ConfirmPop } from "./ConfirmPop";
 import { type ActivityFilter, describeActivity, filterActivity, NO_FILTER, type OutcomeFilter, pairingsIn } from "./activity";
 
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
@@ -134,26 +135,9 @@ function HostRow({ host }: { host: AgentHostView }) {
           <PopoverTrigger asChild>
             <Button size="sm">Remove</Button>
           </PopoverTrigger>
-          <PopoverContent
-            side="top"
-            align="end"
-            className="confirm-pop"
-            onEscapeKeyDown={(event) => {
-              event.preventDefault();
-              setRemoving(false);
-            }}
-          >
-            <h4>Stop answering “{host.name}”?</h4>
-            <p>Its prompts stop showing here. To shut this desktop out on the host too, run keefast-agent pairing revoke-approver there.</p>
-            <div className="hstack justify-end">
-              <Button size="sm" variant="ghost" onClick={() => setRemoving(false)}>
-                Cancel
-              </Button>
-              <Button size="sm" variant="danger" onClick={remove}>
-                Remove
-              </Button>
-            </div>
-          </PopoverContent>
+          <ConfirmPop title={`Stop answering “${host.name}”?`} action="Remove" autoFocus={false} onCancel={() => setRemoving(false)} onConfirm={remove}>
+            Its prompts stop showing here. To shut this desktop out on the host too, run keefast-agent pairing revoke-approver there.
+          </ConfirmPop>
         </Popover>
       </div>
     </div>
