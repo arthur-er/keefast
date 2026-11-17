@@ -552,6 +552,14 @@ impl HeadlessHost {
         &self.approver_credentials
     }
 
+    /// Unpairs the Approver called `name` and cuts off its open prompt streams at once, so it
+    /// is neither shown nor counted on for another prompt.
+    pub fn revoke_approver(&self, name: &str) -> Result<(), crate::approver::ApproverPairingError> {
+        self.approver_credentials.unpair(name)?;
+        self.approvers.disconnect(name);
+        Ok(())
+    }
+
     /// The audit log's latest `limit` records, oldest first.
     pub fn audit_records(&self, limit: usize) -> std::io::Result<Vec<AuditRecord>> {
         self.audit_log.read(limit)

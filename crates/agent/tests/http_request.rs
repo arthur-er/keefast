@@ -349,8 +349,18 @@ fn a_host_allowed_by_a_wildcard_that_resolves_to_a_private_address_is_refused() 
     fixture
         .network
         .resolves("mapped.example.com", &["::ffff:10.0.0.1"]);
+    // Teredo tunnels, and the local-use NAT64 prefix, which may lead anywhere.
+    fixture.network.resolves(
+        "teredo.example.com",
+        &["2001:0:4136:e378:8000:63bf:3fff:fdd2"],
+    );
+    fixture
+        .network
+        .resolves("nat64.example.com", &["64:ff9b:1::a00:1"]);
 
-    for host in ["rebound", "metadata", "lan", "v6", "mapped"] {
+    for host in [
+        "rebound", "metadata", "lan", "v6", "mapped", "teredo", "nat64",
+    ] {
         let url = format!("https://{host}.example.com/");
         let refused = fixture.send(bearer("GET", &url));
         assert!(

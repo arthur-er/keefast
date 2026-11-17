@@ -236,13 +236,34 @@ async fn a_revoked_token_is_refused_at_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_call_answers_locked_until_the_host_is_unlocked() {
     let served = Served::locked(&loopback()).await;
-    let client = served.connect(&served.claude).await;
 
-    let locked = list_secrets(&client).await;
-    assert_eq!(locked.is_error, Some(true));
-    assert!(text(&locked).contains("locked"), "{}", text(&locked));
+    // Locked, the host can't tell a pairing's token from any other string: whatever it is,
+    // the answer is "locked", and no MCP session opens.
+    for token in [served.claude.as_str(), "anything-at-all"] {
+        let response = reqwest::Client::new()
+            .post(served.endpoint.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {token}"))
+            .body(INITIALIZE)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.headers().get("mcp-session-id").is_none());
+        let answer: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(answer["id"], 1);
+        assert!(
+            answer["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("locked"),
+            "{answer}"
+        );
+        assert!(answer.get("result").is_none());
+    }
 
     served.unlock().await;
+    let client = served.connect(&served.claude).await;
     let listed = list_secrets(&client).await;
     assert!(text(&listed).contains("claude token"), "{}", text(&listed));
 }
@@ -384,7 +405,7 @@ async fn run_gets_a_value_once_allowed_and_is_denied_before_and_the_log_shows_bo
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.program, record.outcome))
+        .map(|record| (record.action.to_string(), record.program, record.outcome))
         .collect();
     assert_eq!(
         log,
@@ -686,6 +707,49 @@ async fn only_a_paired_approvers_token_opens_the_prompt_stream_even_while_locked
     assert_eq!(served.answer(&served.claude, "any", true, false).await, 401);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_an_approver_closes_its_prompt_stream_at_once_and_it_stops_being_asked() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let (_, stream) = served.approver_stream(&laptop).await;
+    let mut stream = stream.unwrap();
+    assert!(served.host.approvers().is_connected());
+
+    let host = Arc::clone(&served.host);
+    let reply = tokio::task::spawn_blocking(move || {
+        keefast_agent::admin::handle(
+            &host,
+            keefast_agent::admin::AdminRequest::ApproverRevoke {
+                name: "laptop".to_owned(),
+            },
+        )
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        reply,
+        keefast_agent::admin::AdminReply::Approvers { .. }
+    ));
+
+    let end = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match stream.response.chunk().await {
+                Ok(Some(_)) => continue,
+                ended => return ended.map(|_| ()),
+            }
+        }
+    })
+    .await;
+    assert!(
+        end.is_ok(),
+        "the stream is closed within 5 s, not kept open"
+    );
+    assert!(!served.host.approvers().is_connected());
+    // With nobody to ask, run is refused rather than left waiting for the revoked desktop.
+    let (status, body) = served.run_gh_later().await.unwrap();
+    assert_eq!((status, body["error"].as_str()), (403, Some("not_allowed")));
+}
+
 /// A desktop keefast's [`ApproverClient`] connected to `served` with `token`, and what it hears.
 fn approver_client(
     served: &Served,
@@ -699,6 +763,7 @@ fn approver_client(
         AgentHost {
             url: served.endpoint.url(),
             token: zeroize::Zeroizing::new(token.to_owned()),
+            certificate: None,
         },
         move |event| {
             let _ = send.send(event);
@@ -875,7 +940,14 @@ async fn http_request_sends_the_secret_to_an_allowed_host_and_returns_the_answer
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.method, record.host, record.outcome))
+        .map(|record| {
+            (
+                record.action.to_string(),
+                record.method,
+                record.host,
+                record.outcome,
+            )
+        })
         .collect();
     assert_eq!(
         log,
@@ -1096,7 +1168,7 @@ async fn reveal_secret_asks_the_approver_saying_so_and_returns_the_value_once_al
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.outcome))
+        .map(|record| (record.action.to_string(), record.outcome))
         .collect();
     assert_eq!(log, [("reveal".to_owned(), AuditOutcome::Allowed)]);
 }
@@ -1128,6 +1200,7 @@ async fn a_paired_approver_reads_the_audit_log_even_while_locked_and_nobody_else
     let host = |token: &str| AgentHost {
         url: served.endpoint.url(),
         token: zeroize::Zeroizing::new(token.to_owned()),
+        certificate: None,
     };
 
     let all = tokio::task::block_in_place(|| agent_activity(&host(&laptop), 100)).unwrap();
@@ -1158,4 +1231,74 @@ async fn a_paired_approver_reads_the_audit_log_even_while_locked_and_nobody_else
     assert_eq!(last, all[1..]);
     assert_eq!(locked, all);
     assert_eq!(agent, Err(ActivityError::Unpaired));
+}
+
+/// A host serving TLS with the fixture's self-signed certificate, unlocked, and that
+/// certificate's PEM.
+async fn self_signed() -> (Served, String) {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let listen = Listen::new(
+        "127.0.0.1:0",
+        Some(fixtures.join("tls-cert.pem")),
+        Some(fixtures.join("tls-key.pem")),
+    )
+    .unwrap();
+    let served = Served::locked(&listen).await;
+    served.unlock().await;
+    let pem = std::fs::read_to_string(fixtures.join("tls-cert.pem")).unwrap();
+    (served, pem)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approver_reaches_a_self_signed_host_only_once_told_to_trust_its_certificate() {
+    let (served, pem) = self_signed().await;
+    let laptop = served.pair_approver("laptop");
+    let host = |certificate: Option<&str>| AgentHost {
+        url: served.endpoint.url(),
+        token: zeroize::Zeroizing::new(laptop.clone()),
+        certificate: certificate.map(str::to_owned),
+    };
+
+    let public_roots = tokio::task::block_in_place(|| agent_activity(&host(None), 10));
+    let trusted = tokio::task::block_in_place(|| agent_activity(&host(Some(&pem)), 10));
+
+    assert!(
+        matches!(public_roots, Err(ActivityError::Unreachable(_))),
+        "{public_roots:?}"
+    );
+    assert!(trusted.is_ok(), "{trusted:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_reaches_a_self_signed_host_once_told_to_trust_its_certificate() {
+    let (served, pem) = self_signed().await;
+    served.allow_claude_token("gh").await;
+    let request = keefast_agent::UseSecrets {
+        references: vec!["claude/claude token#password".to_owned()],
+        command: vec!["gh".to_owned()],
+    };
+    let connection = |trusting: Option<&str>| {
+        let connection = keefast_agent::run::Connection::host(
+            served.endpoint.url(),
+            zeroize::Zeroizing::new(served.claude.clone()),
+        );
+        match trusting {
+            Some(pem) => connection.trusting(pem).unwrap(),
+            None => connection,
+        }
+    };
+
+    let public_roots = tokio::task::block_in_place(|| connection(None).use_secrets(&request));
+    let trusted = tokio::task::block_in_place(|| connection(Some(&pem)).use_secrets(&request));
+
+    assert!(public_roots.is_err());
+    assert_eq!(
+        trusted.unwrap()[0].value(),
+        "claude token-secret-value-1234"
+    );
+    assert!(
+        keefast_agent::run::Connection::host(String::new(), zeroize::Zeroizing::default())
+            .trusting("not a certificate")
+            .is_err()
+    );
 }

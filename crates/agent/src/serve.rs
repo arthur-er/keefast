@@ -239,14 +239,18 @@ fn approver(host: &HeadlessHost, headers: &HeaderMap) -> Option<String> {
 
 /// Streams a paired Approver's prompts, from the ones waiting now, until it disconnects.
 async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderMap) -> Response {
-    if approver(&host, &headers).is_none() {
+    let Some(name) = approver(&host, &headers) else {
         return unauthorized_approver();
-    }
+    };
     let (send, receive) = tokio::sync::mpsc::unbounded_channel();
-    let connection = host.approvers().connect(move |event: &ApproverEvent| {
-        // Fails only once the stream is gone, and the connection with it.
-        let _ = send.send(event.clone());
-    });
+    // `send` lives only in the hub: when the Approver is revoked, the hub lets go of it and the
+    // stream ends.
+    let connection = host
+        .approvers()
+        .connect_named(&name, move |event: &ApproverEvent| {
+            // Fails only once the stream is gone, and the connection with it.
+            let _ = send.send(event.clone());
+        });
     let events = UnboundedReceiverStream::new(receive).map(move |event| {
         // The connection lasts as long as the stream: dropping it disconnects the Approver.
         let _connected = &connection;
@@ -326,7 +330,7 @@ async fn accept(
     stop: CancellationToken,
 ) {
     loop {
-        let (stream, _) = tokio::select! {
+        let (stream, peer) = tokio::select! {
             () = stop.cancelled() => return,
             accepted = listener.accept() => match accepted {
                 Ok(accepted) => accepted,
@@ -334,7 +338,7 @@ async fn accept(
                 Err(_) => continue,
             },
         };
-        let app = app.clone();
+        let app = app.clone().layer(axum::Extension(Peer(peer)));
         let acceptor = acceptor.clone();
         let stop = stop.clone();
         // The TLS handshake runs on the connection's own task, so a slow client holds up no
@@ -351,6 +355,10 @@ async fn accept(
         });
     }
 }
+
+/// The address a connection came from, which handlers may read as an extension.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Peer(pub std::net::SocketAddr);
 
 async fn connection<S>(stream: S, app: Router, stop: CancellationToken)
 where
@@ -421,11 +429,50 @@ async fn require_bearer(
     let owner = tokio::task::spawn_blocking(move || host.token_owner(&checked))
         .await
         .unwrap_or(TokenOwner::Unknown);
-    if owner == TokenOwner::Unknown {
-        return unauthorized(request.headers(), request.uri(), tls, true);
+    match owner {
+        TokenOwner::Unknown => unauthorized(request.headers(), request.uri(), tls, true),
+        TokenOwner::Locked => locked(request).await,
+        TokenOwner::Pairing(_) => {
+            request.extensions_mut().insert(Bearer(token));
+            next.run(request).await
+        }
     }
-    request.extensions_mut().insert(Bearer(token));
-    next.run(request).await
+}
+
+/// The answer to every request with a bearer token while the Vault is locked. The host can't
+/// tell a pairing's token from any other string then, so it answers "locked" and nothing
+/// else: no MCP session opens, and no tool is listed. An MCP request gets a JSON-RPC error
+/// with its own id, which MCP clients show; `run` and `store` get their usual refusal.
+async fn locked(request: Request) -> Response {
+    let message = AgentError::Locked.to_string();
+    if !request.uri().path().starts_with("/mcp") {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "locked", message);
+    }
+    if request.method() != axum::http::Method::POST {
+        return (StatusCode::SERVICE_UNAVAILABLE, format!("{message}\n")).into_response();
+    }
+    let body = axum::body::to_bytes(request.into_body(), 1 << 20)
+        .await
+        .unwrap_or_default();
+    let id = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|message| message.get("id").cloned());
+    match id {
+        // A notification or a response wants no answer.
+        None => StatusCode::ACCEPTED.into_response(),
+        Some(id) => {
+            let answer = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32000, "message": message },
+            });
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                answer.to_string(),
+            )
+                .into_response()
+        }
+    }
 }
 
 fn unauthorized(headers: &HeaderMap, uri: &axum::http::Uri, tls: bool, invalid: bool) -> Response {
@@ -451,6 +498,23 @@ pub(crate) fn unauthorized_approver() -> Response {
         .into_response()
 }
 
+/// Refuses an OAuth client's access token at `run`'s and `store`'s endpoints. OAuth clients,
+/// such as Executor, only speak MCP, which never hands out a raw value; only a pairing's own
+/// token, which the user puts in `keefast-agent run`'s environment, reaches these (ADR 0012).
+fn refuse_oauth_client(token: &str) -> Option<Response> {
+    token
+        .starts_with(crate::oauth::ACCESS_TOKEN_PREFIX)
+        .then(|| {
+            refusal(
+                StatusCode::FORBIDDEN,
+                "mcp_only",
+                "an MCP client paired by OAuth reaches keefast only through MCP: `keefast-agent \
+             run` and `store` need an Agent pairing's own token"
+                    .to_owned(),
+            )
+        })
+}
+
 /// `keefast-agent run`'s endpoint: the values a [`UseSecrets`] names, as
 /// `{"values": [{"reference", "value"}]}`, or a refusal as `{"error", "message"}`. Values go
 /// only to `run`, which puts them in its program's environment; never to MCP.
@@ -459,6 +523,9 @@ async fn use_secrets(
     axum::Extension(Bearer(token)): axum::Extension<Bearer>,
     body: Bytes,
 ) -> Response {
+    if let Some(refused) = refuse_oauth_client(&token) {
+        return refused;
+    }
     let Ok(request) = serde_json::from_slice::<UseSecrets>(&body) else {
         return refusal(
             StatusCode::BAD_REQUEST,
@@ -495,6 +562,9 @@ async fn store(
     axum::Extension(Bearer(token)): axum::Extension<Bearer>,
     body: Bytes,
 ) -> Response {
+    if let Some(refused) = refuse_oauth_client(&token) {
+        return refused;
+    }
     let body = Zeroizing::new(body.to_vec());
     let Ok(request) = serde_json::from_slice::<StoreSecret>(&body) else {
         return refusal(

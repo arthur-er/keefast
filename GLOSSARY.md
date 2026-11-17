@@ -169,3 +169,5 @@ _Avoid_: Local server, desktop server
 **Approver**:
 A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied. The desktop lists the hosts it approves for under Settings → Agent hosts.
 _Avoid_: Admin, controller, remote UI
+
+_Note_: the Headless host's **admin socket** (`keefast-agent pairing …`, `--admin-group`, `KEEFAST_AGENT_ADMIN_SOCKET`, `services.keefast-agent.adminGroup`) is not an Approver. It is a local Unix socket for the host's operator, who unlocks the Vault and makes pairings from a shell on the server; an Approver is a desktop keefast that answers prompts over HTTPS. "Admin" stays wrong for an Approver, and is fine for the socket.

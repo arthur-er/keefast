@@ -24,6 +24,8 @@ pub struct AgentHostView {
     pub id: String,
     pub name: String,
     pub url: String,
+    /// Whether it is trusted by a certificate the user gave rather than the public roots.
+    pub trusts_own_certificate: bool,
     pub state: AgentHostState,
     /// Why it is disconnected; keefast connects again by itself.
     pub problem: Option<String>,
@@ -40,6 +42,7 @@ impl From<HostView> for AgentHostView {
             id: host.id,
             name: host.name,
             url: host.url,
+            trusts_own_certificate: host.trusts_own_certificate,
             state,
             problem,
         }
@@ -73,7 +76,7 @@ pub struct PendingAgentPrompt {
     /// behind it. It can never be remembered.
     pub reveal: bool,
     /// When the host denies it unanswered, in seconds since 1970 UTC.
-    pub expires: f64,
+    pub expires: u32,
     /// How many prompts wait besides this one.
     pub more: u32,
 }
@@ -93,10 +96,7 @@ impl PendingAgentPrompt {
             can_remember: prompt.can_remember,
             http_host: prompt.host.clone(),
             reveal: prompt.reveal,
-            expires: waiting
-                .expires
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0.0, |since| since.as_secs_f64()),
+            expires: unix_seconds(waiting.expires),
             more: u32::try_from(more).unwrap_or(u32::MAX),
         }
     }
@@ -120,7 +120,7 @@ pub struct PendingAgentConsent {
     /// The Agent pairing the client has already, which approving lets in again.
     pub paired_as: Option<String>,
     /// When the host forgets it, in seconds since 1970 UTC.
-    pub expires: f64,
+    pub expires: u32,
     /// How many consents wait besides this one.
     pub more: u32,
 }
@@ -136,13 +136,19 @@ impl PendingAgentConsent {
             redirect: consent.redirect.clone(),
             subgroups: consent.subgroups.clone(),
             paired_as: consent.paired_as.clone(),
-            expires: waiting
-                .expires
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0.0, |since| since.as_secs_f64()),
+            expires: unix_seconds(waiting.expires),
             more: u32::try_from(more).unwrap_or(u32::MAX),
         }
     }
+}
+
+/// Seconds since 1970 UTC, as a `u32` (good until 2106): the UI's bindings refuse 64-bit
+/// numbers, and an `f64` would come out as `number | null`.
+fn unix_seconds(time: std::time::SystemTime) -> u32 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u32::try_from(since.as_secs()).unwrap_or(u32::MAX)
+        })
 }
 
 #[tauri::command]
@@ -165,8 +171,9 @@ pub async fn add_agent_host(
     name: String,
     url: String,
     token: String,
+    certificate: Option<String>,
 ) -> ApiResult<AgentHostView> {
-    agent_hosts::add(&core, &name, &url, &token).map(Into::into)
+    agent_hosts::add(&core, &name, &url, &token, certificate.as_deref()).map(Into::into)
 }
 
 #[tauri::command]
@@ -218,6 +225,35 @@ pub async fn answer_agent_consent(
     blocking(move || agent_hosts::answer_agent_consent(&core, &host, &id, &answer)).await?
 }
 
+/// What an Agent did, or asked to do, as a Headless host's audit log names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActivityAction {
+    List,
+    Use,
+    HttpRequest,
+    Create,
+    Store,
+    Reveal,
+    /// One a later host logs and this keefast doesn't know.
+    Other,
+}
+
+impl From<keefast_agent::AuditAction> for AgentActivityAction {
+    fn from(action: keefast_agent::AuditAction) -> Self {
+        use keefast_agent::AuditAction;
+        match action {
+            AuditAction::List => Self::List,
+            AuditAction::Use => Self::Use,
+            AuditAction::HttpRequest => Self::HttpRequest,
+            AuditAction::Create => Self::Create,
+            AuditAction::Store => Self::Store,
+            AuditAction::Reveal => Self::Reveal,
+            AuditAction::Other => Self::Other,
+        }
+    }
+}
+
 /// Whether an Agent's request went through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -232,11 +268,10 @@ pub enum AgentActivityOutcome {
 #[serde(rename_all = "camelCase")]
 pub struct AgentActivityRecord {
     /// When, in seconds since 1970 UTC.
-    pub time: f64,
+    pub time: u32,
     /// The Agent pairing's name, as it was then.
     pub pairing: String,
-    /// `list`, `use`, `http_request`, `create`, `store` or `reveal`; later hosts may add more.
-    pub action: String,
+    pub action: AgentActivityAction,
     pub entry_uuid: Option<String>,
     pub entry_title: Option<String>,
     /// The program a `use` was for.
@@ -258,9 +293,9 @@ impl From<keefast_agent::AuditRecord> for AgentActivityRecord {
             None => (None, None),
         };
         Self {
-            time: record.time as f64,
+            time: u32::try_from(record.time).unwrap_or(u32::MAX),
             pairing: record.pairing,
-            action: record.action,
+            action: record.action.into(),
             entry_uuid,
             entry_title,
             program: record.program,

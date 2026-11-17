@@ -47,8 +47,8 @@ Agents talk MCP (Streamable HTTP) to `/mcp` on that address, as
 `http://127.0.0.1:7807/mcp`, or `https://…/mcp` with TLS. Every request needs an Agent pairing's
 token as `Authorization: Bearer <token>`: one without, or with a token no pairing has (or a
 revoked one), gets 401. While the Vault is locked, the host can't check tokens, since it keeps
-their hashes in the Vault: every call then answers that keefast is locked, and Agents tell their
-user to unlock it. The host doesn't check the `Host` header, so a proxy can forward its own name.
+their hashes in the Vault: any bearer token then gets only the answer that keefast is locked (no MCP
+session opens), and Agents tell their user to unlock it. The host doesn't check the `Host` header, so a proxy can forward its own name.
 
 Three ways to publish the host:
 
@@ -59,7 +59,9 @@ Three ways to publish the host:
   proxy `https://agents.example.com/` to `http://127.0.0.1:7807`. Don't buffer responses: the
   MCP endpoint streams them (SSE).
 - **Built-in TLS**: listen on the network with `--tls-cert` and `--tls-key`, PEM files of a
-  certificate chain and its private key, from ACME or your own CA.
+  certificate chain and its private key, from ACME or your own CA. A certificate the public
+  roots don't vouch for (self-signed, or from your own CA) works too, once each client is told
+  to trust it: see [Self-signed certificates](#self-signed-certificates).
 
 ## Pairing Agents
 
@@ -122,6 +124,19 @@ other (`keefast-agent pairing revoke executor`, or in the desktop app), and its 
 working as soon as the host has the change. Behind a proxy, the host builds the addresses it
 publishes from the `X-Forwarded-Host` and `X-Forwarded-Proto` headers, or else from `Host`: let
 your proxy set them (Caddy does by default; with nginx, `proxy_set_header`), or forward the public `Host`.
+
+## Self-signed certificates
+
+With `--tls-cert` and a self-signed certificate, or one from your own CA, clients don't trust
+the host by the public roots. Give each client that certificate (or the CA's) as a PEM file:
+
+- the desktop: paste it under **Certificate** in **Settings → Agent hosts → Add host…**; it is
+  kept with the host in `agent-hosts.json`;
+- `keefast-agent run` and `store`: `export KEEFAST_AGENT_CA=/path/to/host-cert.pem`.
+
+That certificate is then the only one trusted for that host: the public roots aren't. MCP
+clients (Claude Code, Executor) use their own trust settings; a reverse proxy with ACME or
+`tailscale serve` avoids all this.
 
 ## Using a secret in a command
 
@@ -239,8 +254,8 @@ secret store, and holds a stream of server-sent events open to the host
 too; it answers at `POST /approver/prompts/<id>`. The host keeps each Approver's token hash in
 `approvers.json` in its state directory, not in the Vault: Approvers belong to the host, and they
 connect while it is locked. The desktop checks the host's certificate against the usual public
-roots, so a self-signed certificate won't do; a reverse proxy or `tailscale serve` gives one that
-does.
+roots, unless you paste the host's own certificate under **Certificate** when adding it (see
+[Self-signed certificates](#self-signed-certificates)).
 
 Approvers also see MCP clients asking to pair [by OAuth](#pairing-by-oauth), and approve them
 by typing the code the client's consent page shows.
@@ -293,8 +308,18 @@ it starts. Serve a Vault kept only for Agents if you do this.
 
 Like the desktop app, the host Merges changes made to its Vault file elsewhere: a local Vault
 file is watched, and a Dropbox one checked every 30 seconds. A Dropbox Vault file needs
-`KEEFAST_DROPBOX_APP_KEY`, and a Dropbox account connected for the host's user; connecting one
-from the host isn't possible yet.
+`KEEFAST_DROPBOX_APP_KEY`, and a Dropbox account connected for the host's user. Connect one as
+that user, over ssh if need be:
+
+```sh
+keefast-agent dropbox connect
+```
+
+It prints a Dropbox page to open in a browser on any machine; Dropbox shows a code there, which
+you type back in. The tokens go to that user's OS secret store (the Secret Service on Linux), where
+`serve` finds them, as the desktop app keeps its own. A system service without a Secret Service,
+such as the NixOS module's, can't use Dropbox: keefast has no secret store of its own for servers
+(see the spec's Out of Scope); serve a local Vault file there, kept in step by your own sync.
 
 `--state-dir <dir>` is where the host keeps its own state, such as the cached copy of a Dropbox
 Vault file and the audit log; it defaults to `$XDG_STATE_HOME/keefast-agent`.

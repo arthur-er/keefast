@@ -29,6 +29,9 @@ pub struct AgentHost {
     pub url: String,
     /// The Approver's token, from `keefast-agent pairing approver`.
     pub token: Zeroizing<String>,
+    /// The PEM of the host's own certificate or its CA, trusted instead of the public roots
+    /// (see [`crate::trust`]).
+    pub certificate: Option<String>,
 }
 
 impl AgentHost {
@@ -36,6 +39,18 @@ impl AgentHost {
     fn base(&self) -> &str {
         let base = self.url.trim_end_matches('/');
         base.strip_suffix("/mcp").unwrap_or(base)
+    }
+
+    /// An HTTP client for the host: statuses as answers, trusting its certificate.
+    fn agent(&self, connect: Duration, global: Duration) -> ureq::Agent {
+        ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .tls_config(crate::trust::tls(self.certificate.as_deref()))
+                .timeout_connect(Some(connect))
+                .timeout_global(Some(global))
+                .build(),
+        )
     }
 
     fn authorization(&self) -> String {
@@ -123,12 +138,7 @@ pub fn answer_prompt(
     id: &str,
     answer: ApproverAnswer,
 ) -> Result<(), AnswerPromptError> {
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build(),
-    );
+    let agent = host.agent(Duration::from_secs(15), Duration::from_secs(15));
     let url = format!("{}{APPROVER_PROMPTS_PATH}/{id}", host.base());
     let response = agent
         .post(&url)
@@ -152,12 +162,7 @@ pub fn answer_consent(
     id: &str,
     answer: &ConsentAnswer,
 ) -> Result<(), AnswerPromptError> {
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build(),
-    );
+    let agent = host.agent(Duration::from_secs(15), Duration::from_secs(15));
     let url = format!("{}{APPROVER_CONSENTS_PATH}/{id}", host.base());
     let mut response = agent
         .post(&url)
@@ -203,12 +208,7 @@ pub fn agent_activity(host: &AgentHost, lines: usize) -> Result<Vec<AuditRecord>
     struct Activity {
         records: Vec<AuditRecord>,
     }
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(30)))
-            .build(),
-    );
+    let agent = host.agent(Duration::from_secs(30), Duration::from_secs(30));
     let url = format!("{}{APPROVER_ACTIVITY_PATH}?lines={lines}", host.base());
     let mut response = agent
         .get(&url)
@@ -268,13 +268,7 @@ fn read_stream(
     on_event: &dyn Fn(ApproverClientEvent),
     retry: &mut Duration,
 ) -> String {
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .timeout_global(Some(STREAM_LIFETIME))
-            .build(),
-    );
+    let agent = host.agent(Duration::from_secs(15), STREAM_LIFETIME);
     let url = format!("{}{APPROVER_EVENTS_PATH}", host.base());
     let mut response = match agent
         .get(&url)

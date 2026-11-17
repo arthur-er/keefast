@@ -43,8 +43,10 @@ usage:
       Runs <program> with the secrets the Secret references name in its environment, such as
       `run --env GH_TOKEN=GitHub/token#password -- gh auth status`, and redacts them from its
       output. It reaches keefast at $KEEFAST_AGENT_URL with the Agent pairing's token in
-      $KEEFAST_AGENT_TOKEN; without $KEEFAST_AGENT_URL, the desktop app on this machine. It
-      exits with the program's exit code, or 125 if keefast refused or couldn't be reached.
+      $KEEFAST_AGENT_TOKEN; without $KEEFAST_AGENT_URL, the desktop app on this machine. For a
+      host with a self-signed certificate or its own CA, set $KEEFAST_AGENT_CA to that
+      certificate's PEM file. It exits with the program's exit code, or 125 if keefast refused
+      or couldn't be reached.
 
   keefast-agent store <Secret reference>#<field>
       Saves the value on its input to that field of an Entry in the Agent pairing's own
@@ -111,6 +113,13 @@ usage:
   keefast-agent pairing revoke-approver <name> [--admin-socket <path>]
       Unpairs an Approver: its token stops working.
 
+  keefast-agent dropbox connect
+      Connects the Dropbox account `serve --vault dropbox:/<path>` opens its Vault file from.
+      It prints a Dropbox page to open in a browser on any machine, and reads the code that
+      page shows. The tokens go to this user's OS secret store (the Secret Service on Linux),
+      so run it as the user `serve` runs as; a system service without a Secret Service can't
+      use Dropbox.
+
   keefast-agent log [--lines <n>] [--admin-socket <path>]
       Shows the Headless host's audit log: what each Agent pairing listed and used, when, and
       whether it was allowed. The last 50 records, or <n>.
@@ -129,17 +138,17 @@ fn main() -> ExitCode {
         Some("run") => run(&args[1..]),
         Some("store") => store(&args[1..]),
         #[cfg(unix)]
-        Some(command @ ("serve" | "unlock" | "lock" | "status" | "pairing" | "log")) => {
-            match operator::run(command, &args[1..]) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!("keefast-agent: {error}");
-                    ExitCode::FAILURE
-                }
+        Some(
+            command @ ("serve" | "unlock" | "lock" | "status" | "pairing" | "log" | "dropbox"),
+        ) => match operator::run(command, &args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("keefast-agent: {error}");
+                ExitCode::FAILURE
             }
-        }
+        },
         #[cfg(not(unix))]
-        Some("serve" | "unlock" | "lock" | "status" | "pairing" | "log") => {
+        Some("serve" | "unlock" | "lock" | "status" | "pairing" | "log" | "dropbox") => {
             eprintln!("keefast-agent: the Headless host runs only on Linux and other unix systems");
             ExitCode::FAILURE
         }
@@ -333,6 +342,7 @@ mod operator {
                 &["--key-file", "--admin-socket"],
             )?),
             "pairing" => pairing(args),
+            "dropbox" => dropbox(args),
             "log" => {
                 let flags = Flags::new(args, &[], &["--lines", "--admin-socket"])?;
                 let lines = match flags.value("--lines") {
@@ -583,6 +593,46 @@ mod operator {
         Ok(workspace
             .with_dropbox(Arc::new(Dropbox::new(config, Arc::new(OsSecretStore))))
             .with_vault_cache(Arc::new(FileVaultCache::new(state_dir.join("cache")))))
+    }
+
+    /// `keefast-agent dropbox connect`: connects the Dropbox account a Headless host opens its
+    /// Vault file from, on a server without a browser. The user opens Dropbox's page on any
+    /// machine and types the code it shows here; the tokens go to this user's OS secret store,
+    /// where `serve` finds them, as the desktop app keeps its own.
+    fn dropbox(args: &[String]) -> Result<(), String> {
+        if args.first().map(String::as_str) != Some("connect") {
+            return Err("dropbox needs a command: keefast-agent dropbox connect".to_owned());
+        }
+        Flags::new(&args[1..], &[], &[])?;
+        let config = dropbox_config()
+            .ok_or("connecting Dropbox needs a Dropbox app key in KEEFAST_DROPBOX_APP_KEY")?;
+        let dropbox = Dropbox::new(config, Arc::new(OsSecretStore));
+        let authorization = dropbox
+            .begin_connect_by_code()
+            .map_err(|error| error.to_string())?;
+        eprintln!(
+            "Open this page in a browser, on any machine, let keefast in, and type the code \
+             Dropbox shows:\n\n  {}\n",
+            authorization.url()
+        );
+        eprint!("Code: ");
+        let mut code = String::new();
+        io::stdin()
+            .lock()
+            .read_line(&mut code)
+            .map_err(|error| format!("can't read the code: {error}"))?;
+        if code.trim().is_empty() {
+            return Err("no code given: Dropbox isn't connected".to_owned());
+        }
+        let account = dropbox
+            .finish_connect_with_code(&authorization, &code)
+            .map_err(|error| format!("Dropbox didn't connect: {error}"))?;
+        println!(
+            "Dropbox is connected as {} ({}). Serve a Vault file from it with \
+             --vault dropbox:/<path>.",
+            account.name, account.email
+        );
+        Ok(())
     }
 
     /// The Dropbox app keefast connects as, as the desktop app finds it: the environment, or

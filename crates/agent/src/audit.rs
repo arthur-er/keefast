@@ -22,6 +22,47 @@ pub enum AuditOutcome {
     Denied,
 }
 
+/// What an Agent did, or asked to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditAction {
+    /// `list_secrets`.
+    List,
+    /// `keefast-agent run`: secrets handed to a program.
+    Use,
+    HttpRequest,
+    /// `create_entry`.
+    Create,
+    /// `keefast-agent store`.
+    Store,
+    /// `reveal_secret`.
+    Reveal,
+    /// One a later keefast logs and this one doesn't know.
+    #[serde(other)]
+    Other,
+}
+
+impl AuditAction {
+    /// Its name in the log.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Use => "use",
+            Self::HttpRequest => "http_request",
+            Self::Create => "create",
+            Self::Store => "store",
+            Self::Reveal => "reveal",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl std::fmt::Display for AuditAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The Entry a record is about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEntry {
@@ -37,9 +78,7 @@ pub struct AuditRecord {
     /// The Agent pairing's name, as it was then.
     pub pairing: String,
     pub pairing_id: String,
-    /// `list`, `use`, `http_request`, `create` or `store`; later keefasts add more, such as
-    /// `reveal`.
-    pub action: String,
+    pub action: AuditAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<AuditEntry>,
     /// The program a `use` was for, by its executable's name.

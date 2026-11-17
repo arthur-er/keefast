@@ -178,6 +178,27 @@ impl Served {
             .unwrap()
     }
 
+    /// Begins a consent for `client` as a browser at `source` does through a reverse proxy on
+    /// this machine, which says where the request came from: the response.
+    async fn authorize_from(&self, source: &str, client: &str) -> reqwest::Response {
+        http()
+            .get(format!(
+                "{}?{}",
+                self.url("/oauth/authorize"),
+                encode(&[
+                    ("response_type", "code"),
+                    ("client_id", client),
+                    ("redirect_uri", REDIRECT),
+                    ("code_challenge", &"a".repeat(43)),
+                    ("code_challenge_method", "S256"),
+                ])
+            ))
+            .header("x-forwarded-for", source)
+            .send()
+            .await
+            .unwrap()
+    }
+
     /// The consent page at `path`, as the browser shows it.
     async fn consent_at(&self, path: String) -> Consent {
         let page = http().get(self.url(&path)).send().await.unwrap();
@@ -860,6 +881,7 @@ async fn a_desktops_approver_client_hears_the_consent_and_approves_it_with_the_c
     let host = AgentHost {
         url: served.endpoint.url(),
         token: zeroize::Zeroizing::new(served.laptop.clone()),
+        certificate: None,
     };
     let (send, heard) = std::sync::mpsc::channel();
     let _client = ApproverClient::start(host.clone(), move |event| {
@@ -906,4 +928,104 @@ async fn a_desktops_approver_client_hears_the_consent_and_approves_it_with_the_c
             .iter()
             .any(|p| p.name() == "executor" && p.can_create())
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_source_can_keep_only_two_consents_waiting_so_it_cant_crowd_out_the_others() {
+    let served = Served::start().await;
+    let client = served.register("Executor").await;
+
+    let mut from_one = Vec::new();
+    for _ in 0..3 {
+        from_one.push(served.authorize_from("203.0.113.7", &client).await);
+    }
+    let from_another = served.authorize_from("198.51.100.9", &client).await;
+
+    assert_eq!(from_one[0].status(), 303);
+    assert!(location(&from_one[0]).starts_with("/oauth/consent/"));
+    assert!(location(&from_one[1]).starts_with("/oauth/consent/"));
+    assert_eq!(
+        query(&location(&from_one[2]), "error").as_deref(),
+        Some("temporarily_unavailable")
+    );
+    assert!(location(&from_another).starts_with("/oauth/consent/"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_web_page_elsewhere_may_read_registration_or_token_answers() {
+    // MCP clients register and fetch tokens from their own processes or servers, never from a
+    // web page, so the host lets no other origin's page read the answers.
+    let served = Served::start().await;
+    let register = http()
+        .post(served.url("/oauth/register"))
+        .header("origin", "https://attacker.example")
+        .json(&json!({ "client_name": "page", "redirect_uris": [REDIRECT] }))
+        .send()
+        .await
+        .unwrap();
+    let token = http()
+        .post(served.url("/oauth/token"))
+        .header("origin", "https://attacker.example")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(encode(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", "kfor_nobody"),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    let preflight = http()
+        .request(reqwest::Method::OPTIONS, served.url("/oauth/token"))
+        .header("origin", "https://attacker.example")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .unwrap();
+
+    for response in [&register, &token, &preflight] {
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "{} lets other origins read it",
+            response.url()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_paired_by_oauth_reaches_only_mcp_not_run_or_stores_endpoints() {
+    // OAuth clients (Executor, claude.ai) only speak MCP. The endpoints that hand `run` raw
+    // values, or let `store` write one, are for pairings whose token the user put in `run`'s
+    // environment.
+    let served = Served::start().await;
+    served.unlock().await;
+    let client = served.register("Executor").await;
+    let (access, _) = served.paired_tokens(&client, "executor").await;
+
+    let use_secrets = http()
+        .post(served.url("/agent/use-secrets"))
+        .header("authorization", format!("Bearer {access}"))
+        .json(&json!({
+            "references": ["executor/anything#password"],
+            "command": ["gh", "auth", "status"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let store = http()
+        .post(served.url("/agent/store"))
+        .header("authorization", format!("Bearer {access}"))
+        .json(&json!({ "reference": "executor/anything#password", "value": "x" }))
+        .send()
+        .await
+        .unwrap();
+
+    for response in [use_secrets, store] {
+        assert_eq!(response.status(), 403);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "mcp_only", "{body}");
+    }
+    assert_eq!(served.mcp_status(Some(&access)).await.0, 200);
 }

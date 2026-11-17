@@ -32,7 +32,8 @@ struct FakeFile {
 
 struct Grant {
     challenge: String,
-    redirect_uri: String,
+    /// `None` when the page showed the code for the user to paste.
+    redirect_uri: Option<String>,
 }
 
 #[derive(Default)]
@@ -295,7 +296,18 @@ fn authorize(state: &mut FakeState, url: &Url) -> Reply {
     assert_eq!(query["response_type"], "code");
     assert_eq!(query["code_challenge_method"], "S256");
     assert_eq!(query["token_access_type"], "offline");
-    let redirect_uri = &query["redirect_uri"];
+    let Some(redirect_uri) = query.get("redirect_uri") else {
+        // Without a redirect, Dropbox's page shows the code for the user to copy.
+        let code = state.next("code");
+        state.codes.insert(
+            code.clone(),
+            Grant {
+                challenge: query["code_challenge"].clone(),
+                redirect_uri: None,
+            },
+        );
+        return Response::from_string(format!("Your code: {code}")).boxed();
+    };
     let mut back = Url::parse(redirect_uri).unwrap();
     if std::mem::take(&mut state.deny) {
         back.query_pairs_mut()
@@ -311,7 +323,7 @@ fn authorize(state: &mut FakeState, url: &Url) -> Reply {
             code.clone(),
             Grant {
                 challenge: query["code_challenge"].clone(),
-                redirect_uri: redirect_uri.clone(),
+                redirect_uri: Some(redirect_uri.clone()),
             },
         );
         back.query_pairs_mut()
@@ -336,7 +348,9 @@ fn token(state: &mut FakeState, body: &[u8]) -> Reply {
                 return invalid_grant();
             };
             let challenge = BASE64_URL.encode(Sha256::digest(form["code_verifier"].as_bytes()));
-            if challenge != grant.challenge || form["redirect_uri"] != grant.redirect_uri {
+            if challenge != grant.challenge
+                || form.get("redirect_uri") != grant.redirect_uri.as_ref()
+            {
                 return invalid_grant();
             }
             let refresh = state.next("refresh-");

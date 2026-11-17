@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use keefast_agent::{
     AgentDecision, AgentError, AgentRequest, AgentSession, AgentSettingsExt, AgentUse, Approval,
-    AuditOutcome, DefaultAgentPolicy,
+    AuditAction, AuditOutcome, DefaultAgentPolicy,
 };
 use keefast_core::{EntryFields, EntryId};
 use keefast_workspace::VaultId;
@@ -115,7 +115,7 @@ fn a_reveal_of_an_unmarked_entry_is_refused_without_asking() {
     assert!(fixture.approver.prompts().is_empty());
     let records = fixture.audit.records();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].action, "reveal");
+    assert_eq!(records[0].action, AuditAction::Reveal);
     assert_eq!(records[0].outcome, AuditOutcome::Denied);
     assert_eq!(
         records[0].reason.as_deref(),
@@ -215,7 +215,7 @@ fn a_reveal_is_audited_as_a_reveal_without_the_value() {
     let records = fixture.audit.records();
     assert_eq!(records.len(), 1);
     let record = &records[0];
-    assert_eq!(record.action, "reveal");
+    assert_eq!(record.action, AuditAction::Reveal);
     assert_eq!(record.outcome, AuditOutcome::Allowed);
     assert_eq!(record.entry.as_ref().unwrap().title, "Wallet");
     assert_eq!(record.field.as_deref(), Some("password"));

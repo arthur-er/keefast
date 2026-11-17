@@ -364,7 +364,7 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
   const [busy, setBusy] = useState(false);
   const armed = useArmed();
   const now = useNow(1000);
-  const left = secondsLeft(prompt.expires ?? now, now);
+  const left = secondsLeft(prompt.expires, now);
   const answer = (allow: boolean) => {
     if ((allow && !armed) || busy) return;
     setBusy(true);
@@ -509,7 +509,7 @@ function AgentConsentDialog({ consent }: { consent: NonNullable<WorkspaceSnapsho
   const field = useRef<HTMLInputElement>(null);
   const armed = useArmed();
   const now = useNow(1000);
-  const left = secondsLeft(consent.expires ?? now, now);
+  const left = secondsLeft(consent.expires, now);
   const typed = normaliseCode(code);
   const complete = typed.length === 8;
   const approve = async () => {

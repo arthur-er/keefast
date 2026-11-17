@@ -57,6 +57,8 @@ const REFRESH_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// Consents waiting at once: each is a prompt on every Approver, so a stranger who can reach
 /// the host can't bury the user in them.
 const MAX_CONSENTS: usize = 8;
+/// How many of them one source may keep waiting, so that it can't crowd out the others.
+pub const MAX_CONSENTS_PER_SOURCE: usize = 2;
 /// Wrong codes typed for one consent before it is denied.
 const MAX_WRONG_CODES: u32 = 5;
 /// Registered clients kept; past this, the oldest never approved are forgotten.
@@ -117,6 +119,9 @@ pub struct AuthorizeRequest {
     pub code_challenge_method: Option<String>,
     pub state: Option<String>,
     pub resource: Option<String>,
+    /// Where the request came from, if the endpoint knows: one source may keep only
+    /// [`MAX_CONSENTS_PER_SOURCE`] consents waiting.
+    pub source: Option<std::net::IpAddr>,
 }
 
 /// A consent begun: the page to send the browser to, and what to ask Approvers.
@@ -305,6 +310,7 @@ struct Consent {
     resource: Option<String>,
     issuer: String,
     expires: Instant,
+    source: Option<std::net::IpAddr>,
     wrong_codes: u32,
     /// Where the browser goes, once approved or denied.
     done: Option<String>,
@@ -500,12 +506,16 @@ impl OAuthServer {
         }
         let mut pending = self.pending();
         pending.forget_expired();
-        let waiting = pending
-            .consents
-            .iter()
-            .filter(|consent| consent.done.is_none())
+        let waiting = || {
+            pending
+                .consents
+                .iter()
+                .filter(|consent| consent.done.is_none())
+        };
+        let from_source = waiting()
+            .filter(|consent| request.source.is_some() && consent.source == request.source)
             .count();
-        if waiting >= MAX_CONSENTS {
+        if waiting().count() >= MAX_CONSENTS || from_source >= MAX_CONSENTS_PER_SOURCE {
             return Err(back(
                 "temporarily_unavailable",
                 "too many consents wait to be approved on this keefast host: try again later",
@@ -523,6 +533,7 @@ impl OAuthServer {
             resource: request.resource,
             issuer: issuer.to_owned(),
             expires: Instant::now() + CONSENT_LIFETIME,
+            source: request.source,
             wrong_codes: 0,
             done: None,
         };

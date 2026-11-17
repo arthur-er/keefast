@@ -1707,7 +1707,7 @@ export function createMockBackend(): Backend & {
       if (!state.vaults.some((v) => v.id === vault)) throw new MockError("notFound", "That Vault isn't open.");
       return mockActivity();
     }),
-    addAgentHost: command((name, url, token) => {
+    addAgentHost: command((name, url, token, certificate) => {
       const address = url.trim().replace(/\/+$/, "");
       if (token.trim().startsWith("kfa_"))
         throw new MockError("invalid", "That is an Agent pairing's token. Pair this desktop on the host with `keefast-agent pairing approver <name>`, and paste the token it prints.");
@@ -1715,7 +1715,10 @@ export function createMockBackend(): Backend & {
       if (!/^https:\/\/.+/.test(address) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(address))
         throw new MockError("invalid", "An Agent host on another machine needs an https:// address.");
       if (state.agentHosts.some((h) => h.url === address)) throw new MockError("conflict", "keefast is an Approver for that Agent host already.");
-      const host: AgentHostView = { id: `h${state.nextId++}`, name: name.trim() || address.replace(/^https?:\/\//, "").split("/")[0]!, url: address, state: "connecting", problem: null };
+      if (certificate !== null && certificate.trim() !== "" && !certificate.includes("-----BEGIN CERTIFICATE-----"))
+        throw new MockError("invalid", "keefast can't use that certificate: that isn't a certificate: give the host's certificate, or its CA's, as PEM (-----BEGIN CERTIFICATE-----).");
+      const trustsOwnCertificate = certificate !== null && certificate.trim() !== "";
+      const host: AgentHostView = { id: `h${state.nextId++}`, name: name.trim() || address.replace(/^https?:\/\//, "").split("/")[0]!, url: address, trustsOwnCertificate, state: "connecting", problem: null };
       state.agentHosts.push(host);
       changed();
       // "Connects" a moment later, as the real one does.
@@ -1861,11 +1864,12 @@ export function createMockBackend(): Backend & {
   function mockAgentHosts() {
     if (state.agentHosts.length > 0) return;
     state.agentHosts = [
-      { id: "h-build", name: "Build server", url: "https://build.tail4e2a.ts.net:7807", state: "connected", problem: null },
+      { id: "h-build", name: "Build server", url: "https://build.tail4e2a.ts.net:7807", trustsOwnCertificate: false, state: "connected", problem: null },
       {
         id: "h-home",
         name: "Home lab",
         url: "https://keefast.home.example:7807",
+        trustsOwnCertificate: true,
         state: "disconnected",
         problem: "can't reach https://keefast.home.example:7807: Connection refused",
       },

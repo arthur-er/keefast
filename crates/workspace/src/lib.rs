@@ -51,8 +51,8 @@ pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, PaneWidths, ThemeSetting};
 pub use dropbox::{
-    Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig, DropboxError,
-    DropboxItem,
+    Authorization, CodeAuthorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig,
+    DropboxError, DropboxItem,
 };
 pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};

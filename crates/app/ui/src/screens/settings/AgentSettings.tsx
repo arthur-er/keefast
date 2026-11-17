@@ -2,14 +2,15 @@
 // and the Agent pairings: each owns a subgroup by its name, may read others, and may create
 // Entries in its own. Pairing an Agent shows its bearer token once; the Vault keeps only its hash.
 
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { Bot, Copy, History, Plus } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AgentPairingView, AgentSettingsView, GroupId, VaultId } from "@/bindings";
-import { Button, Check, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, toast } from "@/kit";
+import { Button, Check, Dialog, Field, Input, Popover, PopoverTrigger, toast } from "@/kit";
 
 import { ActivityDialog } from "./AgentHostSettings";
+import { ConfirmPop, RowPop } from "./ConfirmPop";
 import { GroupPicker } from "./GroupPicker";
 import { Hl, SettingRow, type SettingsSection } from "./SettingsLayout";
 
@@ -278,7 +279,7 @@ function AgentPairingRow({ vault, settings, pairing }: { vault: VaultId; setting
               Access…
             </Button>
           </PopoverTrigger>
-          <PopoverContent side="top" align="end" className="confirm-pop" onEscapeKeyDown={(event) => keepPage(event, () => setReading(false))}>
+          <RowPop onClose={() => setReading(false)}>
             <h4>What “{pairing.name}” also reads</h4>
             <p>Besides its own subgroup.</p>
             <ReadsChecklist
@@ -291,40 +292,18 @@ function AgentPairingRow({ vault, settings, pairing }: { vault: VaultId; setting
               checked={pairing.canCreate}
               onChange={(on) => void api.setAgentPairingAccess(vault, pairing.id, pairing.reads, on).catch(fail)}
             />
-          </PopoverContent>
+          </RowPop>
         </Popover>
         <Popover open={revoking} onOpenChange={setRevoking}>
           <PopoverTrigger asChild>
             <Button size="sm">Revoke</Button>
           </PopoverTrigger>
-          <PopoverContent side="top" align="end" className="confirm-pop" onEscapeKeyDown={(event) => keepPage(event, () => setRevoking(false))}>
-            <ConfirmRevoke name={pairing.name} onCancel={() => setRevoking(false)} onRevoke={revoke} />
-          </PopoverContent>
+          <ConfirmPop title={`Revoke the Agent “${pairing.name}”?`} action="Revoke" onCancel={() => setRevoking(false)} onConfirm={revoke}>
+            Its token stops working at once. Its subgroup and Entries stay.
+          </ConfirmPop>
         </Popover>
       </div>
     </div>
   );
 }
 
-/** Escape closes the popover, not the page under it. */
-function keepPage(event: KeyboardEvent, close: () => void) {
-  event.preventDefault();
-  close();
-}
-
-function ConfirmRevoke({ name, onCancel, onRevoke }: { name: string; onCancel: () => void; onRevoke: () => void }): ReactNode {
-  return (
-    <>
-      <h4>Revoke the Agent “{name}”?</h4>
-      <p>Its token stops working at once. Its subgroup and Entries stay.</p>
-      <div className="hstack justify-end">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" variant="danger" autoFocus onClick={onRevoke}>
-          Revoke
-        </Button>
-      </div>
-    </>
-  );
-}

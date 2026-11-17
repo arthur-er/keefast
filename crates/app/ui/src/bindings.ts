@@ -407,7 +407,7 @@ export const commands = {
 	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
 	 *  approver` printed there. An empty name names it by its address.
 	 */
-	addAgentHost: (name: string, url: string, token: string) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token })),
+	addAgentHost: (name: string, url: string, token: string, certificate: string | null) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token, certificate })),
 	removeAgentHost: (host: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_agent_host", { host })),
 	/**
 	 *  Answers the prompt `id` from `host`: allow or deny, and with `remember`, as an Agent access
@@ -495,6 +495,11 @@ export type AddedAttachments = {
 	errors: string[],
 };
 
+/**  What an Agent did, or asked to do, as a Headless host's audit log names it. */
+export type AgentActivityAction = "list" | "use" | "http_request" | "create" | "store" | "reveal" | 
+/**  One a later host logs and this keefast doesn't know. */
+"other";
+
 /**  Whether an Agent's request went through. */
 export type AgentActivityOutcome = "allowed" | "denied";
 
@@ -504,11 +509,10 @@ export type AgentActivityOutcome = "allowed" | "denied";
  */
 export type AgentActivityRecord = {
 	/**  When, in seconds since 1970 UTC. */
-	time: number | null,
+	time: number,
 	/**  The Agent pairing's name, as it was then. */
 	pairing: string,
-	/**  `list`, `use`, `http_request`, `create`, `store` or `reveal`; later hosts may add more. */
-	action: string,
+	action: AgentActivityAction,
 	entryUuid: string | null,
 	entryTitle: string | null,
 	/**  The program a `use` was for. */
@@ -543,6 +547,8 @@ export type AgentHostView = {
 	id: string,
 	name: string,
 	url: string,
+	/**  Whether it is trusted by a certificate the user gave rather than the public roots. */
+	trustsOwnCertificate: boolean,
 	state: AgentHostState,
 	/**  Why it is disconnected; keefast connects again by itself. */
 	problem: string | null,
@@ -1341,7 +1347,7 @@ export type PendingAgentConsent = {
 	/**  The Agent pairing the client has already, which approving lets in again. */
 	pairedAs: string | null,
 	/**  When the host forgets it, in seconds since 1970 UTC. */
-	expires: number | null,
+	expires: number,
 	/**  How many consents wait besides this one. */
 	more: number,
 };
@@ -1377,7 +1383,7 @@ export type PendingAgentPrompt = {
 	 */
 	reveal: boolean,
 	/**  When the host denies it unanswered, in seconds since 1970 UTC. */
-	expires: number | null,
+	expires: number,
 	/**  How many prompts wait besides this one. */
 	more: number,
 };

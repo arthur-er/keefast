@@ -46,7 +46,7 @@ export function describeActivity(record: AgentActivityRecord): string {
       return `Store ${record.field ?? "a value"} in ${entry}`;
     case "reveal":
       return `Reveal ${record.field ?? "a value"} of ${entry}`;
-    default:
-      return record.entryTitle ? `${record.action} ${entry}` : record.action;
+    case "other":
+      return record.entryTitle ? `Something with ${entry}` : "Something keefast doesn't know";
   }
 }

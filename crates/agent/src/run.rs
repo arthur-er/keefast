@@ -88,8 +88,12 @@ pub struct Connection {
 }
 
 enum Keefast {
-    /// A Headless host, at its URL or its MCP endpoint's.
-    Host(String),
+    /// A Headless host, at its URL or its MCP endpoint's, and the PEM of the certificate to
+    /// trust for it instead of the public roots, if any (see [`crate::trust`]).
+    Host {
+        url: String,
+        certificate: Option<String>,
+    },
     /// The desktop app on this machine.
     DesktopApp(DesktopApp),
 }
@@ -98,9 +102,22 @@ impl Connection {
     /// The Headless host at `url`, or its MCP endpoint at `url`.
     pub fn host(url: String, token: Zeroizing<String>) -> Self {
         Self {
-            to: Keefast::Host(url),
+            to: Keefast::Host {
+                url,
+                certificate: None,
+            },
             token,
         }
+    }
+
+    /// Trusts the certificate, or CA certificate, in `pem` for the Headless host, instead of
+    /// the public roots: for a host with a self-signed certificate or the operator's own CA.
+    pub fn trusting(mut self, pem: &str) -> Result<Self, String> {
+        crate::trust::certificates(pem)?;
+        if let Keefast::Host { certificate, .. } = &mut self.to {
+            *certificate = Some(pem.to_owned());
+        }
+        Ok(self)
     }
 
     /// The desktop app on this machine.
@@ -122,7 +139,23 @@ impl Connection {
             .ok()
             .filter(|url| !url.is_empty())
         {
-            Some(url) => Ok(Self::host(url, token)),
+            Some(url) => {
+                let connection = Self::host(url, token);
+                match std::env::var_os("KEEFAST_AGENT_CA").filter(|path| !path.is_empty()) {
+                    None => Ok(connection),
+                    Some(path) => {
+                        let pem = std::fs::read_to_string(&path).map_err(|error| {
+                            format!(
+                                "KEEFAST_AGENT_CA names {}, which can't be read: {error}",
+                                std::path::Path::new(&path).display()
+                            )
+                        })?;
+                        connection
+                            .trusting(&pem)
+                            .map_err(|error| format!("KEEFAST_AGENT_CA: {error}"))
+                    }
+                }
+            }
             None => {
                 let app = DesktopApp::from_env().map_err(|error| {
                     format!(
@@ -151,7 +184,7 @@ impl Connection {
             values: Vec<SecretValue>,
         }
         match &self.to {
-            Keefast::Host(_) => {
+            Keefast::Host { .. } => {
                 let body = Zeroizing::new(
                     serde_json::to_string(request).expect("a request is plain JSON"),
                 );
@@ -168,7 +201,7 @@ impl Connection {
     /// Sets the field `request` names to its value; answers with the Entry it wrote.
     pub fn store(&self, request: StoreSecret) -> Result<WrittenEntry, String> {
         match &self.to {
-            Keefast::Host(_) => {
+            Keefast::Host { .. } => {
                 let body = Zeroizing::new(
                     serde_json::to_string(&request).expect("a request is plain JSON"),
                 );
@@ -186,12 +219,13 @@ impl Connection {
     /// POSTs `body`, JSON, to the endpoint at `path`, and reads its JSON answer, or the message
     /// of keefast's refusal.
     fn post<T: serde::de::DeserializeOwned>(&self, path: &str, body: &str) -> Result<T, String> {
-        let Keefast::Host(url) = &self.to else {
+        let Keefast::Host { url, certificate } = &self.to else {
             unreachable!("only a Headless host is posted to");
         };
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
+                .tls_config(crate::trust::tls(certificate.as_deref()))
                 .timeout_connect(Some(Duration::from_secs(15)))
                 .timeout_global(Some(Duration::from_secs(90)))
                 .build(),
