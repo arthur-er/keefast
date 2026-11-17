@@ -330,7 +330,7 @@ async fn accept(
     stop: CancellationToken,
 ) {
     loop {
-        let (stream, _) = tokio::select! {
+        let (stream, peer) = tokio::select! {
             () = stop.cancelled() => return,
             accepted = listener.accept() => match accepted {
                 Ok(accepted) => accepted,
@@ -338,7 +338,7 @@ async fn accept(
                 Err(_) => continue,
             },
         };
-        let app = app.clone();
+        let app = app.clone().layer(axum::Extension(Peer(peer)));
         let acceptor = acceptor.clone();
         let stop = stop.clone();
         // The TLS handshake runs on the connection's own task, so a slow client holds up no
@@ -355,6 +355,10 @@ async fn accept(
         });
     }
 }
+
+/// The address a connection came from, which handlers may read as an extension.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Peer(pub std::net::SocketAddr);
 
 async fn connection<S>(stream: S, app: Router, stop: CancellationToken)
 where

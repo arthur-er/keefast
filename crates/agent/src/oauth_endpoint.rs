@@ -252,6 +252,7 @@ fn see_other(location: &str) -> Response {
 
 async fn authorize(
     State(endpoint): State<Endpoint>,
+    peer: Option<axum::Extension<crate::serve::Peer>>,
     headers: HeaderMap,
     uri: Uri,
     RawQuery(query): RawQuery,
@@ -265,6 +266,7 @@ async fn authorize(
         code_challenge_method: get("code_challenge_method"),
         state: get("state"),
         resource: get("resource"),
+        source: peer.map(|axum::Extension(peer)| source(peer.0.ip(), &headers)),
     };
     let base = base_url(&headers, &uri, endpoint.tls);
     let host = endpoint.host;

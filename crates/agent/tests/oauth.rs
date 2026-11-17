@@ -178,6 +178,27 @@ impl Served {
             .unwrap()
     }
 
+    /// Begins a consent for `client` as a browser at `source` does through a reverse proxy on
+    /// this machine, which says where the request came from: the response.
+    async fn authorize_from(&self, source: &str, client: &str) -> reqwest::Response {
+        http()
+            .get(format!(
+                "{}?{}",
+                self.url("/oauth/authorize"),
+                encode(&[
+                    ("response_type", "code"),
+                    ("client_id", client),
+                    ("redirect_uri", REDIRECT),
+                    ("code_challenge", &"a".repeat(43)),
+                    ("code_challenge_method", "S256"),
+                ])
+            ))
+            .header("x-forwarded-for", source)
+            .send()
+            .await
+            .unwrap()
+    }
+
     /// The consent page at `path`, as the browser shows it.
     async fn consent_at(&self, path: String) -> Consent {
         let page = http().get(self.url(&path)).send().await.unwrap();
