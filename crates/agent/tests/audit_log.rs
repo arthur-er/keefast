@@ -15,6 +15,7 @@ fn record(n: i64) -> AuditRecord {
         }),
         method: None,
         host: None,
+        field: None,
         program: Some("gh".to_owned()),
         outcome: AuditOutcome::Allowed,
         reason: None,

@@ -3,7 +3,9 @@
 //! Master key says so, and lock locks it again; `pairing` pairs an Agent and prints its token
 //! once, lists the pairings and revokes one; and `run` uses a secret once the desktop app
 //! allows it, is denied before, and `log` shows both (#156's "Done when", on one machine); and
-//! `pairing approve` lets an MCP client in by the code its OAuth consent page shows (#158).
+//! `pairing approve` lets an MCP client in by the code its OAuth consent page shows (#158);
+//! and `store` saves a piped value no tool call returned, only in the pairing's own subgroup
+//! (#160's "Done when").
 
 #![cfg(unix)]
 
@@ -687,4 +689,98 @@ fn pairing_approve_lets_an_oauth_client_in_by_the_code_its_consent_page_shows() 
     assert_eq!(paired, 200);
     assert!(revoked.status.success(), "{}", text(&revoked));
     assert_eq!(after_revoking, 401);
+}
+
+/// `keefast-agent store <reference>` as an Agent runs it, with `value` piped in.
+fn store_with_token(url: &str, token: &str, reference: &str, value: &str) -> Output {
+    let mut child = Command::new(AGENT)
+        .args(["store", reference])
+        .env("KEEFAST_AGENT_URL", url)
+        .env("KEEFAST_AGENT_TOKEN", token)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(value.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn store_saves_a_piped_value_no_tool_call_returned_and_refuses_other_subgroups() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
+    let root = workspace.readable_vault(vault).unwrap().vault().root().id();
+    let agents = workspace.create_group(vault, root, "Agents").unwrap();
+    let github = workspace.create_group(vault, agents, "GitHub").unwrap();
+    workspace.set_agent_group(vault, agents).unwrap();
+    let agent_x = workspace
+        .create_agent_pairing(vault, "Agent-x", vec![github], true)
+        .unwrap();
+    let fields = EntryFields {
+        title: "token".to_owned(),
+        password: SecretString::from("ghp_the-real-token-value"),
+        ..EntryFields::default()
+    };
+    workspace.create_entry(vault, github, &fields).unwrap();
+    workspace.save_vault(vault).unwrap();
+    drop(workspace);
+    let token = agent_x.token.to_string();
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    // As `mint-token | keefast-agent store Agent-x/new#token` would pipe it, line break and all.
+    let stored = store_with_token(&url, &token, "Agent-x/new#token", "kf_minted-value\n");
+    let outside = store_with_token(&url, &token, "GitHub/token#password", "overwritten\n");
+    let log = run(&served.socket, &["log"], "");
+    run(&served.socket, &["lock"], "");
+
+    assert!(stored.status.success(), "{}", text(&stored));
+    assert!(text(&stored).contains("Agent-x/new"), "{}", text(&stored));
+    assert!(
+        !text(&stored).contains("kf_minted-value"),
+        "{}",
+        text(&stored)
+    );
+    assert!(!outside.status.success(), "{}", text(&outside));
+    assert!(
+        text(&outside).contains("own subgroup"),
+        "{}",
+        text(&outside)
+    );
+    let log = text(&log);
+    assert!(log.contains("Agent-x  store new"), "{log}");
+    assert!(log.contains("field token  allowed"), "{log}");
+    assert!(log.contains("field password  denied"), "{log}");
+    assert!(!log.contains("kf_minted-value"), "{log}");
+    // The Vault file the host saved has the value, and GitHub/token as it was.
+    let (workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_200));
+    let open = workspace.readable_vault(vault).unwrap().vault();
+    let field = |title: &str| {
+        open.root()
+            .all_entries()
+            .find(|entry| entry.title() == title)
+            .unwrap()
+            .clone()
+    };
+    let new = field("new");
+    let minted = new
+        .custom_fields()
+        .iter()
+        .find(|custom| custom.name == "token")
+        .unwrap();
+    assert_eq!(
+        secrecy::ExposeSecret::expose_secret(&minted.value),
+        "kf_minted-value"
+    );
+    assert_eq!(
+        secrecy::ExposeSecret::expose_secret(field("token").password()),
+        "ghp_the-real-token-value"
+    );
 }

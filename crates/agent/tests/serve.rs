@@ -27,7 +27,8 @@ use secrecy::SecretString;
 use support::{FakeClock, FakeSecretStore, KEEPASSXC_KDBX4, PASSWORD, VaultFile};
 
 /// A Vault file whose Agent group holds Entries for two pairings, `claude` (which also reads
-/// `shared`) and `codex`, and one Entry outside the Agent group; and the pairings' tokens.
+/// `shared`, and may create Entries) and `codex`, and one Entry outside the Agent group; and
+/// the pairings' tokens.
 struct Served {
     host: Arc<HeadlessHost>,
     endpoint: McpEndpoint,
@@ -44,7 +45,7 @@ fn vault_file() -> (VaultFile, String, String) {
     let shared = workspace.create_group(vault, agents, "shared").unwrap();
     workspace.set_agent_group(vault, agents).unwrap();
     let claude = workspace
-        .create_agent_pairing(vault, "claude", vec![shared], false)
+        .create_agent_pairing(vault, "claude", vec![shared], true)
         .unwrap();
     let codex = workspace
         .create_agent_pairing(vault, "codex", vec![], false)
@@ -899,4 +900,135 @@ async fn http_request_refuses_to_send_the_secret_to_another_host_or_to_loopback(
     let answer = text(&result);
     assert!(answer.contains("isn't one of the hosts"), "{answer}");
     assert!(server.seen.lock().unwrap().is_empty());
+}
+
+impl Served {
+    /// POSTs `keefast-agent store`'s request to set `reference` to `value`, with `token`: the
+    /// status and the JSON answer.
+    async fn store(&self, token: &str, reference: &str, value: &str) -> (u16, serde_json::Value) {
+        let response = reqwest::Client::new()
+            .post(self.endpoint.url().replace("/mcp", "/agent/store"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(serde_json::json!({ "reference": reference, "value": value }).to_string())
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        (
+            status,
+            serde_json::from_str(&response.text().await.unwrap()).unwrap(),
+        )
+    }
+
+    /// The Entry called `title`, as the host's Vault has it now.
+    async fn entry(&self, title: &str) -> Option<keefast_core::Entry> {
+        let host = Arc::clone(&self.host);
+        let title = title.to_owned();
+        tokio::task::spawn_blocking(move || {
+            host.edit(|workspace, vault| {
+                let open = workspace.readable_vault(vault).unwrap().vault();
+                open.root()
+                    .all_entries()
+                    .find(|entry| entry.title() == title)
+                    .cloned()
+            })
+            .unwrap()
+            .0
+        })
+        .await
+        .unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn create_entry_saves_a_generated_password_the_agent_never_sees() {
+    let served = Served::unlocked().await;
+    let client = served.connect(&served.claude).await;
+
+    let arguments = serde_json::json!({
+        "title": "Fly.io",
+        "username": "deploy-bot",
+        "generate_password": { "length": 40, "symbols": false },
+    });
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("create_entry")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+
+    let said = text(&result);
+    assert_ne!(result.is_error, Some(true), "{said}");
+    assert!(said.contains("claude/Fly.io"), "{said}");
+    let entry = served.entry("Fly.io").await.unwrap();
+    let password = secrecy::ExposeSecret::expose_secret(entry.password()).to_owned();
+    assert_eq!(password.len(), 40);
+    assert!(!said.contains(&password), "{said}");
+    assert!(said.contains(&entry.id().to_hex()), "{said}");
+    let log = std::fs::read_to_string(served._file.path.with_file_name("audit.log")).unwrap();
+    assert!(log.contains("\"create\""), "{log}");
+    assert!(!log.contains(&password), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn create_entry_tells_a_pairing_without_the_create_right_how_to_get_it() {
+    let served = Served::unlocked().await;
+    let client = served.connect(&served.codex).await;
+
+    let arguments = serde_json::json!({ "title": "token" });
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("create_entry")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("Vault settings"),
+        "{}",
+        text(&result)
+    );
+    assert!(served.entry("token").await.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn store_saves_a_value_answering_only_with_its_reference_and_refuses_other_subgroups() {
+    let served = Served::unlocked().await;
+
+    let (stored, written) = served
+        .store(&served.claude, "claude/new#token", "minted-token-value")
+        .await;
+    let (outside, refusal) = served
+        .store(&served.claude, "shared/shared key#password", "overwritten")
+        .await;
+    let (no_right, _) = served
+        .store(&served.codex, "codex/codex token#password", "overwritten")
+        .await;
+
+    assert_eq!(stored, 200, "{written}");
+    assert_eq!(written["reference"]["path"], "claude/new");
+    assert_eq!(written["created"], true);
+    assert!(!written.to_string().contains("minted-token-value"));
+    let entry = served.entry("new").await.unwrap();
+    let token = entry
+        .custom_fields()
+        .iter()
+        .find(|field| field.name == "token")
+        .unwrap();
+    assert_eq!(
+        secrecy::ExposeSecret::expose_secret(&token.value),
+        "minted-token-value"
+    );
+    assert_eq!(outside, 403, "{refusal}");
+    assert_eq!(refusal["error"], "not_own_entry");
+    assert_eq!(no_right, 403);
+    let shared = served.entry("shared key").await.unwrap();
+    assert_eq!(
+        secrecy::ExposeSecret::expose_secret(shared.password()),
+        "shared key-secret-value-1234"
+    );
 }

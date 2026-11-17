@@ -38,6 +38,8 @@ pub struct AgentPairingView {
     pub group: GroupId,
     /// The other subgroups of the Agent group it reads.
     pub reads: Vec<GroupId>,
+    /// Whether it creates Entries in its own subgroup, and sets their fields.
+    pub can_create: bool,
 }
 
 impl AgentPairingView {
@@ -47,6 +49,7 @@ impl AgentPairingView {
             name: pairing.name().to_owned(),
             group: pairing.group().into(),
             reads: pairing.readable().iter().copied().map(Into::into).collect(),
+            can_create: pairing.can_create(),
         }
     }
 }
@@ -134,7 +137,8 @@ pub async fn set_agent_group(core: Core<'_>, vault: VaultId, group: GroupId) -> 
 }
 
 /// Pairs an Agent called `name`, with its own subgroup of the Agent group by that name, which
-/// also reads the subgroups `reads`. The reply has its token, which no command returns again.
+/// also reads the subgroups `reads`, and creates Entries in its subgroup if `can_create`. The
+/// reply has its token, which no command returns again.
 #[tauri::command]
 #[specta::specta]
 pub async fn create_agent_pairing(
@@ -142,11 +146,12 @@ pub async fn create_agent_pairing(
     vault: VaultId,
     name: String,
     reads: Vec<GroupId>,
+    can_create: bool,
 ) -> ApiResult<CreatedAgentPairing> {
     let reads = groups(&reads)?;
     let vault = core.read(|workspace| vault.resolve_open(workspace))?;
     let created =
-        core.update(|workspace| workspace.create_agent_pairing(vault, &name, reads, false))?;
+        core.update(|workspace| workspace.create_agent_pairing(vault, &name, reads, can_create))?;
     core.autosave();
     Ok(CreatedAgentPairing {
         pairing: AgentPairingView::of(&created.pairing),
@@ -154,14 +159,16 @@ pub async fn create_agent_pairing(
     })
 }
 
-/// Sets which other subgroups of the Agent group a pairing reads.
+/// Sets which other subgroups of the Agent group a pairing reads, and whether it creates
+/// Entries in its own subgroup.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_agent_pairing_reads(
+pub async fn set_agent_pairing_access(
     core: Core<'_>,
     vault: VaultId,
     pairing: String,
     reads: Vec<GroupId>,
+    can_create: bool,
 ) -> ApiResult<()> {
     let reads = groups(&reads)?;
     let vault = core.read(|workspace| vault.resolve_open(workspace))?;
@@ -171,7 +178,7 @@ pub async fn set_agent_pairing_reads(
             .ok_or_else(ApiError::vault_not_found)?;
         let pairing = self::pairing(&settings, &pairing)?;
         workspace
-            .set_agent_pairing_access(vault, pairing.id(), reads, pairing.can_create())
+            .set_agent_pairing_access(vault, pairing.id(), reads, can_create)
             .map_err(ApiError::from)
     })?;
     core.autosave();

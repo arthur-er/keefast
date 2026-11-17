@@ -372,11 +372,15 @@ export const commands = {
 	setAgentGroup: (vault: VaultId, group: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_group", { vault, group })),
 	/**
 	 *  Pairs an Agent called `name`, with its own subgroup of the Agent group by that name, which
-	 *  also reads the subgroups `reads`. The reply has its token, which no command returns again.
+	 *  also reads the subgroups `reads`, and creates Entries in its subgroup if `can_create`. The
+	 *  reply has its token, which no command returns again.
 	 */
-	createAgentPairing: (vault: VaultId, name: string, reads: GroupId[]) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_agent_pairing", { vault, name, reads })),
-	/**  Sets which other subgroups of the Agent group a pairing reads. */
-	setAgentPairingReads: (vault: VaultId, pairing: string, reads: GroupId[]) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_pairing_reads", { vault, pairing, reads })),
+	createAgentPairing: (vault: VaultId, name: string, reads: GroupId[], canCreate: boolean) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_agent_pairing", { vault, name, reads, canCreate })),
+	/**
+	 *  Sets which other subgroups of the Agent group a pairing reads, and whether it creates
+	 *  Entries in its own subgroup.
+	 */
+	setAgentPairingAccess: (vault: VaultId, pairing: string, reads: GroupId[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_pairing_access", { vault, pairing, reads, canCreate })),
 	/**
 	 *  Revokes an Agent pairing: its token is refused from now on. Its subgroup and Entries stay.
 	 *  Ask the user first.
@@ -515,6 +519,8 @@ export type AgentPairingView = {
 	group: GroupId,
 	/**  The other subgroups of the Agent group it reads. */
 	reads: GroupId[],
+	/**  Whether it creates Entries in its own subgroup, and sets their fields. */
+	canCreate: boolean,
 };
 
 export type AgentSettingsView = {

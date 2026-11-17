@@ -50,7 +50,7 @@ const { AgentAccess } = await import("./AgentAccess");
 const { api } = await import("@/api");
 
 const entry = { vault: 1, id: "e1", title: "GitHub token" } as EntryDetail;
-const claude = { id: "p1", name: "claude", group: "claude", reads: [] };
+const claude = { id: "p1", name: "claude", group: "claude", reads: [], canCreate: false };
 
 function show(shown: EntryDetail | null = entry) {
   render(

@@ -23,6 +23,7 @@ pub mod run;
 pub mod serve;
 mod session;
 mod settings;
+pub mod store;
 
 pub use approver::{
     AgentPrompt, Approval, Approver, ApproverCredentials, ApproverHub, ConsentAnswer,
@@ -30,8 +31,9 @@ pub use approver::{
 };
 pub use audit::{AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
 pub use session::{
-    AgentError, AgentReply, AgentRequest, AgentSession, SecretListing, SecretReference,
-    SecretValue, UseSecrets, VaultAccess, pairings_reading,
+    AgentError, AgentReply, AgentRequest, AgentSession, CreateEntry, SecretListing,
+    SecretReference, SecretValue, StoreSecret, UseSecrets, VaultAccess, WrittenEntry,
+    pairings_reading,
 };
 pub use settings::{
     AgentAccessDecision, AgentCredential, AgentDecision, AgentPairing, AgentPairingId,
