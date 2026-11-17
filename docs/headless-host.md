@@ -90,6 +90,38 @@ The Agent then sees, through `list_secrets`, the Entries in its subgroup and the
 reads: titles, usernames, URLs, tags, field names and Secret references, and the last four
 characters of a long password. Never values, never notes, and nothing outside the Agent group.
 
+### Pairing by OAuth
+
+MCP clients that only sign in with OAuth, or that take just a URL (Executor, claude.ai
+connectors, the MCP Inspector), pair through keefast's own OAuth 2.1 authorization server, as the
+MCP authorization spec describes. Add the host by its URL, `https://agents.example.com/mcp`. The
+client finds the server from the host's 401 answer, registers itself, and opens a consent page in
+your browser. The page asks for no sign-in and no Master key: it shows an eight-letter code.
+Approve that code either
+
+- in keefast on a desktop paired as an [Approver](#approvers): a dialog names the client and
+  where it returns to; type the code from the page, name the pairing, and tick the subgroups it
+  also reads; or
+- on the host:
+
+  ```sh
+  keefast-agent pairing approve ABCD-EFGH --name executor --reads shared
+  ```
+
+  Without `--name`, the pairing is named as the client calls itself.
+
+Either way the Agent pairing is made in the Vault, with its subgroup, as `pairing create` makes
+one, and the page sends your browser back to the client, which gets its tokens. Nobody approves
+in ten minutes, and the page expires; Cancel on the page sends the client away. A client that is
+paired already is let in again as the same pairing.
+
+The client's tokens are kept, hashed, in `oauth.json` in the host's state directory: access
+tokens last an hour, and refresh tokens rotate each time they are used. Revoke the pairing as any
+other (`keefast-agent pairing revoke executor`, or in the desktop app), and its tokens stop
+working as soon as the host has the change. Behind a proxy, the host builds the addresses it
+publishes from the `X-Forwarded-Host` and `X-Forwarded-Proto` headers, or else from `Host`: let
+your proxy set them (Caddy does by default; with nginx, `proxy_set_header`), or forward the public `Host`.
+
 ## Using a secret in a command
 
 An Agent with a shell uses a secret by running its program through `keefast-agent run`, on the
@@ -150,6 +182,9 @@ too; it answers at `POST /approver/prompts/<id>`. The host keeps each Approver's
 connect while it is locked. The desktop checks the host's certificate against the usual public
 roots, so a self-signed certificate won't do; a reverse proxy or `tailscale serve` gives one that
 does.
+
+Approvers also see MCP clients asking to pair [by OAuth](#pairing-by-oauth), and approve them
+by typing the code the client's consent page shows.
 
 Revoking an Approver stops its token at once for answers and new streams; a stream it holds open
 keeps showing prompts, which it can no longer answer, until it reconnects (within five minutes).
