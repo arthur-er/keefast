@@ -22,7 +22,7 @@ use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 
 use crate::approver::ApproverPairing;
 use crate::audit::AuditRecord;
-use crate::host::{HeadlessHost, HostStatus, UnlockError};
+use crate::host::{ConsentApprovalError, HeadlessHost, HostStatus, PairingChoice, UnlockError};
 use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
 
 /// The longest request the admin socket reads: a password and a Key file fit many times over.
@@ -54,6 +54,13 @@ pub enum AdminRequest {
     ApproverList,
     ApproverRevoke {
         name: String,
+    },
+    /// Approves the OAuth client whose consent page shows `code`, creating its Agent pairing
+    /// as `pairing` says; an empty name names it as the client calls itself.
+    PairingApprove {
+        code: String,
+        #[serde(flatten)]
+        pairing: PairingChoice,
     },
 }
 
@@ -145,6 +152,12 @@ pub enum AdminReply {
     Log { records: Vec<AuditRecord> },
     /// The Approvers paired with this host.
     Approvers { approvers: Vec<ApproverPairing> },
+    /// An OAuth client approved: the Agent pairing it pairs as, and whether it had it already.
+    ConsentApproved {
+        client: String,
+        pairing: String,
+        again: bool,
+    },
     /// An Approver paired, with its token: the only time anyone sees it.
     ApproverPaired {
         approver: ApproverPairing,
@@ -175,6 +188,8 @@ pub enum AdminErrorKind {
     Log,
     /// The Approver can't be paired or found as asked.
     Approver,
+    /// No OAuth client waits with that code.
+    Consent,
 }
 
 impl AdminReply {
@@ -263,6 +278,26 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
             },
             Err(error) => AdminReply::error(AdminErrorKind::Approver, error),
         },
+        AdminRequest::PairingApprove { code, pairing } => {
+            match host.approve_consent_code(&code, pairing) {
+                Ok(approved) => AdminReply::ConsentApproved {
+                    client: approved.client,
+                    pairing: approved.pairing,
+                    again: approved.again,
+                },
+                Err(error) => {
+                    let kind = match error {
+                        ConsentApprovalError::Consent(_) => AdminErrorKind::Consent,
+                        ConsentApprovalError::Locked => AdminErrorKind::Locked,
+                        ConsentApprovalError::Pairing(_) | ConsentApprovalError::NoSubgroup(_) => {
+                            AdminErrorKind::Pairing
+                        }
+                        ConsentApprovalError::Save(_) => AdminErrorKind::Save,
+                    };
+                    AdminReply::error(kind, error)
+                }
+            }
+        }
         AdminRequest::PairingList => host
             .with_vault(|workspace, vault| pairings(workspace, vault))
             .unwrap_or_else(locked),

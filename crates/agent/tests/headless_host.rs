@@ -66,6 +66,7 @@ fn serve_with(
             audit_log: file.audit_log(),
             approvers: keefast_agent::ApproverHub::new(),
             approver_credentials: keefast_agent::ApproverCredentials::in_memory(),
+            oauth: keefast_agent::oauth::OAuthServer::in_memory(),
         },
     );
     let dir = tempfile::tempdir().unwrap();

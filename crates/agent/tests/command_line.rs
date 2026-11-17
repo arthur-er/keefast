@@ -2,7 +2,8 @@
 //! serve starts locked, unlock reads the Master key from its input and opens the Vault, a wrong
 //! Master key says so, and lock locks it again; `pairing` pairs an Agent and prints its token
 //! once, lists the pairings and revokes one; and `run` uses a secret once the desktop app
-//! allows it, is denied before, and `log` shows both (#156's "Done when", on one machine).
+//! allows it, is denied before, and `log` shows both (#156's "Done when", on one machine); and
+//! `pairing approve` lets an MCP client in by the code its OAuth consent page shows (#158).
 
 #![cfg(unix)]
 
@@ -541,4 +542,149 @@ fn run_is_denied_when_the_approver_denies() {
     assert_eq!(denied.status.code(), Some(125), "{}", text(&denied));
     assert!(text(&denied).contains("doesn't allow"), "{}", text(&denied));
     assert_eq!(prompts.try_iter().count(), 1);
+}
+
+/// A plain HTTP client that doesn't follow redirects and doesn't treat 4xx as errors.
+fn browser() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .build()
+        .into()
+}
+
+fn form(pairs: &[(&str, &str)]) -> String {
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish()
+}
+
+fn query_param(url: &str, name: &str) -> Option<String> {
+    let (_, query) = url.split_once('?')?;
+    url::form_urlencoded::parse(query.as_bytes())
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+}
+
+/// The status of an MCP initialize request with `token`.
+fn mcp_status(url: &str, token: &str) -> u16 {
+    browser()
+        .post(url)
+        .header("authorization", &format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#)
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[test]
+fn pairing_approve_lets_an_oauth_client_in_by_the_code_its_consent_page_shows() {
+    let (file, _) = vault_with_a_github_token();
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let mcp = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+    let base = mcp.trim_end_matches("/mcp").to_owned();
+    let redirect = "http://localhost:4444/callback";
+    let registered: serde_json::Value = serde_json::from_str(
+        &browser()
+            .post(&format!("{base}/oauth/register"))
+            .header("content-type", "application/json")
+            .send(
+                serde_json::json!({ "client_name": "Executor", "redirect_uris": [redirect] })
+                    .to_string(),
+            )
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap(),
+    )
+    .unwrap();
+    let client = registered["client_id"].as_str().unwrap().to_owned();
+    let verifier = "v".repeat(64);
+    let challenge = {
+        use base64::Engine;
+        use sha2::Digest;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(sha2::Sha256::digest(verifier.as_bytes()))
+    };
+    let authorize = browser()
+        .get(&format!(
+            "{base}/oauth/authorize?{}",
+            form(&[
+                ("response_type", "code"),
+                ("client_id", &client),
+                ("redirect_uri", redirect),
+                ("code_challenge", &challenge),
+                ("code_challenge_method", "S256"),
+                ("state", "s1"),
+                ("resource", &mcp),
+            ])
+        ))
+        .call()
+        .unwrap();
+    let page_path = authorize.headers()["location"].to_str().unwrap().to_owned();
+    let page = browser()
+        .get(&format!("{base}{page_path}"))
+        .call()
+        .unwrap()
+        .body_mut()
+        .read_to_string()
+        .unwrap();
+    let code = page
+        .split("<b>")
+        .nth(1)
+        .and_then(|rest| rest.split("</b>").next())
+        .unwrap()
+        .to_owned();
+
+    let approved = run(
+        &served.socket,
+        &["pairing", "approve", &code, "--name", "executor"],
+        "",
+    );
+    let back = browser()
+        .get(&format!("{base}{page_path}"))
+        .call()
+        .unwrap()
+        .headers()["location"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let tokens: serde_json::Value = serde_json::from_str(
+        &browser()
+            .post(&format!("{base}/oauth/token"))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .send(form(&[
+                ("grant_type", "authorization_code"),
+                ("code", &query_param(&back, "code").unwrap()),
+                ("redirect_uri", redirect),
+                ("client_id", &client),
+                ("code_verifier", &verifier),
+            ]))
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap(),
+    )
+    .unwrap();
+    let access = tokens["access_token"].as_str().unwrap().to_owned();
+    let listed = run(&served.socket, &["pairing", "list"], "");
+    let paired = mcp_status(&mcp, &access);
+    let revoked = run(&served.socket, &["pairing", "revoke", "executor"], "");
+    let after_revoking = mcp_status(&mcp, &access);
+
+    assert!(approved.status.success(), "{}", text(&approved));
+    assert!(
+        text(&approved).contains("approved Executor as the Agent pairing executor"),
+        "{}",
+        text(&approved)
+    );
+    assert!(back.starts_with(redirect), "{back}");
+    assert_eq!(query_param(&back, "state").as_deref(), Some("s1"));
+    assert!(text(&listed).contains("executor"), "{}", text(&listed));
+    assert_eq!(paired, 200);
+    assert!(revoked.status.success(), "{}", text(&revoked));
+    assert_eq!(after_revoking, 401);
 }

@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 use crate::approver::{
-    APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, AgentPrompt, ApproverAnswer, ApproverEvent,
+    APPROVER_CONSENTS_PATH, APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, AgentPrompt,
+    ApproverAnswer, ApproverEvent, ConsentAnswer, ConsentPrompt,
 };
 
 /// A Headless host an Approver is paired with.
@@ -53,6 +54,12 @@ pub enum ApproverClientEvent {
         seconds_left: u32,
         prompt: AgentPrompt,
     },
+    /// An MCP client asks to pair by OAuth: approve the code its consent page shows.
+    Consent {
+        id: String,
+        seconds_left: u32,
+        consent: ConsentPrompt,
+    },
     Dismissed {
         id: String,
     },
@@ -67,6 +74,9 @@ pub enum AnswerPromptError {
     Unpaired,
     #[error("the Agent host can't be reached: {0}")]
     Unreachable(String),
+    /// Refused as asked, such as a wrong code or a pairing name taken: the host's reason.
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// The longest a stream stays open before it is opened afresh: a connection that died without
@@ -131,6 +141,48 @@ pub fn answer_prompt(
         status => Err(AnswerPromptError::Unreachable(format!(
             "it answered {status}"
         ))),
+    }
+}
+
+/// Answers the OAuth consent `id` on `host`: approving needs the code its page shows.
+pub fn answer_consent(
+    host: &AgentHost,
+    id: &str,
+    answer: &ConsentAnswer,
+) -> Result<(), AnswerPromptError> {
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(15)))
+            .build(),
+    );
+    let url = format!("{}{APPROVER_CONSENTS_PATH}/{id}", host.base());
+    let mut response = agent
+        .post(&url)
+        .header("Authorization", &host.authorization())
+        .header("Content-Type", "application/json")
+        .send(serde_json::to_string(answer).expect("an answer is plain JSON"))
+        .map_err(|error| AnswerPromptError::Unreachable(error.to_string()))?;
+    match response.status().as_u16() {
+        200..=299 => Ok(()),
+        401 => Err(AnswerPromptError::Unpaired),
+        409 => Err(AnswerPromptError::Gone),
+        status => {
+            let message = response
+                .body_mut()
+                .read_to_string()
+                .ok()
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+                .and_then(|body| body["message"].as_str().map(str::to_owned));
+            match message {
+                Some(message) if (400..500).contains(&status) => {
+                    Err(AnswerPromptError::Refused(message))
+                }
+                _ => Err(AnswerPromptError::Unreachable(format!(
+                    "it answered {status}"
+                ))),
+            }
+        }
     }
 }
 
@@ -217,6 +269,15 @@ fn read_stream(
                     id,
                     seconds_left,
                     prompt,
+                }),
+                Ok(ApproverEvent::Consent {
+                    id,
+                    seconds_left,
+                    consent,
+                }) => on_event(ApproverClientEvent::Consent {
+                    id,
+                    seconds_left,
+                    consent,
                 }),
                 Ok(ApproverEvent::Dismissed { id }) => {
                     on_event(ApproverClientEvent::Dismissed { id });

@@ -26,6 +26,10 @@ pub const APPROVER_EVENTS_PATH: &str = "/approver/events";
 /// Where an Approver POSTs its [`ApproverAnswer`] to a prompt, at `/approver/prompts/<id>`.
 pub const APPROVER_PROMPTS_PATH: &str = "/approver/prompts";
 
+/// Where an Approver POSTs its [`ConsentAnswer`] to an OAuth client's consent, at
+/// `/approver/consents/<id>`.
+pub const APPROVER_CONSENTS_PATH: &str = "/approver/consents";
+
 /// How long a prompt waits for an answer before the use is denied.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -44,6 +48,39 @@ pub struct AgentPrompt {
     pub command: Vec<String>,
     /// Whether the answer may be remembered: never for shells and interpreters.
     pub can_remember: bool,
+}
+
+/// What an Approver is asked when an MCP client pairs by OAuth: approve the code its consent
+/// page shows, naming the new Agent pairing and choosing what it reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsentPrompt {
+    /// The name the client registered with: its own claim, not verified.
+    pub client: String,
+    /// Where the browser goes back to once approved, by its host.
+    pub redirect: String,
+    /// The Agent group's subgroups, by name, which the pairing may also read; empty while the
+    /// Vault is locked.
+    pub subgroups: Vec<String>,
+    /// The Agent pairing the client has already, which approving connects it to again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_as: Option<String>,
+}
+
+/// An Approver's answer to a [`ConsentPrompt`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsentAnswer {
+    pub approve: bool,
+    /// The code the consent page shows, as the user typed it: needed to approve.
+    #[serde(default)]
+    pub code: String,
+    /// The new Agent pairing's name, which names its subgroup.
+    #[serde(default)]
+    pub name: String,
+    /// The other subgroups of the Agent group it reads, by name.
+    #[serde(default)]
+    pub reads: Vec<String>,
+    #[serde(default)]
+    pub can_create: bool,
 }
 
 /// An Approver's answer, or why there was none.
@@ -104,6 +141,13 @@ pub enum ApproverEvent {
         seconds_left: u32,
         prompt: AgentPrompt,
     },
+    /// An OAuth client's consent to approve with its code, until it is answered, dismissed,
+    /// or `seconds_left` pass.
+    Consent {
+        id: String,
+        seconds_left: u32,
+        consent: ConsentPrompt,
+    },
     /// The prompt was answered (here or by another Approver) or timed out: stop showing it.
     Dismissed { id: String },
 }
@@ -129,6 +173,25 @@ struct HubState {
     next: u64,
     approvers: HashMap<u64, Tell>,
     waiting: HashMap<String, Waiting>,
+    consents: HashMap<String, OfferedConsent>,
+}
+
+struct OfferedConsent {
+    consent: ConsentPrompt,
+    until: std::time::Instant,
+}
+
+impl OfferedConsent {
+    fn event(&self, id: &str) -> ApproverEvent {
+        ApproverEvent::Consent {
+            id: id.to_owned(),
+            seconds_left: whole_seconds(
+                self.until
+                    .saturating_duration_since(std::time::Instant::now()),
+            ),
+            consent: self.consent.clone(),
+        }
+    }
 }
 
 struct Waiting {
@@ -172,6 +235,11 @@ impl ApproverHub {
         for (id, waiting) in &state.waiting {
             tell(&self.prompt_event(id, waiting));
         }
+        let now = std::time::Instant::now();
+        state.consents.retain(|_, offered| offered.until > now);
+        for (id, offered) in &state.consents {
+            tell(&offered.event(id));
+        }
         state.next += 1;
         let id = state.next;
         state.approvers.insert(id, Arc::new(tell));
@@ -197,13 +265,32 @@ impl ApproverHub {
         Ok(())
     }
 
+    /// Shows every Approver, and each that connects within `lasts`, an OAuth client's consent
+    /// to approve as `id`. Nothing waits on it here: the answer goes to the host's OAuth
+    /// server, which [`Self::withdraw_consent`]s it.
+    pub fn offer_consent(&self, id: &str, consent: ConsentPrompt, lasts: Duration) {
+        let offered = OfferedConsent {
+            consent,
+            until: std::time::Instant::now() + lasts,
+        };
+        let mut state = self.state();
+        broadcast(&state, &offered.event(id));
+        state.consents.insert(id.to_owned(), offered);
+    }
+
+    /// Tells every Approver to dismiss the consent `id`: approved, denied, or expired.
+    pub fn withdraw_consent(&self, id: &str) {
+        let mut state = self.state();
+        if state.consents.remove(id).is_some() {
+            broadcast(&state, &ApproverEvent::Dismissed { id: id.to_owned() });
+        }
+    }
+
     fn prompt_event(&self, id: &str, waiting: &Waiting) -> ApproverEvent {
         let left = self.timeout.saturating_sub(waiting.asked.elapsed());
         ApproverEvent::Prompt {
             id: id.to_owned(),
-            // Rounded up: a prompt just asked has the whole minute.
-            seconds_left: u32::try_from(left.as_secs() + u64::from(left.subsec_nanos() > 0))
-                .unwrap_or(u32::MAX),
+            seconds_left: whole_seconds(left),
             prompt: waiting.prompt.clone(),
         }
     }
@@ -248,6 +335,11 @@ impl Approver for ApproverHub {
             }
         }
     }
+}
+
+/// Rounded up: a prompt just asked has the whole minute.
+fn whole_seconds(left: Duration) -> u32 {
+    u32::try_from(left.as_secs() + u64::from(left.subsec_nanos() > 0)).unwrap_or(u32::MAX)
 }
 
 fn broadcast(state: &HubState, event: &ApproverEvent) {

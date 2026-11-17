@@ -448,6 +448,13 @@ impl AgentSettings {
             .find(|pairing| pairing.credential().accepts_token(token))
     }
 
+    /// The Agent pairing an OAuth client registered with a Headless host pairs as, if one does.
+    pub fn pairing_with_oauth_client(&self, client: &str) -> Option<&AgentPairing> {
+        self.pairings.iter().find(|pairing| {
+            matches!(pairing.credential(), AgentCredential::OAuthClient(known) if known == client)
+        })
+    }
+
     /// The Group whose Entries Agents may see; `None` when none was chosen, or the one chosen
     /// is gone or in the Recycle Bin, and then Agents see nothing.
     pub fn agent_group(&self) -> Option<GroupId> {
@@ -492,6 +499,18 @@ pub trait AgentSettingsExt {
         readable: Vec<GroupId>,
         can_create: bool,
     ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+
+    /// Creates an Agent pairing called `name` for the OAuth client `client`, whose tokens the
+    /// Headless host it registered with keeps, with its own subgroup as
+    /// [`Self::create_agent_pairing`] makes one.
+    fn create_oauth_agent_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_create: bool,
+        client: &str,
+    ) -> Result<AgentPairing, AgentSettingsError>;
 
     /// Sets which other subgroups an Agent pairing reads, and whether it creates Entries.
     fn set_agent_pairing_access(
@@ -574,47 +593,22 @@ impl AgentSettingsExt for Workspace {
         readable: Vec<GroupId>,
         can_create: bool,
     ) -> Result<CreatedAgentPairing, AgentSettingsError> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(AgentSettingsError::PairingNameEmpty);
-        }
-        if name.contains('/') {
-            return Err(AgentSettingsError::PairingNameHasSlash);
-        }
-        let settings = self
-            .agent_settings(vault)
-            .ok_or(EditVaultError::VaultNotOpen)?;
-        if settings
-            .pairings()
-            .iter()
-            .any(|pairing| pairing.name() == name)
-        {
-            return Err(AgentSettingsError::PairingNameTaken(name.to_owned()));
-        }
-        let agent_group = settings
-            .agent_group()
-            .ok_or(AgentSettingsError::NoAgentGroup)?;
-        let existing = self
-            .readable_vault(vault)
-            .and_then(|open| open.vault().group(agent_group))
-            .and_then(|group| group.groups().iter().find(|child| child.name() == name))
-            .map(|group| group.id());
-        let group = match existing {
-            Some(group) => group,
-            None => self.create_group(vault, agent_group, name)?,
-        };
         let token = new_token();
-        let pairing = self.add_agent_pairing(
-            vault,
-            NewAgentPairing {
-                name: name.to_owned(),
-                group,
-                readable,
-                can_create,
-                credential: AgentCredential::token(&token),
-            },
-        )?;
+        let credential = AgentCredential::token(&token);
+        let pairing = pair_in_subgroup(self, vault, name, readable, can_create, credential)?;
         Ok(CreatedAgentPairing { pairing, token })
+    }
+
+    fn create_oauth_agent_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_create: bool,
+        client: &str,
+    ) -> Result<AgentPairing, AgentSettingsError> {
+        let credential = AgentCredential::OAuthClient(client.to_owned());
+        pair_in_subgroup(self, vault, name, readable, can_create, credential)
     }
 
     fn set_agent_pairing_access(
@@ -687,6 +681,57 @@ impl AgentSettingsExt for Workspace {
         let key = decision_key(entry, pairing, agent_use);
         Ok(self.set_vault_custom_data(vault, &[item(key, "")])?)
     }
+}
+
+/// Adds an Agent pairing called `name` with `credential`, and its own subgroup of the Agent
+/// group by the same name, unless one is there already, such as one a revoked pairing left.
+fn pair_in_subgroup(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    name: &str,
+    readable: Vec<GroupId>,
+    can_create: bool,
+    credential: AgentCredential,
+) -> Result<AgentPairing, AgentSettingsError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AgentSettingsError::PairingNameEmpty);
+    }
+    if name.contains('/') {
+        return Err(AgentSettingsError::PairingNameHasSlash);
+    }
+    let settings = workspace
+        .agent_settings(vault)
+        .ok_or(EditVaultError::VaultNotOpen)?;
+    if settings
+        .pairings()
+        .iter()
+        .any(|pairing| pairing.name() == name)
+    {
+        return Err(AgentSettingsError::PairingNameTaken(name.to_owned()));
+    }
+    let agent_group = settings
+        .agent_group()
+        .ok_or(AgentSettingsError::NoAgentGroup)?;
+    let existing = workspace
+        .readable_vault(vault)
+        .and_then(|open| open.vault().group(agent_group))
+        .and_then(|group| group.groups().iter().find(|child| child.name() == name))
+        .map(|group| group.id());
+    let group = match existing {
+        Some(group) => group,
+        None => workspace.create_group(vault, agent_group, name)?,
+    };
+    workspace.add_agent_pairing(
+        vault,
+        NewAgentPairing {
+            name: name.to_owned(),
+            group,
+            readable,
+            can_create,
+            credential,
+        },
+    )
 }
 
 fn item(key: impl Into<String>, value: impl Into<String>) -> (String, String) {

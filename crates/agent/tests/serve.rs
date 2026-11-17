@@ -88,6 +88,7 @@ impl Served {
                 audit_log: file.audit_log(),
                 approvers,
                 approver_credentials: keefast_agent::ApproverCredentials::in_memory(),
+                oauth: keefast_agent::oauth::OAuthServer::in_memory(),
             },
         );
         let endpoint = McpEndpoint::start(Arc::clone(&host), listen).await.unwrap();
