@@ -162,6 +162,10 @@ _Avoid_: Secret ID, handle, placeholder
 `keefast-agent serve`: keefast with no window, keeping one Vault unlocked on a server and serving it to Agents over HTTP. Someone has to unlock it after it starts.
 _Avoid_: Daemon, server mode, agent server
 
+**In-app host**:
+The desktop app serving its unlocked Vaults to Agents on the same machine, which reach it through `keefast-agent mcp`, `run` and `store` over a socket or pipe only the user can open. Its prompts show in the app, as from "this computer", and each Vault's log is that Vault's Activity.
+_Avoid_: Local server, desktop server
+
 **Approver**:
 A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied. The desktop lists the hosts it approves for under Settings → Agent hosts.
 _Avoid_: Admin, controller, remote UI
