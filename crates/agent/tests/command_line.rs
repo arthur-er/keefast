@@ -500,6 +500,7 @@ fn approver_answering(
     let host = AgentHost {
         url: url.to_owned(),
         token: zeroize::Zeroizing::new(token),
+        certificate: None,
     };
     let (heard, prompts) = std::sync::mpsc::channel();
     let (connected, is_connected) = std::sync::mpsc::channel();

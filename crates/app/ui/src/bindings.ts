@@ -407,7 +407,7 @@ export const commands = {
 	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
 	 *  approver` printed there. An empty name names it by its address.
 	 */
-	addAgentHost: (name: string, url: string, token: string) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token })),
+	addAgentHost: (name: string, url: string, token: string, certificate: string | null) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token, certificate })),
 	removeAgentHost: (host: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_agent_host", { host })),
 	/**
 	 *  Answers the prompt `id` from `host`: allow or deny, and with `remember`, as an Agent access
@@ -547,6 +547,8 @@ export type AgentHostView = {
 	id: string,
 	name: string,
 	url: string,
+	/**  Whether it is trusted by a certificate the user gave rather than the public roots. */
+	trustsOwnCertificate: boolean,
 	state: AgentHostState,
 	/**  Why it is disconnected; keefast connects again by itself. */
 	problem: string | null,

@@ -59,7 +59,9 @@ Three ways to publish the host:
   proxy `https://agents.example.com/` to `http://127.0.0.1:7807`. Don't buffer responses: the
   MCP endpoint streams them (SSE).
 - **Built-in TLS**: listen on the network with `--tls-cert` and `--tls-key`, PEM files of a
-  certificate chain and its private key, from ACME or your own CA.
+  certificate chain and its private key, from ACME or your own CA. A certificate the public
+  roots don't vouch for (self-signed, or from your own CA) works too, once each client is told
+  to trust it: see [Self-signed certificates](#self-signed-certificates).
 
 ## Pairing Agents
 
@@ -122,6 +124,19 @@ other (`keefast-agent pairing revoke executor`, or in the desktop app), and its 
 working as soon as the host has the change. Behind a proxy, the host builds the addresses it
 publishes from the `X-Forwarded-Host` and `X-Forwarded-Proto` headers, or else from `Host`: let
 your proxy set them (Caddy does by default; with nginx, `proxy_set_header`), or forward the public `Host`.
+
+## Self-signed certificates
+
+With `--tls-cert` and a self-signed certificate, or one from your own CA, clients don't trust
+the host by the public roots. Give each client that certificate (or the CA's) as a PEM file:
+
+- the desktop: paste it under **Certificate** in **Settings → Agent hosts → Add host…**; it is
+  kept with the host in `agent-hosts.json`;
+- `keefast-agent run` and `store`: `export KEEFAST_AGENT_CA=/path/to/host-cert.pem`.
+
+That certificate is then the only one trusted for that host: the public roots aren't. MCP
+clients (Claude Code, Executor) use their own trust settings; a reverse proxy with ACME or
+`tailscale serve` avoids all this.
 
 ## Using a secret in a command
 
@@ -239,8 +254,8 @@ secret store, and holds a stream of server-sent events open to the host
 too; it answers at `POST /approver/prompts/<id>`. The host keeps each Approver's token hash in
 `approvers.json` in its state directory, not in the Vault: Approvers belong to the host, and they
 connect while it is locked. The desktop checks the host's certificate against the usual public
-roots, so a self-signed certificate won't do; a reverse proxy or `tailscale serve` gives one that
-does.
+roots, unless you paste the host's own certificate under **Certificate** when adding it (see
+[Self-signed certificates](#self-signed-certificates)).
 
 Approvers also see MCP clients asking to pair [by OAuth](#pairing-by-oauth), and approve them
 by typing the code the client's consent page shows.

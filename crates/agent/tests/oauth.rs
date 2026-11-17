@@ -881,6 +881,7 @@ async fn a_desktops_approver_client_hears_the_consent_and_approves_it_with_the_c
     let host = AgentHost {
         url: served.endpoint.url(),
         token: zeroize::Zeroizing::new(served.laptop.clone()),
+        certificate: None,
     };
     let (send, heard) = std::sync::mpsc::channel();
     let _client = ApproverClient::start(host.clone(), move |event| {

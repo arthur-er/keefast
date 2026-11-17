@@ -25,6 +25,7 @@ pub mod serve;
 mod session;
 mod settings;
 pub mod store;
+pub mod trust;
 
 pub use approver::{
     AgentPrompt, Approval, Approver, ApproverCredentials, ApproverHub, ConsentAnswer,

@@ -24,6 +24,8 @@ pub struct AgentHostView {
     pub id: String,
     pub name: String,
     pub url: String,
+    /// Whether it is trusted by a certificate the user gave rather than the public roots.
+    pub trusts_own_certificate: bool,
     pub state: AgentHostState,
     /// Why it is disconnected; keefast connects again by itself.
     pub problem: Option<String>,
@@ -40,6 +42,7 @@ impl From<HostView> for AgentHostView {
             id: host.id,
             name: host.name,
             url: host.url,
+            trusts_own_certificate: host.trusts_own_certificate,
             state,
             problem,
         }
@@ -166,8 +169,9 @@ pub async fn add_agent_host(
     name: String,
     url: String,
     token: String,
+    certificate: Option<String>,
 ) -> ApiResult<AgentHostView> {
-    agent_hosts::add(&core, &name, &url, &token).map(Into::into)
+    agent_hosts::add(&core, &name, &url, &token, certificate.as_deref()).map(Into::into)
 }
 
 #[tauri::command]

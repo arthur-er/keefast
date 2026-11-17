@@ -60,6 +60,10 @@ struct SavedHost {
     id: String,
     name: String,
     url: String,
+    /// The PEM of the host's self-signed certificate or its CA, trusted for it instead of the
+    /// public roots. Public, so it is kept here rather than in the OS secret store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    certificate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -105,6 +109,8 @@ pub struct HostView {
     pub id: String,
     pub name: String,
     pub url: String,
+    /// Whether it is trusted by a certificate the user gave rather than the public roots.
+    pub trusts_own_certificate: bool,
     pub connection: Connection,
 }
 
@@ -134,6 +140,7 @@ impl AgentHosts {
                 id: host.saved.id.clone(),
                 name: host.saved.name.clone(),
                 url: host.saved.url.clone(),
+                trusts_own_certificate: host.saved.certificate.is_some(),
                 connection: host.connection.clone(),
             })
             .collect()
@@ -358,6 +365,7 @@ fn connect(
         AgentHost {
             url: saved.url.clone(),
             token: token.clone(),
+            certificate: saved.certificate.clone(),
         },
         move |event| {
             if let Some(core) = weak.upgrade() {
@@ -379,9 +387,26 @@ pub fn heard(core: &AppCore, host: &str, event: ApproverClientEvent) {
     }
 }
 
-/// Adds the host at `url` with the Approver token `token`, and connects to it.
-pub fn add(core: &Arc<AppCore>, name: &str, url: &str, token: &str) -> ApiResult<HostView> {
+/// Adds the host at `url` with the Approver token `token`, and connects to it. `certificate`
+/// is the PEM of its self-signed certificate or its CA, for a host the public roots don't
+/// vouch for.
+pub fn add(
+    core: &Arc<AppCore>,
+    name: &str,
+    url: &str,
+    token: &str,
+    certificate: Option<&str>,
+) -> ApiResult<HostView> {
     let url = check_url(url)?;
+    let certificate = match certificate.map(str::trim).filter(|pem| !pem.is_empty()) {
+        None => None,
+        Some(pem) => {
+            keefast_agent::trust::certificates(pem).map_err(|error| {
+                ApiError::invalid(format!("keefast can't use that certificate: {error}."))
+            })?;
+            Some(pem.to_owned())
+        }
+    };
     let token = token.trim();
     if token.starts_with(keefast_agent::TOKEN_PREFIX) {
         return Err(ApiError::invalid(
@@ -410,6 +435,7 @@ pub fn add(core: &Arc<AppCore>, name: &str, url: &str, token: &str) -> ApiResult
         id: new_id(),
         name,
         url,
+        certificate,
     };
     hosts
         .secrets
@@ -498,6 +524,7 @@ pub fn answer(core: &AppCore, host: &str, id: &str, allow: bool, remember: bool)
             AgentHost {
                 url: host.saved.url.clone(),
                 token: host.token.clone(),
+                certificate: host.saved.certificate.clone(),
             },
             remember,
         )
@@ -576,6 +603,7 @@ pub fn answer_agent_consent(
         AgentHost {
             url: host.saved.url.clone(),
             token: host.token.clone(),
+            certificate: host.saved.certificate.clone(),
         }
     };
     let answered = answer_consent(&agent_host, id, answer);
@@ -619,6 +647,7 @@ pub fn activity(core: &AppCore, id: &str, lines: usize) -> ApiResult<Vec<AuditRe
         AgentHost {
             url: host.saved.url.clone(),
             token: host.token.clone(),
+            certificate: host.saved.certificate.clone(),
         }
     };
     agent_activity(&agent_host, lines).map_err(|error| match error {
@@ -729,6 +758,7 @@ pub(crate) mod tests {
             "build server",
             "http://127.0.0.1:9",
             "kfapprover_test-token",
+            None,
         )
         .unwrap()
         .id
@@ -844,9 +874,9 @@ pub(crate) mod tests {
     fn a_host_needs_an_approvers_token_and_https_unless_it_is_this_machine() {
         let (core, _) = core();
 
-        let agent_token = add(&core, "", "https://host.example", "kfa_agent").unwrap_err();
-        let plain = add(&core, "", "http://host.example", "kfapprover_x").unwrap_err();
-        let loopback = add(&core, "", "http://localhost:7807/", "kfapprover_x").unwrap();
+        let agent_token = add(&core, "", "https://host.example", "kfa_agent", None).unwrap_err();
+        let plain = add(&core, "", "http://host.example", "kfapprover_x", None).unwrap_err();
+        let loopback = add(&core, "", "http://localhost:7807/", "kfapprover_x", None).unwrap();
 
         assert!(
             agent_token.message.contains("pairing approver"),
@@ -858,6 +888,27 @@ pub(crate) mod tests {
             (loopback.name.as_str(), loopback.url.as_str()),
             ("localhost:7807", "http://localhost:7807")
         );
+    }
+
+    #[test]
+    fn a_host_with_a_self_signed_certificate_is_added_with_that_certificate_to_trust() {
+        let (core, _) = core();
+        let pem = include_str!("../../agent/tests/fixtures/tls-cert.pem");
+
+        let not_pem = add(
+            &core,
+            "",
+            "https://lab.example",
+            "kfapprover_x",
+            Some("hello"),
+        )
+        .unwrap_err();
+        let trusting = add(&core, "", "https://lab.example", "kfapprover_x", Some(pem)).unwrap();
+        let blank = add(&core, "", "https://other.example", "kfapprover_y", Some("  ")).unwrap();
+
+        assert!(not_pem.message.contains("certificate"), "{}", not_pem.message);
+        assert!(trusting.trusts_own_certificate);
+        assert!(!blank.trusts_own_certificate);
     }
 
     fn consent_offered(id: &str) -> ApproverClientEvent {

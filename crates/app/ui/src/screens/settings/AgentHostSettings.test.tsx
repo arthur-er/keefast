@@ -32,6 +32,7 @@ describe("Add an Agent host", () => {
       id: "h1",
       name: "build.example:7807",
       url: "https://build.example:7807",
+      trustsOwnCertificate: false,
       state: "connecting",
       problem: null,
     });
@@ -43,7 +44,27 @@ describe("Add an Agent host", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(api.addAgentHost).toHaveBeenCalledWith("", "https://build.example:7807", "kfapprover_token");
+    expect(api.addAgentHost).toHaveBeenCalledWith("", "https://build.example:7807", "kfapprover_token", null);
+  });
+
+  it("passes the certificate pasted for a host with a self-signed one", async () => {
+    vi.mocked(api.addAgentHost).mockResolvedValue({
+      id: "h1",
+      name: "lab.example",
+      url: "https://lab.example",
+      trustsOwnCertificate: true,
+      state: "connecting",
+      problem: null,
+    });
+    const onClose = vi.fn();
+    render(<AddHostDialog onClose={onClose} />);
+
+    fill("https://lab.example", "kfapprover_token");
+    fireEvent.change(screen.getByLabelText("Certificate"), { target: { value: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.addAgentHost).toHaveBeenCalledWith("", "https://lab.example", "kfapprover_token", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----");
   });
 
   it("shows why a host was refused, and stays open", async () => {
@@ -76,7 +97,7 @@ function record(overrides: Partial<AgentActivityRecord>): AgentActivityRecord {
   };
 }
 
-const HOST = { id: "h1", name: "Build server", url: "https://build.example", state: "connected", problem: null } as const;
+const HOST = { id: "h1", name: "Build server", url: "https://build.example", trustsOwnCertificate: false, state: "connected", problem: null } as const;
 
 function showActivity() {
   const client = new QueryClient();

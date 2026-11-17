@@ -757,6 +757,7 @@ fn approver_client(
         AgentHost {
             url: served.endpoint.url(),
             token: zeroize::Zeroizing::new(token.to_owned()),
+            certificate: None,
         },
         move |event| {
             let _ = send.send(event);
@@ -1186,6 +1187,7 @@ async fn a_paired_approver_reads_the_audit_log_even_while_locked_and_nobody_else
     let host = |token: &str| AgentHost {
         url: served.endpoint.url(),
         token: zeroize::Zeroizing::new(token.to_owned()),
+        certificate: None,
     };
 
     let all = tokio::task::block_in_place(|| agent_activity(&host(&laptop), 100)).unwrap();
@@ -1216,4 +1218,75 @@ async fn a_paired_approver_reads_the_audit_log_even_while_locked_and_nobody_else
     assert_eq!(last, all[1..]);
     assert_eq!(locked, all);
     assert_eq!(agent, Err(ActivityError::Unpaired));
+}
+
+/// A host serving TLS with the fixture's self-signed certificate, unlocked, and that
+/// certificate's PEM.
+async fn self_signed() -> (Served, String) {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let listen = Listen::new(
+        "127.0.0.1:0",
+        Some(fixtures.join("tls-cert.pem")),
+        Some(fixtures.join("tls-key.pem")),
+    )
+    .unwrap();
+    let served = Served::locked(&listen).await;
+    served.unlock().await;
+    let pem = std::fs::read_to_string(fixtures.join("tls-cert.pem")).unwrap();
+    (served, pem)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approver_reaches_a_self_signed_host_only_once_told_to_trust_its_certificate() {
+    let (served, pem) = self_signed().await;
+    let laptop = served.pair_approver("laptop");
+    let host = |certificate: Option<&str>| AgentHost {
+        url: served.endpoint.url(),
+        token: zeroize::Zeroizing::new(laptop.clone()),
+        certificate: certificate.map(str::to_owned),
+    };
+
+    let public_roots = tokio::task::block_in_place(|| agent_activity(&host(None), 10));
+    let trusted = tokio::task::block_in_place(|| agent_activity(&host(Some(&pem)), 10));
+
+    assert!(
+        matches!(public_roots, Err(ActivityError::Unreachable(_))),
+        "{public_roots:?}"
+    );
+    assert!(trusted.is_ok(), "{trusted:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_reaches_a_self_signed_host_once_told_to_trust_its_certificate() {
+    let (served, pem) = self_signed().await;
+    served.allow_claude_token("gh").await;
+    let request = keefast_agent::UseSecrets {
+        references: vec!["claude/claude token#password".to_owned()],
+        command: vec!["gh".to_owned()],
+    };
+    let connection = |trusting: Option<&str>| {
+        let connection = keefast_agent::run::Connection::host(
+            served.endpoint.url(),
+            zeroize::Zeroizing::new(served.claude.clone()),
+        );
+        match trusting {
+            Some(pem) => connection.trusting(pem).unwrap(),
+            None => connection,
+        }
+    };
+
+    let public_roots =
+        tokio::task::block_in_place(|| connection(None).use_secrets(&request));
+    let trusted = tokio::task::block_in_place(|| connection(Some(&pem)).use_secrets(&request));
+
+    assert!(public_roots.is_err());
+    assert_eq!(
+        trusted.unwrap()[0].value(),
+        "claude token-secret-value-1234"
+    );
+    assert!(
+        keefast_agent::run::Connection::host(String::new(), zeroize::Zeroizing::default())
+            .trusting("not a certificate")
+            .is_err()
+    );
 }

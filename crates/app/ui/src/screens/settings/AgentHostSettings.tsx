@@ -119,6 +119,7 @@ function HostRow({ host }: { host: AgentHostView }) {
         </div>
         <div className="desc pair-meta truncate" title={host.url}>
           <Hl>{host.url}</Hl>
+          {host.trustsOwnCertificate && " · trusts its own certificate"}
         </div>
         {host.problem && (
           <div className="desc" role="status">
@@ -148,6 +149,7 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [certificate, setCertificate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ready = url.trim() !== "" && token.trim() !== "";
@@ -156,7 +158,7 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const host = await api.addAgentHost(name, url, token);
+      const host = await api.addAgentHost(name, url, token, certificate.trim() === "" ? null : certificate);
       toast(
         <>
           Added <b>{host.name}</b>
@@ -212,6 +214,21 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
         </Field>
         <Field label="Name" htmlFor="agent-host-name" hint="Optional: its address names it otherwise.">
           <Input id="agent-host-name" value={name} placeholder="Build server" onChange={(event) => setName(event.target.value)} />
+        </Field>
+        <Field
+          label="Certificate"
+          htmlFor="agent-host-certificate"
+          hint="Optional: for a host with a self-signed certificate or your own CA, paste that certificate (PEM). keefast then trusts it, and only it, for this host."
+        >
+          <textarea
+            id="agent-host-certificate"
+            className="input mono h-auto py-1.5"
+            rows={3}
+            spellCheck={false}
+            value={certificate}
+            placeholder="-----BEGIN CERTIFICATE-----"
+            onChange={(event) => setCertificate(event.target.value)}
+          />
         </Field>
       </form>
     </Dialog>

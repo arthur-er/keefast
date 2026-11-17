@@ -43,8 +43,10 @@ usage:
       Runs <program> with the secrets the Secret references name in its environment, such as
       `run --env GH_TOKEN=GitHub/token#password -- gh auth status`, and redacts them from its
       output. It reaches keefast at $KEEFAST_AGENT_URL with the Agent pairing's token in
-      $KEEFAST_AGENT_TOKEN; without $KEEFAST_AGENT_URL, the desktop app on this machine. It
-      exits with the program's exit code, or 125 if keefast refused or couldn't be reached.
+      $KEEFAST_AGENT_TOKEN; without $KEEFAST_AGENT_URL, the desktop app on this machine. For a
+      host with a self-signed certificate or its own CA, set $KEEFAST_AGENT_CA to that
+      certificate's PEM file. It exits with the program's exit code, or 125 if keefast refused
+      or couldn't be reached.
 
   keefast-agent store <Secret reference>#<field>
       Saves the value on its input to that field of an Entry in the Agent pairing's own
