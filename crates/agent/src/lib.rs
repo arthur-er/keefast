@@ -7,6 +7,7 @@
 
 pub mod admin;
 pub mod approver;
+pub mod approver_client;
 pub mod audit;
 pub mod host;
 pub mod installed;

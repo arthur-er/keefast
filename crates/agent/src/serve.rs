@@ -52,7 +52,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use crate::approver::{ApproverAnswer, ApproverEvent};
+use crate::approver::{APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, ApproverAnswer, ApproverEvent};
 use crate::host::HeadlessHost;
 use crate::listen::{Listen, TlsFiles};
 use crate::run::USE_SECRETS_PATH;
@@ -173,12 +173,6 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
         .with_state(host);
     agents.merge(approvers)
 }
-
-/// Where a connected Approver's prompts stream from, as server-sent events: `prompt` and
-/// `dismissed`, each with an [`ApproverEvent`] as JSON.
-pub const APPROVER_EVENTS_PATH: &str = "/approver/events";
-/// Where an Approver POSTs its [`ApproverAnswer`] to a prompt, at `/approver/prompts/<id>`.
-pub const APPROVER_PROMPTS_PATH: &str = "/approver/prompts";
 
 /// The Approver whose token a request carries, by name.
 fn approver(host: &HeadlessHost, headers: &HeaderMap) -> Option<String> {

@@ -8,6 +8,10 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use keefast_agent::approver::ApproverAnswer;
+use keefast_agent::approver_client::{
+    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent,
+};
 use keefast_agent::host::{HeadlessHost, HostConfig};
 use keefast_agent::listen::Listen;
 use keefast_agent::serve::McpEndpoint;
@@ -677,4 +681,86 @@ async fn only_a_paired_approvers_token_opens_the_prompt_stream_even_while_locked
     served.host.approver_credentials().unpair("laptop").unwrap();
     assert_eq!(served.approver_stream(&laptop).await.0, 401);
     assert_eq!(served.answer(&served.claude, "any", true, false).await, 401);
+}
+
+/// A desktop keefast's [`ApproverClient`] connected to `served` with `token`, and what it hears.
+fn approver_client(
+    served: &Served,
+    token: &str,
+) -> (
+    ApproverClient,
+    std::sync::mpsc::Receiver<ApproverClientEvent>,
+) {
+    let (send, heard) = std::sync::mpsc::channel();
+    let client = ApproverClient::start(
+        AgentHost {
+            url: served.endpoint.url(),
+            token: zeroize::Zeroizing::new(token.to_owned()),
+        },
+        move |event| {
+            let _ = send.send(event);
+        },
+    );
+    (client, heard)
+}
+
+async fn next_heard(heard: &std::sync::mpsc::Receiver<ApproverClientEvent>) -> ApproverClientEvent {
+    tokio::task::block_in_place(|| {
+        heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktops_approver_client_hears_the_prompt_and_its_answer_lets_run_through() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let (client, heard) = approver_client(&served, &laptop);
+    assert_eq!(next_heard(&heard).await, ApproverClientEvent::Connected);
+
+    let run = served.run_gh_later();
+    let ApproverClientEvent::Prompt { id, prompt, .. } = next_heard(&heard).await else {
+        panic!("expected a prompt");
+    };
+    let answered = tokio::task::block_in_place(|| {
+        client.answer(
+            &id,
+            ApproverAnswer {
+                allow: true,
+                remember: true,
+            },
+        )
+    });
+    let again = tokio::task::block_in_place(|| {
+        client.answer(
+            &id,
+            ApproverAnswer {
+                allow: true,
+                remember: true,
+            },
+        )
+    });
+
+    assert_eq!(prompt.entry_title, "claude token");
+    assert_eq!(answered, Ok(()));
+    assert_eq!(again, Err(AnswerPromptError::Gone));
+    assert_eq!(run.await.unwrap().0, 200);
+    assert_eq!(
+        next_heard(&heard).await,
+        ApproverClientEvent::Dismissed { id }
+    );
+    assert_eq!(served.run_gh_later().await.unwrap().0, 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approver_client_with_a_token_the_host_doesnt_know_hears_why() {
+    let served = Served::unlocked().await;
+
+    let (_client, heard) = approver_client(&served, "kfapprover_nobodys");
+
+    let ApproverClientEvent::Disconnected(why) = next_heard(&heard).await else {
+        panic!("expected to be refused");
+    };
+    assert!(why.contains("pair it again"), "{why}");
 }

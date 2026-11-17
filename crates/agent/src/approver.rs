@@ -20,6 +20,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Where a connected Approver's prompts stream from, as server-sent events: `prompt` and
+/// `dismissed`, each with an [`ApproverEvent`] as JSON.
+pub const APPROVER_EVENTS_PATH: &str = "/approver/events";
+/// Where an Approver POSTs its [`ApproverAnswer`] to a prompt, at `/approver/prompts/<id>`.
+pub const APPROVER_PROMPTS_PATH: &str = "/approver/prompts";
+
 /// How long a prompt waits for an answer before the use is denied.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -115,10 +121,13 @@ pub struct ApproverHub {
     state: Mutex<HubState>,
 }
 
+/// How the hub tells one connected Approver of an event.
+type Tell = Arc<dyn Fn(&ApproverEvent) + Send + Sync>;
+
 #[derive(Default)]
 struct HubState {
     next: u64,
-    approvers: HashMap<u64, Arc<dyn Fn(&ApproverEvent) + Send + Sync>>,
+    approvers: HashMap<u64, Tell>,
     waiting: HashMap<String, Waiting>,
 }
 
