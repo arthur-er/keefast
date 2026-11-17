@@ -12,6 +12,9 @@
 //!                       [--agent-group <path>] [--admin-socket <path>]
 //! keefast-agent pairing list [--admin-socket <path>]
 //! keefast-agent pairing revoke <name> [--admin-socket <path>]
+//! keefast-agent pairing approver <name> [--admin-socket <path>]
+//! keefast-agent pairing approvers [--admin-socket <path>]
+//! keefast-agent pairing revoke-approver <name> [--admin-socket <path>]
 //! keefast-agent log [--lines <n>] [--admin-socket <path>]
 //! keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
 //! ```
@@ -67,6 +70,17 @@ usage:
 
   keefast-agent pairing revoke <name> [--admin-socket <path>]
       Revokes an Agent pairing: its token stops working at once. Its subgroup stays.
+
+  keefast-agent pairing approver <name> [--admin-socket <path>]
+      Pairs a desktop keefast as an Approver called <name>, which shows the prompts for uses
+      no Agent access decision answers, and prints its token, once. Add the host in keefast's
+      Settings → Agent hosts with its address and this token. Works while the Vault is locked.
+
+  keefast-agent pairing approvers [--admin-socket <path>]
+      Lists the Approvers paired with the Headless host.
+
+  keefast-agent pairing revoke-approver <name> [--admin-socket <path>]
+      Unpairs an Approver: its token stops working.
 
   keefast-agent log [--lines <n>] [--admin-socket <path>]
       Shows the Headless host's audit log: what each Agent pairing listed and used, when, and
@@ -313,9 +327,10 @@ mod operator {
     }
 
     fn pairing(args: &[String]) -> Result<(), String> {
-        let (action, rest) = args
-            .split_first()
-            .ok_or("pairing needs create, list or revoke: see keefast-agent --help")?;
+        let (action, rest) = args.split_first().ok_or(
+            "pairing needs create, list, revoke, approver, approvers or revoke-approver: see \
+                 keefast-agent --help",
+        )?;
         match action.as_str() {
             "create" => {
                 let (name, rest) = rest
@@ -359,8 +374,45 @@ mod operator {
                 let request = AdminRequest::PairingRevoke { name: name.clone() };
                 show(ask(&flags, &request)?, &format!("revoked {name}"))
             }
+            "approver" => {
+                let (name, rest) = rest
+                    .split_first()
+                    .filter(|(name, _)| !name.starts_with("--"))
+                    .ok_or("pairing approver needs the Approver's name, such as laptop")?;
+                let flags = Flags::new(rest, &[], &["--admin-socket"])?;
+                match ask(&flags, &AdminRequest::ApproverPair { name: name.clone() })? {
+                    AdminReply::ApproverPaired { approver, token } => {
+                        eprintln!(
+                            "Paired the Approver {}. Its token is below; it isn't shown again. In \
+                             keefast on that desktop, add this host under Settings → Agent hosts, \
+                             with the address Agents use and this token.",
+                            approver.name
+                        );
+                        println!("{}", token.0.as_str());
+                        Ok(())
+                    }
+                    other => show(other, ""),
+                }
+            }
+            "approvers" => {
+                let flags = Flags::new(rest, &[], &["--admin-socket"])?;
+                show(ask(&flags, &AdminRequest::ApproverList)?, "")
+            }
+            "revoke-approver" => {
+                let (name, rest) = rest
+                    .split_first()
+                    .filter(|(name, _)| !name.starts_with("--"))
+                    .ok_or("pairing revoke-approver needs the Approver's name")?;
+                let flags = Flags::new(rest, &[], &["--admin-socket"])?;
+                let request = AdminRequest::ApproverRevoke { name: name.clone() };
+                show(
+                    ask(&flags, &request)?,
+                    &format!("unpaired the Approver {name}"),
+                )
+            }
             other => Err(format!(
-                "unknown pairing command {other}: it is create, list or revoke"
+                "unknown pairing command {other}: it is create, list, revoke, approver, \
+                 approvers or revoke-approver"
             )),
         }
     }
@@ -484,6 +536,23 @@ mod operator {
                 for pairing in &pairings {
                     println!("{}", describe_pairing(pairing));
                 }
+                Ok(())
+            }
+            AdminReply::Approvers { approvers } => {
+                if !done.is_empty() {
+                    println!("{done}");
+                }
+                if approvers.is_empty() {
+                    println!("No Approver is paired.");
+                }
+                for approver in &approvers {
+                    let since = keefast_core::Timestamp::from_unix_seconds(approver.created);
+                    println!("{}, paired {}", approver.name, since.to_iso_8601());
+                }
+                Ok(())
+            }
+            AdminReply::ApproverPaired { approver, .. } => {
+                println!("paired the Approver {}", approver.name);
                 Ok(())
             }
             AdminReply::PairingCreated { pairing, .. } => {

@@ -313,6 +313,61 @@ fn pairing_revoke_removes_the_pairing_and_keeps_it_removed_after_a_restart() {
     assert!(!text(&listed).contains("\nclaude"), "{}", text(&listed));
 }
 
+/// The status of opening the Approver prompt stream at the host `url` with `token`.
+fn approver_stream_status(url: &str, token: &str) -> u16 {
+    let events = url.replace("/mcp", "/approver/events");
+    let agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_recv_body(Some(Duration::from_millis(100)))
+        .build()
+        .new_agent();
+    agent
+        .get(&events)
+        .header("authorization", &format!("Bearer {token}"))
+        .call()
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[test]
+fn pairing_approver_prints_an_approvers_token_once_even_while_locked_and_revoking_it_shuts_it_out()
+{
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    let paired = run(&served.socket, &["pairing", "approver", "laptop"], "");
+    let token = String::from_utf8_lossy(&paired.stdout).trim().to_owned();
+    let listed = run(&served.socket, &["pairing", "approvers"], "");
+    let opened = approver_stream_status(&url, &token);
+    let revoked = run(
+        &served.socket,
+        &["pairing", "revoke-approver", "laptop"],
+        "",
+    );
+    let shut_out = approver_stream_status(&url, &token);
+    let again = run(
+        &served.socket,
+        &["pairing", "revoke-approver", "laptop"],
+        "",
+    );
+
+    assert!(paired.status.success(), "{}", text(&paired));
+    assert!(token.starts_with("kfapprover_"), "{}", text(&paired));
+    assert!(
+        text(&paired).contains("Settings → Agent hosts"),
+        "{}",
+        text(&paired)
+    );
+    assert!(text(&listed).contains("laptop"), "{}", text(&listed));
+    assert!(!text(&listed).contains(&token), "{}", text(&listed));
+    assert_eq!(opened, 200);
+    assert!(revoked.status.success(), "{}", text(&revoked));
+    assert_eq!(shut_out, 401);
+    assert!(!again.status.success(), "{}", text(&again));
+}
+
 /// A Vault file with an Agent group, `Agents`, holding `GitHub/token`, which the pairing
 /// `claude` reads; and claude's token.
 fn vault_with_a_github_token() -> (VaultFile, String) {
