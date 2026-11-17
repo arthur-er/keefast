@@ -367,6 +367,22 @@ fn resolve<'a>(
     Ok((entry, Zeroizing::new(value.to_owned())))
 }
 
+/// The Agent pairings that can use `entry`: those whose own subgroup, or a subgroup they read,
+/// holds it. The desktop app's Entry editor offers decisions for these.
+pub fn pairings_reading(vault: &Vault, entry: EntryId) -> Vec<AgentPairing> {
+    let settings = AgentSettings::of(vault);
+    settings
+        .pairings()
+        .iter()
+        .filter(|pairing| {
+            readable_entries(vault, &settings, pairing)
+                .iter()
+                .any(|(readable, _)| readable.id() == entry)
+        })
+        .cloned()
+        .collect()
+}
+
 /// The Entries `pairing` reads, with their paths below the Agent group: those in its own
 /// subgroup and the subgroups it may read, and in their subgroups.
 fn readable_entries<'a>(

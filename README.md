@@ -30,7 +30,8 @@ Wayland and X11, and draws its window with WebKitGTK 4.1.
 Browser integration works from every one of them: keefast registers the `keefast-native-host`
 it shipped with. The AppImage is mounted somewhere new each run, so it copies its host to
 `~/.local/share/keefast/` and registers that copy, refreshed each time it starts with browser
-integration on.
+integration on. It copies `keefast-agent`, the command Agents run, to
+`~/.local/share/keefast/keefast-agent` in the same way, each time it starts.
 
 Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
 `scripts/package-linux.sh` makes the tarball and AppImage from a release build, and
@@ -45,6 +46,8 @@ with the Microsoft Edge WebView2 Runtime, which Windows 11 and up-to-date Window
 MSI says so if it is missing.
 
 Browser integration registers the `keefast-native-host` installed next to `keefast.exe`.
+`keefast-agent.exe`, the command Agents run, is installed there too, and the MSI adds that
+folder to your user's `PATH`.
 Uninstalling keefast (Settings > Apps) removes those registrations, and only keefast's; your
 config and Vault files stay, so a reinstalled keefast registers the host again when it starts
 if browser integration was on.

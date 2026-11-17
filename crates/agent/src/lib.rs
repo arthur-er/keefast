@@ -20,7 +20,7 @@ mod settings;
 pub use audit::{AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, SecretListing, SecretReference,
-    SecretValue, UseSecrets,
+    SecretValue, UseSecrets, pairings_reading,
 };
 pub use settings::{
     AgentAccessDecision, AgentCredential, AgentDecision, AgentPairing, AgentPairingId,

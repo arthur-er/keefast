@@ -100,6 +100,15 @@ export interface MockVault {
   /** The Agent group's id, once chosen. */
   agentGroup?: string | null;
   agentPairings?: MockAgentPairing[];
+  /** Agent access decisions: an Agent pairing using an Entry with a program. */
+  agentDecisions?: MockAgentDecision[];
+}
+
+export interface MockAgentDecision {
+  entry: string;
+  pairing: string;
+  program: string;
+  allow: boolean;
 }
 
 /** An Agent pairing: its own subgroup of the Agent group, and the others it reads. */

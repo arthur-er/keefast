@@ -1,14 +1,22 @@
 //! A Vault's Agent settings (ADR 0012), kept in its Vault file: the Agent group, and the Agent
 //! pairings that reach its subgroups. A pairing's token is shown once, in the reply to the
 //! command that creates it; the Vault keeps only its hash, and no other command returns it.
+//!
+//! The Entry editor's Agents section shows and changes the Agent access decisions remembered
+//! for an Entry. Until Approvers arrive (#157) a Headless host can ask nobody, so allowing a
+//! program here, ahead of time, is how a use is allowed; the decision reaches every host
+//! serving the Vault through the Vault file. Decisions live in the Vault's custom data, not in
+//! the Entry, so changing one makes no Entry history.
 
-use keefast_agent::{AgentPairing, AgentSettings, AgentSettingsExt};
+use keefast_agent::{
+    AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse, pairings_reading,
+};
 use keefast_core::Vault;
 use serde::Serialize;
 use specta::Type;
 
 use super::Core;
-use crate::dto::{GroupId, VaultId};
+use crate::dto::{EntryId, GroupId, VaultId};
 use crate::error::{ApiError, ApiResult};
 
 /// A subgroup of the Agent group: one pairing's own, and any others may read it.
@@ -186,6 +194,142 @@ pub async fn revoke_agent_pairing(
         let pairing = self::pairing(&settings, &pairing)?;
         workspace
             .revoke_agent_pairing(vault, pairing.id())
+            .map_err(ApiError::from)
+    })?;
+    core.autosave();
+    Ok(())
+}
+
+/// A remembered Agent access decision: an Agent pairing using an Entry with a program.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDecisionView {
+    pub pairing: String,
+    pub pairing_name: String,
+    /// The program's executable name, such as `gh`.
+    pub program: String,
+    pub allow: bool,
+}
+
+/// What the Entry editor's Agents section shows for an Entry.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryAgentAccess {
+    /// The Agent pairings that can use the Entry, from their own subgroup or one they read.
+    /// Empty when the Entry is outside the Agent group.
+    pub pairings: Vec<AgentPairingView>,
+    /// Its remembered decisions, by pairing name, then program. Decisions for hosts
+    /// (`http_request`) come later.
+    pub decisions: Vec<AgentDecisionView>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_entry_agent_access(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+) -> ApiResult<EntryAgentAccess> {
+    let entry = entry.resolve()?;
+    core.read(|workspace| {
+        let id = vault.resolve_open(workspace)?;
+        let open = workspace
+            .readable_vault(id)
+            .ok_or_else(ApiError::vault_not_found)?
+            .vault();
+        let settings = AgentSettings::of(open);
+        let mut decisions: Vec<AgentDecisionView> = settings
+            .decisions_on(entry)
+            .filter_map(|decision| {
+                let AgentUse::Program(program) = &decision.agent_use else {
+                    return None;
+                };
+                // A revoked pairing's decisions no longer matter.
+                let pairing = settings.pairing(&decision.pairing)?;
+                Some(AgentDecisionView {
+                    pairing: pairing.id().as_str().to_owned(),
+                    pairing_name: pairing.name().to_owned(),
+                    program: program.clone(),
+                    allow: decision.decision == AgentDecision::Allow,
+                })
+            })
+            .collect();
+        decisions.sort_by(|a, b| {
+            (a.pairing_name.as_str(), a.program.as_str())
+                .cmp(&(b.pairing_name.as_str(), b.program.as_str()))
+        });
+        Ok(EntryAgentAccess {
+            pairings: pairings_reading(open, entry)
+                .iter()
+                .map(AgentPairingView::of)
+                .collect(),
+            decisions,
+        })
+    })
+}
+
+/// Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with
+/// `program`, by its executable's name. Shells and interpreters are refused: they ask every
+/// time.
+#[tauri::command]
+#[specta::specta]
+pub async fn remember_agent_decision(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+    pairing: String,
+    program: String,
+    allow: bool,
+) -> ApiResult<()> {
+    let entry = entry.resolve()?;
+    let program = keefast_agent::programs::program_name(program.trim());
+    if program.is_empty() {
+        return Err(ApiError::invalid("Name the program, such as gh."));
+    }
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.update(|workspace| {
+        let settings = workspace
+            .agent_settings(vault)
+            .ok_or_else(ApiError::vault_not_found)?;
+        let pairing = self::pairing(&settings, &pairing)?;
+        let decision = if allow {
+            AgentDecision::Allow
+        } else {
+            AgentDecision::Deny
+        };
+        workspace
+            .remember_agent_decision(
+                vault,
+                entry,
+                pairing.id(),
+                &AgentUse::Program(program),
+                decision,
+            )
+            .map_err(ApiError::from)
+    })?;
+    core.autosave();
+    Ok(())
+}
+
+/// Forgets a remembered decision, so the use follows the Default agent policy again.
+#[tauri::command]
+#[specta::specta]
+pub async fn forget_agent_decision(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+    pairing: String,
+    program: String,
+) -> ApiResult<()> {
+    let entry = entry.resolve()?;
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.update(|workspace| {
+        let settings = workspace
+            .agent_settings(vault)
+            .ok_or_else(ApiError::vault_not_found)?;
+        let pairing = self::pairing(&settings, &pairing)?;
+        workspace
+            .forget_agent_decision(vault, entry, pairing.id(), &AgentUse::Program(program))
             .map_err(ApiError::from)
     })?;
     core.autosave();

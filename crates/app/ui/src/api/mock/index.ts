@@ -1505,6 +1505,41 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
+    getEntryAgentAccess: command((id, entryId) => {
+      const [v, e] = entryOf(id, entryId);
+      const pairings = (v.agentPairings ?? []).filter((p) =>
+        [p.group, ...p.reads].some((g) => v.groups.some((x) => x.id === g) && descendants(v, g).has(e.group)),
+      );
+      const decisions = (v.agentDecisions ?? [])
+        .filter((d) => d.entry === e.id)
+        .flatMap((d) => {
+          const pairing = v.agentPairings?.find((p) => p.id === d.pairing);
+          return pairing ? [{ pairing: pairing.id, pairingName: pairing.name, program: d.program, allow: d.allow }] : [];
+        })
+        .sort((a, b) => a.pairingName.localeCompare(b.pairingName) || a.program.localeCompare(b.program));
+      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions };
+    }),
+    rememberAgentDecision: command((id, entryId, pairingId, program, allow) => {
+      const [v, e] = entryOf(id, entryId);
+      if (!v.agentPairings?.some((p) => p.id === pairingId)) throw new MockError("invalid", "This Agent pairing was revoked.");
+      const name = program.trim().split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+      if (!name) throw new MockError("invalid", "Name the program, such as gh.");
+      if (/^(sh|bash|zsh|fish|dash|pwsh|powershell|cmd|node|deno|bun|ruby|perl|php|env|xargs|python.*)$/i.test(name)) {
+        throw new MockError("invalid", `${name} is a shell or interpreter, which can run anything, so keefast asks every time it is used and never remembers an answer.`);
+      }
+      const decisions = (v.agentDecisions ??= []);
+      const known = decisions.find((d) => d.entry === e.id && d.pairing === pairingId && d.program === name);
+      if (known) known.allow = allow;
+      else decisions.push({ entry: e.id, pairing: pairingId, program: name, allow });
+      edited(v);
+      return null;
+    }),
+    forgetAgentDecision: command((id, entryId, pairingId, program) => {
+      const [v, e] = entryOf(id, entryId);
+      v.agentDecisions = (v.agentDecisions ?? []).filter((d) => !(d.entry === e.id && d.pairing === pairingId && d.program === program));
+      edited(v);
+      return null;
+    }),
     dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
       // "Allowed in the browser" after a few seconds, unless stopped first.

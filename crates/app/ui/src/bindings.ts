@@ -382,6 +382,15 @@ export const commands = {
 	 *  Ask the user first.
 	 */
 	revokeAgentPairing: (vault: VaultId, pairing: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_agent_pairing", { vault, pairing })),
+	getEntryAgentAccess: (vault: VaultId, entry: EntryId) => typedError<EntryAgentAccess, ApiError>(__TAURI_INVOKE("get_entry_agent_access", { vault, entry })),
+	/**
+	 *  Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with
+	 *  `program`, by its executable's name. Shells and interpreters are refused: they ask every
+	 *  time.
+	 */
+	rememberAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string, allow: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("remember_agent_decision", { vault, entry, pairing, program, allow })),
+	/**  Forgets a remembered decision, so the use follows the Default agent policy again. */
+	forgetAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string) => typedError<null, ApiError>(__TAURI_INVOKE("forget_agent_decision", { vault, entry, pairing, program })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -447,6 +456,15 @@ export type AccessPolicy = "ask" | "alwaysAllow" | "alwaysDeny";
 export type AddedAttachments = {
 	added: string[],
 	errors: string[],
+};
+
+/**  A remembered Agent access decision: an Agent pairing using an Entry with a program. */
+export type AgentDecisionView = {
+	pairing: string,
+	pairingName: string,
+	/**  The program's executable name, such as `gh`. */
+	program: string,
+	allow: boolean,
 };
 
 /**  An Agent pairing, without its token. */
@@ -673,6 +691,20 @@ export type DropboxStatus = {
 export type EncryptionSettings = {
 	cipher: CipherChoice,
 	kdf: KdfChoice,
+};
+
+/**  What the Entry editor's Agents section shows for an Entry. */
+export type EntryAgentAccess = {
+	/**
+	 *  The Agent pairings that can use the Entry, from their own subgroup or one they read.
+	 *  Empty when the Entry is outside the Agent group.
+	 */
+	pairings: AgentPairingView[],
+	/**
+	 *  Its remembered decisions, by pairing name, then program. Decisions for hosts
+	 *  (`http_request`) come later.
+	 */
+	decisions: AgentDecisionView[],
 };
 
 /**  Everything about an Entry the detail shows, except its secrets. */

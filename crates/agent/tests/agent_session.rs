@@ -587,6 +587,32 @@ fn every_use_and_list_is_audited_with_its_outcome_but_never_a_value() {
     }
 }
 
+#[test]
+fn the_pairings_reading_an_entry_are_its_own_subgroups_and_those_reading_a_shared_one() {
+    let mut fixture = Fixture::new();
+    let own = fixture.add_secret("GitHub", "ghp_token_value");
+    let shared = fixture.groups.shared;
+    let shared_key = fixture.add(shared, "shared key");
+    let codex = fixture.groups.codex;
+    let theirs = fixture.add(codex, "codex token");
+    let vault = fixture
+        .workspace
+        .readable_vault(fixture.vault)
+        .unwrap()
+        .vault();
+
+    let names = |entry| -> Vec<String> {
+        keefast_agent::pairings_reading(vault, entry)
+            .iter()
+            .map(|pairing| pairing.name().to_owned())
+            .collect()
+    };
+
+    assert_eq!(names(own), ["claude"]);
+    assert_eq!(names(shared_key), ["claude"]);
+    assert_eq!(names(theirs), Vec::<String>::new());
+}
+
 struct NoClipboard;
 
 impl Clipboard for NoClipboard {
