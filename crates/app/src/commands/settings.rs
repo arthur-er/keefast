@@ -87,6 +87,8 @@ pub struct AppSettings {
     pub close_to_tray: bool,
     /// Whether the desktop has a Tray, as last checked: without one, closing minimizes instead.
     pub tray_available: bool,
+    /// Whether keefast checks for updates on its own; `None` until the user is asked.
+    pub check_for_updates: Option<bool>,
     /// Why the app config couldn't be read or saved, if it couldn't.
     pub config_error: Option<String>,
 }
@@ -177,6 +179,7 @@ pub async fn get_settings(core: Core<'_>) -> ApiResult<AppSettings> {
             shortcuts: workspace.shortcuts().clone(),
             close_to_tray: workspace.close_to_tray(),
             tray_available: tray::tray_available(),
+            check_for_updates: workspace.check_for_updates(),
             config_error: workspace.config_error().map(ToString::to_string),
         }
     }))
@@ -253,6 +256,19 @@ pub async fn set_close_to_tray(app: AppHandle, core: Core<'_>, enabled: bool) ->
     }
     core.update(|workspace| workspace.set_close_to_tray(enabled));
     tray::sync(&app, enabled);
+    Ok(())
+}
+
+/// Turns checking for updates once a day on or off; turned on, keefast checks soon.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_check_for_updates(
+    core: Core<'_>,
+    updates: tauri::State<'_, std::sync::Arc<crate::updates::Updates>>,
+    enabled: bool,
+) -> ApiResult<()> {
+    core.update(|workspace| workspace.set_check_for_updates(enabled));
+    updates.wake();
     Ok(())
 }
 

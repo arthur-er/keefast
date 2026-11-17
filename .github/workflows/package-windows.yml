@@ -1,17 +1,22 @@
 # Builds the Windows MSI, smoke-checks that it installs and uninstalls cleanly, and uploads it as
-# the `windows-x86_64` artifact. Called by the release workflow; it also runs on pull requests that
-# change the installer, and by hand to try a build.
+# the `windows-x86_64` artifact; a release also signs it as an update (ADR 0014). Called by the
+# release workflow; it also runs on pull requests that change the installer, and by hand to try a
+# build.
 name: Package for Windows
 
 on:
   workflow_call:
     inputs:
       release:
-        description: Bundle Plugins signed with keefast's release key, failing without it.
+        description: Bundle Plugins signed with keefast's release key and sign the MSI as an update, failing without the keys.
         type: boolean
         default: false
     secrets:
       KEEFAST_PLUGIN_SIGNING_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
         required: false
   workflow_dispatch:
   pull_request:
@@ -88,8 +93,19 @@ jobs:
       - name: Smoke check installing and uninstalling
         run: scripts/smoke-windows.ps1 (Get-Item dist\*.msi).FullName
 
+      # The in-app updater installs only an MSI signed with keefast's update key.
+      - name: Sign the MSI as an update
+        if: inputs.release
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: scripts/sign-update.sh dist/*.msi
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
-          path: dist/*.msi
+          path: |
+            dist/*.msi
+            dist/*.msi.sig
           if-no-files-found: error

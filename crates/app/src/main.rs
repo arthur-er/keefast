@@ -17,6 +17,7 @@ mod icon_protocol;
 mod merge_notice;
 mod shortcuts;
 mod tray;
+mod updates;
 
 use keefast_workspace::{BrowserHosts, NativeMessagingHosts};
 
