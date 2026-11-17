@@ -376,5 +376,5 @@ paths, so they stay out of the Nix store. Unattended unlock from a password in t
 store isn't offered: a system service has no secret store to keep it in.
 
 A NixOS VM test (`nix build .#checks.x86_64-linux.headless-host`, part of `nix flake check`;
-it needs KVM) boots the service, unlocks it over the admin socket, and checks it is locked
+it needs KVM, so CI, whose runners have none, skips it and it is run locally) boots the service, unlocks it over the admin socket, and checks it is locked
 again after a restart.
