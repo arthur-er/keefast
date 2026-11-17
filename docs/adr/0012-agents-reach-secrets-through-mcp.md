@@ -61,3 +61,10 @@ Every call that touches a secret (list, use, create, reveal, and the decision) g
 - **ADR 0005's Vault custom data** gains Agent pairings, Agent access decisions, the Default agent policy, each Entry's allowed hosts, and the "Agents may reveal" flag. OAuth tokens are the exception and stay in host state. See its update of 2026-11-16.
 - **ADR 0008 said secrets cross only when shown.** That still holds for the UI. Agents are a second way out, and approvals stand in for showing: no value leaves for an Agent without an Agent access decision or the Default agent policy allowing it.
 - **The Windows and Linux packages** grow a binary, and the AppImage copies `keefast-agent` out as it does the native host.
+
+## Update 2026-11-17: pairing on the host, and the MCP endpoint's checks
+
+- **`keefast-agent pairing create|list|revoke`** goes over the admin socket, not the MCP endpoint, so only the host's operators can pair Agents, as only they can unlock it. While the Vault has no Agent group, `create --agent-group <path>` makes that Group (creating it if missing) the Agent group, so a host with no desktop keefast nearby can be set up from a shell. The host saves the Vault before it answers.
+- **Tokens are checked against the Vault on every request.** A token no pairing has gets 401 before MCP sees it, so a revoked token stops at once. While the Vault is locked nothing can be checked, since the hashes are in it, and every tool answers "locked"; that tells a caller only that the host is locked.
+- **No `Host` header allow-list** (rmcp checks one by default against DNS rebinding). The bearer token, which a web page doesn't have, already guards the endpoint, and a proxy such as `tailscale serve` forwards its own name.
+- **`list_secrets` hints at a password's last four characters only when it has at least twelve**, so a hint never gives away most of a short one.

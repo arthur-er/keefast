@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keefast_agent::{
-    AgentCredential, AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse,
-    DefaultAgentPolicy, NewAgentPairing,
+    AgentCredential, AgentDecision, AgentPairing, AgentSettings, AgentSettingsError,
+    AgentSettingsExt, AgentUse, DefaultAgentPolicy, NewAgentPairing,
 };
 use keefast_core::{EntryFields, EntryId, GroupId};
 use keefast_workspace::{VaultId, Workspace};
@@ -331,4 +331,114 @@ fn a_forgotten_decision_stays_forgotten_through_a_merge_with_a_copy_that_still_h
     let settings = reopened.agent_settings(vault).unwrap();
     assert_eq!(settings.decision(entry, pairing.id(), &gh()), None);
     assert_eq!(settings.decisions_on(entry).count(), 0);
+}
+
+#[test]
+fn creating_a_pairing_makes_its_subgroup_and_gives_its_token_once() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [agents, _, shared]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+
+    let created = workspace
+        .create_agent_pairing(vault, "codex", vec![shared], true)
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    assert!(created.token.starts_with(keefast_agent::TOKEN_PREFIX));
+    let (reopened, vault) = file.open(&clock);
+    let open = reopened.readable_vault(vault).unwrap();
+    let group = open.vault().group(created.pairing.group()).unwrap();
+    assert_eq!(group.name(), "codex");
+    let agent_group = open.vault().group(agents).unwrap();
+    assert!(agent_group.groups().iter().any(|g| g.id() == group.id()));
+    let settings = reopened.agent_settings(vault).unwrap();
+    let pairing = settings.pairing_with_token(&created.token).unwrap();
+    assert_eq!(pairing.name(), "codex");
+    assert_eq!(pairing.readable(), [shared]);
+    assert!(pairing.can_create());
+    let custom_data: Vec<(String, String)> = open.vault().custom_data().collect();
+    assert!(
+        custom_data
+            .iter()
+            .all(|(_, value)| !value.contains(created.token.as_str()))
+    );
+}
+
+#[test]
+fn a_pairing_made_again_after_a_revoke_gets_the_subgroup_its_entries_were_left_in() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, claude, _]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    let first = workspace
+        .create_agent_pairing(vault, "claude", vec![], false)
+        .unwrap();
+    workspace
+        .revoke_agent_pairing(vault, first.pairing.id())
+        .unwrap();
+
+    let again = workspace
+        .create_agent_pairing(vault, "claude", vec![], false)
+        .unwrap();
+
+    assert_eq!(first.pairing.group(), claude);
+    assert_eq!(again.pairing.group(), claude);
+    assert_ne!(again.token, first.token);
+}
+
+#[test]
+fn a_pairing_needs_an_agent_group_and_a_name_no_other_pairing_has() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (mut workspace, vault) = file.open(&clock);
+    assert_eq!(
+        workspace
+            .create_agent_pairing(vault, "claude", vec![], false)
+            .unwrap_err(),
+        AgentSettingsError::NoAgentGroup
+    );
+
+    let (file, _) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    workspace
+        .create_agent_pairing(vault, "claude", vec![], false)
+        .unwrap();
+    let refused = |workspace: &mut Workspace, name: &str| {
+        workspace
+            .create_agent_pairing(vault, name, vec![], false)
+            .unwrap_err()
+    };
+    assert_eq!(
+        refused(&mut workspace, " claude "),
+        AgentSettingsError::PairingNameTaken("claude".to_owned())
+    );
+    assert_eq!(
+        refused(&mut workspace, "  "),
+        AgentSettingsError::PairingNameEmpty
+    );
+    assert_eq!(
+        refused(&mut workspace, "a/b"),
+        AgentSettingsError::PairingNameHasSlash
+    );
+}
+
+#[test]
+fn which_subgroups_a_pairing_reads_and_whether_it_creates_can_be_changed() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, _, shared]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    let created = workspace
+        .create_agent_pairing(vault, "claude", vec![], false)
+        .unwrap();
+
+    workspace
+        .set_agent_pairing_access(vault, created.pairing.id(), vec![shared], true)
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    let pairing = settings.pairing(created.pairing.id()).unwrap();
+    assert_eq!(pairing.readable(), [shared]);
+    assert!(pairing.can_create());
+    assert!(pairing.credential().accepts_token(&created.token));
 }

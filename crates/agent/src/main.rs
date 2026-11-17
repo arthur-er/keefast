@@ -8,6 +8,10 @@
 //! keefast-agent unlock [--key-file <path>] [--no-password] [--remember] [--admin-socket <path>]
 //! keefast-agent lock [--admin-socket <path>]
 //! keefast-agent status [--admin-socket <path>]
+//! keefast-agent pairing create <name> [--reads <subgroup>]... [--can-create]
+//!                       [--agent-group <path>] [--admin-socket <path>]
+//! keefast-agent pairing list [--admin-socket <path>]
+//! keefast-agent pairing revoke <name> [--admin-socket <path>]
 //! ```
 //!
 //! docs/headless-host.md is the operator's guide.
@@ -23,9 +27,10 @@ usage:
                       [--admin-group <group>] [--state-dir <dir>]
                       [--unattended-key-file <path>] [--unattended-password]
       Serves the Vault file as a Headless host. It starts locked: unlock it with
-      `keefast-agent unlock`. Agents reach it at --listen (127.0.0.1:7807 by default); an
-      address other machines can reach needs TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this user, or also to
-      --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
+      `keefast-agent unlock`. Agents reach its MCP endpoint, /mcp, at --listen (127.0.0.1:7807
+      by default) with an Agent pairing's token; an address other machines can reach needs
+      TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this
+      user, or also to --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
       at startup, from that Key file and the password `unlock --remember` kept in the OS secret
       store, and the Vault loses its protection at rest.
 
@@ -41,6 +46,19 @@ usage:
   keefast-agent status [--admin-socket <path>]
       Says whether the Headless host is locked.
 
+  keefast-agent pairing create <name> [--reads <subgroup>]... [--can-create]
+                               [--agent-group <path>] [--admin-socket <path>]
+      Pairs an Agent with the unlocked Vault: makes its subgroup <name> of the Agent group and
+      prints its bearer token, once. It reads its own subgroup and each --reads subgroup.
+      --can-create lets it create Entries in its own subgroup. If the Vault has no Agent group
+      yet, --agent-group makes the Group at that path (such as Agents) the Agent group.
+
+  keefast-agent pairing list [--admin-socket <path>]
+      Lists the Vault's Agent pairings.
+
+  keefast-agent pairing revoke <name> [--admin-socket <path>]
+      Revokes an Agent pairing: its token stops working at once. Its subgroup stays.
+
 The admin socket is $KEEFAST_AGENT_ADMIN_SOCKET, or else $XDG_RUNTIME_DIR/keefast/agent-admin.sock.
 ";
 
@@ -52,7 +70,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         #[cfg(unix)]
-        Some(command @ ("serve" | "unlock" | "lock" | "status")) => {
+        Some(command @ ("serve" | "unlock" | "lock" | "status" | "pairing")) => {
             match operator::run(command, &args[1..]) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -62,7 +80,7 @@ fn main() -> ExitCode {
             }
         }
         #[cfg(not(unix))]
-        Some("serve" | "unlock" | "lock" | "status") => {
+        Some("serve" | "unlock" | "lock" | "status" | "pairing") => {
             eprintln!("keefast-agent: the Headless host runs only on Linux and other unix systems");
             ExitCode::FAILURE
         }
@@ -78,13 +96,15 @@ mod operator {
     use std::io::{self, BufRead, IsTerminal, Write};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::thread;
 
-    use keefast_agent::admin::{self, AdminGroup, AdminReply, AdminRequest, AdminSocket};
+    use keefast_agent::admin::{
+        self, AdminGroup, AdminReply, AdminRequest, AdminSocket, PairingCreate, PairingSummary,
+    };
     use keefast_agent::host::{
         HeadlessHost, HostConfig, HostState, UnattendedUnlock, describe, parse_location,
     };
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
+    use keefast_agent::serve::McpEndpoint;
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -105,6 +125,15 @@ mod operator {
                 }
             }
             Ok(Self(args.to_vec()))
+        }
+
+        /// Every value given for `name`, which may be repeated.
+        fn values(&self, name: &str) -> Vec<String> {
+            self.0
+                .windows(2)
+                .filter(|pair| pair[0] == name)
+                .map(|pair| pair[1].clone())
+                .collect()
         }
 
         fn value(&self, name: &str) -> Option<&str> {
@@ -153,6 +182,7 @@ mod operator {
                 &["--no-password", "--remember"],
                 &["--key-file", "--admin-socket"],
             )?),
+            "pairing" => pairing(args),
             "lock" => {
                 let flags = Flags::new(args, &[], &["--admin-socket"])?;
                 show(ask(&flags, &AdminRequest::Lock)?, "the Vault is locked")
@@ -168,7 +198,7 @@ mod operator {
         let vault = flags.value("--vault").ok_or("serve needs --vault")?;
         let location = parse_location(vault);
         // Checked before anything else, so a host that would hand out tokens in the clear
-        // never starts. Nothing listens there yet: the MCP endpoint comes with Agent pairings.
+        // never starts.
         let listen = Listen::new(
             flags.value("--listen").unwrap_or(DEFAULT_LISTEN),
             flags.value("--tls-cert").map(PathBuf::from),
@@ -210,19 +240,93 @@ mod operator {
             eprintln!("keefast-agent: warning: {warning}");
         }
         let state = host.status().state;
+        // The MCP endpoint runs on Tokio; the rest of the host on plain threads, as the
+        // workspace is synchronous.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|error| format!("can't start the MCP endpoint: {error}"))?;
+        let endpoint = runtime
+            .block_on(McpEndpoint::start(Arc::clone(&host), &listen))
+            .map_err(|error| error.to_string())?;
         socket.serve(Arc::clone(&host));
         eprintln!(
-            "keefast-agent: serving {}, {}; admin socket {}; Agents' address {listen}",
+            "keefast-agent: serving {}, {}; admin socket {}; Agents connect to {}",
             describe(&location),
             match state {
                 HostState::Unlocked => "unlocked",
                 _ => "locked until `keefast-agent unlock`",
             },
-            socket_path.display()
+            socket_path.display(),
+            endpoint.url(),
         );
-        loop {
-            thread::park();
+        runtime.block_on(std::future::pending::<()>());
+        Ok(())
+    }
+
+    fn pairing(args: &[String]) -> Result<(), String> {
+        let (action, rest) = args
+            .split_first()
+            .ok_or("pairing needs create, list or revoke: see keefast-agent --help")?;
+        match action.as_str() {
+            "create" => {
+                let (name, rest) = rest
+                    .split_first()
+                    .filter(|(name, _)| !name.starts_with("--"))
+                    .ok_or("pairing create needs the pairing's name")?;
+                let flags = Flags::new(
+                    rest,
+                    &["--can-create"],
+                    &["--reads", "--agent-group", "--admin-socket"],
+                )?;
+                let request = AdminRequest::PairingCreate(PairingCreate {
+                    name: name.clone(),
+                    reads: flags.values("--reads"),
+                    can_create: flags.has("--can-create"),
+                    agent_group: flags.value("--agent-group").map(str::to_owned),
+                });
+                match ask(&flags, &request)? {
+                    AdminReply::PairingCreated { pairing, token } => {
+                        eprintln!(
+                            "Paired {}. Its token is below; it isn't shown again. Give it to \
+                             the Agent as `Authorization: Bearer <token>`.",
+                            describe_pairing(&pairing)
+                        );
+                        println!("{}", token.0.as_str());
+                        Ok(())
+                    }
+                    other => show(other, ""),
+                }
+            }
+            "list" => {
+                let flags = Flags::new(rest, &[], &["--admin-socket"])?;
+                show(ask(&flags, &AdminRequest::PairingList)?, "")
+            }
+            "revoke" => {
+                let (name, rest) = rest
+                    .split_first()
+                    .filter(|(name, _)| !name.starts_with("--"))
+                    .ok_or("pairing revoke needs the pairing's name")?;
+                let flags = Flags::new(rest, &[], &["--admin-socket"])?;
+                let request = AdminRequest::PairingRevoke { name: name.clone() };
+                show(ask(&flags, &request)?, &format!("revoked {name}"))
+            }
+            other => Err(format!(
+                "unknown pairing command {other}: it is create, list or revoke"
+            )),
         }
+    }
+
+    fn describe_pairing(pairing: &PairingSummary) -> String {
+        let mut text = pairing.name.clone();
+        if !pairing.reads.is_empty() {
+            text += &format!(", which also reads {}", pairing.reads.join(", "));
+        }
+        if pairing.can_create {
+            text += ", and may create Entries";
+        }
+        text
     }
 
     /// The Workspace a Headless host opens its Vault file through: local files, and Dropbox
@@ -314,6 +418,29 @@ mod operator {
                     "Unattended unlock: {}",
                     if status.unattended { "on" } else { "off" }
                 );
+                Ok(())
+            }
+            AdminReply::Pairings {
+                agent_group,
+                pairings,
+            } => {
+                if !done.is_empty() {
+                    println!("{done}");
+                }
+                match agent_group {
+                    Some(group) => println!("Agent group: {group}"),
+                    None => println!("Agent group: none yet"),
+                }
+                if pairings.is_empty() {
+                    println!("No Agent is paired.");
+                }
+                for pairing in &pairings {
+                    println!("{}", describe_pairing(pairing));
+                }
+                Ok(())
+            }
+            AdminReply::PairingCreated { pairing, .. } => {
+                println!("paired {}", describe_pairing(&pairing));
                 Ok(())
             }
             AdminReply::Error { message, .. } => Err(message),

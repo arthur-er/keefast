@@ -231,6 +231,31 @@ impl HeadlessHost {
         Some(f(&mut inner.workspace, id))
     }
 
+    /// Runs `f` on the Workspace and the served Vault, if it is unlocked, then saves the Vault,
+    /// so that what an operator changed is in the Vault file before they hear it is done.
+    /// `None` if it is locked or locking; else `f`'s answer, and whether the save worked.
+    pub fn edit<T>(
+        &self,
+        f: impl FnOnce(&mut Workspace, VaultId) -> T,
+    ) -> Option<(T, Result<(), String>)> {
+        let (answer, saves) = {
+            let mut inner = self.lock_inner();
+            let id = inner.unlocked()?;
+            let answer = f(&mut inner.workspace, id);
+            let saves = if inner
+                .workspace
+                .vault(id)
+                .is_some_and(|open| open.has_unsaved_changes())
+            {
+                inner.workspace.begin_save(id).ok().into_iter().collect()
+            } else {
+                Vec::new()
+            };
+            (answer, saves)
+        };
+        Some((answer, self.run_saves(saves)))
+    }
+
     /// The served Vault's Agent settings, if it is unlocked.
     pub fn agent_settings(&self) -> Option<AgentSettings> {
         self.with_vault(|workspace, id| {

@@ -1,20 +1,21 @@
 // Vault settings C: one Vault's own settings, kept in its Vault file (ADR 0005): its name, its
 // Vault file (saving, locking and showing it), its Recycle Bin, how it answers the Companion extension (Default access policy,
-// Browser group), its Pairings, and its master key and encryption. Same page as General
+// Browser group), its Pairings, its Agent group and Agent pairings, and its master key and encryption. Same page as General
 // Settings C; leaves when the Vault locks.
 
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { Check as CheckIcon, ChevronsUpDown, Folder, FolderOpen, Globe, Lock, PlugZap, Save, Shield, Trash2 } from "lucide-react";
+import { FolderOpen, Globe, Lock, PlugZap, Save, Shield } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { AccessPolicy, GroupNode, PairingView, VaultId, VaultSettings, VaultSummary } from "@/bindings";
-import { useGroups, useVaultSettings, useWorkspace } from "@/api/queries";
-import { Button, GroupIcon, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
-import { DropdownMenu as MenuPrimitive } from "radix-ui";
+import type { AccessPolicy, PairingView, VaultId, VaultSettings, VaultSummary } from "@/bindings";
+import { useAgentSettings, useVaultSettings, useWorkspace } from "@/api/queries";
+import { Button, Popover, PopoverContent, PopoverTrigger, Segmented, Switch, toast } from "@/kit";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
 import { vaultStatus } from "@/shell/vaultStatus";
 
+import { agentsSection } from "./AgentSettings";
+import { GroupPicker } from "./GroupPicker";
 import { pairedText, usedText } from "./pairings";
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
 import { KEY_SEARCH, VaultKeySection } from "./VaultKeySection";
@@ -37,6 +38,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
   const summary = snapshot?.vaults.find((v) => v.id === vault);
   const unlocked = summary?.state === "unlocked";
   const settings = useVaultSettings(unlocked ? vault : undefined).data;
+  const agents = useAgentSettings(unlocked ? vault : undefined).data;
   const { actions } = useShell();
   const [changingKey, setChangingKey] = useState(section === "key");
   // Asked for again while the page shows (the palette's "Change master key and encryption…").
@@ -148,6 +150,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
               }],
         ],
       },
+      ...(agents ? [agentsSection(vault, agents)] : []),
       {
         id: "security",
         name: "Security",
@@ -162,7 +165,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
         }]],
       },
     ];
-  }, [settings, summary, vault, changingKey, closeKey]);
+  }, [settings, agents, summary, vault, changingKey, closeKey]);
 
   if (!summary || !unlocked) return null;
   return (
@@ -251,65 +254,18 @@ function VaultFileRow({ settings, summary }: { settings: VaultSettings; summary:
   );
 }
 
-/** The Groups a Browser group can be, in tree order, with their depth; the Recycle Bin and
- * what is in it can't be. */
-export function browserGroupChoices(root: GroupNode): { group: GroupNode; depth: number }[] {
-  const out: { group: GroupNode; depth: number }[] = [];
-  const walk = (group: GroupNode, depth: number) => {
-    if (group.inRecycleBin) return;
-    out.push({ group, depth });
-    group.children.forEach((child) => walk(child, depth + 1));
-  };
-  walk(root, 0);
-  return out;
-}
-
 function BrowserGroupPicker({ vault, settings }: { vault: VaultId; settings: VaultSettings }) {
-  const groups = useGroups(vault).data;
-  const choices = groups ? browserGroupChoices(groups) : [];
-  const bin = groups?.children.find((group) => group.isRecycleBin);
-  const chosen = choices.find(({ group }) => group.id === settings.browserGroup)?.group;
   return (
-    <Menu>
-      <MenuTrigger asChild>
-        <button type="button" className="pick" aria-label={`Browser group: ${settings.browserGroupName ?? "not set"}`}>
-          {chosen ? <GroupIcon icon={chosen.icon} size={14} className="ico-sm" /> : <Folder className="ico-sm" />}
-          <span className="truncate">{settings.browserGroupName ?? "Made on the first save"}</span>
-          <ChevronsUpDown className="chev ico-sm" />
-        </button>
-      </MenuTrigger>
-      <MenuContent align="end" className="max-h-[360px] w-[240px] overflow-y-auto">
-        <MenuLabel>Save browser sign-ins here</MenuLabel>
-        <MenuPrimitive.RadioGroup
-          value={settings.browserGroup ?? ""}
-          onValueChange={(group) => void api.setBrowserGroup(vault, group).catch(fail)}
-        >
-          {choices.map(({ group, depth }) => (
-            <MenuPrimitive.RadioItem
-              key={group.id}
-              value={group.id}
-              className="menu-item outline-none data-[highlighted]:bg-bg-active"
-              style={{ paddingLeft: 8 + depth * 12 }}
-            >
-              <GroupIcon icon={group.icon} />
-              <span className="truncate">{group.name}</span>
-              <MenuPrimitive.ItemIndicator className="chk">
-                <CheckIcon />
-              </MenuPrimitive.ItemIndicator>
-            </MenuPrimitive.RadioItem>
-          ))}
-        </MenuPrimitive.RadioGroup>
-        {bin && (
-          <>
-            <MenuSeparator />
-            <MenuPrimitive.Item disabled className="menu-item outline-none data-[disabled]:text-fg-2">
-              <Trash2 /> Recycle Bin
-            </MenuPrimitive.Item>
-            <div className="menu-note">Entries from the browser can't be saved in the Recycle Bin.</div>
-          </>
-        )}
-      </MenuContent>
-    </Menu>
+    <GroupPicker
+      vault={vault}
+      label="Browser group"
+      value={settings.browserGroup}
+      valueName={settings.browserGroupName}
+      placeholder="Made on the first save"
+      menuLabel="Save browser sign-ins here"
+      binNote="Entries from the browser can't be saved in the Recycle Bin."
+      onPick={(group) => void api.setBrowserGroup(vault, group).catch(fail)}
+    />
   );
 }
 

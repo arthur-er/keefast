@@ -1,6 +1,7 @@
 # The NixOS module (nix/module.nix) in a VM: the Headless host starts locked, an operator in the
 # admin group unlocks it over the admin socket and nobody else can reach it, and a restart
-# leaves it locked again. A second machine opts in to unattended unlock from a Key file that
+# leaves it locked again. An operator pairs an Agent, whose token reaches the MCP endpoint until
+# it is revoked. A second machine opts in to unattended unlock from a Key file that
 # only root can read.
 { pkgs, module }:
 
@@ -25,6 +26,7 @@ pkgs.testers.runNixOSTest {
         extraGroups = [ "keefast-operators" ];
       };
       users.users.stranger.isNormalUser = true;
+      environment.systemPackages = [ pkgs.curl ];
     };
 
     unattended = {
@@ -73,6 +75,23 @@ pkgs.testers.runNixOSTest {
     with subtest("unlock opens the Vault"):
         machine.succeed(as_user("operator", "keefast-agent unlock", "${password}\\n"))
         machine.succeed(as_user("operator", "keefast-agent status") + " | grep 'State: unlocked'")
+
+    with subtest("a paired Agent reaches the MCP endpoint, until its pairing is revoked"):
+        token = machine.succeed(
+            as_user("operator", "keefast-agent pairing create claude --agent-group Agents 2>/dev/null")
+        ).strip()
+        assert token.startswith("kfa_"), token
+        mcp = (
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7807/mcp "
+            "-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' "
+            "--data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+            "{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
+            "\"clientInfo\":{\"name\":\"vm\",\"version\":\"1\"}}}'"
+        )
+        assert machine.succeed(mcp) == "401"
+        assert machine.succeed(mcp + f" -H 'authorization: Bearer {token}'") == "200"
+        machine.succeed(as_user("operator", "keefast-agent pairing revoke claude"))
+        assert machine.succeed(mcp + f" -H 'authorization: Bearer {token}'") == "401"
 
     with subtest("a restart leaves it locked"):
         machine.systemctl("restart keefast-agent.service")

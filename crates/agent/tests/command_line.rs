@@ -1,6 +1,7 @@
 //! `keefast-agent serve`, `unlock`, `lock` and `status` as an operator runs them, as processes:
 //! serve starts locked, unlock reads the Master key from its input and opens the Vault, a wrong
-//! Master key says so, and lock locks it again.
+//! Master key says so, and lock locks it again; `pairing` pairs an Agent and prints its token
+//! once, lists the pairings and revokes one.
 
 #![cfg(unix)]
 
@@ -35,7 +36,8 @@ fn serve(file: &VaultFile) -> Serve {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("admin.sock");
     let child = Command::new(AGENT)
-        .args(["serve", "--vault"])
+        // Port 0, as tests run side by side: the default port would be taken.
+        .args(["serve", "--listen", "127.0.0.1:0", "--vault"])
         .arg(&file.path)
         .arg("--admin-socket")
         .arg(&socket)
@@ -187,7 +189,7 @@ fn serve_listens_on_loopback_without_tls() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("admin.sock");
     let mut child = Command::new(AGENT)
-        .args(["serve", "--listen", "[::1]:7807", "--vault"])
+        .args(["serve", "--listen", "[::1]:0", "--vault"])
         .arg(&file.path)
         .arg("--admin-socket")
         .arg(&socket)
@@ -206,4 +208,88 @@ fn serve_listens_on_loopback_without_tls() {
     let _ = child.wait();
 
     assert!(status.status.success(), "{}", text(&status));
+}
+
+#[test]
+fn pairing_create_prints_the_token_once_and_list_shows_the_pairing() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+
+    let created = run(
+        &served.socket,
+        &["pairing", "create", "claude", "--agent-group", "Agents"],
+        "",
+    );
+    let listed = run(&served.socket, &["pairing", "list"], "");
+
+    assert!(created.status.success(), "{}", text(&created));
+    let token = String::from_utf8_lossy(&created.stdout).trim().to_owned();
+    assert!(token.starts_with("kfa_"), "{}", text(&created));
+    assert!(listed.status.success(), "{}", text(&listed));
+    assert!(
+        text(&listed).contains("Agent group: Agents"),
+        "{}",
+        text(&listed)
+    );
+    assert!(text(&listed).contains("claude"), "{}", text(&listed));
+    assert!(!text(&listed).contains(&token), "{}", text(&listed));
+}
+
+#[test]
+fn pairing_create_without_an_agent_group_says_how_to_choose_one() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+
+    let refused = run(&served.socket, &["pairing", "create", "claude"], "");
+
+    assert!(!refused.status.success(), "{}", text(&refused));
+    assert!(
+        text(&refused).contains("--agent-group"),
+        "{}",
+        text(&refused)
+    );
+}
+
+#[test]
+fn pairing_needs_the_vault_unlocked() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+
+    let refused = run(&served.socket, &["pairing", "list"], "");
+
+    assert!(!refused.status.success(), "{}", text(&refused));
+    assert!(text(&refused).contains("locked"), "{}", text(&refused));
+}
+
+#[test]
+fn pairing_revoke_removes_the_pairing_and_keeps_it_removed_after_a_restart() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    run(
+        &served.socket,
+        &["pairing", "create", "claude", "--agent-group", "Agents"],
+        "",
+    );
+    run(
+        &served.socket,
+        &["pairing", "create", "codex", "--reads", "claude"],
+        "",
+    );
+
+    let revoked = run(&served.socket, &["pairing", "revoke", "claude"], "");
+    drop(served);
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let listed = run(&served.socket, &["pairing", "list"], "");
+
+    assert!(revoked.status.success(), "{}", text(&revoked));
+    assert!(
+        text(&listed).contains("codex, which also reads claude"),
+        "{}",
+        text(&listed)
+    );
+    assert!(!text(&listed).contains("\nclaude"), "{}", text(&listed));
 }

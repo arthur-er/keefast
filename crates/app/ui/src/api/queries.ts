@@ -34,6 +34,7 @@ export const keys = {
   totp: (vault: VaultId, entry: EntryId) => ["totp", vault, entry] as const,
   customIcons: (vault: VaultId) => ["customIcons", vault] as const,
   vaultSettings: (vault: VaultId) => ["vaultSettings", vault] as const,
+  agentSettings: (vault: VaultId) => ["agentSettings", vault] as const,
   groupForNewItems: (scope: Scope) => ["groupForNewItems", scope] as const,
   generatorLimits: ["generatorLimits"] as const,
   unlockTime: (kdf: KdfChoice) => ["unlockTime", kdf] as const,
@@ -148,6 +149,14 @@ export function useVaultSettings(vault: VaultId | undefined) {
   return useQuery({
     queryKey: keys.vaultSettings(vault ?? -1),
     queryFn: () => api.getVaultSettings(vault!),
+    enabled: vault !== undefined,
+  });
+}
+
+export function useAgentSettings(vault: VaultId | undefined) {
+  return useQuery({
+    queryKey: keys.agentSettings(vault ?? -1),
+    queryFn: () => api.getAgentSettings(vault!),
     enabled: vault !== undefined,
   });
 }

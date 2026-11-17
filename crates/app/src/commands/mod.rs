@@ -4,6 +4,7 @@
 //! Commands are `async` so Tauri runs them off the main thread; the slow ones (key derivation,
 //! file dialogs, Dropbox) run on blocking threads, never holding the Workspace while they wait.
 
+pub mod agents;
 pub mod attachments;
 pub mod browser;
 pub mod clipboard;
