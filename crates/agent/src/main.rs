@@ -1,7 +1,8 @@
 //! `keefast-agent`: the Headless host and the commands its operator runs (ADR 0012).
 //!
 //! ```text
-//! keefast-agent serve --vault <path | dropbox:/path> [--admin-socket <path>]
+//! keefast-agent serve --vault <path | dropbox:/path> [--listen <address:port>]
+//!                     [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
 //!                     [--admin-group <group>] [--state-dir <dir>]
 //!                     [--unattended-key-file <path>] [--unattended-password]
 //! keefast-agent unlock [--key-file <path>] [--no-password] [--remember] [--admin-socket <path>]
@@ -17,11 +18,13 @@ const USAGE: &str = "\
 keefast-agent: serve a keefast Vault to Agents, and look after it
 
 usage:
-  keefast-agent serve --vault <path | dropbox:/path> [--admin-socket <path>]
+  keefast-agent serve --vault <path | dropbox:/path> [--listen <address:port>]
+                      [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
                       [--admin-group <group>] [--state-dir <dir>]
                       [--unattended-key-file <path>] [--unattended-password]
       Serves the Vault file as a Headless host. It starts locked: unlock it with
-      `keefast-agent unlock`. The admin socket is open only to this user, or also to
+      `keefast-agent unlock`. Agents reach it at --listen (127.0.0.1:7807 by default); an
+      address other machines can reach needs TLS, from the PEM files --tls-cert and --tls-key. The admin socket is open only to this user, or also to
       --admin-group. With --unattended-key-file or --unattended-password it unlocks by itself
       at startup, from that Key file and the password `unlock --remember` kept in the OS secret
       store, and the Vault loses its protection at rest.
@@ -81,6 +84,7 @@ mod operator {
     use keefast_agent::host::{
         HeadlessHost, HostConfig, HostState, UnattendedUnlock, describe, parse_location,
     };
+    use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -135,6 +139,9 @@ mod operator {
                 &["--unattended-password"],
                 &[
                     "--vault",
+                    "--listen",
+                    "--tls-cert",
+                    "--tls-key",
                     "--admin-socket",
                     "--admin-group",
                     "--state-dir",
@@ -160,6 +167,14 @@ mod operator {
     fn serve(flags: &Flags) -> Result<(), String> {
         let vault = flags.value("--vault").ok_or("serve needs --vault")?;
         let location = parse_location(vault);
+        // Checked before anything else, so a host that would hand out tokens in the clear
+        // never starts. Nothing listens there yet: the MCP endpoint comes with Agent pairings.
+        let listen = Listen::new(
+            flags.value("--listen").unwrap_or(DEFAULT_LISTEN),
+            flags.value("--tls-cert").map(PathBuf::from),
+            flags.value("--tls-key").map(PathBuf::from),
+        )
+        .map_err(|error| error.to_string())?;
         let state_dir = match flags.value("--state-dir") {
             Some(dir) => PathBuf::from(dir),
             None => dirs::state_dir()
@@ -197,7 +212,7 @@ mod operator {
         let state = host.status().state;
         socket.serve(Arc::clone(&host));
         eprintln!(
-            "keefast-agent: serving {}, {}; admin socket {}",
+            "keefast-agent: serving {}, {}; admin socket {}; Agents' address {listen}",
             describe(&location),
             match state {
                 HostState::Unlocked => "unlocked",
