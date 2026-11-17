@@ -82,7 +82,7 @@ jobs:
         env:
           KEEFAST_SIGNED_PLUGINS: ${{ inputs.release && format('{0}/target/signed-plugins', github.workspace) || '' }}
           KEEFAST_REQUIRE_RELEASE_SIGNING: ${{ inputs.release && '1' || '' }}
-        run: cargo build --release --locked -p keefast -p keefast-native-host --features keefast/custom-protocol
+        run: cargo build --release --locked -p keefast -p keefast-native-host -p keefast-agent --features keefast/custom-protocol
 
       - name: Install WiX
         run: dotnet tool install --global wix --version $env:WIX_VERSION

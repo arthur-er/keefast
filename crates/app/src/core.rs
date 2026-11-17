@@ -15,6 +15,7 @@ use keefast_workspace::{
     VaultLocation, Workspace,
 };
 
+use crate::agent_hosts::AgentHosts;
 use crate::browser::BrowserBridge;
 use crate::clipboard::SystemClipboard;
 use crate::error::{ApiError, ApiResult};
@@ -22,6 +23,7 @@ use crate::events::{
     AppEvent, BrowserRequest, BrowserRequestKind, ClipboardCleared, Launched, MergeNotice,
     Notifier, SaveFailed, WorkspaceChanged,
 };
+use crate::in_app_agents::InAppAgents;
 use crate::merge_notice;
 
 /// What the command line asked to open first.
@@ -60,6 +62,11 @@ pub struct AppCore {
     plugins: RwLock<PluginHost>,
     /// The installed Plugins, and what the user agreed to for each. Locked before `plugins`.
     plugin_store: Mutex<PluginStore>,
+    /// The Headless hosts this desktop is an Approver for, and their prompts. Never locked
+    /// while waiting for the Workspace, nor the other way round.
+    agent_hosts: Mutex<AgentHosts>,
+    /// Agents on this computer, served from the unlocked Vaults (`keefast-agent mcp`).
+    in_app_agents: InAppAgents,
 }
 
 /// The browser requests waiting for the user, by number: the one put to the user now of each
@@ -170,6 +177,8 @@ impl AppCore {
             launches: AtomicU32::new(0),
             plugins: RwLock::new(plugins),
             plugin_store: Mutex::new(PluginStore::bundled_only()),
+            agent_hosts: Mutex::new(AgentHosts::empty()),
+            in_app_agents: InAppAgents::new(keefast_agent::ApproverHub::new()),
         })
     }
 
@@ -245,6 +254,28 @@ impl AppCore {
         };
         self.update(|workspace| workspace.set_form_fills(fills));
         result
+    }
+
+    pub(crate) fn agent_hosts(&self) -> MutexGuard<'_, AgentHosts> {
+        // Changes to the hosts are made whole or not at all: go on after a panic.
+        self.agent_hosts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn in_app_agents(&self) -> &InAppAgents {
+        &self.in_app_agents
+    }
+
+    /// Tells the UI the Agent hosts or their prompts changed, and brings keefast to the front
+    /// for a prompt it hasn't put to the user yet.
+    pub(crate) fn agent_hosts_changed(&self, new_prompt: bool) {
+        let revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
+        self.notifier
+            .emit(AppEvent::WorkspaceChanged(WorkspaceChanged { revision }));
+        if new_prompt {
+            self.notifier.bring_to_front();
+        }
     }
 
     /// The revision the UI was last told about.

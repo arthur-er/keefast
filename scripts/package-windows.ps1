@@ -1,10 +1,10 @@
-# Packages release builds of keefast and keefast-native-host as an MSI, with WiX v5 on the PATH
+# Packages release builds of keefast, keefast-native-host and keefast-agent as an MSI, with WiX v5 on the PATH
 # (`dotnet tool install --global wix --version 5.0.2`), and validates it. keefast.exe must be
 # built with its web UI inside (the `custom-protocol` feature); it needs the WebView2 Runtime,
 # which the MSI checks for.
 #
 #   pnpm --dir crates\app\ui install --frozen-lockfile; pnpm --dir crates\app\ui build
-#   cargo build --release --locked -p keefast -p keefast-native-host --features keefast/custom-protocol
+#   cargo build --release --locked -p keefast -p keefast-native-host -p keefast-agent --features keefast/custom-protocol
 #   scripts/package-windows.ps1 target\release dist
 #
 # Writes keefast-<version>-windows-x86_64.msi into the output directory.

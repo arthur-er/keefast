@@ -8,9 +8,16 @@ import { useWorkspace } from "@/api/queries";
 import { useShell } from "./state";
 import { useView } from "./view";
 
-/** Whether a dialog the backend asked for is up: a browser request, or a lock waiting. */
+/** Whether a dialog the backend asked for is up: a browser request, an Agent host's prompt, or a
+ * lock waiting. */
 export function hasPendingRequest(snapshot: WorkspaceSnapshot | undefined): boolean {
-  return !!(snapshot?.pendingLock || snapshot?.pendingPairing || snapshot?.pendingAccess || snapshot?.pendingLogin);
+  return !!(
+    snapshot?.pendingLock ||
+    snapshot?.pendingPairing ||
+    snapshot?.pendingAccess ||
+    snapshot?.pendingLogin ||
+    snapshot?.pendingAgentPrompt
+  );
 }
 
 /** Whether the screens' keys work: not under an overlay or a browser request's dialog. */

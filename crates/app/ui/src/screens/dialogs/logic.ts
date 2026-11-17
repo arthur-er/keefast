@@ -10,14 +10,19 @@ export type FrontRequest =
   | { kind: "lock"; lock: Pending<"pendingLock"> }
   | { kind: "pairing"; pairing: Pending<"pendingPairing"> }
   | { kind: "access"; access: Pending<"pendingAccess"> }
-  | { kind: "login"; login: Pending<"pendingLogin"> };
+  | { kind: "login"; login: Pending<"pendingLogin"> }
+  | { kind: "agent"; prompt: Pending<"pendingAgentPrompt"> }
+  | { kind: "agentConsent"; consent: Pending<"pendingAgentConsent"> };
 
-/** The request asked now: a Vault locking with unsaved changes, else a Pairing request over an
- * Access request over a captured login, as the GPUI app (and the backend's `browserRequest`)
- * order them. The others wait their turn. */
+/** The request asked now: a Vault locking with unsaved changes, else an Agent host's prompt,
+ * which is denied unanswered after a minute, else an MCP client asking an Agent host to pair by
+ * OAuth, which waits ten, else a Pairing request over an Access request over a captured login, as
+ * the GPUI app (and the backend's `browserRequest`) order them. The others wait their turn. */
 export function frontRequest(snapshot: WorkspaceSnapshot | undefined): FrontRequest | null {
   if (!snapshot) return null;
   if (snapshot.pendingLock) return { kind: "lock", lock: snapshot.pendingLock };
+  if (snapshot.pendingAgentPrompt) return { kind: "agent", prompt: snapshot.pendingAgentPrompt };
+  if (snapshot.pendingAgentConsent) return { kind: "agentConsent", consent: snapshot.pendingAgentConsent };
   if (snapshot.pendingPairing) return { kind: "pairing", pairing: snapshot.pendingPairing };
   if (snapshot.pendingAccess) return { kind: "access", access: snapshot.pendingAccess };
   if (snapshot.pendingLogin) return { kind: "login", login: snapshot.pendingLogin };
@@ -35,6 +40,10 @@ export function requestKey(request: FrontRequest): string {
       return `access-${request.access.id}`;
     case "login":
       return `login-${request.login.id}`;
+    case "agent":
+      return `agent-${request.prompt.host}-${request.prompt.id}`;
+    case "agentConsent":
+      return `consent-${request.consent.host}-${request.consent.id}`;
   }
 }
 
@@ -90,4 +99,31 @@ export function contentsLine(group: GroupNode): string {
 export function splitOrigin(origin: string): { scheme: string; rest: string } {
   const at = origin.indexOf("://");
   return at < 0 ? { scheme: "", rest: origin } : { scheme: origin.slice(0, at + 3), rest: origin.slice(at + 3) };
+}
+
+/** Whole seconds left at `now` of a prompt that expires at `expires`, both in seconds since 1970,
+ * never below 0. */
+export function secondsLeft(expires: number, now: number): number {
+  return Math.max(0, Math.ceil(expires - now));
+}
+
+/** A command line as a shell would show it: arguments with spaces or quotes in single quotes. */
+export function commandLine(command: readonly string[]): string {
+  return command
+    .map((arg) => (arg === "" || /[\s'"$`\\]/.test(arg) ? `'${arg.replaceAll("'", "'\\''")}'` : arg))
+    .join(" ");
+}
+
+/** A consent code as typed: upper case, without dashes or spaces, at most 8 letters. */
+export function normaliseCode(typed: string): string {
+  return typed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 8);
+}
+
+/** A consent code as shown: `ABCD-EFGH`, the dash once four letters are in. */
+export function formatCode(typed: string): string {
+  const code = normaliseCode(typed);
+  return code.length > 4 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
 }

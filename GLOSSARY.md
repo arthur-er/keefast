@@ -146,6 +146,14 @@ _Avoid_: Agent folder, shared secrets
 The user's allow or deny answer to an Agent pairing using a specific Entry with a specific program or host, remembered on that Entry. Shells and interpreters are never remembered: they ask every time, as a reveal does.
 _Avoid_: Permission, grant, scope
 
+**Allowed hosts**:
+The hosts an Entry's secrets may be sent to by `http_request`: host names, IP addresses, or `*.` and a domain for its subdomains. Empty until the user adds one, so a secret goes nowhere by default. A host named exactly is *allowed by name*, and only then may it be at a private, loopback or link-local address.
+_Avoid_: Allow-list, whitelist, domains
+
+**Agents may reveal**:
+A mark on an Entry, set in its Agents section, that lets `reveal_secret` hand one of its values to an Agent, and so to the model behind it, for a secret that must be written somewhere. Each reveal asks the user and is never remembered; an unmarked Entry is never revealed.
+_Avoid_: Exposable, readable, show secret
+
 **Default agent policy**:
 A per-Vault setting (ask, always allow or always deny) applied when an Entry has no Agent access decision for the request. Starts as ask.
 _Avoid_: Global permission, auto-allow
@@ -158,6 +166,12 @@ _Avoid_: Secret ID, handle, placeholder
 `keefast-agent serve`: keefast with no window, keeping one Vault unlocked on a server and serving it to Agents over HTTP. Someone has to unlock it after it starts.
 _Avoid_: Daemon, server mode, agent server
 
+**In-app host**:
+The desktop app serving its unlocked Vaults to Agents on the same machine, which reach it through `keefast-agent mcp`, `run` and `store` over a socket or pipe only the user can open. Its prompts show in the app, as from "this computer", and each Vault's log is that Vault's Activity.
+_Avoid_: Local server, desktop server
+
 **Approver**:
-A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied.
+A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied. The desktop lists the hosts it approves for under Settings → Agent hosts.
 _Avoid_: Admin, controller, remote UI
+
+_Note_: the Headless host's **admin socket** (`keefast-agent pairing …`, `--admin-group`, `KEEFAST_AGENT_ADMIN_SOCKET`, `services.keefast-agent.adminGroup`) is not an Approver. It is a local Unix socket for the host's operator, who unlocks the Vault and makes pairings from a shell on the server; an Approver is a desktop keefast that answers prompts over HTTPS. "Admin" stays wrong for an Approver, and is fine for the socket.

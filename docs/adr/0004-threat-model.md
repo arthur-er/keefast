@@ -18,6 +18,10 @@ ADR 0012 lets AI Agents use secrets from the Agent group. A connected Agent that
 
 With Close to tray on, keefast keeps running, its Vaults unlocked, after the window closes; ADR 0013 says why the protections for an unattended machine still cover it.
 
+## Update 2026-11-17: `keefast-agent`'s endpoint
+
+`keefast-agent` reaches the desktop app at a socket or pipe of its own (`agent.sock`, `keefast-agent-<user>`), made and checked as the browser's above: only the user can connect, and `keefast-agent` relays only to an app of its own user. Keeping it apart from the browser's means no extension the native host relays for can send Agent requests. Any process of the user's can connect, as to the browser's; it still needs an Agent pairing's token (ADR 0012 update "In-app host").
+
 ## Update 2026-11-17: Updates
 
 ADR 0014 lets keefast install new releases of itself. Whoever can publish a keefast release can now run code on users' machines, so a forged or tampered update is in scope. The updater installs only packages signed with keefast's update key, verified against the public key built into keefast, and fetched over HTTPS. The key is not the Plugin release key and is given only to CI's signing step. A release reaches users only once it is published by hand. A stolen update key with the power to publish a release is not defended against: that is a compromise of the project itself.

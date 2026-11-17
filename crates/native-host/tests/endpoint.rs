@@ -21,6 +21,16 @@ mod unix {
     }
 
     #[test]
+    fn keefast_agent_has_a_socket_of_its_own_beside_the_browsers() {
+        let path = ipc::endpoint_path_in(Some(PathBuf::from("/run/user/1000")), ipc::AGENT);
+
+        assert_eq!(
+            path.unwrap(),
+            PathBuf::from("/run/user/1000/keefast/agent.sock")
+        );
+    }
+
+    #[test]
     fn without_a_runtime_directory_there_is_no_socket() {
         let error = ipc::socket_path_in(None).unwrap_err();
 
@@ -74,6 +84,10 @@ mod windows {
         assert_eq!(
             ipc::socket_path().unwrap(),
             PathBuf::from(format!(r"\\.\pipe\keefast-browser-{user}"))
+        );
+        assert_eq!(
+            ipc::endpoint_path(ipc::AGENT).unwrap(),
+            PathBuf::from(format!(r"\\.\pipe\keefast-agent-{user}"))
         );
     }
 

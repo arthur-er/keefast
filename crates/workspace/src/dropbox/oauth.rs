@@ -33,6 +33,38 @@ pub struct Authorization {
     cancelled: Arc<AtomicBool>,
 }
 
+/// A Dropbox authorization given on another machine, for one without a browser such as a
+/// server: Dropbox's page shows the user a code, which they type back in. Show them
+/// [`Self::url`], then finish with [`super::Dropbox::finish_connect_with_code`].
+pub struct CodeAuthorization {
+    url: String,
+    pub(super) verifier: SecretString,
+}
+
+impl CodeAuthorization {
+    pub(super) fn begin(config: &DropboxConfig) -> Result<Self, DropboxError> {
+        let verifier = SecretString::from(random_token(32));
+        let challenge = BASE64_URL.encode(Sha256::digest(verifier.expose_secret().as_bytes()));
+        let mut url = Url::parse(&config.authorize_url).map_err(|_| DropboxError::NotConfigured)?;
+        // No redirect_uri: Dropbox then shows the code on its page.
+        url.query_pairs_mut()
+            .append_pair("client_id", &config.app_key)
+            .append_pair("response_type", "code")
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("token_access_type", "offline");
+        Ok(Self {
+            url: url.into(),
+            verifier,
+        })
+    }
+
+    /// The Dropbox page to open in a browser, on any machine.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Stops a [`super::Dropbox::finish_connect`] that is waiting for the browser.
 #[derive(Clone)]
 pub struct ConnectCanceller(Arc<AtomicBool>);

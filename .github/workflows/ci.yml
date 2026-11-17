@@ -131,13 +131,18 @@ jobs:
       - uses: cachix/install-nix-action@v31
         if: steps.changes.outputs.nix != 'false'
 
+      # The runners have no KVM, so the flake's NixOS VM test (checks.*.headless-host) can't run
+      # here: evaluate every output, build the checks that need no VM, and run the VM test locally
+      # (`nix build .#checks.x86_64-linux.headless-host`, docs/headless-host.md).
       - name: Check the flake
         if: steps.changes.outputs.nix != 'false'
-        run: nix flake check
+        run: |
+          nix flake check --no-build
+          nix build .#checks.x86_64-linux.headless-host-needs-tls --print-build-logs
 
       - name: Build the package
         if: steps.changes.outputs.nix != 'false'
-        run: nix build .#keefast --print-build-logs
+        run: nix build .#keefast .#keefast-agent --print-build-logs
 
   # The Card Plugin's committed card.wasm must be what its source builds, byte for byte. It is
   # committed rather than built by keefast's own build, so CI, the Nix package and Windows need

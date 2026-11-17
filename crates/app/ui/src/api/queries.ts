@@ -35,11 +35,13 @@ export const keys = {
   totp: (vault: VaultId, entry: EntryId) => ["totp", vault, entry] as const,
   customIcons: (vault: VaultId) => ["customIcons", vault] as const,
   vaultSettings: (vault: VaultId) => ["vaultSettings", vault] as const,
+  agentSettings: (vault: VaultId) => ["agentSettings", vault] as const,
   groupForNewItems: (scope: Scope) => ["groupForNewItems", scope] as const,
   generatorLimits: ["generatorLimits"] as const,
   unlockTime: (kdf: KdfChoice) => ["unlockTime", kdf] as const,
   dropbox: ["dropbox"] as const,
   plugins: ["plugins"] as const,
+  agentHosts: ["agentHosts"] as const,
   facets: ["facets"] as const,
 };
 
@@ -81,6 +83,11 @@ export function useSettings() {
  * each time it is shown, as the user may have removed the entry by hand meanwhile. */
 export function useStartOnBoot() {
   return useQuery({ queryKey: keys.startOnBoot, queryFn: api.getStartOnBoot, refetchOnMount: "always" });
+}
+
+/** The Agent hosts this desktop is an Approver for, and how each connection stands. */
+export function useAgentHosts() {
+  return useQuery({ queryKey: keys.agentHosts, queryFn: api.getAgentHosts });
 }
 
 /** Where updating stands (ADR 0014); the backend sends each change. */
@@ -156,6 +163,14 @@ export function useVaultSettings(vault: VaultId | undefined) {
   return useQuery({
     queryKey: keys.vaultSettings(vault ?? -1),
     queryFn: () => api.getVaultSettings(vault!),
+    enabled: vault !== undefined,
+  });
+}
+
+export function useAgentSettings(vault: VaultId | undefined) {
+  return useQuery({
+    queryKey: keys.agentSettings(vault ?? -1),
+    queryFn: () => api.getAgentSettings(vault!),
     enabled: vault !== undefined,
   });
 }

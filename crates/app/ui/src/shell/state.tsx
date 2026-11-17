@@ -8,8 +8,8 @@
 //   history B: 4/7). `editEntry()`, `showHistory()` and `showEntry()` switch it; the pane
 //   (`screens/vault-browser/DetailArea.tsx`) renders the screen for the mode.
 // - **Pages.** `page` is what fills the main area right of the sidebar: the Vault browser's list
-//   and detail, or General / Vault settings C (6/7) and Settings → Plugins, which replace them
-//   and keep the sidebar. `openSettings(section)`, `openVaultSettings(vault)` and `openPlugins()`
+//   and detail, or General / Vault settings C (6/7), Settings → Plugins and Settings → Agent
+//   hosts, which replace them and keep the sidebar. `openSettings(section)`, `openVaultSettings(vault)` and `openPlugins()`
 //   go there; `showBrowser()` comes back.
 // - **Overlays.** `overlay` floats over the shell, one at a time: the command palette A (4/7),
 //   confirmations (`delete` for deleting for good), an attachment's preview. Add a kind to
@@ -27,7 +27,8 @@ export type Page =
   | { kind: "browser" }
   | { kind: "settings"; section?: string }
   | { kind: "vaultSettings"; vault: VaultId; section?: string }
-  | { kind: "plugins"; section?: string };
+  | { kind: "plugins"; section?: string }
+  | { kind: "agentHosts"; section?: string };
 
 export type DetailMode = "view" | "edit" | "history";
 
@@ -137,6 +138,7 @@ export interface ShellActions {
   openSettings(section?: string): void;
   openVaultSettings(vault: VaultId, section?: string): void;
   openPlugins(section?: string): void;
+  openAgentHosts(section?: string): void;
   /** Back to the selected Entry's detail from editing or its history. */
   showEntry(): void;
   editEntry(): void;
@@ -166,6 +168,7 @@ export function ShellProvider({ children, initialState }: { children: ReactNode;
       openSettings: (section) => dispatch({ type: "page", page: { kind: "settings", section } }),
       openVaultSettings: (vault, section) => dispatch({ type: "page", page: { kind: "vaultSettings", vault, section } }),
       openPlugins: (section) => dispatch({ type: "page", page: { kind: "plugins", section } }),
+      openAgentHosts: (section) => dispatch({ type: "page", page: { kind: "agentHosts", section } }),
       showEntry: () => dispatch({ type: "detail", mode: "view" }),
       editEntry: () => dispatch({ type: "detail", mode: "edit" }),
       showHistory: () => dispatch({ type: "detail", mode: "history" }),

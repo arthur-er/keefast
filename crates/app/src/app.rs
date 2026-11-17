@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
+use keefast_agent::installed::AgentCommand;
 use keefast_plugins::PluginStore;
 use keefast_workspace::{
     Dropbox, DropboxConfig, FileConfigStore, FileVaultCache, HttpFavicons, LocalStorage,
@@ -13,6 +14,7 @@ use keefast_workspace::{
 use tauri::{AppHandle, Manager, RunEvent};
 use tauri_specta::{Builder, Event, collect_commands, collect_events};
 
+use crate::agent_hosts::{self, AgentHosts};
 use crate::args::Args;
 use crate::autostart::{self, HiddenLaunch};
 use crate::commands::{self, dropbox::Connecting, settings::apply_window_theme};
@@ -21,6 +23,7 @@ use crate::events::{
     AppEvent, BrowserRequest, ClipboardCleared, Launched, MergeNotice, Notifier, SaveFailed,
     WorkspaceChanged,
 };
+use crate::in_app_agents;
 use crate::updates::UpdateState;
 use crate::{background, browser, icon_protocol, tray, updates};
 
@@ -124,6 +127,23 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::vault_settings::show_vault_file_in_folder,
             commands::vault_settings::set_default_access_policy,
             commands::vault_settings::revoke_pairing,
+            commands::agents::get_agent_settings,
+            commands::agents::set_agent_group,
+            commands::agents::create_agent_pairing,
+            commands::agents::set_agent_pairing_access,
+            commands::agents::revoke_agent_pairing,
+            commands::agents::get_entry_agent_access,
+            commands::agents::remember_agent_decision,
+            commands::agents::forget_agent_decision,
+            commands::agents::set_entry_allowed_hosts,
+            commands::agents::set_entry_agents_may_reveal,
+            commands::agent_hosts::get_agent_hosts,
+            commands::agent_hosts::add_agent_host,
+            commands::agent_hosts::remove_agent_host,
+            commands::agent_hosts::answer_agent_prompt,
+            commands::agent_hosts::answer_agent_consent,
+            commands::agent_hosts::get_agent_activity,
+            commands::agents::get_vault_agent_activity,
             commands::dropbox::dropbox_status,
             commands::dropbox::dropbox_connect,
             commands::dropbox::dropbox_connect_another,
@@ -233,6 +253,22 @@ fn workspace() -> Workspace {
     workspace
 }
 
+/// Copies `keefast-agent` out of an AppImage to where Agents find it between runs (spec story
+/// 83), off the main thread: it is a few megabytes, and nothing waits for it.
+fn install_agent_command() {
+    let Some(command) = AgentCommand::for_current_user() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        if let Err(error) = command.install() {
+            eprintln!(
+                "keefast: couldn't copy keefast-agent to {}: {error}",
+                command.path().display()
+            );
+        }
+    });
+}
+
 /// Which Dropbox app keefast connects as: the app key from the `KEEFAST_DROPBOX_APP_KEY`
 /// environment variable, else the app config's `dropbox_app_key`, else the one keefast was built
 /// with (`KEEFAST_DROPBOX_APP_KEY` at build time). Without one, Dropbox isn't offered. The
@@ -319,6 +355,15 @@ pub fn run(args: Args) {
             tray::check_tray();
             tray::sync(&handle, core.read(Workspace::close_to_tray));
             background::start(&core);
+            install_agent_command();
+            if let Some(file) = AgentHosts::file_in_os_config_dir() {
+                agent_hosts::start(&core, file, Arc::new(OsSecretStore));
+            }
+            in_app_agents::start(
+                &core,
+                in_app_agents::logs_in_os_data_dir(),
+                keefast_agent::local::endpoint(),
+            );
             app.manage(updates::start(&handle, &core));
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);

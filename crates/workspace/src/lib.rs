@@ -51,8 +51,8 @@ pub use clipboard::{Clipboard, CopyError, CopyField};
 pub use clock::{Clock, SystemClock};
 pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, PaneWidths, ThemeSetting};
 pub use dropbox::{
-    Authorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig, DropboxError,
-    DropboxItem,
+    Authorization, CodeAuthorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig,
+    DropboxError, DropboxItem,
 };
 pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};
@@ -1521,6 +1521,36 @@ impl Workspace {
         }
         self.edit(vault, |vault, now| {
             vault.set_tag_color(tag, color, now);
+            Ok(())
+        })
+    }
+
+    /// Sets items of the Vault's custom data, each timed so a Merge keeps the newest (ADR
+    /// 0005), for settings kept in the Vault by crates on top of this one, such as the Agents'
+    /// (ADR 0012). Items that already hold their value are left alone, so setting nothing new
+    /// doesn't leave the Vault with unsaved changes.
+    pub fn set_vault_custom_data(
+        &mut self,
+        vault: VaultId,
+        items: &[(String, String)],
+    ) -> Result<(), EditVaultError> {
+        let open = self.vault(vault).ok_or(EditVaultError::VaultNotOpen)?;
+        let changed: Vec<&(String, String)> = items
+            .iter()
+            .filter(|(key, value)| {
+                !open
+                    .vault
+                    .custom_data()
+                    .any(|(known, held)| known == *key && held == *value)
+            })
+            .collect();
+        if changed.is_empty() {
+            return Ok(());
+        }
+        self.edit(vault, |vault, now| {
+            for (key, value) in changed {
+                vault.set_vault_custom_data(key, value, now);
+            }
             Ok(())
         })
     }

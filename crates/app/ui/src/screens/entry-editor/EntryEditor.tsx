@@ -38,6 +38,7 @@ import { useTagColor } from "@/shell/tagColors";
 import { useShell } from "@/shell/state";
 import { showView, useView } from "@/shell/view";
 
+import { AgentAccess } from "./AgentAccess";
 import { Attachments } from "./Attachments";
 import {
   type Draft, draftExpired, draftOf, ERROR_TEXT, type FieldRow, hiddenFields, isDirty, newDraft, problems, rowKey,
@@ -774,6 +775,7 @@ function EditorForm({
           </div>
 
           <Attachments entry={entry} applyNow={applyNow} />
+          <AgentAccess entry={entry} />
 
           <div className="ee-hr" />
           <div className="ee-foot">
