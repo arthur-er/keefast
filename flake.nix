@@ -19,18 +19,36 @@
       # use the overlay to get `pkgs.keefast`. `nix run` starts keefast.
       overlays.default = final: _prev: {
         keefast = final.callPackage ./nix/package.nix { };
+        keefast-agent = final.callPackage ./nix/agent-package.nix { };
       };
+
+      # A Headless host as a system service: `imports = [ keefast.nixosModules.default ];` and
+      # `services.keefast-agent.enable = true;` (docs/headless-host.md, "On NixOS").
+      nixosModules.default = ./nix/module.nix;
 
       packages = forAllSystems (
         pkgs:
         let
-          inherit (self.overlays.default pkgs pkgs) keefast;
+          inherit (self.overlays.default pkgs pkgs) keefast keefast-agent;
         in
         {
-          inherit keefast;
+          inherit keefast keefast-agent;
           default = keefast;
         }
       );
+
+      # `nix flake check`: the NixOS module in a VM (needs KVM), and the module refusing to
+      # listen where other machines reach it without TLS.
+      checks = forAllSystems (pkgs: {
+        headless-host = import ./nix/tests/headless-host.nix {
+          inherit pkgs;
+          module = self.nixosModules.default;
+        };
+        headless-host-needs-tls = import ./nix/tests/needs-tls.nix {
+          inherit pkgs nixpkgs;
+          module = self.nixosModules.default;
+        };
+      });
 
       devShells = forAllSystems (
         pkgs:
