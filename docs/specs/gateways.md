@@ -59,6 +59,7 @@ agentes-chat keeps its own rules: which of its agents and people may use an item
 29. As agentes-chat, I want every call to answer "locked" while the Headless host is locked, so that I tell people to unlock it rather than reporting keefast as broken.
 30. As agentes-chat, I want errors as a code and keefast's own message, never a value, so that nothing secret ends up in my logs.
 31. As an operator, I want the docs to recommend a Vault kept for Agents, with a subgroup kept for agentes-chat, unlocked unattended from a Key file by the NixOS module, and to say what that gives up, so that agentes-chat keeps working after a reboot and I know the risk.
+32. As an operator running agentes-chat and keefast on the same server or tailnet, I want to list keefast's host in agentes-chat's `VAULT_KEEFAST_PRIVATE_HOSTS`, so that agentes-chat may reach it at a private address that its guard refuses for anything a workspace member types.
 
 ## Implementation Decisions
 
@@ -95,10 +96,10 @@ agentes-chat keeps its own rules: which of its agents and people may use an item
 
 It lives in agentes-chat (`arthur-forks/agentes-chat`), not here, and is listed so the two sides agree:
 
-- A Vault source module, registered through `AgentesModule.adapters()` → `vaultSources`, kind `keefast`, implementing `VaultSource`. `connect` asks for the host's URL and the token, calls `whoami`, and labels the connection with the Vault and subgroups. `list`, `reveal`, `createLogin` and `updateLogin` are thin calls to the API above. Every request goes through agentes-chat's guarded fetch (`publicHttpsFetch`), so the operator's host must be reachable over public HTTPS or a tailnet agentes-chat's server is on.
-- Codes map onto `VaultSourceError`: `unauthorized` → `auth_failed`, `locked` → `locked`, `not_found` → `not_found`, `read_only` → `read_only`, `not_writable` → `not_writable`, `invalid_input` → `invalid_input`, and anything unreachable → `unreachable`.
+- A Vault source module, registered through `AgentesModule.adapters()` → `vaultSources`, kind `keefast`, implementing `VaultSource`. `connect` asks for the host's URL and the token, calls `whoami`, and labels the connection with the Vault and subgroups. `list`, `reveal`, `createLogin` and `updateLogin` are thin calls to the API above. Requests go through agentes-chat's guarded fetch (`publicHttpsFetch`, public HTTPS addresses only), except to hosts its server's operator lists in `VAULT_KEEFAST_PRIVATE_HOSTS`, which may resolve to loopback, private or tailnet addresses. Workspace members can't widen that list: only whoever runs agentes-chat's server sets it.
+- Codes map onto `VaultSourceError`: `unauthorized` → `auth_failed`, `locked` → `unreachable` (in agentes-chat `locked` means a wrong master password and stops syncing until someone reconnects, while `unreachable` retries by itself; the message still says keefast is locked and how to unlock it), `not_found` → `not_found`, `read_only` → `read_only`, `not_writable` → `not_writable`, `invalid_input` → `invalid_input`, and anything unreachable → `unreachable`.
 - One engine change: a `not_writable` code, which, unlike `read_only`, doesn't mark the whole connection read-only. On it, agentes-chat keeps the new password in its own Vault and tells the agent the keefast Entry still has the old one, as it does for a source without `updateLogin`.
-- A failed list leaves the indexed items in place, and a `locked` connection says how to unlock it.
+- A failed list leaves the indexed items in place, and the next sync, every 10 minutes, picks up again once the host is unlocked.
 
 ## Testing Decisions
 

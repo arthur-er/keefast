@@ -17,7 +17,7 @@ So keefast gains a second kind of pairing, the **Gateway pairing**, for another 
   - **Ref**: the Entry's UUID, which a rename, a move or a Merge keeps.
   - Everything else, notes and custom fields included, is left out.
 - **Writes stay in its own subgroup.** A Gateway pairing with the create right may create a login, with a password it supplies, in `Agent group/<pairing name>`, and change the username or password of Entries in that subgroup, each change kept in Entry history. Anywhere else a change is refused as *not writable*, which the gateway can tell apart from a pairing that may not write at all. Nothing is deleted.
-- **Locked means 423.** While the Headless host is locked, every gateway route answers `423 Locked`, so the gateway can say "keefast is locked" rather than "keefast is broken" or "the item is gone".
+- **Locked means 423.** While the Headless host is locked, every gateway route answers `423 Locked`, so the gateway can say "keefast is locked" rather than "keefast is broken" or "the item is gone". agentes-chat files it under its own `unreachable`, which retries by itself, since its `locked` means a wrong master password and waits for someone to reconnect.
 - **Listing is cheap when nothing changed.** The list carries the Vault's revision as an `ETag`, and a gateway polling every few minutes gets `304` until the Vault changes.
 
 ## Considered and rejected
