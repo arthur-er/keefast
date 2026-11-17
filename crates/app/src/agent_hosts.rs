@@ -645,6 +645,7 @@ pub(crate) mod tests {
             reference: "claude/GitHub#password".to_owned(),
             program: command.to_owned(),
             command: vec![command.to_owned(), "auth".to_owned()],
+            host: None,
             can_remember: true,
         }
     }

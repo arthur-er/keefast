@@ -765,3 +765,138 @@ async fn an_approver_client_with_a_token_the_host_doesnt_know_hears_why() {
     };
     assert!(why.contains("pair it again"), "{why}");
 }
+
+/// A web server on loopback that answers every request with its `Authorization` header, and
+/// keeps each request's URL and that header.
+struct EchoServer {
+    address: std::net::SocketAddr,
+    seen: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+impl EchoServer {
+    fn start() -> Self {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let address = server.server_addr().to_ip().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kept = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for request in server.incoming_requests() {
+                let authorization = request
+                    .headers()
+                    .iter()
+                    .find(|header| header.field.equiv("Authorization"))
+                    .map(|header| header.value.to_string())
+                    .unwrap_or_default();
+                kept.lock()
+                    .unwrap()
+                    .push((request.url().to_owned(), authorization.clone()));
+                let reply = format!("you sent {authorization}");
+                let _ = request.respond(tiny_http::Response::from_string(reply));
+            }
+        });
+        Self { address, seen }
+    }
+}
+
+impl Served {
+    /// Lets `claude token` go to `hosts`, and the pairing use it there without asking.
+    async fn allow_claude_token_to(&self, hosts: &[&str]) {
+        let host = Arc::clone(&self.host);
+        let hosts: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
+        tokio::task::spawn_blocking(move || {
+            host.edit(|workspace, vault| {
+                let open = workspace.readable_vault(vault).unwrap().vault();
+                let entry = open
+                    .root()
+                    .all_entries()
+                    .find(|entry| entry.title() == "claude token")
+                    .unwrap()
+                    .id();
+                workspace
+                    .set_agent_allowed_hosts(vault, entry, &hosts)
+                    .unwrap();
+                workspace
+                    .set_default_agent_policy(vault, keefast_agent::DefaultAgentPolicy::Allow)
+                    .unwrap();
+            })
+            .unwrap()
+            .1
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    }
+}
+
+async fn http_request(client: &RunningService<RoleClient, ()>, url: &str) -> CallToolResult {
+    let arguments = serde_json::json!({
+        "method": "GET",
+        "url": url,
+        "headers": { "Authorization": "Bearer {{secret:claude/claude token#password}}" },
+    });
+    client
+        .call_tool(
+            CallToolRequestParams::new("http_request")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_request_sends_the_secret_to_an_allowed_host_and_returns_the_answer_redacted() {
+    let served = Served::unlocked().await;
+    let server = EchoServer::start();
+    // Loopback, which keefast reaches only for a host the Entry names exactly.
+    served.allow_claude_token_to(&["127.0.0.1"]).await;
+    let client = served.connect(&served.claude).await;
+
+    let result = http_request(&client, &format!("http://{}/user", server.address)).await;
+
+    let answer = text(&result);
+    assert_ne!(result.is_error, Some(true), "{answer}");
+    assert_eq!(
+        server.seen.lock().unwrap().clone(),
+        [(
+            "/user".to_owned(),
+            "Bearer claude token-secret-value-1234".to_owned()
+        )]
+    );
+    assert!(
+        answer.contains("you sent Bearer [redacted by keefast]"),
+        "{answer}"
+    );
+    assert!(!answer.contains("secret-value"), "{answer}");
+    assert!(answer.contains("<untrusted-http-response>"), "{answer}");
+    let log: Vec<_> = served
+        .host
+        .audit_records(10)
+        .unwrap()
+        .into_iter()
+        .map(|record| (record.action, record.method, record.host, record.outcome))
+        .collect();
+    assert_eq!(
+        log,
+        [(
+            "http_request".to_owned(),
+            Some("GET".to_owned()),
+            Some("127.0.0.1".to_owned()),
+            AuditOutcome::Allowed
+        )]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_request_refuses_to_send_the_secret_to_another_host_or_to_loopback() {
+    let served = Served::unlocked().await;
+    let server = EchoServer::start();
+    served.allow_claude_token_to(&["api.github.com"]).await;
+    let client = served.connect(&served.claude).await;
+
+    let result = http_request(&client, &format!("http://{}/user", server.address)).await;
+
+    assert_eq!(result.is_error, Some(true));
+    let answer = text(&result);
+    assert!(answer.contains("isn't one of the hosts"), "{answer}");
+    assert!(server.seen.lock().unwrap().is_empty());
+}

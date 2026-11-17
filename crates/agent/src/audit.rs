@@ -1,7 +1,8 @@
 //! The audit log: a record of every list and use of a Vault's secrets by Agents (ADR 0012
 //! "Audit").
 //!
-//! Each record has the time, the Agent pairing, the Entry, the program, and the outcome, never
+//! Each record has the time, the Agent pairing, the Entry, the program, or the method and host
+//! of an `http_request`, and the outcome, never
 //! a value. [`AgentSession`](crate::AgentSession) writes them to the [`AuditSink`] its host
 //! gives it; the Headless host's is [`AuditLog`], an append-only file in its state directory,
 //! rotated by size, that `keefast-agent log` reads.
@@ -36,13 +37,19 @@ pub struct AuditRecord {
     /// The Agent pairing's name, as it was then.
     pub pairing: String,
     pub pairing_id: String,
-    /// `list` or `use`; later keefasts add more, such as `create` and `reveal`.
+    /// `list`, `use` or `http_request`; later keefasts add more, such as `create` and `reveal`.
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<AuditEntry>,
     /// The program a `use` was for, by its executable's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program: Option<String>,
+    /// The method of an `http_request`, such as `GET`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// The host an `http_request` went to, or was refused for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub outcome: AuditOutcome,
     /// Why it was denied.
     #[serde(default, skip_serializing_if = "Option::is_none")]

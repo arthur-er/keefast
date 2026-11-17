@@ -442,3 +442,84 @@ fn which_subgroups_a_pairing_reads_and_whether_it_creates_can_be_changed() {
     assert!(pairing.can_create());
     assert!(pairing.credential().accepts_token(&created.token));
 }
+
+#[test]
+fn an_entrys_allowed_hosts_are_kept_tidy_and_read_back_after_a_save() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, _, entry) = vault_with_paired_entry(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+
+    let kept = workspace
+        .set_agent_allowed_hosts(
+            vault,
+            entry,
+            &[
+                " API.GitHub.com. ".to_owned(),
+                "https://uploads.github.com/repos".to_owned(),
+                "*.githubusercontent.com".to_owned(),
+                "api.github.com".to_owned(),
+                "[::1]".to_owned(),
+            ],
+        )
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    let expected = [
+        "api.github.com",
+        "uploads.github.com",
+        "*.githubusercontent.com",
+        "[::1]",
+    ];
+    assert_eq!(kept, expected);
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert_eq!(settings.allowed_hosts(entry), expected);
+}
+
+#[test]
+fn a_host_that_isnt_one_is_refused_and_nothing_changes() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, _, entry) = vault_with_paired_entry(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    workspace
+        .set_agent_allowed_hosts(vault, entry, &["api.github.com".to_owned()])
+        .unwrap();
+
+    for bad in ["", "api.github.com:443", "*", "*.com.*", "two words", "a/b"] {
+        let refused = workspace.set_agent_allowed_hosts(
+            vault,
+            entry,
+            &["example.com".to_owned(), bad.to_owned()],
+        );
+        assert!(
+            matches!(refused, Err(AgentSettingsError::NotAHost(_))),
+            "{bad:?} was {refused:?}"
+        );
+    }
+    let settings = workspace.agent_settings(vault).unwrap();
+    assert_eq!(settings.allowed_hosts(entry), ["api.github.com"]);
+}
+
+#[test]
+fn allowed_hosts_changed_on_another_copy_later_win_a_merge_and_emptied_ones_stay_empty() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, _, entry) = vault_with_paired_entry(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    desktop
+        .set_agent_allowed_hosts(vault, entry, &["api.github.com".to_owned()])
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    let (mut host, host_vault) = file.open(&clock);
+
+    clock.advance(Duration::from_secs(60));
+    desktop.set_agent_allowed_hosts(vault, entry, &[]).unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.set_default_agent_policy(host_vault, DefaultAgentPolicy::Allow)
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert!(settings.allowed_hosts(entry).is_empty());
+}

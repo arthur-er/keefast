@@ -48,6 +48,11 @@ pub struct AgentPrompt {
     pub command: Vec<String>,
     /// Whether the answer may be remembered: never for shells and interpreters.
     pub can_remember: bool,
+    /// For an `http_request`, the host it goes to, which is also its `program`, for Approvers
+    /// that don't know `host`; `command` is then the method and the URL, with its placeholders
+    /// rather than the secrets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// What an Approver is asked when an MCP client pairs by OAuth: approve the code its consent

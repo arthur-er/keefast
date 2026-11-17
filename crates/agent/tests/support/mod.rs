@@ -219,3 +219,106 @@ impl keefast_agent::Approver for FakeApprover {
             .unwrap_or(keefast_agent::Approval::NoApprover)
     }
 }
+
+/// One request a [`FakeNetwork`] was sent, as the server would see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentHop {
+    pub method: String,
+    pub url: String,
+    /// The addresses it was to connect to.
+    pub addresses: Vec<std::net::IpAddr>,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+}
+
+/// The network as `http_request` sees it, scripted: what each host name resolves to, and what
+/// each URL answers. A URL nobody scripted answers 200 with an empty body.
+#[derive(Default)]
+pub struct FakeNetwork {
+    dns: Mutex<std::collections::HashMap<String, Vec<std::net::IpAddr>>>,
+    responses: Mutex<std::collections::HashMap<String, keefast_agent::http::HopResponse>>,
+    sent: Mutex<Vec<SentHop>>,
+}
+
+impl FakeNetwork {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Makes `host` resolve to `addresses`.
+    pub fn resolves(&self, host: &str, addresses: &[&str]) {
+        let addresses = addresses.iter().map(|a| a.parse().unwrap()).collect();
+        self.dns.lock().unwrap().insert(host.to_owned(), addresses);
+    }
+
+    /// Makes `url` answer `status` with `headers` and `body`.
+    pub fn answers(&self, url: &str, status: u16, headers: &[(&str, &str)], body: &[u8]) {
+        self.responses.lock().unwrap().insert(
+            url.to_owned(),
+            keefast_agent::http::HopResponse {
+                status,
+                headers: headers
+                    .iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                body: body.to_vec(),
+                truncated: false,
+            },
+        );
+    }
+
+    /// Makes `url` answer with `response` as it is.
+    pub fn answers_with(&self, url: &str, response: keefast_agent::http::HopResponse) {
+        self.responses
+            .lock()
+            .unwrap()
+            .insert(url.to_owned(), response);
+    }
+
+    /// Makes `from` redirect to `to` with `status`.
+    pub fn redirects(&self, from: &str, status: u16, to: &str) {
+        self.answers(from, status, &[("location", to)], b"");
+    }
+
+    pub fn sent(&self) -> Vec<SentHop> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl keefast_agent::http::HttpTransport for FakeNetwork {
+    fn resolve(&self, host: &str, _port: u16) -> Result<Vec<std::net::IpAddr>, String> {
+        self.dns
+            .lock()
+            .unwrap()
+            .get(host)
+            .cloned()
+            .ok_or_else(|| format!("can't find {host}"))
+    }
+
+    fn send(
+        &self,
+        hop: &keefast_agent::http::Hop<'_>,
+    ) -> Result<keefast_agent::http::HopResponse, String> {
+        self.sent.lock().unwrap().push(SentHop {
+            method: hop.method.to_owned(),
+            url: hop.url.to_string(),
+            addresses: hop.addresses.to_vec(),
+            headers: hop
+                .headers
+                .iter()
+                .map(|(n, v)| (n.clone(), v.to_string()))
+                .collect(),
+            body: hop.body.map(<[u8]>::to_vec),
+        });
+        Ok(self
+            .responses
+            .lock()
+            .unwrap()
+            .get(hop.url.as_str())
+            .cloned()
+            .unwrap_or(keefast_agent::http::HopResponse {
+                status: 200,
+                ..Default::default()
+            }))
+    }
+}
