@@ -469,7 +469,7 @@ fn without_a_decision_the_default_agent_policy_answers() {
     fixture.add_secret("GitHub", "ghp_token_value");
     let reference = ["claude/GitHub#password"];
 
-    // Ask, with no Approver to ask until Approvers arrive: denied, saying how to allow it.
+    // Ask, with no Approver connected: denied, saying how to allow it.
     let asked = fixture.use_secrets(&reference, &["gh"]).unwrap_err();
     assert!(matches!(asked, AgentError::NotAllowed { .. }), "{asked:?}");
     assert!(asked.to_string().contains("Entry editor"), "{asked}");
