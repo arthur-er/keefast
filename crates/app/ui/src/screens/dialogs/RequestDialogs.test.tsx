@@ -8,6 +8,7 @@ import type { WorkspaceSnapshot } from "@/bindings";
 vi.mock("@/api", () => ({
   api: {
     answerAccess: vi.fn(() => new Promise(() => {})),
+    answerAgentPrompt: vi.fn(() => new Promise(() => {})),
     approvePairing: vi.fn(() => new Promise(() => {})),
     denyPairing: vi.fn(() => new Promise(() => {})),
     getEntry: () => new Promise(() => {}),
@@ -38,6 +39,7 @@ function snapshot(pending: Partial<WorkspaceSnapshot>): WorkspaceSnapshot {
     pendingPairing: null,
     pendingAccess: null,
     pendingLogin: null,
+    pendingAgentPrompt: null,
     clipboardClearsIn: null,
     dropboxAvailable: false,
     configError: null,
@@ -60,6 +62,24 @@ const access = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAccess"]>
     },
   });
 
+const agent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentPrompt"]>> = {}) =>
+  snapshot({
+    pendingAgentPrompt: {
+      id: "5f1c",
+      host: "h1",
+      hostName: "Build server",
+      pairing: "claude",
+      entryTitle: "deploy token",
+      reference: "claude/GitHub/deploy token#password",
+      program: "gh",
+      command: ["gh", "pr", "create", "--title", "Fix the login"],
+      canRemember: true,
+      expires: NOW / 1000 + 60,
+      more: 0,
+      ...changes,
+    },
+  });
+
 const pairing = snapshot({ pendingPairing: { id: 3, vault: 0, vaultName: "Personal" } });
 
 function show(shown: WorkspaceSnapshot) {
@@ -76,6 +96,7 @@ const button = (name: RegExp) => screen.getByRole<HTMLButtonElement>("button", {
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW });
   vi.mocked(api.answerAccess).mockClear();
+  vi.mocked(api.answerAgentPrompt).mockClear();
   vi.mocked(api.approvePairing).mockClear();
 });
 
@@ -167,5 +188,52 @@ describe("the Access prompt", () => {
     ]);
     expect(addresses.map((address) => address.querySelector(".scheme")!.textContent)).toEqual(["https://", "http://"]);
     expect(addresses.map((address) => address.querySelector(".lockico")!.classList.contains("insecure"))).toEqual([false, true]);
+  });
+});
+
+describe("an Agent host's prompt", () => {
+  it("names the pairing, the host, the Entry and the whole command line", () => {
+    show(agent());
+
+    expect(screen.getByRole("alertdialog", { name: "Let claude use “deploy token”?" })).toBeTruthy();
+    expect(screen.getByText("claude on Build server")).toBeTruthy();
+    expect(screen.getByText("claude/GitHub/deploy token#password")).toBeTruthy();
+    expect(screen.getByText("gh pr create --title 'Fix the login'")).toBeTruthy();
+  });
+
+  it("allows only once armed, remembered for the program if asked", () => {
+    show(agent());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Remember this decision for gh/ }));
+    fireEvent.click(button(/^Allow/));
+    expect(api.answerAgentPrompt).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+    fireEvent.click(button(/^Allow/));
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", true, true);
+  });
+
+  it("denies with Escape", () => {
+    show(agent());
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", false, false);
+  });
+
+  it("offers no remembering for a shell, which asks every time", () => {
+    show(agent({ program: "bash", command: ["bash", "-c", "gh auth status"], canRemember: false }));
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText(/can run anything, so keefast asks every time/)).toBeTruthy();
+  });
+
+  it("counts down to when the host denies it", () => {
+    show(agent());
+    expect(screen.getByText(/Denied in 60 s/)).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(15_000));
+
+    expect(screen.getByText(/Denied in 45 s/)).toBeTruthy();
   });
 });

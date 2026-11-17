@@ -33,6 +33,7 @@ export type AppCommandId =
   | "openUrl"
   | "openVaultSettings"
   | "plugins"
+  | "agentHosts"
   | "restoreVersion"
   | "revealVersion"
   | "saveAll"

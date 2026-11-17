@@ -391,6 +391,18 @@ export const commands = {
 	rememberAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string, allow: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("remember_agent_decision", { vault, entry, pairing, program, allow })),
 	/**  Forgets a remembered decision, so the use follows the Default agent policy again. */
 	forgetAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string) => typedError<null, ApiError>(__TAURI_INVOKE("forget_agent_decision", { vault, entry, pairing, program })),
+	getAgentHosts: () => typedError<AgentHostView[], ApiError>(__TAURI_INVOKE("get_agent_hosts")),
+	/**
+	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
+	 *  approver` printed there. An empty name names it by its address.
+	 */
+	addAgentHost: (name: string, url: string, token: string) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token })),
+	removeAgentHost: (host: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_agent_host", { host })),
+	/**
+	 *  Answers the prompt `id` from `host`: allow or deny, and with `remember`, as an Agent access
+	 *  decision saved in the Vault.
+	 */
+	answerAgentPrompt: (host: string, id: string, allow: boolean, remember: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_prompt", { host, id, allow, remember })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -465,6 +477,18 @@ export type AgentDecisionView = {
 	/**  The program's executable name, such as `gh`. */
 	program: string,
 	allow: boolean,
+};
+
+/**  How an Agent host's prompt stream stands. */
+export type AgentHostState = "connecting" | "connected" | "disconnected";
+
+export type AgentHostView = {
+	id: string,
+	name: string,
+	url: string,
+	state: AgentHostState,
+	/**  Why it is disconnected; keefast connects again by itself. */
+	problem: string | null,
 };
 
 /**  An Agent pairing, without its token. */
@@ -1226,6 +1250,32 @@ export type PendingAccess = {
 	asked: number | null,
 };
 
+/**
+ *  An Agent's use of a secret that a Headless host asks this Approver about: the oldest one
+ *  waiting.
+ */
+export type PendingAgentPrompt = {
+	id: string,
+	/**  The Agent host asking, by its id and the name the user gave it. */
+	host: string,
+	hostName: string,
+	/**  The Agent pairing whose Agent asks. */
+	pairing: string,
+	entryTitle: string,
+	/**  The Secret reference the Agent named the Entry by. */
+	reference: string,
+	/**  The program a remembered answer is remembered for. */
+	program: string,
+	/**  The program and its arguments, whole. */
+	command: string[],
+	/**  Whether the answer may be remembered: never for shells and interpreters. */
+	canRemember: boolean,
+	/**  When the host denies it unanswered, in seconds since 1970 UTC. */
+	expires: number | null,
+	/**  How many prompts wait besides this one. */
+	more: number,
+};
+
 export type PendingLock = {
 	vault: VaultId,
 	vaultName: string,
@@ -1574,6 +1624,8 @@ export type WorkspaceSnapshot = {
 	pendingPairing: PendingPairing | null,
 	pendingAccess: PendingAccess | null,
 	pendingLogin: PendingLogin | null,
+	/**  The oldest use of a secret an Agent host asks this Approver about. */
+	pendingAgentPrompt: PendingAgentPrompt | null,
 	/**  Seconds until what keefast copied is cleared from the clipboard, if it will be. */
 	clipboardClearsIn: number | null,
 	/**  Whether this build can reach Dropbox (it has an app key). */

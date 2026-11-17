@@ -116,9 +116,43 @@ Vault's **Default agent policy**. Approving `gh` doesn't approve `curl`. Shells 
 (`sh`, `bash`, `pwsh`, `cmd`, `python…`, `node`, `env`, `xargs`, …) can run anything, so no
 decision for them is ever remembered, and they always ask.
 
-A Headless host has nobody to ask yet, so *ask* means **deny** there. Allow a program ahead of
-time in the desktop app: open the Entry, and under **Agents** add the program for the pairing.
-The decision is saved in the Vault, and the host picks it up when it Merges the Vault file.
+When neither answers, or the program is a shell or interpreter, the host asks its **Approvers**
+(below). With none connected, the use is denied at once, and `run` says why. A program can also
+be allowed ahead of time in the desktop app: open the Entry, and under **Agents** add the program
+for the pairing. The decision is saved in the Vault, and the host picks it up when it Merges the
+Vault file.
+
+## Approvers
+
+An Approver is a desktop keefast paired with the host, which shows its prompts: the pairing, the
+Entry, and the whole command line. Allow or deny, once or remembered for that program; a
+remembered answer is saved in the Vault as an Agent access decision, so it reaches every host
+serving it, and the prompt doesn't come back. Shells and interpreters ask every time. A prompt
+nobody answers within 60 seconds is denied. With several Approvers, the first answer wins and
+the others dismiss the prompt.
+
+The first Approver is paired on the host, since there is no Approver yet to approve it. Pairing
+works while the Vault is locked:
+
+```sh
+keefast-agent pairing approver laptop     # prints the Approver's token, once
+keefast-agent pairing approvers           # lists them
+keefast-agent pairing revoke-approver laptop
+```
+
+In keefast on that desktop, open **Settings → Agent hosts**, choose **Add host…**, and give the
+address Agents use (`https://agents.example.com`, with or without `/mcp`) and the token. The
+desktop keeps the address in `agent-hosts.json` in its config directory and the token in the OS
+secret store, and holds a stream of server-sent events open to the host
+(`GET /approver/events`, with the token as a bearer token) while keefast runs, in the Tray
+too; it answers at `POST /approver/prompts/<id>`. The host keeps each Approver's token hash in
+`approvers.json` in its state directory, not in the Vault: Approvers belong to the host, and they
+connect while it is locked. The desktop checks the host's certificate against the usual public
+roots, so a self-signed certificate won't do; a reverse proxy or `tailscale serve` gives one that
+does.
+
+Revoking an Approver stops its token at once for answers and new streams; a stream it holds open
+keeps showing prompts, which it can no longer answer, until it reconnects (within five minutes).
 
 ## The audit log
 

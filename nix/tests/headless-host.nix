@@ -1,7 +1,9 @@
 # The NixOS module (nix/module.nix) in a VM: the Headless host starts locked, an operator in the
 # admin group unlocks it over the admin socket and nobody else can reach it, and a restart
 # leaves it locked again. An operator pairs an Agent, whose token reaches the MCP endpoint until
-# it is revoked. A second machine opts in to unattended unlock from a Key file that
+# it is revoked. An Approver paired on the host keeps its token, in the state directory, across a
+# restart, and opens the prompt stream while locked. A second machine opts in to unattended unlock
+# from a Key file that
 # only root can read.
 { pkgs, module }:
 
@@ -93,12 +95,28 @@ pkgs.testers.runNixOSTest {
         machine.succeed(as_user("operator", "keefast-agent pairing revoke claude"))
         assert machine.succeed(mcp + f" -H 'authorization: Bearer {token}'") == "401"
 
+    with subtest("an operator pairs an Approver"):
+        approver = machine.succeed(
+            as_user("operator", "keefast-agent pairing approver laptop 2>/dev/null")
+        ).strip()
+        assert approver.startswith("kfapprover_"), approver
+        machine.succeed(as_user("operator", "keefast-agent pairing approvers") + " | grep laptop")
+
     with subtest("a restart leaves it locked"):
         machine.systemctl("restart keefast-agent.service")
         machine.wait_for_unit("keefast-agent.service")
         machine.wait_until_succeeds(
             as_user("operator", "keefast-agent status") + " | grep 'State: locked'"
         )
+
+    with subtest("the Approver still opens its prompt stream, locked and after the restart"):
+        # The stream stays open: curl gives up after a second, having printed the status.
+        events = lambda token: (
+            "curl -s -o /dev/null -m 1 -w '%{http_code}' http://127.0.0.1:7807/approver/events "
+            f"-H 'authorization: Bearer {token}' || true"
+        )
+        assert machine.succeed(events(approver)) == "200"
+        assert machine.succeed(events("kfapprover_nobodys")) == "401"
 
     with subtest("the service is hardened"):
         print(machine.succeed("systemd-analyze security keefast-agent.service | tail -1"))

@@ -9,13 +9,15 @@
 //     | "unlocked-none" | "closed" | "dropbox-disconnected" | "sync-offline" | "sync-error"
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
-//     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build")   (the Plugin scenes: ./plugin-store.ts)
+//     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
+//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-many")
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
 // password is anything but "wrong".
 
 import type {
+  AgentHostView,
   ApiError,
   AppSettings,
   CopyTarget,
@@ -34,6 +36,7 @@ import type {
   GroupNode,
   IconView,
   LaunchInfo,
+  PendingAgentPrompt,
   Location,
   LocationView,
   LoginOption,
@@ -283,6 +286,9 @@ interface MockState {
   launch: LaunchInfo;
   /** Whether keefast is "registered with the OS" to start on boot. */
   startOnBoot: boolean;
+  /** The Agent hosts this desktop is "an Approver for", and their prompts, oldest first. */
+  agentHosts: AgentHostView[];
+  agentPrompts: (Omit<PendingAgentPrompt, "more">)[];
   nextId: number;
 }
 
@@ -318,6 +324,8 @@ function initialState(): MockState {
     configError: null,
     trayAvailable: true,
     launch: { vaultFile: null, keyFile: null, number: 0 },
+    agentHosts: [],
+    agentPrompts: [],
     startOnBoot: false,
     nextId: 100,
   };
@@ -349,6 +357,10 @@ export type MockScene =
   | "configError"
   | "noTray"
   | "launched"
+  | "agentHosts"
+  | "agentPrompt"
+  | "agentPrompt-shell"
+  | "agentPrompt-many"
   | PluginScene;
 
 export function createMockBackend(): Backend & {
@@ -772,6 +784,7 @@ export function createMockBackend(): Backend & {
           ? { kind: "update", vault: login.entries[0][0], entry: login.entries[0][1] }
           : { kind: "newEntry", vault: readable()[0]?.id ?? 0, group: readable()[0]?.browserGroup ?? null },
       },
+      pendingAgentPrompt: state.agentPrompts[0] ? { ...state.agentPrompts[0], more: state.agentPrompts.length - 1 } : null,
       clipboardClearsIn: state.clipboardClearsAt === null ? null : Math.max(0, state.clipboardClearsAt - Date.now() / 1000),
       dropboxAvailable: true,
       configError: state.configError,
@@ -1613,6 +1626,38 @@ export function createMockBackend(): Backend & {
       changed();
       return null;
     }),
+    getAgentHosts: command(() => structuredClone(state.agentHosts)),
+    addAgentHost: command((name, url, token) => {
+      const address = url.trim().replace(/\/+$/, "");
+      if (token.trim().startsWith("kfa_"))
+        throw new MockError("invalid", "That is an Agent pairing's token. Pair this desktop on the host with `keefast-agent pairing approver <name>`, and paste the token it prints.");
+      if (!token.trim().startsWith("kfapprover_")) throw new MockError("invalid", "An Approver's token starts with kfapprover_: get one on the host with `keefast-agent pairing approver <name>`.");
+      if (!/^https:\/\/.+/.test(address) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(address))
+        throw new MockError("invalid", "An Agent host on another machine needs an https:// address.");
+      if (state.agentHosts.some((h) => h.url === address)) throw new MockError("conflict", "keefast is an Approver for that Agent host already.");
+      const host: AgentHostView = { id: `h${state.nextId++}`, name: name.trim() || address.replace(/^https?:\/\//, "").split("/")[0]!, url: address, state: "connecting", problem: null };
+      state.agentHosts.push(host);
+      changed();
+      // "Connects" a moment later, as the real one does.
+      setTimeout(() => {
+        host.state = "connected";
+        changed();
+      }, 600);
+      return structuredClone(host);
+    }),
+    removeAgentHost: command((id) => {
+      state.agentHosts = state.agentHosts.filter((h) => h.id !== id);
+      state.agentPrompts = state.agentPrompts.filter((p) => p.host !== id);
+      changed();
+      return null;
+    }),
+    answerAgentPrompt: command((host, id) => {
+      const before = state.agentPrompts.length;
+      state.agentPrompts = state.agentPrompts.filter((p) => !(p.host === host && p.id === id));
+      changed();
+      if (state.agentPrompts.length === before) throw new MockError("conflict", "Another Approver answered first, or the request timed out.");
+      return null;
+    }),
     answerAccess: command((id, allow, remember) => {
       const pending = state.pendingAccess;
       if (!pending || pending.id !== id) return null;
@@ -1707,6 +1752,44 @@ export function createMockBackend(): Backend & {
     ]),
   ) as unknown as Events;
 
+  /** Two Agent hosts: one connected, one that can't be reached. */
+  function mockAgentHosts() {
+    if (state.agentHosts.length > 0) return;
+    state.agentHosts = [
+      { id: "h-build", name: "Build server", url: "https://build.tail4e2a.ts.net:7807", state: "connected", problem: null },
+      {
+        id: "h-home",
+        name: "Home lab",
+        url: "https://keefast.home.example:7807",
+        state: "disconnected",
+        problem: "can't reach https://keefast.home.example:7807: Connection refused",
+      },
+    ];
+  }
+
+  /** A prompt from the build server, denied by itself after a minute as the host would. */
+  function agentPrompt(command: string[], reference: string, title: string) {
+    mockAgentHosts();
+    const program = command[0]!;
+    const prompt = {
+      id: `p${state.nextId++}`,
+      host: "h-build",
+      hostName: "Build server",
+      pairing: "claude",
+      entryTitle: title,
+      reference: `claude/${reference}`,
+      program,
+      command,
+      canRemember: !["bash", "sh", "zsh", "python3", "node"].includes(program),
+      expires: Date.now() / 1000 + 60,
+    };
+    state.agentPrompts.push(prompt);
+    setTimeout(() => {
+      state.agentPrompts = state.agentPrompts.filter((p) => p.id !== prompt.id);
+      changed();
+    }, 60_000);
+  }
+
   function simulate(scene: MockScene) {
     if ((PLUGIN_SCENES as readonly string[]).includes(scene)) {
       plugins.simulate(scene as PluginScene);
@@ -1716,6 +1799,19 @@ export function createMockBackend(): Backend & {
     const open = readable();
     const first = open[0];
     switch (scene) {
+      case "agentHosts":
+        mockAgentHosts();
+        break;
+      case "agentPrompt":
+        agentPrompt(["gh", "pr", "create", "--title", "Fix the login redirect", "--body", "Closes #212"], "GitHub/deploy token#password", "deploy token");
+        break;
+      case "agentPrompt-shell":
+        agentPrompt(["bash", "-c", "curl -fsS -H \"Authorization: Bearer $NPM_TOKEN\" https://registry.npmjs.org/-/whoami"], "npm/publish#password", "publish");
+        break;
+      case "agentPrompt-many":
+        agentPrompt(["gh", "release", "create", "v2.4.0"], "GitHub/deploy token#password", "deploy token");
+        agentPrompt(["npm", "publish", "--access", "public"], "npm/publish#password", "publish");
+        break;
       case "pairing":
         if (!first) return;
         state.pendingPairing = { id: state.nextId++, vault: first.id };

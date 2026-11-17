@@ -3,9 +3,8 @@
 //! command that creates it; the Vault keeps only its hash, and no other command returns it.
 //!
 //! The Entry editor's Agents section shows and changes the Agent access decisions remembered
-//! for an Entry. Until Approvers arrive (#157) a Headless host can ask nobody, so allowing a
-//! program here, ahead of time, is how a use is allowed; the decision reaches every host
-//! serving the Vault through the Vault file. Decisions live in the Vault's custom data, not in
+//! for an Entry, whether allowed ahead of time here or remembered at an Approver's prompt; the
+//! decision reaches every host serving the Vault through the Vault file. Decisions live in the Vault's custom data, not in
 //! the Entry, so changing one makes no Entry history.
 
 use keefast_agent::{

@@ -1,8 +1,8 @@
 // Entry editor A's Agents section (ADR 0012): the Agent access decisions remembered for this
-// Entry, one per Agent pairing and program, and a way to allow or deny a program ahead of time.
-// Until Approvers arrive, a Headless host can't ask anyone, so allowing a program here is how an
-// Agent gets to use the Entry with `keefast-agent run`. Decisions are kept in the Vault, not in
-// the Entry, so each change applies at once and makes no Entry history.
+// Entry, one per Agent pairing and program, and a way to allow or deny a program ahead of time,
+// so a Headless host doesn't have to ask an Approver. Answers remembered at an Approver's prompt
+// show here too. Decisions are kept in the Vault, not in the Entry, so each change applies at
+// once and makes no Entry history.
 
 import { useState } from "react";
 import { Bot, Plus } from "lucide-react";

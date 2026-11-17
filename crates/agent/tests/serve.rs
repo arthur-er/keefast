@@ -8,6 +8,10 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use keefast_agent::approver::ApproverAnswer;
+use keefast_agent::approver_client::{
+    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent,
+};
 use keefast_agent::host::{HeadlessHost, HostConfig};
 use keefast_agent::listen::Listen;
 use keefast_agent::serve::McpEndpoint;
@@ -69,6 +73,11 @@ fn vault_file() -> (VaultFile, String, String) {
 impl Served {
     /// The host serving the Vault file, locked, and its MCP endpoint at `listen`.
     async fn locked(listen: &Listen) -> Self {
+        Self::start(listen, keefast_agent::ApproverHub::new()).await
+    }
+
+    /// The host serving the Vault file, locked, asking `approvers`.
+    async fn start(listen: &Listen, approvers: Arc<keefast_agent::ApproverHub>) -> Self {
         let (file, claude, codex) = vault_file();
         let (host, _) = HeadlessHost::start(
             Workspace::new(Arc::new(LocalStorage)),
@@ -77,6 +86,8 @@ impl Served {
                 unattended: None,
                 secret_store: Arc::new(FakeSecretStore::default()),
                 audit_log: file.audit_log(),
+                approvers,
+                approver_credentials: keefast_agent::ApproverCredentials::in_memory(),
             },
         );
         let endpoint = McpEndpoint::start(Arc::clone(&host), listen).await.unwrap();
@@ -419,4 +430,337 @@ async fn run_is_told_about_a_bad_reference_a_locked_host_and_a_wrong_token() {
         .await
         .unwrap();
     assert_eq!(wrong.status().as_u16(), 401);
+}
+
+/// An Approver's stream of prompts, as a desktop keefast holds it.
+struct ApproverStream {
+    response: reqwest::Response,
+    buffer: String,
+}
+
+impl ApproverStream {
+    /// The next event: its name and its JSON.
+    async fn next(&mut self) -> (String, serde_json::Value) {
+        loop {
+            if let Some(end) = self.buffer.find("\n\n") {
+                let block: String = self.buffer.drain(..end + 2).collect();
+                let field = |name: &str| -> String {
+                    block
+                        .lines()
+                        .filter_map(|line| line.strip_prefix(name))
+                        .map(str::trim_start)
+                        .collect()
+                };
+                let data = field("data:");
+                // Keep-alive comments carry no data.
+                if data.is_empty() {
+                    continue;
+                }
+                return (field("event:"), serde_json::from_str(&data).unwrap());
+            }
+            let chunk =
+                tokio::time::timeout(std::time::Duration::from_secs(10), self.response.chunk())
+                    .await
+                    .expect("an event within 10 s")
+                    .unwrap()
+                    .expect("the stream stays open");
+            self.buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+}
+
+impl Served {
+    fn url(&self, path: &str) -> String {
+        self.endpoint.url().replace("/mcp", path)
+    }
+
+    /// Pairs an Approver called `name` with the host, as `keefast-agent pairing approver` does,
+    /// and returns its token.
+    fn pair_approver(&self, name: &str) -> String {
+        let (_, token) = self.host.approver_credentials().pair(name, 0).unwrap();
+        token.to_string()
+    }
+
+    /// Opens the prompt stream with `token`: its status, and the stream if it opened.
+    async fn approver_stream(&self, token: &str) -> (u16, Option<ApproverStream>) {
+        let response = reqwest::Client::new()
+            .get(self.url("/approver/events"))
+            .header("authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let stream = (status == 200).then(|| ApproverStream {
+            response,
+            buffer: String::new(),
+        });
+        (status, stream)
+    }
+
+    /// Answers the prompt `id` as the Approver with `token`: the status.
+    async fn answer(&self, token: &str, id: &str, allow: bool, remember: bool) -> u16 {
+        reqwest::Client::new()
+            .post(self.url(&format!("/approver/prompts/{id}")))
+            .header("authorization", format!("Bearer {token}"))
+            .body(serde_json::json!({ "allow": allow, "remember": remember }).to_string())
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    /// `keefast-agent run`'s request for claude's token Entry with `gh`, on a task of its own,
+    /// since it waits for the Approver.
+    fn run_gh_later(&self) -> tokio::task::JoinHandle<(u16, serde_json::Value)> {
+        let url = self.url("/agent/use-secrets");
+        let token = self.claude.clone();
+        tokio::spawn(async move {
+            let response = reqwest::Client::new()
+                .post(url)
+                .header("authorization", format!("Bearer {token}"))
+                .body(
+                    serde_json::json!({
+                        "references": ["claude/claude token#password"],
+                        "command": ["gh", "auth", "status"],
+                    })
+                    .to_string(),
+                )
+                .send()
+                .await
+                .unwrap();
+            let status = response.status().as_u16();
+            (status, response.json().await.unwrap())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_use_that_would_ask_prompts_the_approver_and_its_allow_lets_it_through() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let (_, stream) = served.approver_stream(&laptop).await;
+    let mut stream = stream.unwrap();
+
+    let run = served.run_gh_later();
+    let (name, prompt) = stream.next().await;
+    let answered = served
+        .answer(&laptop, prompt["id"].as_str().unwrap(), true, false)
+        .await;
+    let (status, values) = run.await.unwrap();
+
+    assert_eq!(name, "prompt");
+    assert_eq!(prompt["seconds_left"], 60);
+    assert_eq!(prompt["prompt"]["pairing"], "claude");
+    assert_eq!(prompt["prompt"]["entry_title"], "claude token");
+    assert_eq!(
+        prompt["prompt"]["command"],
+        serde_json::json!(["gh", "auth", "status"])
+    );
+    assert_eq!(prompt["prompt"]["can_remember"], true);
+    assert_eq!(answered, 204);
+    assert_eq!(status, 200, "{values}");
+    assert_eq!(
+        values["values"][0]["value"],
+        "claude token-secret-value-1234"
+    );
+    assert_eq!(stream.next().await.0, "dismissed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_approvers_answer_wins_and_every_approver_dismisses_the_prompt() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let desktop = served.pair_approver("desktop");
+    let mut laptop_stream = served.approver_stream(&laptop).await.1.unwrap();
+    let mut desktop_stream = served.approver_stream(&desktop).await.1.unwrap();
+
+    let run = served.run_gh_later();
+    let (_, on_laptop) = laptop_stream.next().await;
+    let (_, on_desktop) = desktop_stream.next().await;
+    let id = on_laptop["id"].as_str().unwrap();
+    let first = served.answer(&laptop, id, false, false).await;
+    let second = served.answer(&desktop, id, true, true).await;
+    let (status, refusal) = run.await.unwrap();
+
+    assert_eq!(on_laptop["id"], on_desktop["id"]);
+    assert_eq!((first, second), (204, 409));
+    assert_eq!(status, 403);
+    assert_eq!(refusal["error"], "denied");
+    for stream in [&mut laptop_stream, &mut desktop_stream] {
+        let (name, event) = stream.next().await;
+        assert_eq!(
+            (name.as_str(), &event["id"]),
+            ("dismissed", &on_laptop["id"])
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_remembered_allow_skips_the_prompt_next_time() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let mut stream = served.approver_stream(&laptop).await.1.unwrap();
+
+    let run = served.run_gh_later();
+    let (_, prompt) = stream.next().await;
+    served
+        .answer(&laptop, prompt["id"].as_str().unwrap(), true, true)
+        .await;
+    let first = run.await.unwrap().0;
+    let second = served.run_gh_later().await.unwrap().0;
+
+    assert_eq!((first, second), (200, 200));
+    assert_eq!(stream.next().await.0, "dismissed");
+    // No second prompt came: the next event would be one.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), stream.next())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unanswered_prompt_is_denied_and_dismissed_when_it_times_out() {
+    let served = Served::start(
+        &loopback(),
+        keefast_agent::ApproverHub::with_timeout(std::time::Duration::from_millis(500)),
+    )
+    .await;
+    served.unlock().await;
+    let laptop = served.pair_approver("laptop");
+    let mut stream = served.approver_stream(&laptop).await.1.unwrap();
+
+    let run = served.run_gh_later();
+    let (_, prompt) = stream.next().await;
+    let (status, refusal) = run.await.unwrap();
+    let (name, dismissed) = stream.next().await;
+    let late = served
+        .answer(&laptop, prompt["id"].as_str().unwrap(), true, false)
+        .await;
+
+    assert_eq!(status, 403);
+    assert_eq!(refusal["error"], "unanswered");
+    assert_eq!(
+        (name.as_str(), &dismissed["id"]),
+        ("dismissed", &prompt["id"])
+    );
+    assert_eq!(late, 409);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_waiting_when_an_approver_connects_is_shown_to_it() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let desktop = served.pair_approver("desktop");
+    let mut laptop_stream = served.approver_stream(&laptop).await.1.unwrap();
+
+    let run = served.run_gh_later();
+    let (_, prompt) = laptop_stream.next().await;
+    let mut desktop_stream = served.approver_stream(&desktop).await.1.unwrap();
+    let (name, late_prompt) = desktop_stream.next().await;
+    served
+        .answer(&desktop, prompt["id"].as_str().unwrap(), true, false)
+        .await;
+
+    assert_eq!(
+        (name.as_str(), &late_prompt["id"]),
+        ("prompt", &prompt["id"])
+    );
+    assert_eq!(run.await.unwrap().0, 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_paired_approvers_token_opens_the_prompt_stream_even_while_locked() {
+    let served = Served::locked(&loopback()).await;
+    let laptop = served.pair_approver("laptop");
+
+    assert_eq!(served.approver_stream(&laptop).await.0, 200);
+    assert_eq!(served.approver_stream("kfapprover_nobodys").await.0, 401);
+    assert_eq!(served.approver_stream(&served.claude).await.0, 401);
+    served.host.approver_credentials().unpair("laptop").unwrap();
+    assert_eq!(served.approver_stream(&laptop).await.0, 401);
+    assert_eq!(served.answer(&served.claude, "any", true, false).await, 401);
+}
+
+/// A desktop keefast's [`ApproverClient`] connected to `served` with `token`, and what it hears.
+fn approver_client(
+    served: &Served,
+    token: &str,
+) -> (
+    ApproverClient,
+    std::sync::mpsc::Receiver<ApproverClientEvent>,
+) {
+    let (send, heard) = std::sync::mpsc::channel();
+    let client = ApproverClient::start(
+        AgentHost {
+            url: served.endpoint.url(),
+            token: zeroize::Zeroizing::new(token.to_owned()),
+        },
+        move |event| {
+            let _ = send.send(event);
+        },
+    );
+    (client, heard)
+}
+
+async fn next_heard(heard: &std::sync::mpsc::Receiver<ApproverClientEvent>) -> ApproverClientEvent {
+    tokio::task::block_in_place(|| {
+        heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktops_approver_client_hears_the_prompt_and_its_answer_lets_run_through() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    let (client, heard) = approver_client(&served, &laptop);
+    assert_eq!(next_heard(&heard).await, ApproverClientEvent::Connected);
+
+    let run = served.run_gh_later();
+    let ApproverClientEvent::Prompt { id, prompt, .. } = next_heard(&heard).await else {
+        panic!("expected a prompt");
+    };
+    let answered = tokio::task::block_in_place(|| {
+        client.answer(
+            &id,
+            ApproverAnswer {
+                allow: true,
+                remember: true,
+            },
+        )
+    });
+    let again = tokio::task::block_in_place(|| {
+        client.answer(
+            &id,
+            ApproverAnswer {
+                allow: true,
+                remember: true,
+            },
+        )
+    });
+
+    assert_eq!(prompt.entry_title, "claude token");
+    assert_eq!(answered, Ok(()));
+    assert_eq!(again, Err(AnswerPromptError::Gone));
+    assert_eq!(run.await.unwrap().0, 200);
+    assert_eq!(
+        next_heard(&heard).await,
+        ApproverClientEvent::Dismissed { id }
+    );
+    assert_eq!(served.run_gh_later().await.unwrap().0, 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approver_client_with_a_token_the_host_doesnt_know_hears_why() {
+    let served = Served::unlocked().await;
+
+    let (_client, heard) = approver_client(&served, "kfapprover_nobodys");
+
+    let ApproverClientEvent::Disconnected(why) = next_heard(&heard).await else {
+        panic!("expected to be refused");
+    };
+    assert!(why.contains("pair it again"), "{why}");
 }

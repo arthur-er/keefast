@@ -155,5 +155,5 @@ _Avoid_: Secret ID, handle, placeholder
 _Avoid_: Daemon, server mode, agent server
 
 **Approver**:
-A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied.
+A desktop keefast paired with a Headless host, which shows that host's approval prompts and its activity. With no Approver online, a request that would ask is denied. The desktop lists the hosts it approves for under Settings → Agent hosts.
 _Avoid_: Admin, controller, remote UI

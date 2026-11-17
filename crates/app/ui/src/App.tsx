@@ -3,7 +3,7 @@
 // The browsers' requests and a lock waiting on unsaved changes show over either (dialogs A).
 
 import { useEffect } from "react";
-import { FileUp, FolderOpen, Lock, Plus, Puzzle, Save, Settings } from "lucide-react";
+import { Bot, FileUp, FolderOpen, Lock, Plus, Puzzle, Save, Settings } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage, onEvent } from "@/api";
@@ -72,6 +72,7 @@ function Root() {
   useAppCommand({ id: "newVault", title: "New Vault…", section: "Vaults", icon: Plus, shortcut: SHORTCUTS.newVault, run: () => actions.showOpenVault("new") }, keysActive);
   useAppCommand({ id: "settings", title: "Settings", section: "Go to", icon: Settings, shortcut: SHORTCUTS.settings, enabled: anyUnlocked, run: () => actions.openSettings() }, keysActive);
   useAppCommand({ id: "plugins", title: "Plugins", section: "Go to", icon: Puzzle, enabled: anyUnlocked, run: () => actions.openPlugins() }, keysActive);
+  useAppCommand({ id: "agentHosts", title: "Agent hosts", section: "Go to", icon: Bot, enabled: anyUnlocked, run: () => actions.openAgentHosts() }, keysActive);
   useQuitCommand(keysActive);
   useAppCommand({ id: "installPlugin", title: "Install a Plugin…", section: "App", icon: FileUp, enabled: anyUnlocked, run: () => void installFromFile(actions) }, keysActive);
 

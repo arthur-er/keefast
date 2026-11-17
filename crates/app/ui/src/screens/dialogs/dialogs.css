@@ -38,6 +38,13 @@
   .dg-subject .badge { margin-left: auto; }
   .dg-gico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-active); color: var(--fg-1); flex: none; }
   .dg-gico svg.lucide { width: 16px; height: 16px; }
+  /* An Agent's command line, whole: long arguments wrap rather than being cut short. */
+  .dg-command { display: flex; gap: 8px; padding: 10px 12px; border-radius: var(--r-md); background: var(--bg-inset); border: 1px solid var(--border-strong); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.45; color: var(--fg-0); max-height: 132px; overflow: auto; }
+  .dg-command .prompt { color: var(--fg-2); user-select: none; }
+  .dg-command code { font: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .dg-note { display: flex; align-items: flex-start; gap: 8px; font-size: var(--text-sm); color: var(--fg-2); }
+  .dg-note svg.lucide { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+  .dg-note b { color: var(--fg-1); font-weight: 500; }
   .dg-known { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--text-sm); color: var(--fg-2); }
   .dialog .dialog-head + .dialog-body.dg-tight { padding-top: 12px; }
   .btn.danger kbd { background: rgb(255 255 255 / 0.16); border-color: rgb(255 255 255 / 0.2); color: inherit; }

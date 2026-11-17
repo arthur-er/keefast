@@ -1,10 +1,24 @@
 // Browser requests & confirms A: what waits for the user's answer, as centred dialogs over
 // everything (the command palette closes; other overlays wait under them). One at a time: a Vault
-// locking with unsaved changes, else a Pairing request, an Access request, a captured login, in
-// the order the GPUI app asked them. The backend brings keefast to the front when a browser asks.
+// locking with unsaved changes, else an Agent host's prompt, else a Pairing request, an Access
+// request, a captured login, in the order the GPUI app asked them. The backend brings keefast to
+// the front when a browser or an Agent host asks.
 
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, LockOpen, Shield, Timer } from "lucide-react";
+import {
+  Bot,
+  CircleAlert,
+  Folder,
+  FolderPlus,
+  Globe,
+  Info,
+  KeyRound,
+  Link2,
+  Lock,
+  LockOpen,
+  Shield,
+  Timer,
+} from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AskedEntry, LoginOption, LoginTarget, VaultSummary, WorkspaceSnapshot } from "@/bindings";
@@ -18,7 +32,17 @@ import { useShell } from "@/shell/state";
 import { vaultIcon } from "@/shell/vaultStatus";
 
 import { DialogFrame, Kicker, Tile } from "./DialogFrame";
-import { type FrontRequest, frontRequest, requestKey, sameTarget, splitNewGroup, splitOrigin, stepTarget } from "./logic";
+import {
+  commandLine,
+  type FrontRequest,
+  frontRequest,
+  requestKey,
+  sameTarget,
+  secondsLeft,
+  splitNewGroup,
+  splitOrigin,
+  stepTarget,
+} from "./logic";
 
 import "./dialogs.css";
 
@@ -45,6 +69,8 @@ function RequestDialog({ request, vaults }: { request: FrontRequest; vaults: Vau
       return <AccessDialog access={request.access} />;
     case "login":
       return <LoginDialog login={request.login} />;
+    case "agent":
+      return <AgentPromptDialog prompt={request.prompt} />;
   }
 }
 
@@ -315,6 +341,102 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
           )}
         </span>
       </button>
+    </DialogFrame>
+  );
+}
+
+/** An Agent host asks whether an Agent pairing may use an Entry's secret to run a command. Allow
+ * or Deny, remembered for the program as an Agent access decision in the Vault if the user wants,
+ * except for shells and interpreters, which ask every time. Escape denies; nothing on the keyboard
+ * allows. The host denies it by itself once the countdown runs out, and the dialog goes. */
+function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["pendingAgentPrompt"]> }) {
+  const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const armed = useArmed();
+  const now = useNow(1000);
+  const left = secondsLeft(prompt.expires ?? now, now);
+  const answer = (allow: boolean) => {
+    if ((allow && !armed) || busy) return;
+    setBusy(true);
+    const remembered = remember && prompt.canRemember;
+    void api
+      .answerAgentPrompt(prompt.host, prompt.id, allow, remembered)
+      .then(() =>
+        toast(
+          <>
+            {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b> with{" "}
+            <b>{prompt.program}</b>
+            {remembered && <span className="subtle"> · remembered</span>}
+          </>,
+          { icon: allow ? "check" : Shield },
+        ),
+      )
+      .catch(fail)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <DialogFrame
+      role="alertdialog"
+      width={520}
+      autoFocus={false}
+      lead={
+        <Kicker icon={<Bot />}>
+          {[`${prompt.pairing} on ${prompt.hostName}`, "Agent request", ...(prompt.more > 0 ? [`${prompt.more} more waiting`] : [])]}
+        </Kicker>
+      }
+      title={`Let ${prompt.pairing} use “${prompt.entryTitle}”?`}
+      onEscape={() => answer(false)}
+      hint={
+        <>
+          <Timer />
+          Denied in {left} s
+        </>
+      }
+      actions={
+        <>
+          <Button disabled={busy} onClick={() => answer(false)} shortcut="Esc">
+            Deny
+          </Button>
+          <Button variant="primary" disabled={!armed || busy} onClick={() => answer(true)}>
+            Allow
+          </Button>
+        </>
+      }
+    >
+      <div className="dg-subject">
+        <span className="dg-gico">
+          <KeyRound />
+        </span>
+        <div className="min-w-0">
+          <div className="t truncate">{prompt.entryTitle}</div>
+          <div className="u truncate">{prompt.reference}</div>
+        </div>
+      </div>
+      <div className="dg-command" aria-label="Command">
+        <span className="prompt" aria-hidden>
+          $
+        </span>
+        <code>{commandLine(prompt.command)}</code>
+      </div>
+      <p className="dialog-desc m-0">
+        An Agent paired as <b>{prompt.pairing}</b> asks to run this on <b>{prompt.hostName}</b>, with the secret in the
+        program's environment. Allow only if you expect it.
+      </p>
+      {prompt.canRemember ? (
+        <button type="button" className="dg-checkrow" role="checkbox" aria-checked={remember} onClick={() => setRemember(!remember)}>
+          <span className={cn("check", remember && "is-on")} />
+          <span>
+            Remember this decision for <b>{prompt.program}</b>
+          </span>
+        </button>
+      ) : (
+        <p className="dg-note m-0">
+          <Info />
+          <span>
+            <b>{prompt.program}</b> can run anything, so keefast asks every time it is used.
+          </span>
+        </p>
+      )}
     </DialogFrame>
   );
 }

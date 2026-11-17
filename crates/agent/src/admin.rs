@@ -8,6 +8,8 @@
 //! Agent pairings are made and revoked here too (`keefast-agent pairing`), so an operator with
 //! only a shell on the host can pair an Agent: the token is printed once, on the operator's
 //! terminal, and the Vault keeps only its hash. `keefast-agent log` reads the audit log here.
+//! Approvers are paired here too (`keefast-agent pairing approver`): the first one can't be
+//! approved by an Approver, as there is none yet.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -18,6 +20,7 @@ use zeroize::Zeroizing;
 use keefast_core::{Group, GroupId, Vault};
 use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 
+use crate::approver::ApproverPairing;
 use crate::audit::AuditRecord;
 use crate::host::{HeadlessHost, HostStatus, UnlockError};
 use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
@@ -42,6 +45,15 @@ pub enum AdminRequest {
     /// The audit log's last `lines` records.
     Log {
         lines: usize,
+    },
+    /// Pairs a desktop keefast as an Approver, with a new token. It works while the Vault is
+    /// locked: Approvers are kept in the host's state, not the Vault.
+    ApproverPair {
+        name: String,
+    },
+    ApproverList,
+    ApproverRevoke {
+        name: String,
     },
 }
 
@@ -131,6 +143,13 @@ pub enum AdminReply {
     },
     /// Audit log records, oldest first.
     Log { records: Vec<AuditRecord> },
+    /// The Approvers paired with this host.
+    Approvers { approvers: Vec<ApproverPairing> },
+    /// An Approver paired, with its token: the only time anyone sees it.
+    ApproverPaired {
+        approver: ApproverPairing,
+        token: Token,
+    },
     Error {
         kind: AdminErrorKind,
         message: String,
@@ -154,6 +173,8 @@ pub enum AdminErrorKind {
     Pairing,
     /// The audit log can't be read.
     Log,
+    /// The Approver can't be paired or found as asked.
+    Approver,
 }
 
 impl AdminReply {
@@ -218,6 +239,29 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
                 AdminErrorKind::Log,
                 format!("the audit log can't be read: {error}"),
             ),
+        },
+        AdminRequest::ApproverPair { name } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| {
+                    i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+                });
+            match host.approver_credentials().pair(&name, now) {
+                Ok((approver, token)) => AdminReply::ApproverPaired {
+                    approver,
+                    token: Token(token),
+                },
+                Err(error) => AdminReply::error(AdminErrorKind::Approver, error),
+            }
+        }
+        AdminRequest::ApproverList => AdminReply::Approvers {
+            approvers: host.approver_credentials().list(),
+        },
+        AdminRequest::ApproverRevoke { name } => match host.approver_credentials().unpair(&name) {
+            Ok(()) => AdminReply::Approvers {
+                approvers: host.approver_credentials().list(),
+            },
+            Err(error) => AdminReply::error(AdminErrorKind::Approver, error),
         },
         AdminRequest::PairingList => host
             .with_vault(|workspace, vault| pairings(workspace, vault))

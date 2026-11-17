@@ -2,6 +2,7 @@
 // Windows opens a console window for a console program, so release builds are GUI programs there.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod agent_hosts;
 mod app;
 mod args;
 mod autostart;

@@ -24,8 +24,9 @@ use keefast_workspace::{
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
+use crate::approver::{Approver, ApproverCredentials, ApproverHub};
 use crate::audit::{AuditLog, AuditRecord, AuditSink};
-use crate::{AgentError, AgentReply, AgentRequest, AgentSession, AgentSettings};
+use crate::{AgentError, AgentReply, AgentRequest, AgentSession, AgentSettings, VaultAccess};
 
 /// How a Headless host is set up.
 pub struct HostConfig {
@@ -37,6 +38,10 @@ pub struct HostConfig {
     pub secret_store: Arc<dyn SecretStore>,
     /// Where every Agent's list and use is recorded, in the host's state directory.
     pub audit_log: Arc<AuditLog>,
+    /// The desktop keefasts asked about uses no decision answers.
+    pub approvers: Arc<ApproverHub>,
+    /// Who may connect as an Approver, in the host's state directory.
+    pub approver_credentials: ApproverCredentials,
 }
 
 /// Where an unattended unlock finds the Master key at startup. Anyone who can read these can
@@ -106,6 +111,8 @@ pub struct HeadlessHost {
     unattended: bool,
     secret_store: Arc<dyn SecretStore>,
     audit_log: Arc<AuditLog>,
+    approvers: Arc<ApproverHub>,
+    approver_credentials: ApproverCredentials,
 }
 
 struct Inner {
@@ -131,6 +138,8 @@ impl HeadlessHost {
             unattended: config.unattended.is_some(),
             secret_store: config.secret_store,
             audit_log: config.audit_log,
+            approvers: config.approvers,
+            approver_credentials: config.approver_credentials,
         });
         host.watch_vault_file();
         host.sync_online_vault();
@@ -262,21 +271,36 @@ impl HeadlessHost {
     }
 
     /// Handles an Agent's `request`, from the Agent pairing whose bearer token is `token`,
-    /// through an [`AgentSession`] that records it in the audit log. It blocks on the
-    /// Workspace, so async callers run it on a blocking thread.
+    /// through an [`AgentSession`] that records it in the audit log and asks the connected
+    /// Approvers. It blocks on the Workspace, and on an Approver for up to a minute, so async
+    /// callers run it on a blocking thread.
     pub fn handle_agent(
         &self,
         token: &str,
         request: AgentRequest,
     ) -> Result<AgentReply, AgentError> {
-        self.with_vault(|workspace, vault| {
-            let settings = AgentSettings::of(workspace.readable_vault(vault)?.vault());
-            let pairing = settings.pairing_with_token(token)?.id().clone();
-            let audit: Arc<dyn AuditSink> = self.audit_log.clone();
-            Some(AgentSession::new(pairing, audit).handle(workspace, vault, request))
-        })
-        .map(|paired| paired.unwrap_or(Err(AgentError::NotPaired)))
-        .unwrap_or(Err(AgentError::Locked))
+        let pairing = self
+            .with_vault(|workspace, vault| {
+                let settings = AgentSettings::of(workspace.readable_vault(vault)?.vault());
+                Some(settings.pairing_with_token(token)?.id().clone())
+            })
+            .ok_or(AgentError::Locked)?
+            .ok_or(AgentError::NotPaired)?;
+        let audit: Arc<dyn AuditSink> = self.audit_log.clone();
+        let approver: Arc<dyn Approver> = self.approvers.clone();
+        AgentSession::new(pairing, audit)
+            .with_approver(approver)
+            .handle(self, request)
+    }
+
+    /// The Approvers connected to this host, and the prompts waiting for them.
+    pub fn approvers(&self) -> &Arc<ApproverHub> {
+        &self.approvers
+    }
+
+    /// Who may connect as an Approver.
+    pub fn approver_credentials(&self) -> &ApproverCredentials {
+        &self.approver_credentials
     }
 
     /// The audit log's latest `limit` records, oldest first.
@@ -364,6 +388,20 @@ impl HeadlessHost {
                 report(host.run_saves(syncs));
             }
         });
+    }
+}
+
+/// An [`AgentSession`] reaches the served Vault through the host's lock, and its changes are
+/// saved at once.
+impl VaultAccess for HeadlessHost {
+    fn read<T>(&self, f: impl FnOnce(&Workspace, VaultId) -> T) -> Option<T> {
+        self.with_vault(|workspace, vault| f(workspace, vault))
+    }
+
+    fn edit<T>(&self, f: impl FnOnce(&mut Workspace, VaultId) -> T) -> Option<T> {
+        let (answer, saved) = HeadlessHost::edit(self, f)?;
+        report(saved);
+        Some(answer)
     }
 }
 

@@ -14,6 +14,7 @@ use keefast_workspace::{
 use tauri::{AppHandle, Manager, RunEvent};
 use tauri_specta::{Builder, Event, collect_commands, collect_events};
 
+use crate::agent_hosts::{self, AgentHosts};
 use crate::args::Args;
 use crate::autostart::{self, HiddenLaunch};
 use crate::commands::{self, dropbox::Connecting, settings::apply_window_theme};
@@ -127,6 +128,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::agents::get_entry_agent_access,
             commands::agents::remember_agent_decision,
             commands::agents::forget_agent_decision,
+            commands::agent_hosts::get_agent_hosts,
+            commands::agent_hosts::add_agent_host,
+            commands::agent_hosts::remove_agent_host,
+            commands::agent_hosts::answer_agent_prompt,
             commands::dropbox::dropbox_status,
             commands::dropbox::dropbox_connect,
             commands::dropbox::dropbox_connect_another,
@@ -337,6 +342,9 @@ pub fn run(args: Args) {
             tray::sync(&handle, core.read(Workspace::close_to_tray));
             background::start(&core);
             install_agent_command();
+            if let Some(file) = AgentHosts::file_in_os_config_dir() {
+                agent_hosts::start(&core, file, Arc::new(OsSecretStore));
+            }
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }
