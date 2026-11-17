@@ -79,7 +79,5 @@ pub fn store(
     reference: &str,
     value: Zeroizing<String>,
 ) -> Result<WrittenEntry, String> {
-    let request = StoreSecret::new(reference.to_owned(), value);
-    let body = Zeroizing::new(serde_json::to_string(&request).expect("a request is plain JSON"));
-    connection.post(STORE_PATH, &body)
+    connection.store(StoreSecret::new(reference.to_owned(), value))
 }

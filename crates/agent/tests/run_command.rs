@@ -209,7 +209,7 @@ fn a_refusal_is_shown_and_the_program_never_starts() {
 }
 
 #[test]
-fn without_keefasts_address_run_says_what_to_set() {
+fn without_a_token_run_says_what_to_set() {
     let output = Command::new(env!("CARGO_BIN_EXE_keefast-agent"))
         .args(["run", "--env", "GH_TOKEN=GitHub/token#password", "--", "gh"])
         .env_remove("KEEFAST_AGENT_URL")
@@ -218,5 +218,5 @@ fn without_keefasts_address_run_says_what_to_set() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(125));
-    assert!(text(&output.stderr).contains("KEEFAST_AGENT_URL"));
+    assert!(text(&output.stderr).contains("KEEFAST_AGENT_TOKEN"));
 }

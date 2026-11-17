@@ -1,5 +1,8 @@
 //! How the native host reaches the app: a Unix socket on Linux, a named pipe on Windows. Both
 //! ends frame messages as native messaging does, so the host relays them unchanged.
+//!
+//! `keefast-agent` reaches the app the same way, at an endpoint of its own named `agent`
+//! beside the browser's (ADR 0012 update "In-app host"), with the same peer checks.
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -20,27 +23,46 @@ pub const MAX_MESSAGE: usize = 1024 * 1024;
 /// connect to. Without a runtime directory there is nowhere private for the socket, so this
 /// fails rather than fall back to a directory other users share.
 pub fn socket_path() -> io::Result<PathBuf> {
+    endpoint_path(BROWSER)
+}
+
+/// The browser's endpoint, which the native host relays to.
+pub const BROWSER: &str = "browser";
+/// `keefast-agent`'s endpoint, apart from the browser's so no extension can reach it.
+pub const AGENT: &str = "agent";
+
+/// Where the app listens for the program `name` names ([`BROWSER`] or [`AGENT`]), private to
+/// the user as [`socket_path`] says.
+pub fn endpoint_path(name: &str) -> io::Result<PathBuf> {
     #[cfg(windows)]
     {
         let user = std::env::var("USERNAME").unwrap_or_default();
-        Ok(PathBuf::from(format!(r"\\.\pipe\keefast-browser-{user}")))
+        Ok(PathBuf::from(format!(r"\\.\pipe\keefast-{name}-{user}")))
     }
     #[cfg(not(windows))]
     {
-        socket_path_in(dirs::runtime_dir())
+        endpoint_path_in(dirs::runtime_dir(), name)
     }
 }
 
-/// The socket's path in `runtime_dir`, the user's runtime directory, if there is one.
+/// The browser socket's path in `runtime_dir`, the user's runtime directory, if there is one.
 #[cfg(not(windows))]
 pub fn socket_path_in(runtime_dir: Option<PathBuf>) -> io::Result<PathBuf> {
+    endpoint_path_in(runtime_dir, BROWSER)
+}
+
+/// The socket `name`'s path in `runtime_dir`, the user's runtime directory, if there is one.
+#[cfg(not(windows))]
+pub fn endpoint_path_in(runtime_dir: Option<PathBuf>, name: &str) -> io::Result<PathBuf> {
     let dir = runtime_dir.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            "no runtime directory (XDG_RUNTIME_DIR) to keep keefast's browser socket private in",
+            format!(
+                "no runtime directory (XDG_RUNTIME_DIR) to keep keefast's {name} socket private in"
+            ),
         )
     })?;
-    Ok(dir.join("keefast").join("browser.sock"))
+    Ok(dir.join("keefast").join(format!("{name}.sock")))
 }
 
 fn name(path: &Path) -> io::Result<Name<'_>> {
@@ -98,6 +120,12 @@ pub fn listen(path: &Path) -> io::Result<Listener> {
 /// Reads one message: its length as a native-endian `u32`, then the message. `None` when the
 /// other end has closed the connection between messages.
 pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
+    read_frame_up_to(reader, MAX_MESSAGE)
+}
+
+/// [`read_frame`], for messages up to `max` bytes rather than [`MAX_MESSAGE`]: for an
+/// endpoint no browser reaches.
+pub fn read_frame_up_to(reader: &mut impl Read, max: usize) -> io::Result<Option<Vec<u8>>> {
     let mut length = [0; 4];
     match reader.read_exact(&mut length) {
         Ok(()) => {}
@@ -105,7 +133,7 @@ pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
         Err(error) => return Err(error),
     }
     let length = u32::from_ne_bytes(length) as usize;
-    if length > MAX_MESSAGE {
+    if length > max {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("a {length}-byte message is too large"),
@@ -117,9 +145,14 @@ pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
 }
 
 pub fn write_frame(writer: &mut impl Write, message: &[u8]) -> io::Result<()> {
+    write_frame_up_to(writer, message, MAX_MESSAGE)
+}
+
+/// [`write_frame`], for messages up to `max` bytes.
+pub fn write_frame_up_to(writer: &mut impl Write, message: &[u8], max: usize) -> io::Result<()> {
     let length = u32::try_from(message.len())
         .ok()
-        .filter(|&length| length as usize <= MAX_MESSAGE)
+        .filter(|&length| length as usize <= max)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "message too large"))?;
     writer.write_all(&length.to_ne_bytes())?;
     writer.write_all(message)?;
@@ -159,10 +192,19 @@ impl Server {
         path: PathBuf,
         events: impl Fn(ServerEvent) -> bool + Send + Sync + 'static,
     ) -> io::Result<Self> {
+        Self::start_up_to(path, MAX_MESSAGE, events)
+    }
+
+    /// [`Self::start`], for messages either way of up to `max` bytes.
+    pub fn start_up_to(
+        path: PathBuf,
+        max: usize,
+        events: impl Fn(ServerEvent) -> bool + Send + Sync + 'static,
+    ) -> io::Result<Self> {
         let listener = listen(&path)?;
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&stopped);
-        let accepting = thread::spawn(move || accept(listener, &stop, Arc::new(events)));
+        let accepting = thread::spawn(move || accept(listener, &stop, max, Arc::new(events)));
         Ok(Self {
             path,
             stopped,
@@ -188,6 +230,7 @@ impl Drop for Server {
 fn accept(
     listener: Listener,
     stopped: &AtomicBool,
+    max: usize,
     events: Arc<dyn Fn(ServerEvent) -> bool + Send + Sync>,
 ) {
     for (id, stream) in (0..).zip(listener.incoming()) {
@@ -204,14 +247,14 @@ fn accept(
         }
         thread::spawn(move || {
             for reply in outgoing {
-                if write_frame(&mut to_host, &reply).is_err() {
+                if write_frame_up_to(&mut to_host, &reply, max).is_err() {
                     break;
                 }
             }
         });
         let events = Arc::clone(&events);
         thread::spawn(move || {
-            while let Ok(Some(message)) = read_frame(&mut from_host) {
+            while let Ok(Some(message)) = read_frame_up_to(&mut from_host, max) {
                 if !events(ServerEvent::Message(id, message)) {
                     return;
                 }
@@ -248,7 +291,7 @@ mod owner {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!(
-                    "{} is open to other users, so keefast's browser socket can't go there",
+                    "{} is open to other users, so keefast's socket can't go there",
                     dir.display()
                 ),
             ));

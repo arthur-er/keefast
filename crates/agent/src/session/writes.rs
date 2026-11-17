@@ -22,7 +22,7 @@ use crate::audit::{AuditEntry, AuditOutcome};
 use crate::{AgentPairing, AgentSettings};
 
 /// What `create_entry` makes: an Entry with this title in the pairing's own subgroup.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CreateEntry {
     pub title: String,
     pub username: String,
@@ -32,6 +32,7 @@ pub struct CreateEntry {
     /// with a generated password or `keefast-agent store`, never through the Agent's context.
     pub fields: BTreeMap<String, String>,
     /// How keefast generates the password, if it does. It is never returned.
+    #[serde(default, with = "recipe")]
     pub password: Option<PasswordRecipe>,
 }
 
@@ -471,4 +472,78 @@ fn own_path(vault: &Vault, settings: &AgentSettings, pairing: &AgentPairing) -> 
         stack.extend(group.groups().iter().map(|child| (child, path.clone())));
     }
     None
+}
+
+/// A [`PasswordRecipe`] as JSON, for a `create_entry` the desktop app runs: `core` has no
+/// serde of its own.
+mod recipe {
+    use keefast_core::{CharacterRecipe, PassphraseRecipe, PasswordRecipe};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Recipe {
+        Characters {
+            length: u32,
+            lowercase: bool,
+            uppercase: bool,
+            digits: bool,
+            symbols: bool,
+            exclude_lookalikes: bool,
+        },
+        Passphrase {
+            words: u32,
+            separator: String,
+        },
+    }
+
+    pub fn serialize<S: Serializer>(
+        recipe: &Option<PasswordRecipe>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        recipe
+            .as_ref()
+            .map(|recipe| match recipe {
+                PasswordRecipe::Characters(c) => Recipe::Characters {
+                    length: c.length,
+                    lowercase: c.lowercase,
+                    uppercase: c.uppercase,
+                    digits: c.digits,
+                    symbols: c.symbols,
+                    exclude_lookalikes: c.exclude_lookalikes,
+                },
+                PasswordRecipe::Passphrase(p) => Recipe::Passphrase {
+                    words: p.words,
+                    separator: p.separator.clone(),
+                },
+            })
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<PasswordRecipe>, D::Error> {
+        Ok(
+            Option::<Recipe>::deserialize(deserializer)?.map(|recipe| match recipe {
+                Recipe::Characters {
+                    length,
+                    lowercase,
+                    uppercase,
+                    digits,
+                    symbols,
+                    exclude_lookalikes,
+                } => PasswordRecipe::Characters(CharacterRecipe {
+                    length,
+                    lowercase,
+                    uppercase,
+                    digits,
+                    symbols,
+                    exclude_lookalikes,
+                }),
+                Recipe::Passphrase { words, separator } => {
+                    PasswordRecipe::Passphrase(PassphraseRecipe { words, separator })
+                }
+            }),
+        )
+    }
 }
