@@ -67,3 +67,53 @@ impl VaultFile {
         (workspace, vault)
     }
 }
+
+/// A KeePassXC Vault whose Master key is [`PASSWORD`] and [`XML_V2_KEY_FILE`].
+pub const KEY_FILE_KDBX: &[u8] =
+    include_bytes!("../../../../fixtures/key-files/keepassxc-xml-v2.kdbx");
+pub const XML_V2_KEY_FILE: &[u8] = include_bytes!("../../../../fixtures/key-files/xml-v2.keyx");
+
+/// An OS secret store in memory.
+#[derive(Default)]
+pub struct FakeSecretStore(Mutex<std::collections::HashMap<String, String>>);
+
+impl FakeSecretStore {
+    pub fn holding(name: &str, secret: &str) -> Arc<Self> {
+        let store = Self::default();
+        store
+            .0
+            .lock()
+            .unwrap()
+            .insert(name.to_owned(), secret.to_owned());
+        Arc::new(store)
+    }
+
+    pub fn secret(&self, name: &str) -> Option<String> {
+        self.0.lock().unwrap().get(name).cloned()
+    }
+}
+
+impl keefast_workspace::SecretStore for FakeSecretStore {
+    fn get(
+        &self,
+        name: &str,
+    ) -> Result<Option<secrecy::SecretString>, keefast_workspace::SecretStoreError> {
+        Ok(self.secret(name).map(secrecy::SecretString::from))
+    }
+
+    fn set(
+        &self,
+        name: &str,
+        secret: &secrecy::SecretString,
+    ) -> Result<(), keefast_workspace::SecretStoreError> {
+        use secrecy::ExposeSecret;
+        let secret = secret.expose_secret().to_owned();
+        self.0.lock().unwrap().insert(name.to_owned(), secret);
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), keefast_workspace::SecretStoreError> {
+        self.0.lock().unwrap().remove(name);
+        Ok(())
+    }
+}

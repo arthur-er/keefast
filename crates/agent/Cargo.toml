@@ -7,14 +7,21 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64.workspace = true
 getrandom.workspace = true
 keefast-core.workspace = true
 keefast-workspace.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
+zeroize = { workspace = true, features = ["serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
+libc.workspace = true
 tempfile.workspace = true

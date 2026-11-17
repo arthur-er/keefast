@@ -2836,15 +2836,19 @@ dependencies = [
 name = "keefast-agent"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "getrandom 0.4.3",
  "keefast-core",
  "keefast-workspace",
+ "libc",
+ "secrecy",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]
