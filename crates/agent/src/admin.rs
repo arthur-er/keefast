@@ -22,7 +22,9 @@ use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 
 use crate::approver::ApproverPairing;
 use crate::audit::AuditRecord;
-use crate::host::{ConsentApprovalError, HeadlessHost, HostStatus, PairingChoice, UnlockError};
+use crate::host::{
+    ConsentApprovalError, HeadlessHost, HostStatus, PairingChoice, UnlockError, subgroups_named,
+};
 use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
 
 /// The longest request the admin socket reads: a password and a Key file fit many times over.
@@ -401,44 +403,14 @@ fn create_pairing(
     create: PairingCreate,
 ) -> Result<AdminReply, AdminReply> {
     let failed = |error: AgentSettingsError| AdminReply::error(AdminErrorKind::Pairing, error);
-    let settings = workspace.agent_settings(vault).ok_or_else(locked_error)?;
-    let agent_group = match (settings.agent_group(), &create.agent_group) {
-        (Some(group), _) => group,
-        (None, None) => {
-            return Err(AdminReply::error(
-                AdminErrorKind::Pairing,
-                "the Vault has no Agent group yet: name one with --agent-group, or choose one \
-                 in keefast's Vault settings, under Agents",
-            ));
-        }
-        (None, Some(path)) => {
-            let group = group_at_path(workspace, vault, path).map_err(failed)?;
-            workspace.set_agent_group(vault, group).map_err(failed)?;
-            group
-        }
-    };
+    let agent_group = agent_group(workspace, vault, create.agent_group.as_deref())?;
     let open = workspace.readable_vault(vault).ok_or_else(locked_error)?;
-    let subgroups = open
-        .vault()
-        .group(agent_group)
-        .map(|group| group.groups().to_vec())
-        .unwrap_or_default();
-    let reads = create
-        .reads
-        .iter()
-        .map(|name| {
-            subgroups
-                .iter()
-                .find(|group| group.name() == name)
-                .map(|group| group.id())
-                .ok_or_else(|| {
-                    AdminReply::error(
-                        AdminErrorKind::Pairing,
-                        format!("the Agent group has no subgroup called {name}"),
-                    )
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let reads = subgroups_named(open.vault(), agent_group, &create.reads).map_err(|name| {
+        AdminReply::error(
+            AdminErrorKind::Pairing,
+            format!("the Agent group has no subgroup called {name}"),
+        )
+    })?;
     let created = workspace
         .create_agent_pairing(vault, &create.name, reads, create.can_create)
         .map_err(failed)?;
@@ -450,6 +422,30 @@ fn create_pairing(
         pairing: summary(vault, &created.pairing),
         token: Token(created.token),
     })
+}
+
+/// The Vault's Agent group; when it has none yet, the Group at `path` (`--agent-group`),
+/// made where it is missing and set as the Agent group.
+fn agent_group(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    path: Option<&str>,
+) -> Result<GroupId, AdminReply> {
+    let failed = |error: AgentSettingsError| AdminReply::error(AdminErrorKind::Pairing, error);
+    let settings = workspace.agent_settings(vault).ok_or_else(locked_error)?;
+    match (settings.agent_group(), path) {
+        (Some(group), _) => Ok(group),
+        (None, None) => Err(AdminReply::error(
+            AdminErrorKind::Pairing,
+            "the Vault has no Agent group yet: name one with --agent-group, or choose one \
+             in keefast's Vault settings, under Agents",
+        )),
+        (None, Some(path)) => {
+            let group = group_at_path(workspace, vault, path).map_err(failed)?;
+            workspace.set_agent_group(vault, group).map_err(failed)?;
+            Ok(group)
+        }
+    }
 }
 
 /// The Group at `path` from the root Group, made where it is missing.

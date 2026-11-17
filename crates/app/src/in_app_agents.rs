@@ -164,7 +164,11 @@ pub fn handle(
     token: &str,
     request: AgentRequest,
 ) -> Result<AgentReply, AgentError> {
-    let (vault, pairing, location) = core.read(|workspace| paired(workspace, token))?;
+    let Paired {
+        vault,
+        pairing,
+        location,
+    } = core.read(|workspace| paired(workspace, token))?;
     let agents = core.in_app_agents();
     let mut session = AgentSession::new(
         pairing,
@@ -183,14 +187,23 @@ pub fn handle(
     )
 }
 
+/// An unlocked Vault with the Agent pairing a token belongs to.
+struct Paired {
+    vault: VaultId,
+    pairing: keefast_agent::AgentPairingId,
+    /// Where the Vault lives, which names its log.
+    location: VaultLocation,
+}
+
 /// The unlocked Vault with an Agent pairing whose token is `token`, and the pairing.
-fn paired(
-    workspace: &Workspace,
-    token: &str,
-) -> Result<(VaultId, keefast_agent::AgentPairingId, VaultLocation), AgentError> {
+fn paired(workspace: &Workspace, token: &str) -> Result<Paired, AgentError> {
     for open in workspace.readable_vaults() {
         if let Some(pairing) = AgentSettings::of(open.vault()).pairing_with_token(token) {
-            return Ok((open.id(), pairing.id().clone(), open.location().clone()));
+            return Ok(Paired {
+                vault: open.id(),
+                pairing: pairing.id().clone(),
+                location: open.location().clone(),
+            });
         }
     }
     let some_locked = workspace.readable_vaults().next().is_none()
