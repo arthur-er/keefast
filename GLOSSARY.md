@@ -138,6 +138,14 @@ _Avoid_: Client, bot, integration, AI
 The trust relationship between one Agent and one Vault: a name, the Agent group subgroups it may read, whether it may create Entries, and how it proves itself (a token, or an OAuth client). Created by the user and stored in that Vault. A gateway such as Executor is one Agent pairing, however many agents sit behind it.
 _Avoid_: Token, API key, connection, grant
 
+**Gateway pairing**:
+A pairing for another program's vault, such as agentes-chat's, that resolves values for its own agents and keeps them from its models. It reaches only a Headless host, through `/gateway/v1/` rather than MCP, and resolves any value in its subgroups without a prompt: the subgroups it was given are the approval. Made only by a person, never through OAuth. An Agent pairing and a Gateway pairing are the two kinds of pairing a Vault holds for Agents.
+_Avoid_: Connector, integration, service account, source
+
+**Resolve**:
+What a Gateway pairing does with a value: keefast returns one field of one Entry to the gateway, logs it, and keeps nothing. Not a reveal: a reveal puts a value in a model's context, a resolve hands it to a gateway that promises not to.
+_Avoid_: Fetch, get secret, reveal
+
 **Agent group**:
 The Group in a Vault whose Entries Agents may see. Each Agent pairing writes to a subgroup of its own, `Agent group/<pairing name>`, and may be given others to read. Entries outside it don't exist as far as Agents can tell.
 _Avoid_: Agent folder, shared secrets

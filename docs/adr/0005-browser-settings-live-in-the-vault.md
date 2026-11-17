@@ -9,3 +9,7 @@ KDBX tags are plain text, so the colour chosen for a tag needs a place of its ow
 ## Update 2026-11-16: Agent settings live there too
 
 Agent pairings (with their token hashes), Agent access decisions, the Default agent policy, each Entry's allowed hosts for `http_request`, and the "Agents may reveal" flag go in the Vault file's custom data, for the same reason as Pairings: approving on a desktop must reach a Headless host that serves the same Vault (ADR 0012). OAuth access and refresh tokens are the exception. They rotate on every refresh, and keeping them in the Vault would make each refresh a save and a Merge, so they stay hashed in the Headless host's own state. The audit log stays on the machine that wrote it.
+
+## Update 2026-11-17: Gateway pairings live there too
+
+Agent pairings gain a kind, `agent` or `gateway` (ADR 0015). Gateway pairings are stored beside Agent pairings, with their token hash, for the same reason: one made on a desktop must reach the Headless host that serves the Vault. A pairing stored before kinds existed is an Agent pairing.

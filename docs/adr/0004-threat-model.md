@@ -21,3 +21,7 @@ With Close to tray on, keefast keeps running, its Vaults unlocked, after the win
 ## Update 2026-11-17: Updates
 
 ADR 0014 lets keefast install new releases of itself. Whoever can publish a keefast release can now run code on users' machines, so a forged or tampered update is in scope. The updater installs only packages signed with keefast's update key, verified against the public key built into keefast, and fetched over HTTPS. The key is not the Plugin release key and is given only to CI's signing step. A release reaches users only once it is published by hand. A stolen update key with the power to publish a release is not defended against: that is a compromise of the project itself.
+
+## Update 2026-11-17: Gateways
+
+ADR 0015 lets a Gateway pairing, such as agentes-chat's, resolve the values in its Agent group subgroups on a Headless host without a prompt. A compromised gateway, or anyone holding its token, gets all of them. The defences are the subgroups the operator chooses to give it, the token kept only as a hash in the Vault, revocation that takes effect at once, and the audit log, which names every Entry a gateway resolved and whom the gateway said it was for. keefast can't verify that claim, and doesn't stop a gateway leaking a value to its own model: that is the gateway's promise.
