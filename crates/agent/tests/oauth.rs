@@ -989,3 +989,39 @@ async fn no_web_page_elsewhere_may_read_registration_or_token_answers() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_paired_by_oauth_reaches_only_mcp_not_run_or_stores_endpoints() {
+    // OAuth clients (Executor, claude.ai) only speak MCP. The endpoints that hand `run` raw
+    // values, or let `store` write one, are for pairings whose token the user put in `run`'s
+    // environment.
+    let served = Served::start().await;
+    served.unlock().await;
+    let client = served.register("Executor").await;
+    let (access, _) = served.paired_tokens(&client, "executor").await;
+
+    let use_secrets = http()
+        .post(served.url("/agent/use-secrets"))
+        .header("authorization", format!("Bearer {access}"))
+        .json(&json!({
+            "references": ["executor/anything#password"],
+            "command": ["gh", "auth", "status"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let store = http()
+        .post(served.url("/agent/store"))
+        .header("authorization", format!("Bearer {access}"))
+        .json(&json!({ "reference": "executor/anything#password", "value": "x" }))
+        .send()
+        .await
+        .unwrap();
+
+    for response in [use_secrets, store] {
+        assert_eq!(response.status(), 403);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "mcp_only", "{body}");
+    }
+    assert_eq!(served.mcp_status(Some(&access)).await.0, 200);
+}
