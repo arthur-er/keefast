@@ -101,6 +101,10 @@ impl From<keefast_agent::AgentSettingsError> for ApiError {
             AgentSettingsError::NoAgentGroup => {
                 Self::invalid("Choose the Agent group before pairing an Agent.")
             }
+            AgentSettingsError::NotAHost(host) => Self::invalid(format!(
+                "{host} isn't a host: write a host name such as api.github.com, *. and a domain \
+                 for its subdomains, or an IP address, without a port."
+            )),
             AgentSettingsError::NeverRemembered(program) => Self::invalid(format!(
                 "{program} is a shell or interpreter, which can run anything, so keefast asks \
                  every time it is used and never remembers an answer."

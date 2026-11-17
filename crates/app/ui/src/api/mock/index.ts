@@ -10,7 +10,7 @@
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
 //     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
-//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-many"
+//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-http" | "agentPrompt-many"
 //     | "agentConsent" | "agentConsent-again")   (an MCP client pairing by OAuth; its code is ABCD-EFGH)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
@@ -341,6 +341,21 @@ const MOCK_BROWSER = "Chrome on my laptop";
 /** When the mock started, in seconds since 1970. */
 const MOCK_START = Date.now() / 1000;
 
+/** A host as keefast keeps it in an Entry's allowed hosts, roughly: lower case, without a scheme,
+ * path or trailing dot; `null` when it isn't one or has a port. */
+function mockHost(given: string): string | null {
+  let host = given.trim().toLowerCase();
+  const scheme = host.indexOf("://");
+  if (scheme >= 0) host = host.slice(scheme + 3).split(/[/?#]/)[0]!;
+  host = host.replace(/\.$/, "");
+  const wildcard = host.startsWith("*.");
+  const rest = wildcard ? host.slice(2) : host;
+  if (/^\[[0-9a-f:.]+\]$/.test(rest) && !wildcard) return host;
+  if (!/^[a-z0-9_-]+(\.[a-z0-9_-]+)*$/.test(rest)) return null;
+  if (wildcard && !rest.includes(".")) return null;
+  return host;
+}
+
 /** The scenes `?mock=` and `__keefastMock.simulate` set up. */
 export type MockScene =
   | "pairing"
@@ -364,6 +379,7 @@ export type MockScene =
   | "agentHosts"
   | "agentPrompt"
   | "agentPrompt-shell"
+  | "agentPrompt-http"
   | "agentPrompt-many"
   | "agentConsent"
   | "agentConsent-again"
@@ -1537,31 +1553,63 @@ export function createMockBackend(): Backend & {
         .filter((d) => d.entry === e.id)
         .flatMap((d) => {
           const pairing = v.agentPairings?.find((p) => p.id === d.pairing);
-          return pairing ? [{ pairing: pairing.id, pairingName: pairing.name, program: d.program, allow: d.allow }] : [];
+          return pairing ? [{ pairing: pairing.id, pairingName: pairing.name, kind: d.kind, name: d.name, allow: d.allow }] : [];
         })
-        .sort((a, b) => a.pairingName.localeCompare(b.pairingName) || a.program.localeCompare(b.program));
-      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions };
+        .sort(
+          (a, b) =>
+            a.pairingName.localeCompare(b.pairingName) ||
+            (a.kind === b.kind ? 0 : a.kind === "program" ? -1 : 1) ||
+            a.name.localeCompare(b.name),
+        );
+      const allowedHosts = [...(v.agentAllowedHosts?.[e.id] ?? [])];
+      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions, allowedHosts };
     }),
-    rememberAgentDecision: command((id, entryId, pairingId, program, allow) => {
+    rememberAgentDecision: command((id, entryId, pairingId, kind, given, allow) => {
       const [v, e] = entryOf(id, entryId);
       if (!v.agentPairings?.some((p) => p.id === pairingId)) throw new MockError("invalid", "This Agent pairing was revoked.");
-      const name = program.trim().split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
-      if (!name) throw new MockError("invalid", "Name the program, such as gh.");
-      if (/^(sh|bash|zsh|fish|dash|pwsh|powershell|cmd|node|deno|bun|ruby|perl|php|env|xargs|python.*)$/i.test(name)) {
-        throw new MockError("invalid", `${name} is a shell or interpreter, which can run anything, so keefast asks every time it is used and never remembers an answer.`);
+      let name: string;
+      if (kind === "program") {
+        name = given.trim().split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+        if (!name) throw new MockError("invalid", "Name the program, such as gh.");
+        if (/^(sh|bash|zsh|fish|dash|pwsh|powershell|cmd|node|deno|bun|ruby|perl|php|env|xargs|python.*)$/i.test(name)) {
+          throw new MockError("invalid", `${name} is a shell or interpreter, which can run anything, so keefast asks every time it is used and never remembers an answer.`);
+        }
+      } else {
+        const host = mockHost(given);
+        if (!host || host.startsWith("*.")) throw new MockError("invalid", "Name the host, such as api.github.com.");
+        name = host;
       }
       const decisions = (v.agentDecisions ??= []);
-      const known = decisions.find((d) => d.entry === e.id && d.pairing === pairingId && d.program === name);
+      const known = decisions.find((d) => d.entry === e.id && d.pairing === pairingId && d.kind === kind && d.name === name);
       if (known) known.allow = allow;
-      else decisions.push({ entry: e.id, pairing: pairingId, program: name, allow });
+      else decisions.push({ entry: e.id, pairing: pairingId, kind, name, allow });
       edited(v);
       return null;
     }),
-    forgetAgentDecision: command((id, entryId, pairingId, program) => {
+    forgetAgentDecision: command((id, entryId, pairingId, kind, name) => {
       const [v, e] = entryOf(id, entryId);
-      v.agentDecisions = (v.agentDecisions ?? []).filter((d) => !(d.entry === e.id && d.pairing === pairingId && d.program === program));
+      v.agentDecisions = (v.agentDecisions ?? []).filter(
+        (d) => !(d.entry === e.id && d.pairing === pairingId && d.kind === kind && d.name === name),
+      );
       edited(v);
       return null;
+    }),
+    setEntryAllowedHosts: command((id, entryId, hosts) => {
+      const [v, e] = entryOf(id, entryId);
+      const kept: string[] = [];
+      for (const given of hosts) {
+        const host = mockHost(given);
+        if (!host) {
+          throw new MockError(
+            "invalid",
+            `${given} isn't a host: write a host name such as api.github.com, *. and a domain for its subdomains, or an IP address, without a port.`,
+          );
+        }
+        if (!kept.includes(host)) kept.push(host);
+      }
+      (v.agentAllowedHosts ??= {})[e.id] = kept;
+      edited(v);
+      return kept;
     }),
     dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
@@ -1788,9 +1836,9 @@ export function createMockBackend(): Backend & {
   }
 
   /** A prompt from the build server, denied by itself after a minute as the host would. */
-  function agentPrompt(command: string[], reference: string, title: string) {
+  function agentPrompt(command: string[], reference: string, title: string, httpHost: string | null = null) {
     mockAgentHosts();
-    const program = command[0]!;
+    const program = httpHost ?? command[0]!;
     const prompt = {
       id: `p${state.nextId++}`,
       host: "h-build",
@@ -1801,6 +1849,7 @@ export function createMockBackend(): Backend & {
       program,
       command,
       canRemember: !["bash", "sh", "zsh", "python3", "node"].includes(program),
+      httpHost,
       expires: Date.now() / 1000 + 60,
     };
     state.agentPrompts.push(prompt);
@@ -1853,6 +1902,14 @@ export function createMockBackend(): Backend & {
         break;
       case "agentConsent-again":
         agentConsent("executor");
+        break;
+      case "agentPrompt-http":
+        agentPrompt(
+          ["POST", "https://api.github.com/repos/acme/web/issues/212/comments"],
+          "GitHub/deploy token#password",
+          "deploy token",
+          "api.github.com",
+        );
         break;
       case "agentPrompt-many":
         agentPrompt(["gh", "release", "create", "v2.4.0"], "GitHub/deploy token#password", "deploy token");

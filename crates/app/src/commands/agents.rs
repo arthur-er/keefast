@@ -3,15 +3,17 @@
 //! command that creates it; the Vault keeps only its hash, and no other command returns it.
 //!
 //! The Entry editor's Agents section shows and changes the Agent access decisions remembered
-//! for an Entry, whether allowed ahead of time here or remembered at an Approver's prompt; the
-//! decision reaches every host serving the Vault through the Vault file. Decisions live in the Vault's custom data, not in
-//! the Entry, so changing one makes no Entry history.
+//! for an Entry, by program (`keefast-agent run`) or host (`http_request`), whether allowed
+//! ahead of time here or remembered at an Approver's prompt, and the hosts `http_request` may
+//! send the Entry's secrets to. Both reach every host serving the Vault through the Vault file.
+//! They live in the Vault's custom data, not in the Entry, so changing them makes no Entry
+//! history.
 
 use keefast_agent::{
     AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse, pairings_reading,
 };
 use keefast_core::Vault;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::Core;
@@ -199,14 +201,35 @@ pub async fn revoke_agent_pairing(
     Ok(())
 }
 
-/// A remembered Agent access decision: an Agent pairing using an Entry with a program.
+/// What an Agent access decision is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentUseKind {
+    /// A program `keefast-agent run` starts, by its executable's name.
+    Program,
+    /// A host an `http_request` goes to.
+    Host,
+}
+
+impl AgentUseKind {
+    fn agent_use(self, name: String) -> AgentUse {
+        match self {
+            Self::Program => AgentUse::Program(name),
+            Self::Host => AgentUse::Host(name),
+        }
+    }
+}
+
+/// A remembered Agent access decision: an Agent pairing using an Entry with a program, or at
+/// a host.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDecisionView {
     pub pairing: String,
     pub pairing_name: String,
-    /// The program's executable name, such as `gh`.
-    pub program: String,
+    pub kind: AgentUseKind,
+    /// The program's executable name, such as `gh`, or the host, such as `api.github.com`.
+    pub name: String,
     pub allow: bool,
 }
 
@@ -217,9 +240,11 @@ pub struct EntryAgentAccess {
     /// The Agent pairings that can use the Entry, from their own subgroup or one they read.
     /// Empty when the Entry is outside the Agent group.
     pub pairings: Vec<AgentPairingView>,
-    /// Its remembered decisions, by pairing name, then program. Decisions for hosts
-    /// (`http_request`) come later.
+    /// Its remembered decisions, by pairing name, then programs before hosts, then name.
     pub decisions: Vec<AgentDecisionView>,
+    /// The hosts `http_request` may send its secrets to, as kept: host names, IP addresses, or
+    /// `*.` and a domain for its subdomains.
+    pub allowed_hosts: Vec<String>,
 }
 
 #[tauri::command]
@@ -240,22 +265,27 @@ pub async fn get_entry_agent_access(
         let mut decisions: Vec<AgentDecisionView> = settings
             .decisions_on(entry)
             .filter_map(|decision| {
-                let AgentUse::Program(program) = &decision.agent_use else {
-                    return None;
+                let (kind, name) = match &decision.agent_use {
+                    AgentUse::Program(program) => (AgentUseKind::Program, program),
+                    AgentUse::Host(host) => (AgentUseKind::Host, host),
                 };
                 // A revoked pairing's decisions no longer matter.
                 let pairing = settings.pairing(&decision.pairing)?;
                 Some(AgentDecisionView {
                     pairing: pairing.id().as_str().to_owned(),
                     pairing_name: pairing.name().to_owned(),
-                    program: program.clone(),
+                    kind,
+                    name: name.clone(),
                     allow: decision.decision == AgentDecision::Allow,
                 })
             })
             .collect();
         decisions.sort_by(|a, b| {
-            (a.pairing_name.as_str(), a.program.as_str())
-                .cmp(&(b.pairing_name.as_str(), b.program.as_str()))
+            (a.pairing_name.as_str(), a.kind, a.name.as_str()).cmp(&(
+                b.pairing_name.as_str(),
+                b.kind,
+                b.name.as_str(),
+            ))
         });
         Ok(EntryAgentAccess {
             pairings: pairings_reading(open, entry)
@@ -263,13 +293,14 @@ pub async fn get_entry_agent_access(
                 .map(AgentPairingView::of)
                 .collect(),
             decisions,
+            allowed_hosts: settings.allowed_hosts(entry).to_vec(),
         })
     })
 }
 
-/// Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with
-/// `program`, by its executable's name. Shells and interpreters are refused: they ask every
-/// time.
+/// Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with a
+/// program, by its executable's name, or at a host. Shells and interpreters are refused: they
+/// ask every time.
 #[tauri::command]
 #[specta::specta]
 pub async fn remember_agent_decision(
@@ -277,14 +308,25 @@ pub async fn remember_agent_decision(
     vault: VaultId,
     entry: EntryId,
     pairing: String,
-    program: String,
+    kind: AgentUseKind,
+    name: String,
     allow: bool,
 ) -> ApiResult<()> {
     let entry = entry.resolve()?;
-    let program = keefast_agent::programs::program_name(program.trim());
-    if program.is_empty() {
-        return Err(ApiError::invalid("Name the program, such as gh."));
-    }
+    let name = match kind {
+        AgentUseKind::Program => {
+            let program = keefast_agent::programs::program_name(name.trim());
+            if program.is_empty() {
+                return Err(ApiError::invalid("Name the program, such as gh."));
+            }
+            program
+        }
+        AgentUseKind::Host => match keefast_agent::hosts::normalize_allowed_host(&name) {
+            // A decision is for one host a request goes to, never a wildcard.
+            Some(host) if !host.starts_with("*.") => host,
+            _ => return Err(ApiError::invalid("Name the host, such as api.github.com.")),
+        },
+    };
     let vault = core.read(|workspace| vault.resolve_open(workspace))?;
     core.update(|workspace| {
         let settings = workspace
@@ -297,13 +339,7 @@ pub async fn remember_agent_decision(
             AgentDecision::Deny
         };
         workspace
-            .remember_agent_decision(
-                vault,
-                entry,
-                pairing.id(),
-                &AgentUse::Program(program),
-                decision,
-            )
+            .remember_agent_decision(vault, entry, pairing.id(), &kind.agent_use(name), decision)
             .map_err(ApiError::from)
     })?;
     core.autosave();
@@ -318,7 +354,8 @@ pub async fn forget_agent_decision(
     vault: VaultId,
     entry: EntryId,
     pairing: String,
-    program: String,
+    kind: AgentUseKind,
+    name: String,
 ) -> ApiResult<()> {
     let entry = entry.resolve()?;
     let vault = core.read(|workspace| vault.resolve_open(workspace))?;
@@ -328,9 +365,30 @@ pub async fn forget_agent_decision(
             .ok_or_else(ApiError::vault_not_found)?;
         let pairing = self::pairing(&settings, &pairing)?;
         workspace
-            .forget_agent_decision(vault, entry, pairing.id(), &AgentUse::Program(program))
+            .forget_agent_decision(vault, entry, pairing.id(), &kind.agent_use(name))
             .map_err(ApiError::from)
     })?;
     core.autosave();
     Ok(())
+}
+
+/// Sets the hosts `http_request` may send the Entry's secrets to, and returns them as kept:
+/// lower case, without schemes or paths, without repeats. Refused whole if one isn't a host.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_entry_allowed_hosts(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+    hosts: Vec<String>,
+) -> ApiResult<Vec<String>> {
+    let entry = entry.resolve()?;
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    let kept = core.update(|workspace| {
+        workspace
+            .set_agent_allowed_hosts(vault, entry, &hosts)
+            .map_err(ApiError::from)
+    })?;
+    core.autosave();
+    Ok(kept)
 }

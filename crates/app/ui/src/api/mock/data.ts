@@ -100,14 +100,17 @@ export interface MockVault {
   /** The Agent group's id, once chosen. */
   agentGroup?: string | null;
   agentPairings?: MockAgentPairing[];
-  /** Agent access decisions: an Agent pairing using an Entry with a program. */
+  /** Agent access decisions: an Agent pairing using an Entry with a program or at a host. */
   agentDecisions?: MockAgentDecision[];
+  /** Each Entry's allowed hosts for `http_request`, by Entry id. */
+  agentAllowedHosts?: Record<string, string[]>;
 }
 
 export interface MockAgentDecision {
   entry: string;
   pairing: string;
-  program: string;
+  kind: "program" | "host";
+  name: string;
   allow: boolean;
 }
 

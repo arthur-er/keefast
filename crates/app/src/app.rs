@@ -128,6 +128,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::agents::get_entry_agent_access,
             commands::agents::remember_agent_decision,
             commands::agents::forget_agent_decision,
+            commands::agents::set_entry_allowed_hosts,
             commands::agent_hosts::get_agent_hosts,
             commands::agent_hosts::add_agent_host,
             commands::agent_hosts::remove_agent_host,

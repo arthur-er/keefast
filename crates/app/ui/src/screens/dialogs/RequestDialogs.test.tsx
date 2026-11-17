@@ -76,6 +76,7 @@ const agent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentPromp
       program: "gh",
       command: ["gh", "pr", "create", "--title", "Fix the login"],
       canRemember: true,
+      httpHost: null,
       expires: NOW / 1000 + 60,
       more: 0,
       ...changes,
@@ -245,6 +246,23 @@ describe("an Agent host's prompt", () => {
 
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getByText(/can run anything, so keefast asks every time/)).toBeTruthy();
+  });
+
+  it("shows an HTTP request's method and URL, and remembers the answer for its host", () => {
+    show(
+      agent({
+        program: "api.github.com",
+        command: ["POST", "https://api.github.com/user?q={{secret:claude/GitHub#username}}"],
+        httpHost: "api.github.com",
+      }),
+    );
+
+    expect(screen.getByLabelText("Request").textContent).toContain(
+      "POST https://api.github.com/user?q={{secret:claude/GitHub#username}}",
+    );
+    expect(screen.queryByLabelText("Command")).toBeNull();
+    expect(screen.getByText(/send this request to/)).toBeTruthy();
+    expect(screen.getByRole("checkbox").textContent).toContain("Remember this decision for api.github.com");
   });
 
   it("counts down to when the host denies it", () => {
