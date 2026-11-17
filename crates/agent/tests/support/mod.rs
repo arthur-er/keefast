@@ -53,6 +53,13 @@ impl VaultFile {
         Self { _dir: dir, path }
     }
 
+    /// An audit log beside the Vault file, as a Headless host keeps in its state directory.
+    pub fn audit_log(&self) -> Arc<keefast_agent::AuditLog> {
+        Arc::new(keefast_agent::AuditLog::new(
+            self.path.with_file_name("audit.log"),
+        ))
+    }
+
     pub fn location(&self) -> VaultLocation {
         VaultLocation::Local(self.path.clone())
     }
@@ -115,5 +122,21 @@ impl keefast_workspace::SecretStore for FakeSecretStore {
     fn delete(&self, name: &str) -> Result<(), keefast_workspace::SecretStoreError> {
         self.0.lock().unwrap().remove(name);
         Ok(())
+    }
+}
+
+/// An audit sink that keeps its records in memory, for the test to read.
+#[derive(Default)]
+pub struct MemoryAudit(Mutex<Vec<keefast_agent::AuditRecord>>);
+
+impl MemoryAudit {
+    pub fn records(&self) -> Vec<keefast_agent::AuditRecord> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl keefast_agent::AuditSink for MemoryAudit {
+    fn record(&self, record: keefast_agent::AuditRecord) {
+        self.0.lock().unwrap().push(record);
     }
 }

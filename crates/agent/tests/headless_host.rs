@@ -63,6 +63,7 @@ fn serve_with(
             location: file.location(),
             unattended,
             secret_store,
+            audit_log: file.audit_log(),
         },
     );
     let dir = tempfile::tempdir().unwrap();

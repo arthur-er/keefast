@@ -8,6 +8,10 @@
 //! learns only that, and can tell its user. Each tool call reads its pairing from the Vault
 //! again and goes through an [`AgentSession`].
 //!
+//! Beside `/mcp`, it serves `keefast-agent run` at [`USE_SECRETS_PATH`], behind the same
+//! bearer check: the values go to that command, which puts them in a program's environment,
+//! and never through MCP to the model.
+//!
 //! The endpoint listens where [`Listen`] says: loopback in the clear, anywhere else only with
 //! TLS, from the operator's PEM files. It doesn't check the `Host` header against a list, as
 //! rmcp does by default against DNS rebinding: the bearer token, which a web page doesn't have,
@@ -19,10 +23,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use axum::routing::post;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::service::TowerToHyperService;
 use rmcp::handler::server::common::Extension;
@@ -40,7 +46,8 @@ use zeroize::Zeroizing;
 
 use crate::host::HeadlessHost;
 use crate::listen::{Listen, TlsFiles};
-use crate::{AgentError, AgentRequest, AgentSession, AgentSettings, SecretListing};
+use crate::run::USE_SECRETS_PATH;
+use crate::{AgentError, AgentRequest, SecretListing, UseSecrets};
 
 /// What the MCP server tells every Agent when it connects.
 pub const INSTRUCTIONS: &str = "\
@@ -138,6 +145,10 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken) -> Router {
     );
     Router::new()
         .nest_service("/mcp", mcp)
+        .route(
+            USE_SECRETS_PATH,
+            post(use_secrets).with_state(Arc::clone(&host)),
+        )
         .layer(middleware::from_fn_with_state(host, require_bearer))
 }
 
@@ -261,6 +272,65 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+/// `keefast-agent run`'s endpoint: the values a [`UseSecrets`] names, as
+/// `{"values": [{"reference", "value"}]}`, or a refusal as `{"error", "message"}`. Values go
+/// only to `run`, which puts them in its program's environment; never to MCP.
+async fn use_secrets(
+    State(host): State<Arc<HeadlessHost>>,
+    axum::Extension(Bearer(token)): axum::Extension<Bearer>,
+    body: Bytes,
+) -> Response {
+    let Ok(request) = serde_json::from_slice::<UseSecrets>(&body) else {
+        return refusal(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "keefast expected a use-secrets request: update keefast-agent".to_owned(),
+        );
+    };
+    let used = tokio::task::spawn_blocking(move || {
+        host.handle_agent(&token, AgentRequest::UseSecrets(request))
+    })
+    .await;
+    match used {
+        Ok(Ok(reply)) => {
+            let body = Zeroizing::new(
+                serde_json::to_vec(&serde_json::json!({ "values": reply.into_values() }))
+                    .expect("values are plain JSON"),
+            );
+            ([(header::CONTENT_TYPE, "application/json")], body.to_vec()).into_response()
+        }
+        Ok(Err(error)) => {
+            let (status, kind) = match &error {
+                AgentError::Locked => (StatusCode::SERVICE_UNAVAILABLE, "locked"),
+                AgentError::NotPaired => (StatusCode::UNAUTHORIZED, "not_paired"),
+                AgentError::NotAllowed { .. } => (StatusCode::FORBIDDEN, "not_allowed"),
+                AgentError::Denied { .. } => (StatusCode::FORBIDDEN, "denied"),
+                AgentError::UnknownReference(_)
+                | AgentError::AmbiguousReference(_)
+                | AgentError::UnknownField(_)
+                | AgentError::NoField(_)
+                | AgentError::NoProgram => (StatusCode::UNPROCESSABLE_ENTITY, "bad_reference"),
+            };
+            refusal(status, kind, error.to_string())
+        }
+        Err(error) => refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error.to_string(),
+        ),
+    }
+}
+
+fn refusal(status: StatusCode, kind: &str, message: String) -> Response {
+    let body = serde_json::json!({ "error": kind, "message": message });
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
 /// The MCP tools, for one MCP session.
 #[derive(Clone)]
 struct AgentTools {
@@ -288,13 +358,7 @@ impl AgentTools {
         };
         let host = Arc::clone(&self.host);
         let listed = tokio::task::spawn_blocking(move || {
-            host.with_vault(|workspace, vault| {
-                let settings = AgentSettings::of(workspace.readable_vault(vault)?.vault());
-                let pairing = settings.pairing_with_token(&token)?.id().clone();
-                Some(AgentSession::new(pairing).handle(workspace, vault, AgentRequest::ListSecrets))
-            })
-            .map(|paired| paired.unwrap_or(Err(AgentError::NotPaired)))
-            .unwrap_or(Err(AgentError::Locked))
+            host.handle_agent(&token, AgentRequest::ListSecrets)
         })
         .await
         .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;

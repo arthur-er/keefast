@@ -7,7 +7,7 @@
 //!
 //! Agent pairings are made and revoked here too (`keefast-agent pairing`), so an operator with
 //! only a shell on the host can pair an Agent: the token is printed once, on the operator's
-//! terminal, and the Vault keeps only its hash.
+//! terminal, and the Vault keeps only its hash. `keefast-agent log` reads the audit log here.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 use keefast_core::{Group, GroupId, Vault};
 use keefast_workspace::{EditVaultError, UnlockSecrets, VaultId, Workspace};
 
+use crate::audit::AuditRecord;
 use crate::host::{HeadlessHost, HostStatus, UnlockError};
 use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
 
@@ -37,6 +38,10 @@ pub enum AdminRequest {
     PairingList,
     PairingRevoke {
         name: String,
+    },
+    /// The audit log's last `lines` records.
+    Log {
+        lines: usize,
     },
 }
 
@@ -124,6 +129,8 @@ pub enum AdminReply {
         pairing: PairingSummary,
         token: Token,
     },
+    /// Audit log records, oldest first.
+    Log { records: Vec<AuditRecord> },
     Error {
         kind: AdminErrorKind,
         message: String,
@@ -145,6 +152,8 @@ pub enum AdminErrorKind {
     Locked,
     /// The Agent pairing can't be made or found as asked.
     Pairing,
+    /// The audit log can't be read.
+    Log,
 }
 
 impl AdminReply {
@@ -202,6 +211,14 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
             Err(error) => AdminReply::error(AdminErrorKind::Save, error),
         },
         AdminRequest::Status => AdminReply::Status(host.status()),
+        // The log holds no secret, and is kept outside the Vault: it reads while locked too.
+        AdminRequest::Log { lines } => match host.audit_records(lines) {
+            Ok(records) => AdminReply::Log { records },
+            Err(error) => AdminReply::error(
+                AdminErrorKind::Log,
+                format!("the audit log can't be read: {error}"),
+            ),
+        },
         AdminRequest::PairingList => host
             .with_vault(|workspace, vault| pairings(workspace, vault))
             .unwrap_or_else(locked),

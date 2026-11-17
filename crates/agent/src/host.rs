@@ -24,7 +24,8 @@ use keefast_workspace::{
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
-use crate::AgentSettings;
+use crate::audit::{AuditLog, AuditRecord, AuditSink};
+use crate::{AgentError, AgentReply, AgentRequest, AgentSession, AgentSettings};
 
 /// How a Headless host is set up.
 pub struct HostConfig {
@@ -34,6 +35,8 @@ pub struct HostConfig {
     pub unattended: Option<UnattendedUnlock>,
     /// The OS secret store, where an unattended unlock's password is kept.
     pub secret_store: Arc<dyn SecretStore>,
+    /// Where every Agent's list and use is recorded, in the host's state directory.
+    pub audit_log: Arc<AuditLog>,
 }
 
 /// Where an unattended unlock finds the Master key at startup. Anyone who can read these can
@@ -102,6 +105,7 @@ pub struct HeadlessHost {
     location: VaultLocation,
     unattended: bool,
     secret_store: Arc<dyn SecretStore>,
+    audit_log: Arc<AuditLog>,
 }
 
 struct Inner {
@@ -126,6 +130,7 @@ impl HeadlessHost {
             location: config.location,
             unattended: config.unattended.is_some(),
             secret_store: config.secret_store,
+            audit_log: config.audit_log,
         });
         host.watch_vault_file();
         host.sync_online_vault();
@@ -254,6 +259,29 @@ impl HeadlessHost {
             (answer, saves)
         };
         Some((answer, self.run_saves(saves)))
+    }
+
+    /// Handles an Agent's `request`, from the Agent pairing whose bearer token is `token`,
+    /// through an [`AgentSession`] that records it in the audit log. It blocks on the
+    /// Workspace, so async callers run it on a blocking thread.
+    pub fn handle_agent(
+        &self,
+        token: &str,
+        request: AgentRequest,
+    ) -> Result<AgentReply, AgentError> {
+        self.with_vault(|workspace, vault| {
+            let settings = AgentSettings::of(workspace.readable_vault(vault)?.vault());
+            let pairing = settings.pairing_with_token(token)?.id().clone();
+            let audit: Arc<dyn AuditSink> = self.audit_log.clone();
+            Some(AgentSession::new(pairing, audit).handle(workspace, vault, request))
+        })
+        .map(|paired| paired.unwrap_or(Err(AgentError::NotPaired)))
+        .unwrap_or(Err(AgentError::Locked))
+    }
+
+    /// The audit log's latest `limit` records, oldest first.
+    pub fn audit_records(&self, limit: usize) -> std::io::Result<Vec<AuditRecord>> {
+        self.audit_log.read(limit)
     }
 
     /// The served Vault's Agent settings, if it is unlocked.
