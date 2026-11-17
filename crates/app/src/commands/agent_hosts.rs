@@ -146,7 +146,9 @@ impl PendingAgentConsent {
 /// numbers, and an `f64` would come out as `number | null`.
 fn unix_seconds(time: std::time::SystemTime) -> u32 {
     time.duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| u32::try_from(since.as_secs()).unwrap_or(u32::MAX))
+        .map_or(0, |since| {
+            u32::try_from(since.as_secs()).unwrap_or(u32::MAX)
+        })
 }
 
 #[tauri::command]

@@ -506,7 +506,12 @@ impl OAuthServer {
         }
         let mut pending = self.pending();
         pending.forget_expired();
-        let waiting = || pending.consents.iter().filter(|consent| consent.done.is_none());
+        let waiting = || {
+            pending
+                .consents
+                .iter()
+                .filter(|consent| consent.done.is_none())
+        };
         let from_source = waiting()
             .filter(|consent| request.source.is_some() && consent.source == request.source)
             .count();

@@ -450,8 +450,12 @@ impl AgentSession {
         let pairing = settings
             .pairing(&self.pairing)
             .ok_or(AgentError::NotPaired)?;
-        self.audit
-            .record(self.record(workspace, pairing, AuditAction::List, AuditOutcome::Allowed));
+        self.audit.record(self.record(
+            workspace,
+            pairing,
+            AuditAction::List,
+            AuditOutcome::Allowed,
+        ));
         Ok(AgentReply::Secrets(
             readable_entries(vault, &settings, pairing)
                 .iter()
@@ -539,8 +543,12 @@ impl AgentSession {
             } else {
                 AuditOutcome::Allowed
             };
-            let mut record =
-                UseFor::Program(program).audited(self.record(workspace, pairing, AuditAction::Use, outcome));
+            let mut record = UseFor::Program(program).audited(self.record(
+                workspace,
+                pairing,
+                AuditAction::Use,
+                outcome,
+            ));
             record.entry = Some(AuditEntry {
                 uuid: entry.id().to_hex(),
                 title: entry.title().to_owned(),
@@ -797,7 +805,8 @@ impl AgentSession {
             } else {
                 AuditOutcome::Allowed
             };
-            let mut record = used_for.audited(self.record(workspace, &pairing, used_for.action(), outcome));
+            let mut record =
+                used_for.audited(self.record(workspace, &pairing, used_for.action(), outcome));
             record.entry = Some(AuditEntry {
                 uuid: used.uuid.clone(),
                 title: used.title.clone(),
@@ -834,8 +843,12 @@ impl AgentSession {
             method,
             host: &host,
         };
-        let mut record =
-            used_for.audited(self.record(workspace, pairing, used_for.action(), AuditOutcome::Denied));
+        let mut record = used_for.audited(self.record(
+            workspace,
+            pairing,
+            used_for.action(),
+            AuditOutcome::Denied,
+        ));
         record.entry = Some(AuditEntry {
             uuid: used.uuid.clone(),
             title: used.title.clone(),
@@ -1104,7 +1117,12 @@ impl AgentSession {
         let Some(Some(pairing)) = vault.read(|workspace, id| {
             let settings = workspace.agent_settings(id)?;
             let pairing = settings.pairing(&self.pairing)?.clone();
-            Some(self.record(workspace, &pairing, AuditAction::HttpRequest, AuditOutcome::Denied))
+            Some(self.record(
+                workspace,
+                &pairing,
+                AuditAction::HttpRequest,
+                AuditOutcome::Denied,
+            ))
         }) else {
             return;
         };

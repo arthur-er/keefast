@@ -904,9 +904,20 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         let trusting = add(&core, "", "https://lab.example", "kfapprover_x", Some(pem)).unwrap();
-        let blank = add(&core, "", "https://other.example", "kfapprover_y", Some("  ")).unwrap();
+        let blank = add(
+            &core,
+            "",
+            "https://other.example",
+            "kfapprover_y",
+            Some("  "),
+        )
+        .unwrap();
 
-        assert!(not_pem.message.contains("certificate"), "{}", not_pem.message);
+        assert!(
+            not_pem.message.contains("certificate"),
+            "{}",
+            not_pem.message
+        );
         assert!(trusting.trusts_own_certificate);
         assert!(!blank.trusts_own_certificate);
     }

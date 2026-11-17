@@ -41,18 +41,12 @@ struct Endpoint {
 pub(crate) fn router(host: Arc<HeadlessHost>, tls: bool) -> Router {
     let endpoint = Endpoint { host, tls };
     Router::new()
-        .route(
-            PROTECTED_RESOURCE_PATH,
-            get(protected_resource),
-        )
+        .route(PROTECTED_RESOURCE_PATH, get(protected_resource))
         .route(
             &format!("{PROTECTED_RESOURCE_PATH}/mcp"),
             get(protected_resource),
         )
-        .route(
-            AUTHORIZATION_SERVER_PATH,
-            get(authorization_server),
-        )
+        .route(AUTHORIZATION_SERVER_PATH, get(authorization_server))
         .route(REGISTER_PATH, post(register))
         .route(AUTHORIZE_PATH, get(authorize))
         .route(&format!("{CONSENT_PATH}/{{page}}"), get(consent))

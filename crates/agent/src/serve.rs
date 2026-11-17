@@ -502,15 +502,17 @@ pub(crate) fn unauthorized_approver() -> Response {
 /// such as Executor, only speak MCP, which never hands out a raw value; only a pairing's own
 /// token, which the user puts in `keefast-agent run`'s environment, reaches these (ADR 0012).
 fn refuse_oauth_client(token: &str) -> Option<Response> {
-    token.starts_with(crate::oauth::ACCESS_TOKEN_PREFIX).then(|| {
-        refusal(
-            StatusCode::FORBIDDEN,
-            "mcp_only",
-            "an MCP client paired by OAuth reaches keefast only through MCP: `keefast-agent \
+    token
+        .starts_with(crate::oauth::ACCESS_TOKEN_PREFIX)
+        .then(|| {
+            refusal(
+                StatusCode::FORBIDDEN,
+                "mcp_only",
+                "an MCP client paired by OAuth reaches keefast only through MCP: `keefast-agent \
              run` and `store` need an Agent pairing's own token"
-                .to_owned(),
-        )
-    })
+                    .to_owned(),
+            )
+        })
 }
 
 /// `keefast-agent run`'s endpoint: the values a [`UseSecrets`] names, as

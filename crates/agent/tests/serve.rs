@@ -726,7 +726,10 @@ async fn revoking_an_approver_closes_its_prompt_stream_at_once_and_it_stops_bein
     })
     .await
     .unwrap();
-    assert!(matches!(reply, keefast_agent::admin::AdminReply::Approvers { .. }));
+    assert!(matches!(
+        reply,
+        keefast_agent::admin::AdminReply::Approvers { .. }
+    ));
 
     let end = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -737,7 +740,10 @@ async fn revoking_an_approver_closes_its_prompt_stream_at_once_and_it_stops_bein
         }
     })
     .await;
-    assert!(end.is_ok(), "the stream is closed within 5 s, not kept open");
+    assert!(
+        end.is_ok(),
+        "the stream is closed within 5 s, not kept open"
+    );
     assert!(!served.host.approvers().is_connected());
     // With nobody to ask, run is refused rather than left waiting for the revoked desktop.
     let (status, body) = served.run_gh_later().await.unwrap();
@@ -934,7 +940,14 @@ async fn http_request_sends_the_secret_to_an_allowed_host_and_returns_the_answer
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action.to_string(), record.method, record.host, record.outcome))
+        .map(|record| {
+            (
+                record.action.to_string(),
+                record.method,
+                record.host,
+                record.outcome,
+            )
+        })
         .collect();
     assert_eq!(
         log,
@@ -1275,8 +1288,7 @@ async fn run_reaches_a_self_signed_host_once_told_to_trust_its_certificate() {
         }
     };
 
-    let public_roots =
-        tokio::task::block_in_place(|| connection(None).use_secrets(&request));
+    let public_roots = tokio::task::block_in_place(|| connection(None).use_secrets(&request));
     let trusted = tokio::task::block_in_place(|| connection(Some(&pem)).use_secrets(&request));
 
     assert!(public_roots.is_err());

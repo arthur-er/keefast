@@ -967,7 +967,10 @@ async fn no_web_page_elsewhere_may_read_registration_or_token_answers() {
         .post(served.url("/oauth/token"))
         .header("origin", "https://attacker.example")
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(encode(&[("grant_type", "refresh_token"), ("refresh_token", "kfor_nobody")]))
+        .body(encode(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", "kfor_nobody"),
+        ]))
         .send()
         .await
         .unwrap();
