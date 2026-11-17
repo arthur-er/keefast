@@ -3,12 +3,13 @@
 // Entries in its own. Pairing an Agent shows its bearer token once; the Vault keeps only its hash.
 
 import { type ReactNode, useState } from "react";
-import { Bot, Copy, Plus } from "lucide-react";
+import { Bot, Copy, History, Plus } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AgentPairingView, AgentSettingsView, GroupId, VaultId } from "@/bindings";
 import { Button, Check, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, toast } from "@/kit";
 
+import { ActivityDialog } from "./AgentHostSettings";
 import { GroupPicker } from "./GroupPicker";
 import { Hl, SettingRow, type SettingsSection } from "./SettingsLayout";
 
@@ -28,7 +29,7 @@ export function readsText(pairing: AgentPairingView, settings: AgentSettingsView
   return pairing.canCreate ? `${reads} · creates Entries` : reads;
 }
 
-export function agentsSection(vault: VaultId, settings: AgentSettingsView): SettingsSection {
+export function agentsSection(vault: VaultId, settings: AgentSettingsView, vaultName: string): SettingsSection {
   return {
     id: "agents",
     name: "Agents",
@@ -58,6 +59,11 @@ export function agentsSection(vault: VaultId, settings: AgentSettingsView): Sett
           id: "pairAgent",
           search: "Pair an Agent token bearer mcp claude codex new pairing",
           render: () => <PairAgentRow vault={vault} settings={settings} />,
+        },
+        {
+          id: "agentActivity",
+          search: "Activity audit log Agents on this computer keefast-agent mcp list use denied",
+          render: () => <ActivityRow vault={vault} vaultName={vaultName} />,
         },
       ],
       settings.pairings.length > 0
@@ -95,6 +101,19 @@ function PairAgentRow({ vault, settings }: { vault: VaultId; settings: AgentSett
         <Plus /> <Hl>Pair an Agent…</Hl>
       </Button>
       {open && <PairAgentDialog vault={vault} settings={settings} onClose={() => setOpen(false)} />}
+    </SettingRow>
+  );
+}
+
+/** This Vault's Activity in the in-app host: what Agents on this computer did with it. */
+function ActivityRow({ vault, vaultName }: { vault: VaultId; vaultName: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingRow label="Activity" desc="What Agents on this computer asked this Vault for, through keefast-agent, and whether they got it.">
+      <Button size="sm" onClick={() => setOpen(true)}>
+        <History /> <Hl>Activity…</Hl>
+      </Button>
+      {open && <ActivityDialog vault={{ id: vault, name: vaultName }} onClose={() => setOpen(false)} />}
     </SettingRow>
   );
 }

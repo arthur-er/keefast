@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Info, Plus, RefreshCw, Server } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { AgentActivityRecord, AgentHostView } from "@/bindings";
+import type { AgentActivityRecord, AgentHostView, VaultId } from "@/bindings";
 import { useAgentHosts } from "@/api/queries";
 import { Badge, Button, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, Segmented, Select, toast } from "@/kit";
 
@@ -242,9 +242,18 @@ const OUTCOMES = [
 
 const ALL_PAIRINGS = "*";
 
-/** A Headless host's Activity: what its Agents did and were refused, newest first. */
-export function ActivityDialog({ host, onClose }: { host: AgentHostView; onClose: () => void }) {
-  const activity = useQuery({ queryKey: ["agentActivity", host.id], queryFn: () => api.getAgentActivity(host.id), retry: false });
+/** Whose Activity: a Headless host's, read through it, or a Vault's own in this desktop's in-app host. */
+export type ActivitySource = { host: AgentHostView; vault?: never } | { vault: { id: VaultId; name: string }; host?: never };
+
+/** Agent Activity: what Agents did and were refused, newest first. */
+export function ActivityDialog({ host, vault, onClose }: ActivitySource & { onClose: () => void }) {
+  const activity = useQuery({
+    queryKey: host ? ["agentActivity", host.id] : ["vaultAgentActivity", vault!.id],
+    queryFn: () => (host ? api.getAgentActivity(host.id) : api.getVaultAgentActivity(vault!.id)),
+    retry: false,
+  });
+  const name = host ? host.name : vault!.name;
+  const place = host ? "this host" : "this Vault on this computer";
   const [filter, setFilter] = useState<ActivityFilter>(NO_FILTER);
   const records = activity.data ?? [];
   const shown = filterActivity(records, filter);
@@ -255,8 +264,8 @@ export function ActivityDialog({ host, onClose }: { host: AgentHostView; onClose
       open
       onOpenChange={(next) => next || onClose()}
       className="activity-dialog"
-      title={<>Activity on {host.name}</>}
-      description="What Agents asked this host for, and whether they got it. Values are never recorded."
+      title={<>Activity on {name}</>}
+      description={`What Agents asked ${place} for, and whether they got it. Values are never recorded.`}
       footer={
         <>
           <Button variant="ghost" disabled={activity.isFetching} onClick={() => void activity.refetch()}>
@@ -284,9 +293,9 @@ export function ActivityDialog({ host, onClose }: { host: AgentHostView; onClose
           {errorMessage(activity.error)}
         </div>
       ) : activity.isPending ? (
-        <div className="activity-empty">Reading the host’s log…</div>
+        <div className="activity-empty">{host ? "Reading the host’s log…" : "Reading the log…"}</div>
       ) : shown.length === 0 ? (
-        <div className="activity-empty">{records.length === 0 ? "No Agent has asked this host for anything yet." : "Nothing matches these filters."}</div>
+        <div className="activity-empty">{records.length === 0 ? `No Agent has asked ${place} for anything yet.` : "Nothing matches these filters."}</div>
       ) : (
         <ol className="activity-list" aria-label="Activity">
           {shown.map((record, at) => (

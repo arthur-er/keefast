@@ -423,6 +423,11 @@ export const commands = {
 	answerAgentConsent: (host: string, id: string, approve: boolean, code: string, name: string, reads: string[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_consent", { host, id, approve, code, name, reads, canCreate })),
 	/**  The Activity of the Agent host `host`: its audit log's latest records, newest first. */
 	getAgentActivity: (host: string) => typedError<AgentActivityRecord[], ApiError>(__TAURI_INVOKE("get_agent_activity", { host })),
+	/**
+	 *  What Agents on this computer did with the Vault's secrets, newest first: the Vault's own
+	 *  audit log, which this desktop keeps as its in-app host (ADR 0012 "Audit").
+	 */
+	getVaultAgentActivity: (vault: VaultId) => typedError<AgentActivityRecord[], ApiError>(__TAURI_INVOKE("get_vault_agent_activity", { vault })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
