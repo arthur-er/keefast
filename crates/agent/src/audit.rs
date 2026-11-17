@@ -94,6 +94,16 @@ impl AuditLog {
         }
     }
 
+    /// The size a log file grows to before it is rotated.
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
+    }
+
+    /// How many rotated files are kept besides the current one.
+    pub fn keep(&self) -> u32 {
+        self.keep
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -164,6 +174,33 @@ impl AuditLog {
         let skip = records.len().saturating_sub(limit);
         Ok(records.split_off(skip))
     }
+}
+
+/// A log file size as an operator writes it, for `serve --log-max-size`: bytes, or a number
+/// with a `K`, `M` or `G` suffix (`KiB`, `MiB`, `GiB` too), in powers of 1024, such as `16M`.
+pub fn parse_log_size(text: &str) -> Result<u64, String> {
+    let trimmed = text.trim();
+    let digits = trimmed.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let unit = &trimmed[digits.len()..];
+    let shift = match unit.to_ascii_uppercase().as_str() {
+        "" | "B" => 0,
+        "K" | "KB" | "KIB" => 10,
+        "M" | "MB" | "MIB" => 20,
+        "G" | "GB" | "GIB" => 30,
+        _ => return Err(format!("{text}: give a size such as 4M, 512K or 1G")),
+    };
+    let number: u64 = digits
+        .trim()
+        .parse()
+        .map_err(|_| format!("{text}: give a size such as 4M, 512K or 1G"))?;
+    let bytes = number
+        .checked_mul(1 << shift)
+        .ok_or_else(|| format!("{text}: that is too large"))?;
+    // Smaller than a record or two, every write would rotate.
+    if bytes < 4096 {
+        return Err(format!("{text}: give at least 4K"));
+    }
+    Ok(bytes)
 }
 
 impl AuditSink for AuditLog {

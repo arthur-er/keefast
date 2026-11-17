@@ -20,10 +20,10 @@ use std::time::{Duration, SystemTime};
 
 use keefast_agent::approver::{APPROVER_TOKEN_PREFIX, ApproverAnswer};
 use keefast_agent::approver_client::{
-    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent, answer_consent,
-    answer_prompt,
+    ActivityError, AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent,
+    agent_activity, answer_consent, answer_prompt,
 };
-use keefast_agent::{AgentPrompt, ConsentAnswer, ConsentPrompt};
+use keefast_agent::{AgentPrompt, AuditRecord, ConsentAnswer, ConsentPrompt};
 use keefast_workspace::SecretStore;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -571,6 +571,34 @@ pub fn answer_agent_consent(
     })
 }
 
+/// The latest `lines` records of the host `id`'s audit log, oldest first, for its Activity view.
+/// It blocks while they travel.
+pub fn activity(core: &AppCore, id: &str, lines: usize) -> ApiResult<Vec<AuditRecord>> {
+    let agent_host = {
+        let hosts = core.agent_hosts();
+        let host = hosts
+            .hosts
+            .iter()
+            .find(|known| known.saved.id == id)
+            .ok_or_else(|| ApiError::new(ErrorKind::NotFound, "That Agent host is gone."))?;
+        AgentHost {
+            url: host.saved.url.clone(),
+            token: host.token.clone(),
+        }
+    };
+    agent_activity(&agent_host, lines).map_err(|error| match error {
+        ActivityError::Unpaired => ApiError::new(
+            ErrorKind::Unavailable,
+            "The Agent host no longer knows this desktop as an Approver: pair it again.",
+        ),
+        ActivityError::Unreachable(why) => ApiError::new(
+            ErrorKind::Unavailable,
+            "The Agent host couldn't be reached, so its Activity can't be shown.",
+        )
+        .with_detail(why),
+    })
+}
+
 /// The host's reason, which reads as a command line's does, as a sentence for the dialog.
 fn sentence(why: &str) -> String {
     let mut chars = why.chars();
@@ -760,6 +788,21 @@ pub(crate) mod tests {
 
         assert_eq!(error.kind, ErrorKind::Unavailable);
         assert!(core.agent_hosts().front().is_none());
+    }
+
+    #[test]
+    fn the_activity_of_a_host_that_cant_be_reached_or_is_gone_says_so() {
+        let (core, _) = core();
+        let host = added(&core);
+
+        let unreachable = activity(&core, &host, 10).unwrap_err();
+        let gone = activity(&core, "nobody", 10).unwrap_err();
+
+        assert!(
+            unreachable.message.contains("couldn't be reached"),
+            "{unreachable:?}"
+        );
+        assert!(gone.message.contains("gone"), "{gone:?}");
     }
 
     #[test]

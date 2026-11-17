@@ -1,15 +1,19 @@
 // Settings → Agent hosts (ADR 0012 "Approvals"), laid out as Settings C: the keefast Headless
 // hosts this desktop is an Approver for, each with how its connection stands, and adding one by
 // its address and the token `keefast-agent pairing approver` printed on it. Their prompts show
-// as the approval prompt, over everything (screens/dialogs/RequestDialogs.tsx).
+// as the approval prompt, over everything (screens/dialogs/RequestDialogs.tsx). Each host's
+// Activity, its audit log read through the Approver connection, opens from its row.
 
 import { useMemo, useState } from "react";
-import { Info, Plus, Server } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Info, Plus, RefreshCw, Server } from "lucide-react";
 
 import { api, errorMessage } from "@/api";
-import type { AgentHostView } from "@/bindings";
+import type { AgentActivityRecord, AgentHostView } from "@/bindings";
 import { useAgentHosts } from "@/api/queries";
-import { Badge, Button, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, toast } from "@/kit";
+import { Badge, Button, Dialog, Field, Input, Popover, PopoverContent, PopoverTrigger, Segmented, Select, toast } from "@/kit";
+
+import { type ActivityFilter, describeActivity, filterActivity, NO_FILTER, type OutcomeFilter, pairingsIn } from "./activity";
 
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
 
@@ -95,6 +99,7 @@ const STATE_LABEL: Record<AgentHostView["state"], string> = {
 
 function HostRow({ host }: { host: AgentHostView }) {
   const [removing, setRemoving] = useState(false);
+  const [watching, setWatching] = useState(false);
   const remove = () => {
     setRemoving(false);
     api.removeAgentHost(host.id).then(() => toast(<>Removed <b>{host.name}</b></>, { icon: "check" }), fail);
@@ -120,7 +125,11 @@ function HostRow({ host }: { host: AgentHostView }) {
           </div>
         )}
       </div>
-      <div className="ctl">
+      <div className="ctl hstack gap-2">
+        <Button size="sm" onClick={() => setWatching(true)}>
+          Activity…
+        </Button>
+        {watching && <ActivityDialog host={host} onClose={() => setWatching(false)} />}
         <Popover open={removing} onOpenChange={setRemoving}>
           <PopoverTrigger asChild>
             <Button size="sm">Remove</Button>
@@ -222,5 +231,86 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
         </Field>
       </form>
     </Dialog>
+  );
+}
+
+const OUTCOMES = [
+  { value: "all", label: "All" },
+  { value: "allowed", label: "Allowed" },
+  { value: "denied", label: "Denied" },
+] as const satisfies readonly { value: OutcomeFilter; label: string }[];
+
+const ALL_PAIRINGS = "*";
+
+/** A Headless host's Activity: what its Agents did and were refused, newest first. */
+export function ActivityDialog({ host, onClose }: { host: AgentHostView; onClose: () => void }) {
+  const activity = useQuery({ queryKey: ["agentActivity", host.id], queryFn: () => api.getAgentActivity(host.id), retry: false });
+  const [filter, setFilter] = useState<ActivityFilter>(NO_FILTER);
+  const records = activity.data ?? [];
+  const shown = filterActivity(records, filter);
+  const pairings = pairingsIn(records);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => next || onClose()}
+      className="activity-dialog"
+      title={<>Activity on {host.name}</>}
+      description="What Agents asked this host for, and whether they got it. Values are never recorded."
+      footer={
+        <>
+          <Button variant="ghost" disabled={activity.isFetching} onClick={() => void activity.refetch()}>
+            <RefreshCw /> Refresh
+          </Button>
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        </>
+      }
+    >
+      <div className="activity-filters">
+        <Select
+          label="Agent pairing"
+          value={filter.pairing || ALL_PAIRINGS}
+          onValueChange={(pairing) => setFilter({ ...filter, pairing: pairing === ALL_PAIRINGS ? "" : pairing })}
+          options={[{ value: ALL_PAIRINGS, label: "All pairings" }, ...pairings.map((pairing) => ({ value: pairing, label: pairing }))]}
+          className="activity-pairing"
+        />
+        <Input aria-label="Entry" placeholder="Entry" value={filter.entry} onChange={(event) => setFilter({ ...filter, entry: event.target.value })} />
+        <Segmented label="Outcome" value={filter.outcome} onValueChange={(outcome) => setFilter({ ...filter, outcome })} options={OUTCOMES} />
+      </div>
+      {activity.isError ? (
+        <div className="activity-empty" role="alert">
+          {errorMessage(activity.error)}
+        </div>
+      ) : activity.isPending ? (
+        <div className="activity-empty">Reading the host’s log…</div>
+      ) : shown.length === 0 ? (
+        <div className="activity-empty">{records.length === 0 ? "No Agent has asked this host for anything yet." : "Nothing matches these filters."}</div>
+      ) : (
+        <ol className="activity-list" aria-label="Activity">
+          {shown.map((record, at) => (
+            <ActivityRow key={`${record.time}-${at}`} record={record} />
+          ))}
+        </ol>
+      )}
+    </Dialog>
+  );
+}
+
+function ActivityRow({ record }: { record: AgentActivityRecord }) {
+  const when = record.time === null ? "" : new Date(record.time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return (
+    <li className="activity-row">
+      <div className="activity-what">
+        <span className="truncate">{describeActivity(record)}</span>
+        <Badge tone={record.outcome === "allowed" ? "ok" : "danger"}>{record.outcome === "allowed" ? "Allowed" : "Denied"}</Badge>
+      </div>
+      <div className="activity-meta">
+        <span>{record.pairing}</span>
+        <span>{when}</span>
+        {record.reason && <span>{record.reason}</span>}
+      </div>
+    </li>
   );
 }

@@ -53,6 +53,10 @@ let
     adminSocket
     "--state-dir"
     stateDir
+    "--log-max-size"
+    cfg.auditLog.maxSize
+    "--log-keep"
+    (toString cfg.auditLog.keep)
   ]
   ++ lib.optionals (cfg.adminGroup != null) [
     "--admin-group"
@@ -151,6 +155,28 @@ in
         Read by systemd as a credential, so it may be readable by root alone; give it as a
         string, so it stays out of the Nix store.
       '';
+    };
+
+    auditLog = {
+      maxSize = mkOption {
+        type = types.strMatching "[0-9]+([KMG](i?B)?|B)?";
+        default = "4M";
+        example = "64M";
+        description = ''
+          The size the audit log (${stateDir}/audit.log) grows to before it is rotated: bytes,
+          or a number with a K, M or G suffix, in powers of 1024. At least 4K.
+        '';
+      };
+      keep = mkOption {
+        type = types.ints.unsigned;
+        default = 4;
+        example = 30;
+        description = ''
+          How many rotated audit log files are kept besides the current one; older ones are
+          deleted. With `maxSize`, this bounds the log's disk use and how far back
+          `keefast-agent log` and Approvers' Activity view reach. 0 keeps only the current file.
+        '';
+      };
     };
 
     openFirewall = mkOption {
