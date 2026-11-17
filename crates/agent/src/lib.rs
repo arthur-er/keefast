@@ -6,15 +6,21 @@
 //! links Tauri or WebKit, so `keefast-agent` runs on a server without a display.
 
 pub mod admin;
+pub mod audit;
 pub mod host;
+pub mod installed;
 pub mod listen;
+pub mod programs;
+pub mod run;
 #[cfg(feature = "serve")]
 pub mod serve;
 mod session;
 mod settings;
 
+pub use audit::{AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, SecretListing, SecretReference,
+    SecretValue, UseSecrets, pairings_reading,
 };
 pub use settings::{
     AgentAccessDecision, AgentCredential, AgentDecision, AgentPairing, AgentPairingId,

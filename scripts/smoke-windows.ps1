@@ -51,6 +51,12 @@ function Assert([bool] $condition, [string] $message) {
 Invoke-Msiexec '/i' (Join-Path $temp 'keefast-install.log')
 Assert (Test-Path (Join-Path $installDir 'keefast.exe')) 'the app is installed'
 Assert (Test-Path (Join-Path $installDir 'keefast-native-host.exe')) 'the native host is installed next to it'
+$agent = Join-Path $installDir 'keefast-agent.exe'
+Assert (Test-Path $agent) 'keefast-agent is installed next to it'
+& $agent --help | Out-Null
+Assert ($LASTEXITCODE -eq 0) 'keefast-agent starts'
+$userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+Assert (($userPath -split ';' | ForEach-Object { $_.TrimEnd('\') }) -contains $installDir) 'the install folder is on the user''s PATH, for Agents to run keefast-agent'
 Assert (Test-Path $shortcut) 'the Start menu has a shortcut'
 
 # Browser integration turned on, as keefast writes it for a browser that has run: its manifest

@@ -36,6 +36,8 @@ thiserror.workspace = true
 tokio = { workspace = true, optional = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
+# `keefast-agent run` asks the Headless host for values over HTTPS.
+ureq.workspace = true
 zeroize = { workspace = true, features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -46,5 +48,5 @@ libc.workspace = true
 reqwest.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 tempfile.workspace = true
+tiny_http.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-ureq.workspace = true

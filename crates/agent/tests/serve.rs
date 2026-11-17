@@ -8,10 +8,10 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use keefast_agent::AgentSettingsExt;
 use keefast_agent::host::{HeadlessHost, HostConfig};
 use keefast_agent::listen::Listen;
 use keefast_agent::serve::McpEndpoint;
+use keefast_agent::{AgentDecision, AgentSettingsExt, AgentUse, AuditOutcome};
 use keefast_core::EntryFields;
 use keefast_workspace::{LocalStorage, UnlockSecrets, Workspace};
 use rmcp::ServiceExt;
@@ -76,6 +76,7 @@ impl Served {
                 location: file.location(),
                 unattended: None,
                 secret_store: Arc::new(FakeSecretStore::default()),
+                audit_log: file.audit_log(),
             },
         );
         let endpoint = McpEndpoint::start(Arc::clone(&host), listen).await.unwrap();
@@ -272,4 +273,150 @@ async fn with_tls_the_endpoint_is_served_over_https() {
     .unwrap();
 
     assert_eq!(statuses, (401, 200));
+}
+
+impl Served {
+    /// POSTs `keefast-agent run`'s request for `references`, to run `program`, with `token`:
+    /// the status and the JSON answer.
+    async fn use_secrets(
+        &self,
+        token: &str,
+        references: &[&str],
+        program: &str,
+    ) -> (u16, serde_json::Value) {
+        let url = self.endpoint.url().replace("/mcp", "/agent/use-secrets");
+        let response = reqwest::Client::new()
+            .post(url)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(serde_json::json!({ "references": references, "command": [program, "auth", "status"] }).to_string())
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        (
+            status,
+            serde_json::from_str(&response.text().await.unwrap()).unwrap(),
+        )
+    }
+
+    /// Remembers that `claude` may use its token Entry with `program`, as the desktop app's
+    /// Entry editor would, reaching the host through the Vault.
+    async fn allow_claude_token(&self, program: &str) {
+        let host = Arc::clone(&self.host);
+        let program = program.to_owned();
+        tokio::task::spawn_blocking(move || {
+            host.edit(|workspace, vault| {
+                let settings = workspace.agent_settings(vault).unwrap();
+                let claude = settings.pairings()[0].id().clone();
+                let open = workspace.readable_vault(vault).unwrap().vault();
+                let entry = open
+                    .root()
+                    .all_entries()
+                    .find(|entry| entry.title() == "claude token")
+                    .unwrap()
+                    .id();
+                workspace
+                    .remember_agent_decision(
+                        vault,
+                        entry,
+                        &claude,
+                        &AgentUse::Program(program),
+                        AgentDecision::Allow,
+                    )
+                    .unwrap();
+            })
+            .unwrap()
+            .1
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_gets_a_value_once_allowed_and_is_denied_before_and_the_log_shows_both() {
+    let served = Served::unlocked().await;
+
+    let (denied, refusal) = served
+        .use_secrets(&served.claude, &["claude/claude token#password"], "gh")
+        .await;
+    served.allow_claude_token("gh").await;
+    let (allowed, values) = served
+        .use_secrets(
+            &served.claude,
+            &["claude/claude token#password"],
+            "/usr/bin/gh",
+        )
+        .await;
+
+    assert_eq!(denied, 403, "{refusal}");
+    assert_eq!(refusal["error"], "not_allowed");
+    assert!(
+        refusal["message"]
+            .as_str()
+            .unwrap()
+            .contains("Entry editor"),
+        "{refusal}"
+    );
+    assert_eq!(allowed, 200, "{values}");
+    assert_eq!(
+        values["values"][0]["value"],
+        "claude token-secret-value-1234"
+    );
+    let log: Vec<_> = served
+        .host
+        .audit_records(10)
+        .unwrap()
+        .into_iter()
+        .map(|record| (record.action, record.program, record.outcome))
+        .collect();
+    assert_eq!(
+        log,
+        [
+            (
+                "use".to_owned(),
+                Some("gh".to_owned()),
+                AuditOutcome::Denied
+            ),
+            (
+                "use".to_owned(),
+                Some("gh".to_owned()),
+                AuditOutcome::Allowed
+            ),
+        ]
+    );
+    let file = std::fs::read_to_string(served._file.path.with_file_name("audit.log")).unwrap();
+    assert!(!file.contains("secret-value"), "{file}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_is_told_about_a_bad_reference_a_locked_host_and_a_wrong_token() {
+    let served = Served::locked(&loopback()).await;
+
+    let (locked, _) = served
+        .use_secrets(&served.claude, &["claude/claude token#password"], "gh")
+        .await;
+    served.unlock().await;
+    let (unknown, refusal) = served
+        .use_secrets(&served.claude, &["codex/codex token#password"], "gh")
+        .await;
+
+    assert_eq!(locked, 503);
+    assert_eq!(unknown, 422);
+    assert!(
+        refusal["message"]
+            .as_str()
+            .unwrap()
+            .contains("codex/codex token#password")
+    );
+    let wrong = reqwest::Client::new()
+        .post(served.endpoint.url().replace("/mcp", "/agent/use-secrets"))
+        .header("authorization", "Bearer kfa_nobodys")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status().as_u16(), 401);
 }

@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+use crate::programs::is_shell_or_interpreter;
+
 /// The Agent group, as its UUID in hex.
 const AGENT_GROUP_KEY: &str = "keefast_AGENT_GROUP";
 /// The Default agent policy: `ask`, `allow` or `deny`.
@@ -134,6 +136,11 @@ pub enum AgentSettingsError {
     PairingNotFound,
     #[error("the Vault has no Agent group yet: choose one first")]
     NoAgentGroup,
+    #[error(
+        "{0} is a shell or interpreter, which can run anything: it asks every time, and is \
+         never remembered"
+    )]
+    NeverRemembered(String),
     #[error(transparent)]
     Vault(#[from] EditVaultError),
 }
@@ -654,6 +661,11 @@ impl AgentSettingsExt for Workspace {
         agent_use: &AgentUse,
         decision: AgentDecision,
     ) -> Result<(), AgentSettingsError> {
+        if let AgentUse::Program(program) = agent_use
+            && is_shell_or_interpreter(program)
+        {
+            return Err(AgentSettingsError::NeverRemembered(program.clone()));
+        }
         let key = decision_key(entry, pairing, agent_use);
         Ok(self.set_vault_custom_data(vault, &[item(key, decision.value())])?)
     }

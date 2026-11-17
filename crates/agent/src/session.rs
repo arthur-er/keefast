@@ -11,13 +11,26 @@
 //! an Entry's notes: they are where prompt injection would hide, and they often hold secrets
 //! themselves. Each request reads the pairing afresh from the Vault, so revoking one takes
 //! effect at once.
+//!
+//! A use (`keefast-agent run`) names its secrets by Secret reference, and is checked against
+//! the Agent access decisions for the pairing, each Entry and the program, then the Default
+//! agent policy. Until Approvers arrive (#157) nobody can be asked, so a use that would ask is
+//! refused, saying how to allow it ahead of time in the desktop app. Every list and use goes
+//! to the audit log, never with a value.
 
-use keefast_core::{Group, GroupId, Vault};
+use std::sync::Arc;
+
+use keefast_core::{Entry, EntryId, Group, GroupId, Vault};
 use keefast_workspace::{VaultId, Workspace};
 use secrecy::ExposeSecret;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
-use crate::{AgentPairingId, AgentSettings};
+use crate::audit::{AuditEntry, AuditOutcome, AuditRecord, AuditSink};
+use crate::programs::{is_shell_or_interpreter, program_name};
+use crate::{
+    AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentUse, DefaultAgentPolicy,
+};
 
 /// A password at least this long gets a hint of its last four characters; a shorter one would
 /// give too much of itself away.
@@ -29,20 +42,67 @@ const HINT_LENGTH: usize = 4;
 pub enum AgentRequest {
     /// The secrets the pairing can read, without their values.
     ListSecrets,
+    /// The values of secrets, for `keefast-agent run` to put in a program's environment.
+    UseSecrets(UseSecrets),
+}
+
+/// What `keefast-agent run` asks for: the values `references` name, to run `command` with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseSecrets {
+    /// Secret references, such as `GitHub/token#password`.
+    pub references: Vec<String>,
+    /// The program and its arguments, whole, as the Agent will run them.
+    pub command: Vec<String>,
 }
 
 /// keefast's answer to an [`AgentRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentReply {
     Secrets(Vec<SecretListing>),
+    /// One value per reference asked for, in the same order.
+    Values(Vec<SecretValue>),
 }
 
 impl AgentReply {
-    /// The secrets listed in reply to [`AgentRequest::ListSecrets`].
+    /// The secrets listed in reply to [`AgentRequest::ListSecrets`]; empty for another reply.
     pub fn into_secrets(self) -> Vec<SecretListing> {
         match self {
             Self::Secrets(secrets) => secrets,
+            Self::Values(_) => Vec::new(),
         }
+    }
+
+    /// The values in reply to [`AgentRequest::UseSecrets`]; empty for another reply.
+    pub fn into_values(self) -> Vec<SecretValue> {
+        match self {
+            Self::Values(values) => values,
+            Self::Secrets(_) => Vec::new(),
+        }
+    }
+}
+
+/// A secret's value, and the Secret reference it was asked for by. Its `Debug` hides the value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretValue {
+    pub reference: String,
+    value: Zeroizing<String>,
+}
+
+impl SecretValue {
+    pub fn new(reference: String, value: Zeroizing<String>) -> Self {
+        Self { reference, value }
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretValue")
+            .field("reference", &self.reference)
+            .finish_non_exhaustive()
     }
 }
 
@@ -55,6 +115,25 @@ pub enum AgentError {
         "this Agent pairing was revoked or doesn't exist: ask the user to pair this Agent again"
     )]
     NotPaired,
+    #[error(
+        "no secret this Agent pairing can read matches {0}: list_secrets shows the ones it can"
+    )]
+    UnknownReference(String),
+    #[error("{0} matches more than one Entry: name it by the Entry's UUID instead")]
+    AmbiguousReference(String),
+    #[error("the Entry {0} names has no such field: list_secrets shows its fields")]
+    UnknownField(String),
+    #[error("{0} names no field: end it with # and a field, such as #password")]
+    NoField(String),
+    #[error("no program to run was given")]
+    NoProgram,
+    #[error(
+        "the user hasn't allowed this Agent pairing to use {reference} with {program}: ask them \
+         to allow it in keefast's Entry editor, under Agents, then try again"
+    )]
+    NotAllowed { reference: String, program: String },
+    #[error("the user doesn't allow this Agent pairing to use {reference} with {program}")]
+    Denied { reference: String, program: String },
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name
@@ -86,15 +165,16 @@ pub struct SecretReference {
 }
 
 /// One Agent pairing's requests.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentSession {
     pairing: AgentPairingId,
+    audit: Arc<dyn AuditSink>,
 }
 
 impl AgentSession {
-    /// A session for the Agent pairing `pairing`.
-    pub fn new(pairing: AgentPairingId) -> Self {
-        Self { pairing }
+    /// A session for the Agent pairing `pairing`, recording what it does in `audit`.
+    pub fn new(pairing: AgentPairingId, audit: Arc<dyn AuditSink>) -> Self {
+        Self { pairing, audit }
     }
 
     pub fn pairing(&self) -> &AgentPairingId {
@@ -117,36 +197,219 @@ impl AgentSession {
         let pairing = settings
             .pairing(&self.pairing)
             .ok_or(AgentError::NotPaired)?;
+        let readable = readable_entries(vault, &settings, pairing);
         match request {
             AgentRequest::ListSecrets => {
-                let mut reads = vec![pairing.group()];
-                reads.extend_from_slice(pairing.readable());
-                Ok(AgentReply::Secrets(list_secrets(vault, &settings, &reads)))
+                self.audit
+                    .record(self.record(workspace, pairing, "list", AuditOutcome::Allowed));
+                Ok(AgentReply::Secrets(
+                    readable
+                        .iter()
+                        .map(|(entry, path)| listing(entry, path))
+                        .collect(),
+                ))
             }
+            AgentRequest::UseSecrets(request) => {
+                self.use_secrets(workspace, &settings, pairing, &readable, request)
+            }
+        }
+    }
+
+    fn use_secrets(
+        &self,
+        workspace: &Workspace,
+        settings: &AgentSettings,
+        pairing: &AgentPairing,
+        readable: &[(&Entry, String)],
+        request: UseSecrets,
+    ) -> Result<AgentReply, AgentError> {
+        let program = program_name(request.command.first().ok_or(AgentError::NoProgram)?);
+        if program.is_empty() {
+            return Err(AgentError::NoProgram);
+        }
+        let mut resolved = Vec::with_capacity(request.references.len());
+        for reference in &request.references {
+            resolved.push(resolve(readable, reference)?);
+        }
+        // Each Entry is checked, and audited, once, however many of its fields are used.
+        let mut checked: Vec<EntryId> = Vec::new();
+        for ((entry, _), reference) in resolved.iter().zip(&request.references) {
+            if checked.contains(&entry.id()) {
+                continue;
+            }
+            checked.push(entry.id());
+            let refusal = match decide(settings, entry.id(), pairing.id(), &program) {
+                Outcome::Allow => None,
+                Outcome::Deny => Some(AgentError::Denied {
+                    reference: reference.clone(),
+                    program: program.clone(),
+                }),
+                // Nobody to ask until Approvers arrive (#157): asking means no.
+                Outcome::Ask => Some(AgentError::NotAllowed {
+                    reference: reference.clone(),
+                    program: program.clone(),
+                }),
+            };
+            let outcome = match refusal {
+                None => AuditOutcome::Allowed,
+                Some(_) => AuditOutcome::Denied,
+            };
+            let mut record = self.record(workspace, pairing, "use", outcome);
+            record.entry = Some(AuditEntry {
+                uuid: entry.id().to_hex(),
+                title: entry.title().to_owned(),
+            });
+            record.program = Some(program.clone());
+            record.reason = refusal.as_ref().map(|error| match error {
+                AgentError::NotAllowed { .. } => "not allowed yet, and nobody to ask".to_owned(),
+                _ => "denied".to_owned(),
+            });
+            self.audit.record(record);
+            if let Some(refusal) = refusal {
+                return Err(refusal);
+            }
+        }
+        Ok(AgentReply::Values(
+            resolved
+                .into_iter()
+                .zip(request.references)
+                .map(|((_, value), reference)| SecretValue::new(reference, value))
+                .collect(),
+        ))
+    }
+
+    fn record(
+        &self,
+        workspace: &Workspace,
+        pairing: &AgentPairing,
+        action: &str,
+        outcome: AuditOutcome,
+    ) -> AuditRecord {
+        AuditRecord {
+            time: workspace.now().unix_seconds(),
+            pairing: pairing.name().to_owned(),
+            pairing_id: pairing.id().as_str().to_owned(),
+            action: action.to_owned(),
+            entry: None,
+            program: None,
+            outcome,
+            reason: None,
         }
     }
 }
 
-/// The Entries in the subgroups of the Agent group listed in `reads`, and in their subgroups.
-fn list_secrets(vault: &Vault, settings: &AgentSettings, reads: &[GroupId]) -> Vec<SecretListing> {
+enum Outcome {
+    Allow,
+    Deny,
+    Ask,
+}
+
+/// What the Vault answers `pairing` using `entry` with `program`: its Agent access decision, or
+/// else its Default agent policy. Shells and interpreters ask every time, whatever was
+/// remembered or the policy allows, unless the policy denies everything.
+fn decide(
+    settings: &AgentSettings,
+    entry: EntryId,
+    pairing: &AgentPairingId,
+    program: &str,
+) -> Outcome {
+    let policy = settings.default_agent_policy();
+    if is_shell_or_interpreter(program) {
+        return match policy {
+            DefaultAgentPolicy::Deny => Outcome::Deny,
+            _ => Outcome::Ask,
+        };
+    }
+    match settings.decision(entry, pairing, &AgentUse::Program(program.to_owned())) {
+        Some(AgentDecision::Allow) => Outcome::Allow,
+        Some(AgentDecision::Deny) => Outcome::Deny,
+        None => match policy {
+            DefaultAgentPolicy::Allow => Outcome::Allow,
+            DefaultAgentPolicy::Deny => Outcome::Deny,
+            DefaultAgentPolicy::Ask => Outcome::Ask,
+        },
+    }
+}
+
+/// The Entry and value `reference` names among the Entries the pairing reads: by UUID, or by
+/// path below the Agent group, then `#` and a field. The last `#` splits them, since titles may
+/// have one in them and field names rarely do.
+fn resolve<'a>(
+    readable: &[(&'a Entry, String)],
+    reference: &str,
+) -> Result<(&'a Entry, Zeroizing<String>), AgentError> {
+    let (name, field) = reference
+        .rsplit_once('#')
+        .ok_or_else(|| AgentError::NoField(reference.to_owned()))?;
+    let by_uuid = EntryId::from_hex(name);
+    let mut matches = readable.iter().filter(|(entry, path)| match by_uuid {
+        Some(id) => entry.id() == id,
+        None => path == name,
+    });
+    let (entry, _) = matches
+        .next()
+        .ok_or_else(|| AgentError::UnknownReference(reference.to_owned()))?;
+    if matches.next().is_some() {
+        return Err(AgentError::AmbiguousReference(reference.to_owned()));
+    }
+    let value = match field {
+        "password" => Some(entry.password().expose_secret()),
+        "username" => Some(entry.username()),
+        "url" => Some(entry.url()),
+        _ => entry
+            .custom_fields()
+            .iter()
+            .find(|custom| custom.name == field)
+            .map(|custom| custom.value.expose_secret()),
+    }
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| AgentError::UnknownField(reference.to_owned()))?;
+    Ok((entry, Zeroizing::new(value.to_owned())))
+}
+
+/// The Agent pairings that can use `entry`: those whose own subgroup, or a subgroup they read,
+/// holds it. The desktop app's Entry editor offers decisions for these.
+pub fn pairings_reading(vault: &Vault, entry: EntryId) -> Vec<AgentPairing> {
+    let settings = AgentSettings::of(vault);
+    settings
+        .pairings()
+        .iter()
+        .filter(|pairing| {
+            readable_entries(vault, &settings, pairing)
+                .iter()
+                .any(|(readable, _)| readable.id() == entry)
+        })
+        .cloned()
+        .collect()
+}
+
+/// The Entries `pairing` reads, with their paths below the Agent group: those in its own
+/// subgroup and the subgroups it may read, and in their subgroups.
+fn readable_entries<'a>(
+    vault: &'a Vault,
+    settings: &AgentSettings,
+    pairing: &AgentPairing,
+) -> Vec<(&'a Entry, String)> {
     let Some(agent_group) = settings.agent_group().and_then(|id| vault.group(id)) else {
         return Vec::new();
     };
-    let mut listed = Vec::new();
+    let mut reads = vec![pairing.group()];
+    reads.extend_from_slice(pairing.readable());
+    let mut readable = Vec::new();
     // The Agent group's own Entries belong to no pairing, so the walk starts below it.
     for subgroup in agent_group.groups() {
-        walk(vault, subgroup, "", false, reads, &mut listed);
+        walk(vault, subgroup, "", false, &reads, &mut readable);
     }
-    listed
+    readable
 }
 
-fn walk(
-    vault: &Vault,
-    group: &Group,
+fn walk<'a>(
+    vault: &'a Vault,
+    group: &'a Group,
     parent_path: &str,
     parent_read: bool,
     reads: &[GroupId],
-    listed: &mut Vec<SecretListing>,
+    readable: &mut Vec<(&'a Entry, String)>,
 ) {
     if vault.recycle_bin() == Some(group.id()) {
         return;
@@ -154,35 +417,42 @@ fn walk(
     let path = format!("{parent_path}{}/", group.name());
     let read = parent_read || reads.contains(&group.id());
     if read {
-        listed.extend(group.entries().iter().map(|entry| {
-            let password = entry.password().expose_secret();
-            let mut fields: Vec<String> = [
-                ("password", password),
-                ("username", entry.username()),
-                ("url", entry.url()),
-            ]
-            .into_iter()
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(name, _)| name.to_owned())
-            .collect();
-            fields.extend(entry.custom_fields().iter().map(|field| field.name.clone()));
-            let length = password.chars().count();
-            SecretListing {
-                title: entry.title().to_owned(),
-                username: entry.username().to_owned(),
-                url: entry.url().to_owned(),
-                tags: entry.tags().to_vec(),
-                fields,
-                reference: SecretReference {
-                    uuid: entry.id().to_hex(),
-                    path: format!("{path}{}", entry.title()),
-                },
-                hint: (length >= HINT_FROM_LENGTH)
-                    .then(|| password.chars().skip(length - HINT_LENGTH).collect()),
-            }
-        }));
+        readable.extend(
+            group
+                .entries()
+                .iter()
+                .map(|entry| (entry, format!("{path}{}", entry.title()))),
+        );
     }
     for subgroup in group.groups() {
-        walk(vault, subgroup, &path, read, reads, listed);
+        walk(vault, subgroup, &path, read, reads, readable);
+    }
+}
+
+fn listing(entry: &Entry, path: &str) -> SecretListing {
+    let password = entry.password().expose_secret();
+    let mut fields: Vec<String> = [
+        ("password", password),
+        ("username", entry.username()),
+        ("url", entry.url()),
+    ]
+    .into_iter()
+    .filter(|(_, value)| !value.is_empty())
+    .map(|(name, _)| name.to_owned())
+    .collect();
+    fields.extend(entry.custom_fields().iter().map(|field| field.name.clone()));
+    let length = password.chars().count();
+    SecretListing {
+        title: entry.title().to_owned(),
+        username: entry.username().to_owned(),
+        url: entry.url().to_owned(),
+        tags: entry.tags().to_vec(),
+        fields,
+        reference: SecretReference {
+            uuid: entry.id().to_hex(),
+            path: path.to_owned(),
+        },
+        hint: (length >= HINT_FROM_LENGTH)
+            .then(|| password.chars().skip(length - HINT_LENGTH).collect()),
     }
 }

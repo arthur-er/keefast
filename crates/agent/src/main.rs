@@ -12,6 +12,8 @@
 //!                       [--agent-group <path>] [--admin-socket <path>]
 //! keefast-agent pairing list [--admin-socket <path>]
 //! keefast-agent pairing revoke <name> [--admin-socket <path>]
+//! keefast-agent log [--lines <n>] [--admin-socket <path>]
+//! keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
 //! ```
 //!
 //! docs/headless-host.md is the operator's guide.
@@ -22,6 +24,13 @@ const USAGE: &str = "\
 keefast-agent: serve a keefast Vault to Agents, and look after it
 
 usage:
+  keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
+      Runs <program> with the secrets the Secret references name in its environment, such as
+      `run --env GH_TOKEN=GitHub/token#password -- gh auth status`, and redacts them from its
+      output. It reaches keefast at $KEEFAST_AGENT_URL with the Agent pairing's token in
+      $KEEFAST_AGENT_TOKEN. It exits with the program's exit code, or 125 if keefast refused
+      or couldn't be reached.
+
   keefast-agent serve --vault <path | dropbox:/path> [--listen <address:port>]
                       [--tls-cert <path> --tls-key <path>] [--admin-socket <path>]
                       [--admin-group <group>] [--state-dir <dir>]
@@ -59,6 +68,10 @@ usage:
   keefast-agent pairing revoke <name> [--admin-socket <path>]
       Revokes an Agent pairing: its token stops working at once. Its subgroup stays.
 
+  keefast-agent log [--lines <n>] [--admin-socket <path>]
+      Shows the Headless host's audit log: what each Agent pairing listed and used, when, and
+      whether it was allowed. The last 50 records, or <n>.
+
 The admin socket is $KEEFAST_AGENT_ADMIN_SOCKET, or else $XDG_RUNTIME_DIR/keefast/agent-admin.sock.
 ";
 
@@ -69,8 +82,9 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
+        Some("run") => run(&args[1..]),
         #[cfg(unix)]
-        Some(command @ ("serve" | "unlock" | "lock" | "status" | "pairing")) => {
+        Some(command @ ("serve" | "unlock" | "lock" | "status" | "pairing" | "log")) => {
             match operator::run(command, &args[1..]) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -80,13 +94,30 @@ fn main() -> ExitCode {
             }
         }
         #[cfg(not(unix))]
-        Some("serve" | "unlock" | "lock" | "status" | "pairing") => {
+        Some("serve" | "unlock" | "lock" | "status" | "pairing" | "log") => {
             eprintln!("keefast-agent: the Headless host runs only on Linux and other unix systems");
             ExitCode::FAILURE
         }
         Some(other) => {
             eprintln!("keefast-agent: unknown command {other}\n\n{USAGE}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// `keefast-agent run`: on Linux and Windows alike.
+fn run(args: &[String]) -> ExitCode {
+    use keefast_agent::run::{self, Connection, FAILED, RunArgs};
+
+    let ran = RunArgs::parse(args).and_then(|args| {
+        let connection = Connection::from_env()?;
+        run::run(&args, &connection)
+    });
+    match ran {
+        Ok(code) => ExitCode::from(code),
+        Err(error) => {
+            eprintln!("keefast-agent: {error}");
+            ExitCode::from(FAILED)
         }
     }
 }
@@ -105,6 +136,7 @@ mod operator {
     };
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_agent::serve::McpEndpoint;
+    use keefast_agent::{AuditLog, AuditOutcome, AuditRecord};
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -183,6 +215,16 @@ mod operator {
                 &["--key-file", "--admin-socket"],
             )?),
             "pairing" => pairing(args),
+            "log" => {
+                let flags = Flags::new(args, &[], &["--lines", "--admin-socket"])?;
+                let lines = match flags.value("--lines") {
+                    Some(lines) => lines
+                        .parse()
+                        .map_err(|_| format!("--lines {lines}: give a number"))?,
+                    None => 50,
+                };
+                show(ask(&flags, &AdminRequest::Log { lines })?, "")
+            }
             "lock" => {
                 let flags = Flags::new(args, &[], &["--admin-socket"])?;
                 show(ask(&flags, &AdminRequest::Lock)?, "the Vault is locked")
@@ -234,6 +276,7 @@ mod operator {
                 location: location.clone(),
                 unattended,
                 secret_store: Arc::new(OsSecretStore),
+                audit_log: Arc::new(AuditLog::new(state_dir.join("audit.log"))),
             },
         );
         for warning in warnings {
@@ -443,8 +486,37 @@ mod operator {
                 println!("paired {}", describe_pairing(&pairing));
                 Ok(())
             }
+            AdminReply::Log { records } => {
+                if records.is_empty() {
+                    println!("No Agent has used this Vault yet.");
+                }
+                for record in &records {
+                    println!("{}", describe_record(record));
+                }
+                Ok(())
+            }
             AdminReply::Error { message, .. } => Err(message),
         }
+    }
+
+    /// One line of the audit log: when, who, what, with what, and the outcome.
+    fn describe_record(record: &AuditRecord) -> String {
+        let time = keefast_core::Timestamp::from_unix_seconds(record.time).to_iso_8601();
+        let mut line = format!("{time}  {}  {}", record.pairing, record.action);
+        if let Some(entry) = &record.entry {
+            line += &format!(" {} ({})", entry.title, entry.uuid);
+        }
+        if let Some(program) = &record.program {
+            line += &format!(" with {program}");
+        }
+        line += match record.outcome {
+            AuditOutcome::Allowed => "  allowed",
+            AuditOutcome::Denied => "  denied",
+        };
+        if let Some(reason) = &record.reason {
+            line += &format!(": {reason}");
+        }
+        line
     }
 
     /// Reads a password from the terminal without showing it, or else a line of input.

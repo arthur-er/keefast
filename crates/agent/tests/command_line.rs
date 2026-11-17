@@ -1,7 +1,8 @@
 //! `keefast-agent serve`, `unlock`, `lock` and `status` as an operator runs them, as processes:
 //! serve starts locked, unlock reads the Master key from its input and opens the Vault, a wrong
 //! Master key says so, and lock locks it again; `pairing` pairs an Agent and prints its token
-//! once, lists the pairings and revokes one.
+//! once, lists the pairings and revokes one; and `run` uses a secret once the desktop app
+//! allows it, is denied before, and `log` shows both (#156's "Done when", on one machine).
 
 #![cfg(unix)]
 
@@ -13,7 +14,10 @@ use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use support::{KEEPASSXC_KDBX4, PASSWORD, VaultFile};
+use keefast_agent::{AgentDecision, AgentSettingsExt, AgentUse};
+use keefast_core::EntryFields;
+use secrecy::SecretString;
+use support::{FakeClock, KEEPASSXC_KDBX4, PASSWORD, VaultFile};
 use tempfile::TempDir;
 
 const AGENT: &str = env!("CARGO_BIN_EXE_keefast-agent");
@@ -22,6 +26,8 @@ const AGENT: &str = env!("CARGO_BIN_EXE_keefast-agent");
 struct Serve {
     child: Child,
     socket: PathBuf,
+    /// Where Agents reach it, from the line it prints when it starts.
+    url: std::sync::mpsc::Receiver<String>,
     _dir: TempDir,
 }
 
@@ -43,9 +49,21 @@ fn serve(file: &VaultFile) -> Serve {
         .arg(&socket)
         .arg("--state-dir")
         .arg(dir.path().join("state"))
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut child = child;
+    let stderr = child.stderr.take().unwrap();
+    let (send, url) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if let Some((_, url)) = line.split_once("Agents connect to ") {
+                let _ = send.send(url.trim().to_owned());
+            }
+        }
+    });
     let until = Instant::now() + Duration::from_secs(10);
     while !socket.exists() && Instant::now() < until {
         thread::sleep(Duration::from_millis(20));
@@ -53,6 +71,7 @@ fn serve(file: &VaultFile) -> Serve {
     Serve {
         child,
         socket,
+        url,
         _dir: dir,
     }
 }
@@ -292,4 +311,97 @@ fn pairing_revoke_removes_the_pairing_and_keeps_it_removed_after_a_restart() {
         text(&listed)
     );
     assert!(!text(&listed).contains("\nclaude"), "{}", text(&listed));
+}
+
+/// A Vault file with an Agent group, `Agents`, holding `GitHub/token`, which the pairing
+/// `claude` reads; and claude's token.
+fn vault_with_a_github_token() -> (VaultFile, String) {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
+    let root = workspace.readable_vault(vault).unwrap().vault().root().id();
+    let agents = workspace.create_group(vault, root, "Agents").unwrap();
+    let github = workspace.create_group(vault, agents, "GitHub").unwrap();
+    workspace.set_agent_group(vault, agents).unwrap();
+    let claude = workspace
+        .create_agent_pairing(vault, "claude", vec![github], false)
+        .unwrap();
+    let fields = EntryFields {
+        title: "token".to_owned(),
+        password: SecretString::from("ghp_the-real-token-value"),
+        ..EntryFields::default()
+    };
+    workspace.create_entry(vault, github, &fields).unwrap();
+    workspace.save_vault(vault).unwrap();
+    (file, claude.token.to_string())
+}
+
+/// The desktop app allowing claude to use `GitHub/token` with `program`, in the Entry
+/// editor: a decision saved into the Vault file, which the Headless host Merges.
+fn allow_in_the_desktop_app(file: &VaultFile, program: &str) {
+    let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_100));
+    let settings = workspace.agent_settings(vault).unwrap();
+    let claude = settings.pairings()[0].id().clone();
+    let entry = workspace
+        .readable_vault(vault)
+        .unwrap()
+        .vault()
+        .root()
+        .all_entries()
+        .find(|entry| entry.title() == "token")
+        .unwrap()
+        .id();
+    workspace
+        .remember_agent_decision(
+            vault,
+            entry,
+            &claude,
+            &AgentUse::Program(program.to_owned()),
+            AgentDecision::Allow,
+        )
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+}
+
+fn run_with_token(url: &str, token: &str) -> Output {
+    Command::new(AGENT)
+        .args(["run", "--env", "GH_TOKEN=GitHub/token#password", "--"])
+        .args(["printenv", "GH_TOKEN"])
+        .env("KEEFAST_AGENT_URL", url)
+        .env("KEEFAST_AGENT_TOKEN", token)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn run_is_denied_until_the_desktop_app_allows_it_and_the_log_shows_both() {
+    let (file, token) = vault_with_a_github_token();
+    let served = serve(&file);
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    let denied = run_with_token(&url, &token);
+    allow_in_the_desktop_app(&file, "printenv");
+    let until = Instant::now() + Duration::from_secs(15);
+    let allowed = loop {
+        let ran = run_with_token(&url, &token);
+        if ran.status.success() || Instant::now() > until {
+            break ran;
+        }
+        thread::sleep(Duration::from_millis(200));
+    };
+    let log = run(&served.socket, &["log"], "");
+
+    assert_eq!(denied.status.code(), Some(125), "{}", text(&denied));
+    assert!(text(&denied).contains("Entry editor"), "{}", text(&denied));
+    assert!(allowed.status.success(), "{}", text(&allowed));
+    // printenv printed the value, and run redacted it.
+    assert_eq!(
+        String::from_utf8_lossy(&allowed.stdout).trim(),
+        "[redacted by keefast]"
+    );
+    let log = text(&log);
+    assert!(log.contains("claude  use token"), "{log}");
+    assert!(log.contains("with printenv  denied"), "{log}");
+    assert!(log.contains("with printenv  allowed"), "{log}");
+    assert!(!log.contains("ghp_the-real-token-value"), "{log}");
 }

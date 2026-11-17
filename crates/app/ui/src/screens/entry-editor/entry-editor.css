@@ -119,6 +119,14 @@
   .ee-att-prev .cut { font-family: var(--font-ui); color: var(--fg-2); font-size: var(--text-xs); margin-top: 6px; display: block; white-space: normal; }
   .ee-att-prev img { max-width: 100%; max-height: 220px; display: block; }
 
+  /* Agents */
+  .ee-agent code, .ee-agent-note code { font: 12px var(--font-mono); }
+  .ee-agent .badge { flex: none; }
+  .ee-agent-add { display: flex; align-items: center; gap: 8px; padding: 6px 0; flex-wrap: wrap; }
+  .ee-agent-add .input { width: 160px; }
+  .ee-agent-add .nm { font-weight: 500; }
+  .ee-agent-note { color: var(--fg-2); font-size: var(--text-xs); margin-top: 6px; }
+
   .ee-hr { height: 1px; background: var(--border); margin: 24px 0 0; }
   .ee-foot { display: flex; align-items: center; gap: 6px; padding-top: 12px; font-size: var(--text-sm); color: var(--fg-2); }
   .ee-foot svg.lucide { width: 13px; height: 13px; }

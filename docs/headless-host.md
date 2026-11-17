@@ -90,6 +90,48 @@ The Agent then sees, through `list_secrets`, the Entries in its subgroup and the
 reads: titles, usernames, URLs, tags, field names and Secret references, and the last four
 characters of a long password. Never values, never notes, and nothing outside the Agent group.
 
+## Using a secret in a command
+
+An Agent with a shell uses a secret by running its program through `keefast-agent run`, on the
+Agent's own machine, Linux or Windows:
+
+```sh
+export KEEFAST_AGENT_URL=https://agents.example.com/mcp   # the host, or its /mcp endpoint
+export KEEFAST_AGENT_TOKEN=kfa_…                           # the Agent pairing's token
+keefast-agent run --env GH_TOKEN=GitHub/token#password -- gh auth status
+```
+
+Each `--env NAME=<Secret reference>` names a value: an Entry's UUID or its path below the Agent
+group, then `#` and a field (`password`, `username`, `url`, or a custom field's name). A path
+that matches two Entries, a field the Entry hasn't got, or an Entry the pairing can't read is an
+error that names the reference. `run` asks the host for the values (at `/agent/use-secrets`,
+with the same token), starts the program with them in its environment, and passes its exit code
+through; it exits with 125 when keefast refuses or can't be reached. The values are replaced by
+`[redacted by keefast]` in the program's output, even when written in pieces. That is best
+effort: a program that encodes a value, or writes it to a file, gets past it.
+
+The host checks every use against the **Agent access decisions** for that pairing, Entry and
+program (by its executable's name: `gh`, whether it is `/usr/bin/gh` or `gh.exe`), then the
+Vault's **Default agent policy**. Approving `gh` doesn't approve `curl`. Shells and interpreters
+(`sh`, `bash`, `pwsh`, `cmd`, `python…`, `node`, `env`, `xargs`, …) can run anything, so no
+decision for them is ever remembered, and they always ask.
+
+A Headless host has nobody to ask yet, so *ask* means **deny** there. Allow a program ahead of
+time in the desktop app: open the Entry, and under **Agents** add the program for the pairing.
+The decision is saved in the Vault, and the host picks it up when it Merges the Vault file.
+
+## The audit log
+
+Every list and use is recorded, with the time, the pairing, the Entry, the program and whether
+it was allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
+append-only, readable only by the host's user, and rotated at 4 MiB, keeping four older files
+(`audit.log.1` … `audit.log.4`). Read it over the admin socket:
+
+```sh
+keefast-agent log              # the last 50 records
+keefast-agent log --lines 500
+```
+
 ## Unattended unlock
 
 By default a reboot leaves the host locked until someone unlocks it. To have it unlock by
@@ -113,7 +155,7 @@ file is watched, and a Dropbox one checked every 30 seconds. A Dropbox Vault fil
 from the host isn't possible yet.
 
 `--state-dir <dir>` is where the host keeps its own state, such as the cached copy of a Dropbox
-Vault file; it defaults to `$XDG_STATE_HOME/keefast-agent`.
+Vault file and the audit log; it defaults to `$XDG_STATE_HOME/keefast-agent`.
 
 ## On NixOS
 
