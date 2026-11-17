@@ -21,7 +21,8 @@ use crate::events::{
     AppEvent, BrowserRequest, ClipboardCleared, Launched, MergeNotice, Notifier, SaveFailed,
     WorkspaceChanged,
 };
-use crate::{background, browser, icon_protocol, tray};
+use crate::updates::UpdateState;
+use crate::{background, browser, icon_protocol, tray, updates};
 
 /// The label of keefast's one window, as `tauri.conf.json` names it.
 pub const MAIN_WINDOW: &str = "main";
@@ -106,6 +107,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::settings::set_shortcut,
             commands::settings::get_start_on_boot,
             commands::settings::set_start_on_boot,
+            commands::settings::set_check_for_updates,
+            commands::updates::get_updates,
+            commands::updates::check_for_updates_now,
+            commands::updates::install_update,
+            commands::updates::open_release_page,
             commands::plugins::list_plugins,
             commands::plugins::choose_plugin_package,
             commands::plugins::install_plugin,
@@ -139,6 +145,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ClipboardCleared,
             SaveFailed,
             Launched,
+            UpdateState,
         ])
 }
 
@@ -283,7 +290,8 @@ pub fn run(args: Args) {
         // First, so a later launch hands its command line over before anything else starts.
         .plugin(tauri_plugin_single_instance::init(launched_again))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     // Linux writes its own Start on boot entry (see `autostart`).
     #[cfg(not(target_os = "linux"))]
     let app = app.plugin(autostart::plugin());
@@ -311,6 +319,7 @@ pub fn run(args: Args) {
             tray::check_tray();
             tray::sync(&handle, core.read(Workspace::close_to_tray));
             background::start(&core);
+            app.manage(updates::start(&handle, &core));
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }

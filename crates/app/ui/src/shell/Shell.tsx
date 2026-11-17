@@ -1,4 +1,4 @@
-// The app shell (Vault browser C): the sidebar, the toolbar and Merge notice, and the main area,
+// The app shell (Vault browser C): the sidebar, the toolbar, Merge and update notices, and the main area,
 // which shows the Entry list and detail, a locked Vault's card, or a page (settings).
 
 import { type CSSProperties, useEffect, useRef, useState } from "react";
@@ -11,6 +11,7 @@ import { keys, useSettings, useWorkspace } from "@/api/queries";
 import { cn } from "@/lib/utils";
 import { EntryHistoryPage } from "@/screens/entry-history/EntryHistory";
 import { SettingsPage } from "@/screens/settings/SettingsPage";
+import { UpdateNotice } from "@/screens/updates/UpdateNotice";
 import { DetailArea } from "@/screens/vault-browser/DetailArea";
 import { EntryList } from "@/screens/vault-browser/EntryList";
 import { LockedVault } from "@/screens/vault-browser/LockedVault";
@@ -44,6 +45,7 @@ export function Shell() {
           <>
             <Toolbar />
             <MergeNotice />
+            <UpdateNotice />
             <div className="vb-panes">
               <Browser widths={widths} />
             </div>

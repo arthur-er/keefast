@@ -17,6 +17,7 @@ pub mod icons;
 pub mod plugins;
 pub mod settings;
 pub mod totp;
+pub mod updates;
 pub mod vault_settings;
 pub mod vaults;
 pub mod window;
