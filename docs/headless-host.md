@@ -308,8 +308,18 @@ it starts. Serve a Vault kept only for Agents if you do this.
 
 Like the desktop app, the host Merges changes made to its Vault file elsewhere: a local Vault
 file is watched, and a Dropbox one checked every 30 seconds. A Dropbox Vault file needs
-`KEEFAST_DROPBOX_APP_KEY`, and a Dropbox account connected for the host's user; connecting one
-from the host isn't possible yet.
+`KEEFAST_DROPBOX_APP_KEY`, and a Dropbox account connected for the host's user. Connect one as
+that user, over ssh if need be:
+
+```sh
+keefast-agent dropbox connect
+```
+
+It prints a Dropbox page to open in a browser on any machine; Dropbox shows a code there, which
+you type back in. The tokens go to that user's OS secret store (the Secret Service on Linux), where
+`serve` finds them, as the desktop app keeps its own. A system service without a Secret Service,
+such as the NixOS module's, can't use Dropbox: keefast has no secret store of its own for servers
+(see the spec's Out of Scope); serve a local Vault file there, kept in step by your own sync.
 
 `--state-dir <dir>` is where the host keeps its own state, such as the cached copy of a Dropbox
 Vault file and the audit log; it defaults to `$XDG_STATE_HOME/keefast-agent`.

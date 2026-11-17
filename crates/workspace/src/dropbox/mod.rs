@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 use crate::secret_store::{SecretStore, SecretStoreError};
 use crate::storage::{Revision, StorageError, StorageProvider, StoredFile, VaultLocation};
 
-pub use oauth::{Authorization, ConnectCanceller};
+pub use oauth::{Authorization, CodeAuthorization, ConnectCanceller};
 
 /// The name the connected account's tokens are kept under in the secret store.
 const SECRET_NAME: &str = "dropbox";
@@ -220,13 +220,49 @@ impl Dropbox {
         authorization: Authorization,
     ) -> Result<DropboxAccount, DropboxError> {
         let code = authorization.wait_for_code()?;
-        let tokens = self.request_tokens(&[
+        self.connect_with_code(
+            code.expose_secret(),
+            &authorization.verifier,
+            Some(&authorization.redirect_uri),
+        )
+    }
+
+    /// Starts connecting a Dropbox account from a machine without a browser, such as a
+    /// Headless host's server: the user opens [`CodeAuthorization::url`] anywhere, and types
+    /// the code Dropbox's page shows into [`Self::finish_connect_with_code`].
+    pub fn begin_connect_by_code(&self) -> Result<CodeAuthorization, DropboxError> {
+        if self.config.app_key.is_empty() {
+            return Err(DropboxError::NotConfigured);
+        }
+        CodeAuthorization::begin(&self.config)
+    }
+
+    /// Connects with the `code` Dropbox's page showed for `authorization`, as
+    /// [`Self::finish_connect`] does. Spaces and line breaks around it are ignored.
+    pub fn finish_connect_with_code(
+        &self,
+        authorization: &CodeAuthorization,
+        code: &str,
+    ) -> Result<DropboxAccount, DropboxError> {
+        self.connect_with_code(code.trim(), &authorization.verifier, None)
+    }
+
+    fn connect_with_code(
+        &self,
+        code: &str,
+        verifier: &SecretString,
+        redirect_uri: Option<&str>,
+    ) -> Result<DropboxAccount, DropboxError> {
+        let mut form = vec![
             ("grant_type", "authorization_code"),
-            ("code", code.expose_secret()),
-            ("code_verifier", authorization.verifier.expose_secret()),
+            ("code", code),
+            ("code_verifier", verifier.expose_secret()),
             ("client_id", &self.config.app_key),
-            ("redirect_uri", &authorization.redirect_uri),
-        ])?;
+        ];
+        if let Some(redirect_uri) = redirect_uri {
+            form.push(("redirect_uri", redirect_uri));
+        }
+        let tokens = self.request_tokens(&form)?;
         let Some(refresh_token) = tokens.refresh_token else {
             return Err(DropboxError::Api("Dropbox sent no refresh token".into()));
         };
