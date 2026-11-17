@@ -444,6 +444,6 @@ mod tests {
         let records = activity(&app.core, app.vault, 10).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].pairing, "claude");
-        assert_eq!(records[0].action, "list");
+        assert_eq!(records[0].action, keefast_agent::AuditAction::List);
     }
 }

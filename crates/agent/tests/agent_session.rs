@@ -573,7 +573,7 @@ fn every_use_and_list_is_audited_with_its_outcome_but_never_a_value() {
         .iter()
         .map(|record| {
             (
-                record.action.clone(),
+                record.action.to_string(),
                 record.entry.as_ref().map(|entry| entry.title.clone()),
                 record.program.clone(),
                 record.outcome,

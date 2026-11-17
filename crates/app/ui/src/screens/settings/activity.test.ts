@@ -37,6 +37,7 @@ describe("the Activity view", () => {
     ]);
     expect(describeActivity(record({ action: "list", entryTitle: null, program: null }))).toBe("List its secrets");
     expect(describeActivity(record({ action: "store", entryTitle: "Database", program: null, field: "Stripe key" }))).toBe("Store Stripe key in “Database”");
+    expect(describeActivity(record({ action: "other", entryTitle: "Database", program: null }))).toBe("Something with “Database”");
   });
 
   it("filters by pairing, Entry and outcome together", () => {

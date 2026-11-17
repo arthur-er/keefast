@@ -464,7 +464,7 @@ fn writes_are_audited_with_the_entry_and_field_but_never_the_value() {
         .map(|record| {
             (
                 record.pairing.clone(),
-                record.action.clone(),
+                record.action.to_string(),
                 record.entry.as_ref().map(|entry| entry.title.clone()),
                 record.field.clone(),
                 record.outcome,

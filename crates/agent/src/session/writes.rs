@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::{AgentError, AgentReply, AgentSession, SecretReference, VaultAccess, readable_entries};
-use crate::audit::{AuditEntry, AuditOutcome};
+use crate::audit::{AuditAction, AuditEntry, AuditOutcome};
 use crate::{AgentPairing, AgentSettings};
 
 /// What `create_entry` makes: an Entry with this title in the pairing's own subgroup.
@@ -144,7 +144,7 @@ enum Target {
 
 /// What an Agent's write is audited as: its action, and for a `store`, the field.
 struct Write<'a> {
-    action: &'static str,
+    action: AuditAction,
     field: Option<&'a str>,
 }
 
@@ -176,7 +176,7 @@ impl AgentSession {
         request: CreateEntry,
     ) -> Result<AgentReply, AgentError> {
         let write = Write {
-            action: "create",
+            action: AuditAction::Create,
             field: None,
         };
         let (pairing, group, path) = {
@@ -266,7 +266,7 @@ impl AgentSession {
             .filter(|(_, field)| !field.is_empty())
             .ok_or_else(|| AgentError::NoField(reference.to_owned()))?;
         let write = Write {
-            action: "store",
+            action: AuditAction::Store,
             field: Some(field_name),
         };
         let (pairing, target) = {

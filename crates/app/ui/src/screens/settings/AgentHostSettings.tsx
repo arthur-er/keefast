@@ -292,7 +292,7 @@ export function ActivityDialog({ host, vault, onClose }: ActivitySource & { onCl
 }
 
 function ActivityRow({ record }: { record: AgentActivityRecord }) {
-  const when = record.time === null ? "" : new Date(record.time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const when = new Date(record.time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   return (
     <li className="activity-row">
       <div className="activity-what">

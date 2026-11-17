@@ -384,7 +384,7 @@ async fn run_gets_a_value_once_allowed_and_is_denied_before_and_the_log_shows_bo
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.program, record.outcome))
+        .map(|record| (record.action.to_string(), record.program, record.outcome))
         .collect();
     assert_eq!(
         log,
@@ -875,7 +875,7 @@ async fn http_request_sends_the_secret_to_an_allowed_host_and_returns_the_answer
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.method, record.host, record.outcome))
+        .map(|record| (record.action.to_string(), record.method, record.host, record.outcome))
         .collect();
     assert_eq!(
         log,
@@ -1096,7 +1096,7 @@ async fn reveal_secret_asks_the_approver_saying_so_and_returns_the_value_once_al
         .audit_records(10)
         .unwrap()
         .into_iter()
-        .map(|record| (record.action, record.outcome))
+        .map(|record| (record.action.to_string(), record.outcome))
         .collect();
     assert_eq!(log, [("reveal".to_owned(), AuditOutcome::Allowed)]);
 }

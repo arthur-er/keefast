@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::approver::{AgentPrompt, Approval, Approver, NoApprover};
-use crate::audit::{AuditEntry, AuditOutcome, AuditRecord, AuditSink};
+use crate::audit::{AuditAction, AuditEntry, AuditOutcome, AuditRecord, AuditSink};
 use crate::hosts::{Allowed, allows, is_private_address, url_host};
 use crate::http::{
     Hop, HttpRequest, HttpResponse, HttpTransport, MAX_REDIRECTS, MAX_REQUEST_BODY,
@@ -339,20 +339,26 @@ impl UseFor<'_> {
         }
     }
 
+    fn action(&self) -> AuditAction {
+        match self {
+            Self::Program(_) => AuditAction::Use,
+            Self::Http { .. } => AuditAction::HttpRequest,
+            Self::Reveal { .. } => AuditAction::Reveal,
+        }
+    }
+
     /// `record`, as a record of this use.
     fn audited(&self, mut record: AuditRecord) -> AuditRecord {
+        record.action = self.action();
         match self {
             Self::Program(program) => {
-                record.action = "use".to_owned();
                 record.program = Some((*program).to_owned());
             }
             Self::Http { method, host } => {
-                record.action = "http_request".to_owned();
                 record.method = Some((*method).to_owned());
                 record.host = Some((*host).to_owned());
             }
             Self::Reveal { field } => {
-                record.action = "reveal".to_owned();
                 record.field = Some((*field).to_owned());
             }
         }
@@ -445,7 +451,7 @@ impl AgentSession {
             .pairing(&self.pairing)
             .ok_or(AgentError::NotPaired)?;
         self.audit
-            .record(self.record(workspace, pairing, "list", AuditOutcome::Allowed));
+            .record(self.record(workspace, pairing, AuditAction::List, AuditOutcome::Allowed));
         Ok(AgentReply::Secrets(
             readable_entries(vault, &settings, pairing)
                 .iter()
@@ -534,7 +540,7 @@ impl AgentSession {
                 AuditOutcome::Allowed
             };
             let mut record =
-                UseFor::Program(program).audited(self.record(workspace, pairing, "use", outcome));
+                UseFor::Program(program).audited(self.record(workspace, pairing, AuditAction::Use, outcome));
             record.entry = Some(AuditEntry {
                 uuid: entry.id().to_hex(),
                 title: entry.title().to_owned(),
@@ -602,14 +608,14 @@ impl AgentSession {
         &self,
         workspace: &Workspace,
         pairing: &AgentPairing,
-        action: &str,
+        action: AuditAction,
         outcome: AuditOutcome,
     ) -> AuditRecord {
         AuditRecord {
             time: workspace.now().unix_seconds(),
             pairing: pairing.name().to_owned(),
             pairing_id: pairing.id().as_str().to_owned(),
-            action: action.to_owned(),
+            action,
             entry: None,
             program: None,
             method: None,
@@ -680,7 +686,7 @@ impl AgentSession {
                 time,
                 pairing: asking.prompt.pairing.clone(),
                 pairing_id: self.pairing.as_str().to_owned(),
-                action: String::new(),
+                action: used_for.action(),
                 entry: Some(AuditEntry {
                     uuid: asking.prompt.entry_uuid.clone(),
                     title: asking.prompt.entry_title.clone(),
@@ -791,7 +797,7 @@ impl AgentSession {
             } else {
                 AuditOutcome::Allowed
             };
-            let mut record = used_for.audited(self.record(workspace, &pairing, "", outcome));
+            let mut record = used_for.audited(self.record(workspace, &pairing, used_for.action(), outcome));
             record.entry = Some(AuditEntry {
                 uuid: used.uuid.clone(),
                 title: used.title.clone(),
@@ -829,7 +835,7 @@ impl AgentSession {
             host: &host,
         };
         let mut record =
-            used_for.audited(self.record(workspace, pairing, "", AuditOutcome::Denied));
+            used_for.audited(self.record(workspace, pairing, used_for.action(), AuditOutcome::Denied));
         record.entry = Some(AuditEntry {
             uuid: used.uuid.clone(),
             title: used.title.clone(),
@@ -1098,7 +1104,7 @@ impl AgentSession {
         let Some(Some(pairing)) = vault.read(|workspace, id| {
             let settings = workspace.agent_settings(id)?;
             let pairing = settings.pairing(&self.pairing)?.clone();
-            Some(self.record(workspace, &pairing, "", AuditOutcome::Denied))
+            Some(self.record(workspace, &pairing, AuditAction::HttpRequest, AuditOutcome::Denied))
         }) else {
             return;
         };
@@ -1191,7 +1197,7 @@ impl AgentSession {
             let mut record = UseFor::Reveal { field }.audited(self.record(
                 workspace,
                 pairing,
-                "",
+                AuditAction::Reveal,
                 AuditOutcome::Denied,
             ));
             record.entry = Some(AuditEntry {
