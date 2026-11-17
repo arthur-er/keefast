@@ -1032,3 +1032,83 @@ async fn store_saves_a_value_answering_only_with_its_reference_and_refuses_other
         "shared key-secret-value-1234"
     );
 }
+
+impl Served {
+    /// Marks `claude token` "Agents may reveal".
+    async fn mark_claude_token_revealable(&self) {
+        let host = Arc::clone(&self.host);
+        tokio::task::spawn_blocking(move || {
+            host.edit(|workspace, vault| {
+                let open = workspace.readable_vault(vault).unwrap().vault();
+                let entry = open
+                    .root()
+                    .all_entries()
+                    .find(|entry| entry.title() == "claude token")
+                    .unwrap()
+                    .id();
+                workspace.set_agents_may_reveal(vault, entry, true).unwrap();
+            })
+            .unwrap()
+            .1
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    }
+}
+
+async fn reveal_secret(client: &RunningService<RoleClient, ()>, reference: &str) -> CallToolResult {
+    let arguments = serde_json::json!({ "reference": reference });
+    client
+        .call_tool(
+            CallToolRequestParams::new("reveal_secret")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reveal_secret_asks_the_approver_saying_so_and_returns_the_value_once_allowed() {
+    let served = Served::unlocked().await;
+    served.mark_claude_token_revealable().await;
+    let laptop = served.pair_approver("laptop");
+    let (_, stream) = served.approver_stream(&laptop).await;
+    let mut stream = stream.unwrap();
+    let client = served.connect(&served.claude).await;
+
+    let revealed =
+        tokio::spawn(async move { reveal_secret(&client, "claude/claude token#password").await });
+    let (_, prompt) = stream.next().await;
+    served
+        .answer(&laptop, prompt["id"].as_str().unwrap(), true, true)
+        .await;
+    let result = revealed.await.unwrap();
+
+    assert_eq!(prompt["prompt"]["reveal"], true);
+    assert_eq!(prompt["prompt"]["can_remember"], false);
+    let said = text(&result);
+    assert_ne!(result.is_error, Some(true), "{said}");
+    assert!(said.contains("claude token-secret-value-1234"), "{said}");
+    let log: Vec<_> = served
+        .host
+        .audit_records(10)
+        .unwrap()
+        .into_iter()
+        .map(|record| (record.action, record.outcome))
+        .collect();
+    assert_eq!(log, [("reveal".to_owned(), AuditOutcome::Allowed)]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reveal_secret_of_an_unmarked_entry_is_refused_and_says_what_to_use_instead() {
+    let served = Served::unlocked().await;
+    let client = served.connect(&served.claude).await;
+
+    let result = reveal_secret(&client, "claude/claude token#password").await;
+
+    assert_eq!(result.is_error, Some(true));
+    let said = text(&result);
+    assert!(said.contains("Agents may reveal"), "{said}");
+    assert!(!said.contains("secret-value"), "{said}");
+}

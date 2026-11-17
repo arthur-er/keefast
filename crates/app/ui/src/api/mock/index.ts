@@ -10,7 +10,8 @@
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
 //     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
-//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-http" | "agentPrompt-many"
+//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-http" | "agentPrompt-reveal"
+//     | "agentPrompt-many"
 //     | "agentConsent" | "agentConsent-again")   (an MCP client pairing by OAuth; its code is ABCD-EFGH)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
@@ -380,6 +381,7 @@ export type MockScene =
   | "agentPrompt"
   | "agentPrompt-shell"
   | "agentPrompt-http"
+  | "agentPrompt-reveal"
   | "agentPrompt-many"
   | "agentConsent"
   | "agentConsent-again"
@@ -1563,7 +1565,8 @@ export function createMockBackend(): Backend & {
             a.name.localeCompare(b.name),
         );
       const allowedHosts = [...(v.agentAllowedHosts?.[e.id] ?? [])];
-      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions, allowedHosts };
+      const agentsMayReveal = (v.agentsMayReveal ?? []).includes(e.id);
+      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions, allowedHosts, agentsMayReveal };
     }),
     rememberAgentDecision: command((id, entryId, pairingId, kind, given, allow) => {
       const [v, e] = entryOf(id, entryId);
@@ -1611,6 +1614,13 @@ export function createMockBackend(): Backend & {
       (v.agentAllowedHosts ??= {})[e.id] = kept;
       edited(v);
       return kept;
+    }),
+    setEntryAgentsMayReveal: command((id, entryId, mayReveal) => {
+      const [v, e] = entryOf(id, entryId);
+      const others = (v.agentsMayReveal ?? []).filter((marked) => marked !== e.id);
+      v.agentsMayReveal = mayReveal ? [...others, e.id] : others;
+      edited(v);
+      return null;
     }),
     dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
@@ -1840,6 +1850,7 @@ export function createMockBackend(): Backend & {
   function agentPrompt(command: string[], reference: string, title: string, httpHost: string | null = null) {
     mockAgentHosts();
     const program = httpHost ?? command[0]!;
+    const reveal = program === "reveal_secret";
     const prompt = {
       id: `p${state.nextId++}`,
       host: "h-build",
@@ -1849,8 +1860,9 @@ export function createMockBackend(): Backend & {
       reference: `claude/${reference}`,
       program,
       command,
-      canRemember: !["bash", "sh", "zsh", "python3", "node"].includes(program),
+      canRemember: !["bash", "sh", "zsh", "python3", "node", "reveal_secret"].includes(program),
       httpHost,
+      reveal,
       expires: Date.now() / 1000 + 60,
     };
     state.agentPrompts.push(prompt);
@@ -1911,6 +1923,9 @@ export function createMockBackend(): Backend & {
           "deploy token",
           "api.github.com",
         );
+        break;
+      case "agentPrompt-reveal":
+        agentPrompt(["reveal_secret", "claude/deploy/Wallet seed#password"], "deploy/Wallet seed#password", "Wallet seed");
         break;
       case "agentPrompt-many":
         agentPrompt(["gh", "release", "create", "v2.4.0"], "GitHub/deploy token#password", "deploy token");

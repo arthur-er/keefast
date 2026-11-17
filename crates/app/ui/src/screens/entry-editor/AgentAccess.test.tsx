@@ -9,6 +9,7 @@ const vault = vi.hoisted(() => ({
   pairings: [] as { id: string; name: string; group: string; reads: string[] }[],
   decisions: [] as AgentDecisionView[],
   allowedHosts: [] as string[],
+  agentsMayReveal: false,
   toasts: [] as string[],
 }));
 
@@ -19,7 +20,12 @@ vi.mock("@/api", () => ({
       pairings: vault.pairings,
       decisions: [...vault.decisions],
       allowedHosts: [...vault.allowedHosts],
+      agentsMayReveal: vault.agentsMayReveal,
     })),
+    setEntryAgentsMayReveal: vi.fn(async (_vault: number, _entry: string, mayReveal: boolean) => {
+      vault.agentsMayReveal = mayReveal;
+      return null;
+    }),
     rememberAgentDecision: vi.fn(
       async (_vault: number, _entry: string, pairing: string, kind: "program" | "host", name: string, allow: boolean) => {
         if (name === "bash") throw new Error("bash is a shell or interpreter, which can run anything");
@@ -64,6 +70,7 @@ beforeEach(() => {
   vault.pairings = [claude];
   vault.decisions = [];
   vault.allowedHosts = [];
+  vault.agentsMayReveal = false;
   vault.toasts = [];
 });
 
@@ -162,5 +169,30 @@ describe("The Entry editor's Agents section", () => {
 
     await waitFor(() => expect(api.getEntryAgentAccess).toHaveBeenCalled());
     expect(screen.queryByText("Agents")).toBeNull();
+  });
+
+  it("marks the Entry Agents may reveal, saying its value then reaches the model when allowed", async () => {
+    show();
+
+    const mark = await screen.findByRole("switch", { name: "Agents may reveal" });
+    expect(mark.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText(/the value itself reaches the model/)).toBeTruthy();
+    fireEvent.click(mark);
+
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Agents may reveal" }).getAttribute("aria-checked")).toBe("true"),
+    );
+    expect(api.setEntryAgentsMayReveal).toHaveBeenCalledWith(1, "e1", true);
+  });
+
+  it("shows a marked Entry's section even when no Agent can read it any more, to take the mark off", async () => {
+    vault.pairings = [];
+    vault.agentsMayReveal = true;
+    show();
+
+    const mark = await screen.findByRole("switch", { name: "Agents may reveal" });
+    fireEvent.click(mark);
+
+    await waitFor(() => expect(api.setEntryAgentsMayReveal).toHaveBeenCalledWith(1, "e1", false));
   });
 });

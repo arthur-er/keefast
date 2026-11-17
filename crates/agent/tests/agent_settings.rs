@@ -523,3 +523,40 @@ fn allowed_hosts_changed_on_another_copy_later_win_a_merge_and_emptied_ones_stay
     let settings = reopened.agent_settings(vault).unwrap();
     assert!(settings.allowed_hosts(entry).is_empty());
 }
+
+#[test]
+fn agents_may_reveal_is_read_back_after_a_save_and_taking_it_off_later_wins_a_merge() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, _, entry) = vault_with_paired_entry(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    assert!(
+        !desktop
+            .agent_settings(vault)
+            .unwrap()
+            .agents_may_reveal(entry)
+    );
+    desktop.set_agents_may_reveal(vault, entry, true).unwrap();
+    desktop.save_vault(vault).unwrap();
+    let (mut host, host_vault) = file.open(&clock);
+    assert!(
+        host.agent_settings(host_vault)
+            .unwrap()
+            .agents_may_reveal(entry)
+    );
+
+    clock.advance(Duration::from_secs(60));
+    desktop.set_agents_may_reveal(vault, entry, false).unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.set_default_agent_policy(host_vault, DefaultAgentPolicy::Allow)
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    assert!(
+        !reopened
+            .agent_settings(vault)
+            .unwrap()
+            .agents_may_reveal(entry)
+    );
+}

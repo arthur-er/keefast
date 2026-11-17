@@ -646,6 +646,7 @@ pub(crate) mod tests {
             program: command.to_owned(),
             command: vec![command.to_owned(), "auth".to_owned()],
             host: None,
+            reveal: false,
             can_remember: true,
         }
     }

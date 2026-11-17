@@ -252,6 +252,9 @@ pub struct EntryAgentAccess {
     /// The hosts `http_request` may send its secrets to, as kept: host names, IP addresses, or
     /// `*.` and a domain for its subdomains.
     pub allowed_hosts: Vec<String>,
+    /// Whether it is marked "Agents may reveal": `reveal_secret` may hand its values to a
+    /// model, when the user allows it at the prompt, every time.
+    pub agents_may_reveal: bool,
 }
 
 #[tauri::command]
@@ -301,6 +304,7 @@ pub async fn get_entry_agent_access(
                 .collect(),
             decisions,
             allowed_hosts: settings.allowed_hosts(entry).to_vec(),
+            agents_may_reveal: settings.agents_may_reveal(entry),
         })
     })
 }
@@ -398,4 +402,24 @@ pub async fn set_entry_allowed_hosts(
     })?;
     core.autosave();
     Ok(kept)
+}
+
+/// Marks the Entry "Agents may reveal", or takes the mark off. Each reveal still asks.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_entry_agents_may_reveal(
+    core: Core<'_>,
+    vault: VaultId,
+    entry: EntryId,
+    may_reveal: bool,
+) -> ApiResult<()> {
+    let entry = entry.resolve()?;
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    core.update(|workspace| {
+        workspace
+            .set_agents_may_reveal(vault, entry, may_reveal)
+            .map_err(ApiError::from)
+    })?;
+    core.autosave();
+    Ok(())
 }

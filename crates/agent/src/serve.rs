@@ -98,6 +98,10 @@ it to keefast-agent rather than putting it in a tool call:
 It sets that field, creating the Entry if needed. You can change Entries only in your own \
 subgroup, and never delete them.
 
+Only when a value itself must end up somewhere you write, such as a config file, call \
+reveal_secret. It works only on Entries the user marked \"Agents may reveal\", and asks them every \
+time; for any other Entry, use the secret without seeing it as above.
+
 keefast-agent reaches this server through the KEEFAST_AGENT_URL and KEEFAST_AGENT_TOKEN \
 environment variables. Never ask the user to paste a secret into the conversation.
 
@@ -539,6 +543,14 @@ impl From<HttpRequestParams> for HttpRequest {
     }
 }
 
+/// What an Agent passes to `reveal_secret`.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct RevealSecretParams {
+    /// The Secret reference of the value to reveal, such as `Deploy/wallet#password`.
+    reference: String,
+}
+
 /// What an Agent passes to `create_entry`.
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -750,6 +762,41 @@ impl AgentTools {
                 ))])
             }
             Ok(None) => refused(AgentError::NotPaired),
+            Err(error) => refused(error),
+        })
+    }
+
+    #[tool(
+        description = "Reveal a secret's value to you, for the rare secret that must itself be \
+                       written somewhere, such as into a config file. Works only on Entries the \
+                       user marked \"Agents may reveal\", and asks the user every time. Prefer \
+                       keefast-agent run or http_request, which use a secret without you seeing \
+                       it."
+    )]
+    async fn reveal_secret(
+        &self,
+        Parameters(params): Parameters<RevealSecretParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Some(Bearer(token)) = parts.extensions.get::<Bearer>().cloned() else {
+            return Ok(refused(AgentError::NotPaired));
+        };
+        let host = Arc::clone(&self.host);
+        let request = AgentRequest::Reveal(params.reference);
+        let revealed = tokio::task::spawn_blocking(move || host.handle_agent(&token, request))
+            .await
+            .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+        Ok(match revealed.map(AgentReply::into_values) {
+            Ok(values) if values.len() == 1 => {
+                let value = &values[0];
+                CallToolResult::success(vec![ContentBlock::text(format!(
+                    "The value of {}, which the user allowed you to see this once. Put it only \
+                     where it is needed; never repeat it in the conversation or in logs.\n{}",
+                    value.reference,
+                    value.value()
+                ))])
+            }
+            Ok(_) => refused(AgentError::NotPaired),
             Err(error) => refused(error),
         })
     }
