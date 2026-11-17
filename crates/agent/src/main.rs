@@ -136,7 +136,7 @@ mod operator {
     };
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_agent::serve::McpEndpoint;
-    use keefast_agent::{AuditLog, AuditOutcome, AuditRecord};
+    use keefast_agent::{ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord};
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -270,6 +270,8 @@ mod operator {
         // Bound first, so a second host for the same socket stops before it unlocks anything.
         let socket = AdminSocket::bind(&socket_path, group)
             .map_err(|error| format!("can't listen at {}: {error}", socket_path.display()))?;
+        let approver_credentials = ApproverCredentials::open(state_dir.join("approvers.json"))
+            .map_err(|error| error.to_string())?;
         let (host, warnings) = HeadlessHost::start(
             workspace,
             HostConfig {
@@ -277,6 +279,8 @@ mod operator {
                 unattended,
                 secret_store: Arc::new(OsSecretStore),
                 audit_log: Arc::new(AuditLog::new(state_dir.join("audit.log"))),
+                approvers: ApproverHub::new(),
+                approver_credentials,
             },
         );
         for warning in warnings {

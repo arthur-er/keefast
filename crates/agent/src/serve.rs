@@ -305,6 +305,7 @@ async fn use_secrets(
                 AgentError::NotPaired => (StatusCode::UNAUTHORIZED, "not_paired"),
                 AgentError::NotAllowed { .. } => (StatusCode::FORBIDDEN, "not_allowed"),
                 AgentError::Denied { .. } => (StatusCode::FORBIDDEN, "denied"),
+                AgentError::Unanswered { .. } => (StatusCode::FORBIDDEN, "unanswered"),
                 AgentError::UnknownReference(_)
                 | AgentError::AmbiguousReference(_)
                 | AgentError::UnknownField(_)

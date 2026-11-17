@@ -140,3 +140,82 @@ impl keefast_agent::AuditSink for MemoryAudit {
         self.0.lock().unwrap().push(record);
     }
 }
+
+/// A Workspace behind a mutex, with the Vault a session serves from it: what the Headless host
+/// gives an [`keefast_agent::AgentSession`], so that it can let go of the Workspace while an
+/// Approver is asked.
+pub struct SharedVault {
+    pub workspace: Mutex<Workspace>,
+    pub vault: VaultId,
+}
+
+impl SharedVault {
+    pub fn new(workspace: Workspace, vault: VaultId) -> Arc<Self> {
+        Arc::new(Self {
+            workspace: Mutex::new(workspace),
+            vault,
+        })
+    }
+
+    pub fn workspace(&self) -> std::sync::MutexGuard<'_, Workspace> {
+        self.workspace.lock().unwrap()
+    }
+}
+
+impl keefast_agent::VaultAccess for SharedVault {
+    fn read<T>(&self, f: impl FnOnce(&Workspace, VaultId) -> T) -> Option<T> {
+        let workspace = self.workspace();
+        workspace.readable_vault(self.vault)?;
+        Some(f(&workspace, self.vault))
+    }
+
+    fn edit<T>(&self, f: impl FnOnce(&mut Workspace, VaultId) -> T) -> Option<T> {
+        let mut workspace = self.workspace();
+        workspace.readable_vault(self.vault)?;
+        Some(f(&mut workspace, self.vault))
+    }
+}
+
+/// An Approver that answers from a script, in order, and keeps the prompts it was shown. With
+/// nothing left to answer, it is as if no Approver were online. `during` runs while it is
+/// asked, as a person might lock the Vault meanwhile.
+#[derive(Default)]
+pub struct FakeApprover {
+    answers: Mutex<std::collections::VecDeque<keefast_agent::Approval>>,
+    prompts: Mutex<Vec<keefast_agent::AgentPrompt>>,
+    during: Mutex<Option<Box<dyn FnMut() + Send>>>,
+}
+
+impl FakeApprover {
+    pub fn answering(answers: impl IntoIterator<Item = keefast_agent::Approval>) -> Arc<Self> {
+        let approver = Self::default();
+        approver.answers.lock().unwrap().extend(answers);
+        Arc::new(approver)
+    }
+
+    pub fn answer(&self, answer: keefast_agent::Approval) {
+        self.answers.lock().unwrap().push_back(answer);
+    }
+
+    pub fn while_asked(&self, during: impl FnMut() + Send + 'static) {
+        *self.during.lock().unwrap() = Some(Box::new(during));
+    }
+
+    pub fn prompts(&self) -> Vec<keefast_agent::AgentPrompt> {
+        self.prompts.lock().unwrap().clone()
+    }
+}
+
+impl keefast_agent::Approver for FakeApprover {
+    fn ask(&self, prompt: &keefast_agent::AgentPrompt) -> keefast_agent::Approval {
+        self.prompts.lock().unwrap().push(prompt.clone());
+        if let Some(during) = self.during.lock().unwrap().as_mut() {
+            during();
+        }
+        self.answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(keefast_agent::Approval::NoApprover)
+    }
+}

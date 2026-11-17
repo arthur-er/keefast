@@ -14,9 +14,10 @@
 //!
 //! A use (`keefast-agent run`) names its secrets by Secret reference, and is checked against
 //! the Agent access decisions for the pairing, each Entry and the program, then the Default
-//! agent policy. Until Approvers arrive (#157) nobody can be asked, so a use that would ask is
-//! refused, saying how to allow it ahead of time in the desktop app. Every list and use goes
-//! to the audit log, never with a value.
+//! agent policy. When neither answers, or the program is a shell or interpreter, the session's
+//! [`Approver`] is asked, without holding the Workspace, for up to a minute; with nobody to ask,
+//! the use is refused at once, saying how to allow it ahead of time in the desktop app. Every
+//! list and use goes to the audit log, never with a value.
 
 use std::sync::Arc;
 
@@ -26,10 +27,12 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use crate::approver::{AgentPrompt, Approval, Approver, NoApprover};
 use crate::audit::{AuditEntry, AuditOutcome, AuditRecord, AuditSink};
 use crate::programs::{is_shell_or_interpreter, program_name};
 use crate::{
-    AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentUse, DefaultAgentPolicy,
+    AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentSettingsExt, AgentUse,
+    DefaultAgentPolicy,
 };
 
 /// A password at least this long gets a hint of its last four characters; a shorter one would
@@ -128,10 +131,17 @@ pub enum AgentError {
     #[error("no program to run was given")]
     NoProgram,
     #[error(
-        "the user hasn't allowed this Agent pairing to use {reference} with {program}: ask them \
-         to allow it in keefast's Entry editor, under Agents, then try again"
+        "the user hasn't allowed this Agent pairing to use {reference} with {program}, and there \
+         is no Approver to ask them now: ask them to open keefast on their desktop, paired with \
+         this host as an Approver, or to allow it in keefast's Entry editor, under Agents, then \
+         try again"
     )]
     NotAllowed { reference: String, program: String },
+    #[error(
+        "the user didn't answer within 60 seconds whether this Agent pairing may use {reference} \
+         with {program}, so it was denied: ask them to watch for keefast's prompt, then try again"
+    )]
+    Unanswered { reference: String, program: String },
     #[error("the user doesn't allow this Agent pairing to use {reference} with {program}")]
     Denied { reference: String, program: String },
 }
@@ -164,33 +174,192 @@ pub struct SecretReference {
     pub path: String,
 }
 
+/// Where a session reaches the Vault it serves. Each call holds the Workspace only while it
+/// runs, so that the session can let go of it while an Approver is asked: a host keeps
+/// serving, and its Vault keeps syncing, while the user decides.
+pub trait VaultAccess {
+    /// Runs `f` on the Workspace and the Vault, if it is unlocked; `None` if it is locked.
+    fn read<T>(&self, f: impl FnOnce(&Workspace, VaultId) -> T) -> Option<T>;
+    /// As [`Self::read`], for a change to the Vault, which the host saves after.
+    fn edit<T>(&self, f: impl FnOnce(&mut Workspace, VaultId) -> T) -> Option<T>;
+}
+
 /// One Agent pairing's requests.
 #[derive(Clone)]
 pub struct AgentSession {
     pairing: AgentPairingId,
     audit: Arc<dyn AuditSink>,
+    approver: Arc<dyn Approver>,
+}
+
+/// An Entry a use needs the Approver's answer for, as the first look at the Vault found it.
+struct Asking {
+    prompt: AgentPrompt,
+    entry: EntryId,
 }
 
 impl AgentSession {
-    /// A session for the Agent pairing `pairing`, recording what it does in `audit`.
+    /// A session for the Agent pairing `pairing`, recording what it does in `audit`, with
+    /// nobody to ask: a use that would ask is denied until [`Self::with_approver`] gives one.
     pub fn new(pairing: AgentPairingId, audit: Arc<dyn AuditSink>) -> Self {
-        Self { pairing, audit }
+        Self {
+            pairing,
+            audit,
+            approver: Arc::new(NoApprover),
+        }
+    }
+
+    /// Asks `approver` about uses no decision or policy answers.
+    pub fn with_approver(mut self, approver: Arc<dyn Approver>) -> Self {
+        self.approver = approver;
+        self
     }
 
     pub fn pairing(&self) -> &AgentPairingId {
         &self.pairing
     }
 
-    /// Handles `request` against `vault` in `workspace`. It never notes activity: Agents don't
-    /// keep a Vault from locking when its user is idle.
+    /// Handles `request` against the Vault `vault` reaches. It never notes activity: Agents
+    /// don't keep a Vault from locking when its user is idle. A use that needs the user's say
+    /// blocks until the Approver answers.
     pub fn handle(
         &self,
-        workspace: &Workspace,
-        vault: VaultId,
+        vault: &impl VaultAccess,
         request: AgentRequest,
     ) -> Result<AgentReply, AgentError> {
+        match request {
+            AgentRequest::ListSecrets => vault
+                .read(|workspace, id| self.list_secrets(workspace, id))
+                .unwrap_or(Err(AgentError::Locked)),
+            AgentRequest::UseSecrets(request) => self.use_secrets(vault, request),
+        }
+    }
+
+    fn list_secrets(&self, workspace: &Workspace, id: VaultId) -> Result<AgentReply, AgentError> {
         let vault = workspace
-            .readable_vault(vault)
+            .readable_vault(id)
+            .ok_or(AgentError::Locked)?
+            .vault();
+        let settings = AgentSettings::of(vault);
+        let pairing = settings
+            .pairing(&self.pairing)
+            .ok_or(AgentError::NotPaired)?;
+        self.audit
+            .record(self.record(workspace, pairing, "list", AuditOutcome::Allowed));
+        Ok(AgentReply::Secrets(
+            readable_entries(vault, &settings, pairing)
+                .iter()
+                .map(|(entry, path)| listing(entry, path))
+                .collect(),
+        ))
+    }
+
+    /// A use, in three steps: decide what the Vault can, holding the Workspace; ask the
+    /// Approver about the rest, without it; then, holding it again, remember what was to be
+    /// remembered and read the values afresh, since the Vault may have changed meanwhile.
+    fn use_secrets(
+        &self,
+        vault: &impl VaultAccess,
+        request: UseSecrets,
+    ) -> Result<AgentReply, AgentError> {
+        let program = program_name(request.command.first().ok_or(AgentError::NoProgram)?);
+        if program.is_empty() {
+            return Err(AgentError::NoProgram);
+        }
+        let (asking, first_time) = vault
+            .read(|workspace, id| self.decide_use(workspace, id, &request, &program))
+            .unwrap_or(Err(AgentError::Locked))?;
+        let mut remember = Vec::new();
+        for asking in asking {
+            let approval = self.approver.ask(&asking.prompt);
+            let (reason, refusal) = match approval {
+                Approval::Allow { remember: wants } => {
+                    if wants && asking.prompt.can_remember {
+                        remember.push((asking.entry, AgentDecision::Allow));
+                        ("allowed and remembered at a prompt", None)
+                    } else {
+                        ("allowed once at a prompt", None)
+                    }
+                }
+                Approval::Deny { remember: wants } => {
+                    if wants && asking.prompt.can_remember {
+                        remember.push((asking.entry, AgentDecision::Deny));
+                    }
+                    let reason = if wants && asking.prompt.can_remember {
+                        "denied and remembered at a prompt"
+                    } else {
+                        "denied once at a prompt"
+                    };
+                    (
+                        reason,
+                        Some(AgentError::Denied {
+                            reference: asking.prompt.reference.clone(),
+                            program: program.clone(),
+                        }),
+                    )
+                }
+                Approval::Unanswered => (
+                    "nobody answered the prompt in time",
+                    Some(AgentError::Unanswered {
+                        reference: asking.prompt.reference.clone(),
+                        program: program.clone(),
+                    }),
+                ),
+                Approval::NoApprover => (
+                    "no Approver to ask",
+                    Some(AgentError::NotAllowed {
+                        reference: asking.prompt.reference.clone(),
+                        program: program.clone(),
+                    }),
+                ),
+            };
+            let time = vault
+                .read(|workspace, _| workspace.now().unix_seconds())
+                .unwrap_or(first_time);
+            self.audit.record(AuditRecord {
+                time,
+                pairing: asking.prompt.pairing.clone(),
+                pairing_id: self.pairing.as_str().to_owned(),
+                action: "use".to_owned(),
+                entry: Some(AuditEntry {
+                    uuid: asking.prompt.entry_uuid.clone(),
+                    title: asking.prompt.entry_title.clone(),
+                }),
+                program: Some(program.clone()),
+                outcome: if refusal.is_some() {
+                    AuditOutcome::Denied
+                } else {
+                    AuditOutcome::Allowed
+                },
+                reason: Some(reason.to_owned()),
+            });
+            if let Some(refusal) = refusal {
+                if !remember.is_empty() {
+                    self.remember(vault, &program, &remember);
+                }
+                return Err(refusal);
+            }
+        }
+        if !remember.is_empty() {
+            self.remember(vault, &program, &remember);
+        }
+        vault
+            .read(|workspace, id| self.values(workspace, id, request))
+            .unwrap_or(Err(AgentError::Locked))
+    }
+
+    /// Checks each Entry a use names against its Agent access decisions and the Default agent
+    /// policy, auditing what they answer, and returns those the Approver must be asked about,
+    /// with the time it was checked.
+    fn decide_use(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+        request: &UseSecrets,
+        program: &str,
+    ) -> Result<(Vec<Asking>, i64), AgentError> {
+        let vault = workspace
+            .readable_vault(id)
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
@@ -198,84 +367,106 @@ impl AgentSession {
             .pairing(&self.pairing)
             .ok_or(AgentError::NotPaired)?;
         let readable = readable_entries(vault, &settings, pairing);
-        match request {
-            AgentRequest::ListSecrets => {
-                self.audit
-                    .record(self.record(workspace, pairing, "list", AuditOutcome::Allowed));
-                Ok(AgentReply::Secrets(
-                    readable
-                        .iter()
-                        .map(|(entry, path)| listing(entry, path))
-                        .collect(),
-                ))
-            }
-            AgentRequest::UseSecrets(request) => {
-                self.use_secrets(workspace, &settings, pairing, &readable, request)
-            }
-        }
-    }
-
-    fn use_secrets(
-        &self,
-        workspace: &Workspace,
-        settings: &AgentSettings,
-        pairing: &AgentPairing,
-        readable: &[(&Entry, String)],
-        request: UseSecrets,
-    ) -> Result<AgentReply, AgentError> {
-        let program = program_name(request.command.first().ok_or(AgentError::NoProgram)?);
-        if program.is_empty() {
-            return Err(AgentError::NoProgram);
-        }
         let mut resolved = Vec::with_capacity(request.references.len());
         for reference in &request.references {
-            resolved.push(resolve(readable, reference)?);
+            resolved.push(resolve(&readable, reference)?.0);
         }
         // Each Entry is checked, and audited, once, however many of its fields are used.
         let mut checked: Vec<EntryId> = Vec::new();
-        for ((entry, _), reference) in resolved.iter().zip(&request.references) {
+        let mut asking = Vec::new();
+        for (entry, reference) in resolved.iter().zip(&request.references) {
             if checked.contains(&entry.id()) {
                 continue;
             }
             checked.push(entry.id());
-            let refusal = match decide(settings, entry.id(), pairing.id(), &program) {
-                Outcome::Allow => None,
-                Outcome::Deny => Some(AgentError::Denied {
-                    reference: reference.clone(),
-                    program: program.clone(),
-                }),
-                // Nobody to ask until Approvers arrive (#157): asking means no.
-                Outcome::Ask => Some(AgentError::NotAllowed {
-                    reference: reference.clone(),
-                    program: program.clone(),
-                }),
+            let refused = match decide(&settings, entry.id(), pairing.id(), program) {
+                Outcome::Allow => false,
+                Outcome::Deny => true,
+                Outcome::Ask => {
+                    asking.push(Asking {
+                        prompt: AgentPrompt {
+                            pairing: pairing.name().to_owned(),
+                            entry_uuid: entry.id().to_hex(),
+                            entry_title: entry.title().to_owned(),
+                            reference: reference.clone(),
+                            program: program.to_owned(),
+                            command: request.command.clone(),
+                            can_remember: !is_shell_or_interpreter(program),
+                        },
+                        entry: entry.id(),
+                    });
+                    continue;
+                }
             };
-            let outcome = match refusal {
-                None => AuditOutcome::Allowed,
-                Some(_) => AuditOutcome::Denied,
+            let outcome = if refused {
+                AuditOutcome::Denied
+            } else {
+                AuditOutcome::Allowed
             };
             let mut record = self.record(workspace, pairing, "use", outcome);
             record.entry = Some(AuditEntry {
                 uuid: entry.id().to_hex(),
                 title: entry.title().to_owned(),
             });
-            record.program = Some(program.clone());
-            record.reason = refusal.as_ref().map(|error| match error {
-                AgentError::NotAllowed { .. } => "not allowed yet, and nobody to ask".to_owned(),
-                _ => "denied".to_owned(),
-            });
+            record.program = Some(program.to_owned());
+            record.reason = refused.then(|| "denied".to_owned());
             self.audit.record(record);
-            if let Some(refusal) = refusal {
-                return Err(refusal);
+            if refused {
+                return Err(AgentError::Denied {
+                    reference: reference.clone(),
+                    program: program.to_owned(),
+                });
             }
         }
-        Ok(AgentReply::Values(
-            resolved
-                .into_iter()
-                .zip(request.references)
-                .map(|((_, value), reference)| SecretValue::new(reference, value))
-                .collect(),
-        ))
+        Ok((asking, workspace.now().unix_seconds()))
+    }
+
+    /// Saves answers the user asked to remember as Agent access decisions, so they reach every
+    /// host serving the Vault. A Vault locked meanwhile keeps none of them: the use is refused
+    /// as locked anyway.
+    fn remember(
+        &self,
+        vault: &impl VaultAccess,
+        program: &str,
+        answers: &[(EntryId, AgentDecision)],
+    ) {
+        let agent_use = AgentUse::Program(program.to_owned());
+        vault.edit(|workspace, id| {
+            for (entry, decision) in answers {
+                // Fails only for a revoked pairing or a deleted Entry, which the use then hears.
+                let _ = workspace.remember_agent_decision(
+                    id,
+                    *entry,
+                    &self.pairing,
+                    &agent_use,
+                    *decision,
+                );
+            }
+        });
+    }
+
+    /// The values a use names, read now.
+    fn values(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+        request: UseSecrets,
+    ) -> Result<AgentReply, AgentError> {
+        let vault = workspace
+            .readable_vault(id)
+            .ok_or(AgentError::Locked)?
+            .vault();
+        let settings = AgentSettings::of(vault);
+        let pairing = settings
+            .pairing(&self.pairing)
+            .ok_or(AgentError::NotPaired)?;
+        let readable = readable_entries(vault, &settings, pairing);
+        let mut values = Vec::with_capacity(request.references.len());
+        for reference in request.references {
+            let (_, value) = resolve(&readable, &reference)?;
+            values.push(SecretValue::new(reference, value));
+        }
+        Ok(AgentReply::Values(values))
     }
 
     fn record(

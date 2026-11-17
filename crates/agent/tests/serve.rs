@@ -77,6 +77,8 @@ impl Served {
                 unattended: None,
                 secret_store: Arc::new(FakeSecretStore::default()),
                 audit_log: file.audit_log(),
+                approvers: keefast_agent::ApproverHub::new(),
+                approver_credentials: keefast_agent::ApproverCredentials::in_memory(),
             },
         );
         let endpoint = McpEndpoint::start(Arc::clone(&host), listen).await.unwrap();

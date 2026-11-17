@@ -64,6 +64,8 @@ fn serve_with(
             unattended,
             secret_store,
             audit_log: file.audit_log(),
+            approvers: keefast_agent::ApproverHub::new(),
+            approver_credentials: keefast_agent::ApproverCredentials::in_memory(),
         },
     );
     let dir = tempfile::tempdir().unwrap();
