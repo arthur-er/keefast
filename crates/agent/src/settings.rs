@@ -8,7 +8,7 @@
 //! pairing is marked by an item of its own, which outlives any copy of the pairing a Merge
 //! brings back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+use crate::hosts::normalize_allowed_host;
 use crate::programs::is_shell_or_interpreter;
 
 /// The Agent group, as its UUID in hex.
@@ -35,6 +36,9 @@ const REVOKED_PREFIX: &str = "keefast_AGENT_REVOKED_PAIRING_";
 /// forgotten. One item per decision rather than one per Entry, so that decisions remembered on
 /// two Approvers at once both survive a Merge (ADR 0005 update 2026-11-17).
 const DECISION_PREFIX: &str = "keefast_AGENT_DECISION_";
+/// Each Entry's allowed hosts, under this prefix plus its UUID, as a JSON array of hosts; an
+/// empty array once emptied. One item per Entry: the newest list wins a Merge whole.
+const HOSTS_PREFIX: &str = "keefast_AGENT_HOSTS_";
 
 /// What an Agent uses an Entry with: the program `keefast-agent run` starts, by its
 /// executable's name, or the host an `http_request` goes to.
@@ -141,6 +145,11 @@ pub enum AgentSettingsError {
          never remembered"
     )]
     NeverRemembered(String),
+    #[error(
+        "{0:?} isn't a host: write a host name such as api.github.com, *. and a domain for its \
+         subdomains, or an IP address, without a port"
+    )]
+    NotAHost(String),
     #[error(transparent)]
     Vault(#[from] EditVaultError),
 }
@@ -374,6 +383,7 @@ pub struct AgentSettings {
     default_agent_policy: DefaultAgentPolicy,
     pairings: Vec<AgentPairing>,
     decisions: Vec<AgentAccessDecision>,
+    allowed_hosts: HashMap<EntryId, Vec<String>>,
 }
 
 impl AgentSettings {
@@ -407,6 +417,19 @@ impl AgentSettings {
                 .iter()
                 .filter_map(|(key, value)| AgentAccessDecision::read(key, value))
                 .collect(),
+            allowed_hosts: items
+                .iter()
+                .filter_map(|(key, value)| {
+                    let entry = EntryId::from_hex(key.strip_prefix(HOSTS_PREFIX)?)?;
+                    // A list edited by hand keeps only the hosts that still read as hosts.
+                    let hosts: Vec<String> = serde_json::from_str(value).ok()?;
+                    let hosts = hosts
+                        .iter()
+                        .filter_map(|host| normalize_allowed_host(host))
+                        .collect();
+                    Some((entry, hosts))
+                })
+                .collect(),
         }
     }
 
@@ -430,6 +453,15 @@ impl AgentSettings {
         self.decisions
             .iter()
             .filter(move |decision| decision.entry == entry)
+    }
+
+    /// The hosts an `http_request` may send `entry`'s secrets to, as the user wrote them,
+    /// normalized; empty when it may send them nowhere.
+    pub fn allowed_hosts(&self, entry: EntryId) -> &[String] {
+        self.allowed_hosts
+            .get(&entry)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// The Agent pairings, revoked ones left out, by name.
@@ -538,6 +570,15 @@ pub trait AgentSettingsExt {
         agent_use: &AgentUse,
         decision: AgentDecision,
     ) -> Result<(), AgentSettingsError>;
+
+    /// Sets the hosts an `http_request` may send `entry`'s secrets to, and returns them as kept:
+    /// normalized, in order, without repeats. Refused whole if one isn't a host.
+    fn set_agent_allowed_hosts(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        hosts: &[String],
+    ) -> Result<Vec<String>, AgentSettingsError>;
 
     /// Forgets the decision for `pairing` using `entry` with `agent_use`, so it asks again,
     /// or follows the Default agent policy.
@@ -662,6 +703,32 @@ impl AgentSettingsExt for Workspace {
         }
         let key = decision_key(entry, pairing, agent_use);
         Ok(self.set_vault_custom_data(vault, &[item(key, decision.value())])?)
+    }
+
+    fn set_agent_allowed_hosts(
+        &mut self,
+        vault: VaultId,
+        entry: EntryId,
+        hosts: &[String],
+    ) -> Result<Vec<String>, AgentSettingsError> {
+        let mut kept: Vec<String> = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            let host = normalize_allowed_host(host)
+                .ok_or_else(|| AgentSettingsError::NotAHost(host.clone()))?;
+            if !kept.contains(&host) {
+                kept.push(host);
+            }
+        }
+        let settings = self
+            .agent_settings(vault)
+            .ok_or(EditVaultError::VaultNotOpen)?;
+        // Never set and still empty: nothing to write.
+        if kept.as_slice() != settings.allowed_hosts(entry) {
+            let key = format!("{HOSTS_PREFIX}{}", entry.to_hex());
+            let json = serde_json::to_string(&kept).expect("hosts are plain JSON");
+            self.set_vault_custom_data(vault, &[item(key, json)])?;
+        }
+        Ok(kept)
     }
 
     fn forget_agent_decision(

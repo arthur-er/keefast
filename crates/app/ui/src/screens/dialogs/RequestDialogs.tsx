@@ -370,8 +370,8 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
       .then(() =>
         toast(
           <>
-            {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b> with{" "}
-            <b>{prompt.program}</b>
+            {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b>{" "}
+            {prompt.httpHost ? "at" : "with"} <b>{prompt.program}</b>
             {remembered && <span className="subtle"> · remembered</span>}
           </>,
           { icon: allow ? "check" : Shield },
@@ -418,16 +418,33 @@ function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["
           <div className="u truncate">{prompt.reference}</div>
         </div>
       </div>
-      <div className="dg-command" aria-label="Command">
-        <span className="prompt" aria-hidden>
-          $
-        </span>
-        <code>{commandLine(prompt.command)}</code>
-      </div>
-      <p className="dialog-desc m-0">
-        An Agent paired as <b>{prompt.pairing}</b> asks to run this on <b>{prompt.hostName}</b>, with the secret in the
-        program's environment. Allow only if you expect it.
-      </p>
+      {prompt.httpHost ? (
+        <>
+          <div className="dg-command" aria-label="Request">
+            <span className="prompt" aria-hidden>
+              →
+            </span>
+            <code>{prompt.command.join(" ")}</code>
+          </div>
+          <p className="dialog-desc m-0">
+            An Agent paired as <b>{prompt.pairing}</b> asks <b>{prompt.hostName}</b> to send this request to{" "}
+            <b>{prompt.httpHost}</b>, with the secret where its placeholder is. Allow only if you expect it.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="dg-command" aria-label="Command">
+            <span className="prompt" aria-hidden>
+              $
+            </span>
+            <code>{commandLine(prompt.command)}</code>
+          </div>
+          <p className="dialog-desc m-0">
+            An Agent paired as <b>{prompt.pairing}</b> asks to run this on <b>{prompt.hostName}</b>, with the secret in
+            the program's environment. Allow only if you expect it.
+          </p>
+        </>
+      )}
       {prompt.canRemember ? (
         <button type="button" className="dg-checkrow" role="checkbox" aria-checked={remember} onClick={() => setRemember(!remember)}>
           <span className={cn("check", remember && "is-on")} />

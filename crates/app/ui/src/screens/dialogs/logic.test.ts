@@ -59,6 +59,7 @@ const agent = {
   program: "gh",
   command: ["gh", "auth", "status"],
   canRemember: true,
+  httpHost: null,
   expires: 1_900_000_060,
   more: 0,
 };

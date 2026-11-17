@@ -66,6 +66,9 @@ pub struct PendingAgentPrompt {
     pub command: Vec<String>,
     /// Whether the answer may be remembered: never for shells and interpreters.
     pub can_remember: bool,
+    /// For an `http_request`, the host it goes to; `command` is then its method and URL, with
+    /// placeholders where the secrets go.
+    pub http_host: Option<String>,
     /// When the host denies it unanswered, in seconds since 1970 UTC.
     pub expires: f64,
     /// How many prompts wait besides this one.
@@ -85,6 +88,7 @@ impl PendingAgentPrompt {
             program: prompt.program.clone(),
             command: prompt.command.clone(),
             can_remember: prompt.can_remember,
+            http_host: prompt.host.clone(),
             expires: waiting
                 .expires
                 .duration_since(std::time::UNIX_EPOCH)

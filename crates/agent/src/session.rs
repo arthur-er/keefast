@@ -19,6 +19,8 @@
 //! the use is refused at once, saying how to allow it ahead of time in the desktop app. Every
 //! list and use goes to the audit log, never with a value.
 
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use keefast_core::{Entry, EntryId, Group, GroupId, Vault};
@@ -29,7 +31,13 @@ use zeroize::Zeroizing;
 
 use crate::approver::{AgentPrompt, Approval, Approver, NoApprover};
 use crate::audit::{AuditEntry, AuditOutcome, AuditRecord, AuditSink};
+use crate::hosts::{Allowed, allows, is_private_address, url_host};
+use crate::http::{
+    Hop, HttpRequest, HttpResponse, HttpTransport, MAX_REDIRECTS, MAX_REQUEST_BODY,
+    NetworkTransport, Template, basic_auth, body_text, expand, is_redirect, percent_encode,
+};
 use crate::programs::{is_shell_or_interpreter, program_name};
+use crate::run::Redactor;
 use crate::{
     AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentSettingsExt, AgentUse,
     DefaultAgentPolicy,
@@ -47,6 +55,8 @@ pub enum AgentRequest {
     ListSecrets,
     /// The values of secrets, for `keefast-agent run` to put in a program's environment.
     UseSecrets(UseSecrets),
+    /// An HTTP request keefast sends with secrets put in, to their Entries' allowed hosts.
+    Http(HttpRequest),
 }
 
 /// What `keefast-agent run` asks for: the values `references` name, to run `command` with.
@@ -64,6 +74,8 @@ pub enum AgentReply {
     Secrets(Vec<SecretListing>),
     /// One value per reference asked for, in the same order.
     Values(Vec<SecretValue>),
+    /// What an `http_request` got back, its secrets redacted.
+    Http(HttpResponse),
 }
 
 impl AgentReply {
@@ -71,7 +83,7 @@ impl AgentReply {
     pub fn into_secrets(self) -> Vec<SecretListing> {
         match self {
             Self::Secrets(secrets) => secrets,
-            Self::Values(_) => Vec::new(),
+            _ => Vec::new(),
         }
     }
 
@@ -79,7 +91,15 @@ impl AgentReply {
     pub fn into_values(self) -> Vec<SecretValue> {
         match self {
             Self::Values(values) => values,
-            Self::Secrets(_) => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The response in reply to [`AgentRequest::Http`].
+    pub fn into_http(self) -> Option<HttpResponse> {
+        match self {
+            Self::Http(response) => Some(response),
+            _ => None,
         }
     }
 }
@@ -144,6 +164,32 @@ pub enum AgentError {
     Unanswered { reference: String, program: String },
     #[error("the user doesn't allow this Agent pairing to use {reference} with {program}")]
     Denied { reference: String, program: String },
+    #[error(
+        "http_request sends a secret: put {{{{secret:<Secret reference>}}}} in its URL's path or \
+         query, a header, the body or basic auth. For a request without one, use another tool"
+    )]
+    NoSecret,
+    #[error("keefast won't send this request: {0}")]
+    BadHttpRequest(String),
+    #[error(
+        "{host} isn't one of the hosts the Entry {reference} names may be sent to: ask the user \
+         to add it in keefast's Entry editor, under Agents, if it should be"
+    )]
+    HostNotAllowed { reference: String, host: String },
+    #[error(
+        "the server redirected the request to {host}, which isn't one of the hosts the Entry \
+         {reference} names may be sent to, so keefast stopped before sending it there"
+    )]
+    RedirectNotAllowed { reference: String, host: String },
+    #[error(
+        "{host} is at {address}, a private, loopback or link-local address, which keefast sends \
+         secrets to only for a host the Entry's allowed hosts name exactly"
+    )]
+    PrivateAddress { host: String, address: String },
+    #[error("the request was redirected more than {0} times")]
+    TooManyRedirects(usize),
+    #[error("the request failed: {0}")]
+    HttpFailed(String),
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name
@@ -190,6 +236,68 @@ pub struct AgentSession {
     pairing: AgentPairingId,
     audit: Arc<dyn AuditSink>,
     approver: Arc<dyn Approver>,
+    transport: Arc<dyn HttpTransport>,
+}
+
+/// What a use is for: the program `keefast-agent run` starts, or the host an `http_request`
+/// goes to, with its method.
+enum UseFor<'a> {
+    Program(&'a str),
+    Http { method: &'a str, host: &'a str },
+}
+
+impl UseFor<'_> {
+    /// The program or host, as the Agent is told it.
+    fn name(&self) -> &str {
+        match self {
+            Self::Program(program) => program,
+            Self::Http { host, .. } => host,
+        }
+    }
+
+    fn agent_use(&self) -> AgentUse {
+        match self {
+            Self::Program(program) => AgentUse::Program((*program).to_owned()),
+            Self::Http { host, .. } => AgentUse::Host((*host).to_owned()),
+        }
+    }
+
+    /// `record`, as a record of this use.
+    fn audited(&self, mut record: AuditRecord) -> AuditRecord {
+        match self {
+            Self::Program(program) => {
+                record.action = "use".to_owned();
+                record.program = Some((*program).to_owned());
+            }
+            Self::Http { method, host } => {
+                record.action = "http_request".to_owned();
+                record.method = Some((*method).to_owned());
+                record.host = Some((*host).to_owned());
+            }
+        }
+        record
+    }
+}
+
+/// An Entry an `http_request` uses a secret of.
+struct UsedEntry {
+    id: EntryId,
+    uuid: String,
+    title: String,
+    /// The first Secret reference the request names it by.
+    reference: String,
+    allowed_hosts: Vec<String>,
+}
+
+/// An `http_request` with its placeholders filled in, from one look at the Vault.
+struct Prepared {
+    url: url::Url,
+    host: String,
+    headers: Vec<(String, Zeroizing<String>)>,
+    body: Option<Zeroizing<Vec<u8>>>,
+    /// Everything to redact from what comes back: the values, and the forms they were sent in.
+    secrets: Vec<Zeroizing<Vec<u8>>>,
+    used: Vec<UsedEntry>,
 }
 
 /// An Entry a use needs the Approver's answer for, as the first look at the Vault found it.
@@ -206,7 +314,14 @@ impl AgentSession {
             pairing,
             audit,
             approver: Arc::new(NoApprover),
+            transport: Arc::new(NetworkTransport),
         }
+    }
+
+    /// Sends `http_request`s through `transport` rather than the network.
+    pub fn with_transport(mut self, transport: Arc<dyn HttpTransport>) -> Self {
+        self.transport = transport;
+        self
     }
 
     /// Asks `approver` about uses no decision or policy answers.
@@ -232,6 +347,7 @@ impl AgentSession {
                 .read(|workspace, id| self.list_secrets(workspace, id))
                 .unwrap_or(Err(AgentError::Locked)),
             AgentRequest::UseSecrets(request) => self.use_secrets(vault, request),
+            AgentRequest::Http(request) => self.http_request(vault, request),
         }
     }
 
@@ -269,80 +385,7 @@ impl AgentSession {
         let (asking, first_time) = vault
             .read(|workspace, id| self.decide_use(workspace, id, &request, &program))
             .unwrap_or(Err(AgentError::Locked))?;
-        let mut remember = Vec::new();
-        for asking in asking {
-            let approval = self.approver.ask(&asking.prompt);
-            let (reason, refusal) = match approval {
-                Approval::Allow { remember: wants } => {
-                    if wants && asking.prompt.can_remember {
-                        remember.push((asking.entry, AgentDecision::Allow));
-                        ("allowed and remembered at a prompt", None)
-                    } else {
-                        ("allowed once at a prompt", None)
-                    }
-                }
-                Approval::Deny { remember: wants } => {
-                    if wants && asking.prompt.can_remember {
-                        remember.push((asking.entry, AgentDecision::Deny));
-                    }
-                    let reason = if wants && asking.prompt.can_remember {
-                        "denied and remembered at a prompt"
-                    } else {
-                        "denied once at a prompt"
-                    };
-                    (
-                        reason,
-                        Some(AgentError::Denied {
-                            reference: asking.prompt.reference.clone(),
-                            program: program.clone(),
-                        }),
-                    )
-                }
-                Approval::Unanswered => (
-                    "nobody answered the prompt in time",
-                    Some(AgentError::Unanswered {
-                        reference: asking.prompt.reference.clone(),
-                        program: program.clone(),
-                    }),
-                ),
-                Approval::NoApprover => (
-                    "no Approver to ask",
-                    Some(AgentError::NotAllowed {
-                        reference: asking.prompt.reference.clone(),
-                        program: program.clone(),
-                    }),
-                ),
-            };
-            let time = vault
-                .read(|workspace, _| workspace.now().unix_seconds())
-                .unwrap_or(first_time);
-            self.audit.record(AuditRecord {
-                time,
-                pairing: asking.prompt.pairing.clone(),
-                pairing_id: self.pairing.as_str().to_owned(),
-                action: "use".to_owned(),
-                entry: Some(AuditEntry {
-                    uuid: asking.prompt.entry_uuid.clone(),
-                    title: asking.prompt.entry_title.clone(),
-                }),
-                program: Some(program.clone()),
-                outcome: if refusal.is_some() {
-                    AuditOutcome::Denied
-                } else {
-                    AuditOutcome::Allowed
-                },
-                reason: Some(reason.to_owned()),
-            });
-            if let Some(refusal) = refusal {
-                if !remember.is_empty() {
-                    self.remember(vault, &program, &remember);
-                }
-                return Err(refusal);
-            }
-        }
-        if !remember.is_empty() {
-            self.remember(vault, &program, &remember);
-        }
+        self.ask(vault, asking, first_time, &UseFor::Program(&program))?;
         vault
             .read(|workspace, id| self.values(workspace, id, request))
             .unwrap_or(Err(AgentError::Locked))
@@ -379,7 +422,8 @@ impl AgentSession {
                 continue;
             }
             checked.push(entry.id());
-            let refused = match decide(&settings, entry.id(), pairing.id(), program) {
+            let agent_use = AgentUse::Program(program.to_owned());
+            let refused = match decide(&settings, entry.id(), pairing.id(), &agent_use) {
                 Outcome::Allow => false,
                 Outcome::Deny => true,
                 Outcome::Ask => {
@@ -392,6 +436,7 @@ impl AgentSession {
                             program: program.to_owned(),
                             command: request.command.clone(),
                             can_remember: !is_shell_or_interpreter(program),
+                            host: None,
                         },
                         entry: entry.id(),
                     });
@@ -403,12 +448,12 @@ impl AgentSession {
             } else {
                 AuditOutcome::Allowed
             };
-            let mut record = self.record(workspace, pairing, "use", outcome);
+            let mut record =
+                UseFor::Program(program).audited(self.record(workspace, pairing, "use", outcome));
             record.entry = Some(AuditEntry {
                 uuid: entry.id().to_hex(),
                 title: entry.title().to_owned(),
             });
-            record.program = Some(program.to_owned());
             record.reason = refused.then(|| "denied".to_owned());
             self.audit.record(record);
             if refused {
@@ -427,10 +472,9 @@ impl AgentSession {
     fn remember(
         &self,
         vault: &impl VaultAccess,
-        program: &str,
+        agent_use: &AgentUse,
         answers: &[(EntryId, AgentDecision)],
     ) {
-        let agent_use = AgentUse::Program(program.to_owned());
         vault.edit(|workspace, id| {
             for (entry, decision) in answers {
                 // Fails only for a revoked pairing or a deleted Entry, which the use then hears.
@@ -438,7 +482,7 @@ impl AgentSession {
                     id,
                     *entry,
                     &self.pairing,
-                    &agent_use,
+                    agent_use,
                     *decision,
                 );
             }
@@ -483,10 +527,501 @@ impl AgentSession {
             action: action.to_owned(),
             entry: None,
             program: None,
+            method: None,
+            host: None,
             outcome,
             reason: None,
         }
     }
+
+    /// Asks the Approver about each Entry in `asking`, auditing each answer, and remembers the
+    /// answers the user asked to. The first refusal ends it.
+    fn ask(
+        &self,
+        vault: &impl VaultAccess,
+        asking: Vec<Asking>,
+        first_time: i64,
+        used_for: &UseFor<'_>,
+    ) -> Result<(), AgentError> {
+        let name = used_for.name().to_owned();
+        let mut remember = Vec::new();
+        let mut refused = None;
+        for asking in asking {
+            let reference = asking.prompt.reference.clone();
+            let can_remember = asking.prompt.can_remember;
+            let (reason, refusal) = match self.approver.ask(&asking.prompt) {
+                Approval::Allow { remember: wants } => {
+                    if wants && can_remember {
+                        remember.push((asking.entry, AgentDecision::Allow));
+                        ("allowed and remembered at a prompt", None)
+                    } else {
+                        ("allowed once at a prompt", None)
+                    }
+                }
+                Approval::Deny { remember: wants } => {
+                    let reason = if wants && can_remember {
+                        remember.push((asking.entry, AgentDecision::Deny));
+                        "denied and remembered at a prompt"
+                    } else {
+                        "denied once at a prompt"
+                    };
+                    let program = name.clone();
+                    (reason, Some(AgentError::Denied { reference, program }))
+                }
+                Approval::Unanswered => (
+                    "nobody answered the prompt in time",
+                    Some(AgentError::Unanswered {
+                        reference,
+                        program: name.clone(),
+                    }),
+                ),
+                Approval::NoApprover => (
+                    "no Approver to ask",
+                    Some(AgentError::NotAllowed {
+                        reference,
+                        program: name.clone(),
+                    }),
+                ),
+            };
+            let time = vault
+                .read(|workspace, _| workspace.now().unix_seconds())
+                .unwrap_or(first_time);
+            self.audit.record(used_for.audited(AuditRecord {
+                time,
+                pairing: asking.prompt.pairing.clone(),
+                pairing_id: self.pairing.as_str().to_owned(),
+                action: String::new(),
+                entry: Some(AuditEntry {
+                    uuid: asking.prompt.entry_uuid.clone(),
+                    title: asking.prompt.entry_title.clone(),
+                }),
+                program: None,
+                method: None,
+                host: None,
+                outcome: if refusal.is_some() {
+                    AuditOutcome::Denied
+                } else {
+                    AuditOutcome::Allowed
+                },
+                reason: Some(reason.to_owned()),
+            }));
+            if refusal.is_some() {
+                refused = refusal;
+                break;
+            }
+        }
+        if !remember.is_empty() {
+            self.remember(vault, &used_for.agent_use(), &remember);
+        }
+        refused.map_or(Ok(()), Err)
+    }
+}
+
+/// `http_request`: decided like a use, keyed on the host, then sent hop by hop, each hop's host
+/// checked against every used Entry's allowed hosts and its addresses against private ranges.
+impl AgentSession {
+    fn http_request(
+        &self,
+        vault: &impl VaultAccess,
+        request: HttpRequest,
+    ) -> Result<AgentReply, AgentError> {
+        let template = Template::check(request)?;
+        let (asking, first_time, host) = vault
+            .read(|workspace, id| self.decide_http(workspace, id, &template))
+            .unwrap_or(Err(AgentError::Locked))?;
+        let used_for = UseFor::Http {
+            method: &template.method,
+            host: &host,
+        };
+        self.ask(vault, asking, first_time, &used_for)?;
+        // The values are read afresh: the Vault may have changed while the user was asked.
+        let prepared = vault
+            .read(|workspace, id| {
+                let (prepared, pairing) = self.prepare(workspace, id, &template)?;
+                self.check_first_host(workspace, &pairing, &prepared, &template.method)?;
+                Ok::<_, AgentError>(prepared)
+            })
+            .unwrap_or(Err(AgentError::Locked))?;
+        self.send(vault, &template.method, prepared)
+            .map(AgentReply::Http)
+    }
+
+    /// Checks the request's host against each used Entry's allowed hosts, then its decisions
+    /// and the Default agent policy, auditing what they answer, and returns the Entries the
+    /// Approver must be asked about, the time, and the host.
+    fn decide_http(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+        template: &Template,
+    ) -> Result<(Vec<Asking>, i64, String), AgentError> {
+        let (prepared, pairing) = self.prepare(workspace, id, template)?;
+        self.check_first_host(workspace, &pairing, &prepared, &template.method)?;
+        let vault = workspace
+            .readable_vault(id)
+            .ok_or(AgentError::Locked)?
+            .vault();
+        let settings = AgentSettings::of(vault);
+        let host = prepared.host.clone();
+        let used_for = UseFor::Http {
+            method: &template.method,
+            host: &host,
+        };
+        let agent_use = used_for.agent_use();
+        let mut asking = Vec::new();
+        for used in &prepared.used {
+            let refused = match decide(&settings, used.id, pairing.id(), &agent_use) {
+                Outcome::Allow => false,
+                Outcome::Deny => true,
+                Outcome::Ask => {
+                    asking.push(Asking {
+                        prompt: AgentPrompt {
+                            pairing: pairing.name().to_owned(),
+                            entry_uuid: used.uuid.clone(),
+                            entry_title: used.title.clone(),
+                            reference: used.reference.clone(),
+                            program: host.clone(),
+                            command: vec![template.method.clone(), template.request.url.clone()],
+                            can_remember: true,
+                            host: Some(host.clone()),
+                        },
+                        entry: used.id,
+                    });
+                    continue;
+                }
+            };
+            let outcome = if refused {
+                AuditOutcome::Denied
+            } else {
+                AuditOutcome::Allowed
+            };
+            let mut record = used_for.audited(self.record(workspace, &pairing, "", outcome));
+            record.entry = Some(AuditEntry {
+                uuid: used.uuid.clone(),
+                title: used.title.clone(),
+            });
+            record.reason = refused.then(|| "denied".to_owned());
+            self.audit.record(record);
+            if refused {
+                return Err(AgentError::Denied {
+                    reference: used.reference.clone(),
+                    program: host,
+                });
+            }
+        }
+        Ok((asking, workspace.now().unix_seconds(), host))
+    }
+
+    /// Refuses the request if a used Entry doesn't allow its first host, auditing it.
+    fn check_first_host(
+        &self,
+        workspace: &Workspace,
+        pairing: &AgentPairing,
+        prepared: &Prepared,
+        method: &str,
+    ) -> Result<(), AgentError> {
+        let Some(used) = prepared
+            .used
+            .iter()
+            .find(|used| allows(&used.allowed_hosts, &prepared.host).is_none())
+        else {
+            return Ok(());
+        };
+        let host = redact(&prepared.secrets, &prepared.host);
+        let used_for = UseFor::Http {
+            method,
+            host: &host,
+        };
+        let mut record =
+            used_for.audited(self.record(workspace, pairing, "", AuditOutcome::Denied));
+        record.entry = Some(AuditEntry {
+            uuid: used.uuid.clone(),
+            title: used.title.clone(),
+        });
+        record.reason = Some("not one of the Entry's allowed hosts".to_owned());
+        self.audit.record(record);
+        Err(AgentError::HostNotAllowed {
+            reference: used.reference.clone(),
+            host,
+        })
+    }
+
+    /// The request with its placeholders filled in from the Entries the pairing reads now.
+    fn prepare(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+        template: &Template,
+    ) -> Result<(Prepared, AgentPairing), AgentError> {
+        let bad = |message: &str| AgentError::BadHttpRequest(message.to_owned());
+        let vault = workspace
+            .readable_vault(id)
+            .ok_or(AgentError::Locked)?
+            .vault();
+        let settings = AgentSettings::of(vault);
+        let pairing = settings
+            .pairing(&self.pairing)
+            .ok_or(AgentError::NotPaired)?;
+        let readable = readable_entries(vault, &settings, pairing);
+        let mut values: HashMap<&str, Zeroizing<String>> = HashMap::new();
+        let mut used: Vec<UsedEntry> = Vec::new();
+        for reference in &template.references {
+            let (entry, value) = resolve(&readable, reference)?;
+            values.insert(reference, value);
+            if !used.iter().any(|known| known.id == entry.id()) {
+                used.push(UsedEntry {
+                    id: entry.id(),
+                    uuid: entry.id().to_hex(),
+                    title: entry.title().to_owned(),
+                    reference: reference.clone(),
+                    allowed_hosts: settings.allowed_hosts(entry.id()).to_vec(),
+                });
+            }
+        }
+        let value = |reference: &str| values.get(reference).cloned();
+        let mut secrets: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+        for value in values.values() {
+            secrets.push(Zeroizing::new(value.as_bytes().to_vec()));
+            let encoded = percent_encode(value);
+            if encoded.as_str() != value.as_str() {
+                secrets.push(Zeroizing::new(encoded.as_bytes().to_vec()));
+            }
+        }
+        let request = &template.request;
+        let url = expand(&request.url, &value, true);
+        let url = url::Url::parse(&url).map_err(|_| bad("the URL isn't one"))?;
+        if !matches!(url.scheme(), "https" | "http") {
+            return Err(bad("keefast sends only https requests"));
+        }
+        let host = url_host(&url).ok_or_else(|| bad("the URL has no host"))?;
+        let mut headers: Vec<(String, Zeroizing<String>)> = request
+            .headers
+            .iter()
+            .map(|(name, text)| (name.clone(), expand(text, &value, false)))
+            .collect();
+        if let Some(auth) = &request.basic_auth {
+            let header = basic_auth(
+                &expand(&auth.username, &value, false),
+                &expand(&auth.password, &value, false),
+            );
+            // What a server echoing the header back would show.
+            if let Some(encoded) = header.strip_prefix("Basic ") {
+                secrets.push(Zeroizing::new(encoded.as_bytes().to_vec()));
+            }
+            headers.push(("Authorization".to_owned(), header));
+        }
+        if headers
+            .iter()
+            .any(|(_, value)| value.contains(['\r', '\n']))
+        {
+            return Err(bad("a header's value can't have a line break in it"));
+        }
+        let body = match &request.body {
+            Some(text) => {
+                let body = expand(text, &value, false);
+                if body.len() > MAX_REQUEST_BODY {
+                    return Err(AgentError::BadHttpRequest(format!(
+                        "the body may be at most {MAX_REQUEST_BODY} bytes, with its secrets"
+                    )));
+                }
+                Some(Zeroizing::new(body.as_bytes().to_vec()))
+            }
+            None => None,
+        };
+        Ok((
+            Prepared {
+                url,
+                host,
+                headers,
+                body,
+                secrets,
+                used,
+            },
+            pairing.clone(),
+        ))
+    }
+
+    /// Sends the request, following redirects by hand so that each hop's host and addresses
+    /// are checked before the secrets go there, and redacts the response.
+    fn send(
+        &self,
+        vault: &impl VaultAccess,
+        first_method: &str,
+        prepared: Prepared,
+    ) -> Result<HttpResponse, AgentError> {
+        let Prepared {
+            mut url,
+            mut host,
+            headers,
+            mut body,
+            secrets,
+            used,
+        } = prepared;
+        let mut method = first_method.to_owned();
+        let mut redirects = 0;
+        let response = loop {
+            let mut by_name = true;
+            for entry in &used {
+                match allows(&entry.allowed_hosts, &host) {
+                    Some(Allowed::ByName) => {}
+                    Some(Allowed::ByWildcard) => by_name = false,
+                    None => {
+                        let host = redact(&secrets, &host);
+                        self.refused(
+                            vault,
+                            entry,
+                            &method,
+                            &host,
+                            "redirected to a host the Entry doesn't allow",
+                        );
+                        return Err(AgentError::RedirectNotAllowed {
+                            reference: entry.reference.clone(),
+                            host,
+                        });
+                    }
+                }
+            }
+            let addresses: Vec<IpAddr> = match url.host() {
+                Some(url::Host::Ipv4(v4)) => vec![IpAddr::V4(v4)],
+                Some(url::Host::Ipv6(v6)) => vec![IpAddr::V6(v6)],
+                Some(url::Host::Domain(domain)) => {
+                    let port = url.port_or_known_default().unwrap_or(443);
+                    self.transport
+                        .resolve(domain, port)
+                        .map_err(|error| AgentError::HttpFailed(redact(&secrets, &error)))?
+                }
+                None => return Err(AgentError::BadHttpRequest("the URL has no host".to_owned())),
+            };
+            if addresses.is_empty() {
+                return Err(AgentError::HttpFailed(format!("{host} has no address")));
+            }
+            let private = addresses
+                .iter()
+                .find(|address| is_private_address(**address));
+            if let Some(address) = private
+                && !by_name
+            {
+                let host = redact(&secrets, &host);
+                for entry in &used {
+                    self.refused(vault, entry, &method, &host, "at a private address");
+                }
+                return Err(AgentError::PrivateAddress {
+                    host,
+                    address: address.to_string(),
+                });
+            }
+            if url.scheme() == "http" && !addresses.iter().all(|a| is_private_address(*a)) {
+                let host = redact(&secrets, &host);
+                for entry in &used {
+                    self.refused(
+                        vault,
+                        entry,
+                        &method,
+                        &host,
+                        "plain http to a public address",
+                    );
+                }
+                return Err(AgentError::BadHttpRequest(format!(
+                    "{host} is a public address, which keefast sends secrets to only over https"
+                )));
+            }
+            let hop = Hop {
+                method: &method,
+                url: &url,
+                addresses: &addresses,
+                headers: &headers,
+                body: body.as_deref().map(Vec::as_slice),
+            };
+            let response = self
+                .transport
+                .send(&hop)
+                .map_err(|error| AgentError::HttpFailed(redact(&secrets, &error)))?;
+            let location = response
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("location"))
+                .map(|(_, value)| value.clone());
+            let (true, Some(location)) = (is_redirect(response.status), location) else {
+                break response;
+            };
+            redirects += 1;
+            if redirects > MAX_REDIRECTS {
+                return Err(AgentError::TooManyRedirects(MAX_REDIRECTS));
+            }
+            url = url.join(&location).map_err(|_| {
+                AgentError::HttpFailed(
+                    "the server redirected to something that isn't a URL".to_owned(),
+                )
+            })?;
+            if !matches!(url.scheme(), "https" | "http") {
+                return Err(AgentError::HttpFailed(
+                    "the server redirected to something other than http or https".to_owned(),
+                ));
+            }
+            host = url_host(&url).ok_or_else(|| {
+                AgentError::HttpFailed("the server redirected to a URL without a host".to_owned())
+            })?;
+            // As browsers do: a 303, and a 301 or 302 after a POST, go on as a GET.
+            if (response.status == 303 && method != "HEAD")
+                || (matches!(response.status, 301 | 302) && method == "POST")
+            {
+                method = "GET".to_owned();
+                body = None;
+            }
+        };
+        let mut redactor = Redactor::new(secrets.clone());
+        let mut redacted = redactor.push(&response.body);
+        // A body cut off may end in the start of a secret, which must not be passed on.
+        if !response.truncated {
+            redacted.extend(redactor.finish());
+        }
+        let (body, body_encoding) = body_text(redacted);
+        Ok(HttpResponse {
+            status: response.status,
+            url: redact(&secrets, url.as_str()),
+            headers: response
+                .headers
+                .iter()
+                .map(|(name, value)| (name.clone(), redact(&secrets, value)))
+                .collect(),
+            body,
+            body_encoding: body_encoding.to_owned(),
+            truncated: response.truncated,
+        })
+    }
+
+    /// Audits a hop refused after the use was allowed.
+    fn refused(
+        &self,
+        vault: &impl VaultAccess,
+        entry: &UsedEntry,
+        method: &str,
+        host: &str,
+        reason: &str,
+    ) {
+        let Some(Some(pairing)) = vault.read(|workspace, id| {
+            let settings = workspace.agent_settings(id)?;
+            let pairing = settings.pairing(&self.pairing)?.clone();
+            Some(self.record(workspace, &pairing, "", AuditOutcome::Denied))
+        }) else {
+            return;
+        };
+        let mut record = UseFor::Http { method, host }.audited(pairing);
+        record.entry = Some(AuditEntry {
+            uuid: entry.uuid.clone(),
+            title: entry.title.clone(),
+        });
+        record.reason = Some(reason.to_owned());
+        self.audit.record(record);
+    }
+}
+
+/// `text` with every secret in `secrets` replaced.
+fn redact(secrets: &[Zeroizing<Vec<u8>>], text: &str) -> String {
+    let mut redactor = Redactor::new(secrets.to_vec());
+    let mut out = redactor.push(text.as_bytes());
+    out.extend(redactor.finish());
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 enum Outcome {
@@ -495,23 +1030,25 @@ enum Outcome {
     Ask,
 }
 
-/// What the Vault answers `pairing` using `entry` with `program`: its Agent access decision, or
+/// What the Vault answers `pairing` using `entry` with a program or host: its Agent access decision, or
 /// else its Default agent policy. Shells and interpreters ask every time, whatever was
 /// remembered or the policy allows, unless the policy denies everything.
 fn decide(
     settings: &AgentSettings,
     entry: EntryId,
     pairing: &AgentPairingId,
-    program: &str,
+    agent_use: &AgentUse,
 ) -> Outcome {
     let policy = settings.default_agent_policy();
-    if is_shell_or_interpreter(program) {
+    if let AgentUse::Program(program) = agent_use
+        && is_shell_or_interpreter(program)
+    {
         return match policy {
             DefaultAgentPolicy::Deny => Outcome::Deny,
             _ => Outcome::Ask,
         };
     }
-    match settings.decision(entry, pairing, &AgentUse::Program(program.to_owned())) {
+    match settings.decision(entry, pairing, agent_use) {
         Some(AgentDecision::Allow) => Outcome::Allow,
         Some(AgentDecision::Deny) => Outcome::Deny,
         None => match policy {

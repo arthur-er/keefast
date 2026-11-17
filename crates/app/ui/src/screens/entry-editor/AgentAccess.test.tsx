@@ -8,22 +8,35 @@ import type { AgentDecisionView, EntryDetail } from "@/bindings";
 const vault = vi.hoisted(() => ({
   pairings: [] as { id: string; name: string; group: string; reads: string[] }[],
   decisions: [] as AgentDecisionView[],
+  allowedHosts: [] as string[],
   toasts: [] as string[],
 }));
 
 vi.mock("@/api", () => ({
   errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
   api: {
-    getEntryAgentAccess: vi.fn(async () => ({ pairings: vault.pairings, decisions: [...vault.decisions] })),
-    rememberAgentDecision: vi.fn(async (_vault: number, _entry: string, pairing: string, program: string, allow: boolean) => {
-      if (program === "bash") throw new Error("bash is a shell or interpreter, which can run anything");
-      vault.decisions = vault.decisions.filter((d) => !(d.pairing === pairing && d.program === program));
-      vault.decisions.push({ pairing, pairingName: "claude", program, allow });
+    getEntryAgentAccess: vi.fn(async () => ({
+      pairings: vault.pairings,
+      decisions: [...vault.decisions],
+      allowedHosts: [...vault.allowedHosts],
+    })),
+    rememberAgentDecision: vi.fn(
+      async (_vault: number, _entry: string, pairing: string, kind: "program" | "host", name: string, allow: boolean) => {
+        if (name === "bash") throw new Error("bash is a shell or interpreter, which can run anything");
+        vault.decisions = vault.decisions.filter((d) => !(d.pairing === pairing && d.kind === kind && d.name === name));
+        vault.decisions.push({ pairing, pairingName: "claude", kind, name, allow });
+        return null;
+      },
+    ),
+    forgetAgentDecision: vi.fn(async (_vault: number, _entry: string, pairing: string, kind: string, name: string) => {
+      vault.decisions = vault.decisions.filter((d) => !(d.pairing === pairing && d.kind === kind && d.name === name));
       return null;
     }),
-    forgetAgentDecision: vi.fn(async (_vault: number, _entry: string, pairing: string, program: string) => {
-      vault.decisions = vault.decisions.filter((d) => !(d.pairing === pairing && d.program === program));
-      return null;
+    setEntryAllowedHosts: vi.fn(async (_vault: number, _entry: string, hosts: string[]) => {
+      const bad = hosts.find((host) => host.includes(":"));
+      if (bad) throw new Error(`${bad} isn't a host`);
+      vault.allowedHosts = hosts.map((host) => host.toLowerCase());
+      return vault.allowedHosts;
     }),
   },
 }));
@@ -50,6 +63,7 @@ function show(shown: EntryDetail | null = entry) {
 beforeEach(() => {
   vault.pairings = [claude];
   vault.decisions = [];
+  vault.allowedHosts = [];
   vault.toasts = [];
 });
 
@@ -57,6 +71,7 @@ afterEach(() => {
   cleanup();
   vi.mocked(api.rememberAgentDecision).mockClear();
   vi.mocked(api.forgetAgentDecision).mockClear();
+  vi.mocked(api.setEntryAllowedHosts).mockClear();
 });
 
 describe("The Entry editor's Agents section", () => {
@@ -69,21 +84,21 @@ describe("The Entry editor's Agents section", () => {
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
 
     expect(await screen.findByText("Allowed")).toBeTruthy();
-    expect(api.rememberAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "gh", true);
+    expect(api.rememberAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "program", "gh", true);
     expect(screen.getByText("gh")).toBeTruthy();
   });
 
   it("turns an allowed program into a denied one, and forgets it", async () => {
-    vault.decisions = [{ pairing: "p1", pairingName: "claude", program: "gh", allow: true }];
+    vault.decisions = [{ pairing: "p1", pairingName: "claude", kind: "program", name: "gh", allow: true }];
     show();
 
     fireEvent.click(await screen.findByRole("button", { name: "Deny" }));
     expect(await screen.findByText("Denied")).toBeTruthy();
-    expect(api.rememberAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "gh", false);
+    expect(api.rememberAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "program", "gh", false);
 
     fireEvent.click(screen.getByRole("button", { name: "Forget" }));
     await waitFor(() => expect(screen.queryByText("Denied")).toBeNull());
-    expect(api.forgetAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "gh");
+    expect(api.forgetAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "program", "gh");
   });
 
   it("shows why a shell can't be remembered and keeps the form open", async () => {
@@ -95,6 +110,49 @@ describe("The Entry editor's Agents section", () => {
 
     await waitFor(() => expect(vault.toasts).toEqual(["bash is a shell or interpreter, which can run anything"]));
     expect(screen.getByLabelText("Program")).toBeTruthy();
+  });
+
+  it("adds and removes the hosts http_request may send the Entry's secrets to", async () => {
+    show();
+
+    expect(await screen.findByText(/No host yet/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Allowed host"), { target: { value: "API.GitHub.com" } });
+    fireEvent.keyDown(screen.getByLabelText("Allowed host"), { key: "Enter" });
+    expect(await screen.findByText("api.github.com")).toBeTruthy();
+    expect(api.setEntryAllowedHosts).toHaveBeenLastCalledWith(1, "e1", ["API.GitHub.com"]);
+
+    fireEvent.change(screen.getByLabelText("Allowed host"), { target: { value: "uploads.github.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByText("uploads.github.com")).toBeTruthy();
+    expect(api.setEntryAllowedHosts).toHaveBeenLastCalledWith(1, "e1", ["api.github.com", "uploads.github.com"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove api.github.com" }));
+    await waitFor(() => expect(screen.queryByText("api.github.com")).toBeNull());
+    expect(api.setEntryAllowedHosts).toHaveBeenLastCalledWith(1, "e1", ["uploads.github.com"]);
+  });
+
+  it("keeps a host that isn't one in the field and says why", async () => {
+    show();
+
+    fireEvent.change(await screen.findByLabelText("Allowed host"), { target: { value: "api.github.com:443" } });
+    fireEvent.keyDown(screen.getByLabelText("Allowed host"), { key: "Enter" });
+
+    await waitFor(() => expect(vault.toasts).toEqual(["api.github.com:443 isn't a host"]));
+    expect((screen.getByLabelText("Allowed host") as HTMLInputElement).value).toBe("api.github.com:443");
+  });
+
+  it("allows a host ahead of time, and shows it apart from programs", async () => {
+    vault.decisions = [{ pairing: "p1", pairingName: "claude", kind: "program", name: "gh", allow: true }];
+    show();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Host" }));
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "api.github.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(await screen.findByText("api.github.com")).toBeTruthy();
+    expect(api.rememberAgentDecision).toHaveBeenCalledWith(1, "e1", "p1", "host", "api.github.com", true);
+    expect(screen.getByText("at")).toBeTruthy();
+    expect(screen.getByText("with")).toBeTruthy();
   });
 
   it("isn't shown for an Entry no Agent can use, or a new Entry", async () => {

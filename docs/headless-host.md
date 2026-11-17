@@ -154,6 +154,33 @@ be allowed ahead of time in the desktop app: open the Entry, and under **Agents*
 for the pairing. The decision is saved in the Vault, and the host picks it up when it Merges the
 Vault file.
 
+## Using a secret in an HTTP request
+
+An Agent with only MCP calls the `http_request` tool. It gives the method, the URL, headers, a
+body and basic auth, with `{{secret:<Secret reference>}}` where a value goes:
+
+```json
+{
+  "method": "GET",
+  "url": "https://api.github.com/user",
+  "headers": { "Authorization": "Bearer {{secret:GitHub/token#password}}" }
+}
+```
+
+The host sends the request itself and returns the status, headers and body, with every value it
+put in replaced by `[redacted by keefast]`. Placeholders may go in the URL's path and query,
+header values, the body and basic auth, but not the URL's host.
+
+A secret goes only to its Entry's **allowed hosts**, which start empty: in the desktop app, open
+the Entry and add them under **Agents → Allowed hosts** (`api.github.com`, or `*.github.com` for
+its subdomains). Every redirect is checked against them again before it is followed. Requests to
+private, loopback and link-local addresses are refused, after DNS and on every redirect, unless
+the Entry names that host exactly; plain `http` is allowed only to such a host. Requests are
+checked against Agent access decisions by host (`api.github.com`), and asked about like a
+program. Limits: 1 MiB request and response bodies (a longer response is cut off and says so),
+five redirects, 30 seconds a hop. The host makes these requests from its own network, so a
+firewall in front of it applies.
+
 ## Approvers
 
 An Approver is a desktop keefast paired with the host, which shows its prompts: the pairing, the
@@ -191,8 +218,8 @@ keeps showing prompts, which it can no longer answer, until it reconnects (withi
 
 ## The audit log
 
-Every list and use is recorded, with the time, the pairing, the Entry, the program and whether
-it was allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
+Every list and use is recorded, with the time, the pairing, the Entry, the program (or an HTTP
+request's method and host) and whether it was allowed, never a value, in `audit.log` in the state directory (`--state-dir`). It is
 append-only, readable only by the host's user, and rotated at 4 MiB, keeping four older files
 (`audit.log.1` … `audit.log.4`). Read it over the admin socket:
 

@@ -384,13 +384,18 @@ export const commands = {
 	revokeAgentPairing: (vault: VaultId, pairing: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_agent_pairing", { vault, pairing })),
 	getEntryAgentAccess: (vault: VaultId, entry: EntryId) => typedError<EntryAgentAccess, ApiError>(__TAURI_INVOKE("get_entry_agent_access", { vault, entry })),
 	/**
-	 *  Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with
-	 *  `program`, by its executable's name. Shells and interpreters are refused: they ask every
-	 *  time.
+	 *  Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with a
+	 *  program, by its executable's name, or at a host. Shells and interpreters are refused: they
+	 *  ask every time.
 	 */
-	rememberAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string, allow: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("remember_agent_decision", { vault, entry, pairing, program, allow })),
+	rememberAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, kind: AgentUseKind, name: string, allow: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("remember_agent_decision", { vault, entry, pairing, kind, name, allow })),
 	/**  Forgets a remembered decision, so the use follows the Default agent policy again. */
-	forgetAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, program: string) => typedError<null, ApiError>(__TAURI_INVOKE("forget_agent_decision", { vault, entry, pairing, program })),
+	forgetAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, kind: AgentUseKind, name: string) => typedError<null, ApiError>(__TAURI_INVOKE("forget_agent_decision", { vault, entry, pairing, kind, name })),
+	/**
+	 *  Sets the hosts `http_request` may send the Entry's secrets to, and returns them as kept:
+	 *  lower case, without schemes or paths, without repeats. Refused whole if one isn't a host.
+	 */
+	setEntryAllowedHosts: (vault: VaultId, entry: EntryId, hosts: string[]) => typedError<string[], ApiError>(__TAURI_INVOKE("set_entry_allowed_hosts", { vault, entry, hosts })),
 	getAgentHosts: () => typedError<AgentHostView[], ApiError>(__TAURI_INVOKE("get_agent_hosts")),
 	/**
 	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
@@ -477,12 +482,16 @@ export type AddedAttachments = {
 	errors: string[],
 };
 
-/**  A remembered Agent access decision: an Agent pairing using an Entry with a program. */
+/**
+ *  A remembered Agent access decision: an Agent pairing using an Entry with a program, or at
+ *  a host.
+ */
 export type AgentDecisionView = {
 	pairing: string,
 	pairingName: string,
-	/**  The program's executable name, such as `gh`. */
-	program: string,
+	kind: AgentUseKind,
+	/**  The program's executable name, such as `gh`, or the host, such as `api.github.com`. */
+	name: string,
 	allow: boolean,
 };
 
@@ -522,6 +531,13 @@ export type AgentSubgroup = {
 	id: GroupId,
 	name: string,
 };
+
+/**  What an Agent access decision is for. */
+export type AgentUseKind = 
+/**  A program `keefast-agent run` starts, by its executable's name. */
+"program" | 
+/**  A host an `http_request` goes to. */
+"host";
 
 /**
  *  A failed command. `message` is a whole sentence for the user; `detail` is the technical
@@ -731,11 +747,13 @@ export type EntryAgentAccess = {
 	 *  Empty when the Entry is outside the Agent group.
 	 */
 	pairings: AgentPairingView[],
-	/**
-	 *  Its remembered decisions, by pairing name, then program. Decisions for hosts
-	 *  (`http_request`) come later.
-	 */
+	/**  Its remembered decisions, by pairing name, then programs before hosts, then name. */
 	decisions: AgentDecisionView[],
+	/**
+	 *  The hosts `http_request` may send its secrets to, as kept: host names, IP addresses, or
+	 *  `*.` and a domain for its subdomains.
+	 */
+	allowedHosts: string[],
 };
 
 /**  Everything about an Entry the detail shows, except its secrets. */
@@ -1300,6 +1318,11 @@ export type PendingAgentPrompt = {
 	command: string[],
 	/**  Whether the answer may be remembered: never for shells and interpreters. */
 	canRemember: boolean,
+	/**
+	 *  For an `http_request`, the host it goes to; `command` is then its method and URL, with
+	 *  placeholders where the secrets go.
+	 */
+	httpHost: string | null,
 	/**  When the host denies it unanswered, in seconds since 1970 UTC. */
 	expires: number | null,
 	/**  How many prompts wait besides this one. */

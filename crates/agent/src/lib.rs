@@ -10,6 +10,8 @@ pub mod approver;
 pub mod approver_client;
 pub mod audit;
 pub mod host;
+pub mod hosts;
+pub mod http;
 pub mod installed;
 pub mod listen;
 pub mod oauth;

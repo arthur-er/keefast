@@ -13,6 +13,8 @@ fn record(n: i64) -> AuditRecord {
             uuid: "00112233445566778899aabbccddeeff".to_owned(),
             title: "GitHub".to_owned(),
         }),
+        method: None,
+        host: None,
         program: Some("gh".to_owned()),
         outcome: AuditOutcome::Allowed,
         reason: None,

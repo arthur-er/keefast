@@ -652,6 +652,7 @@ fn a_use_that_would_ask_prompts_the_approver_with_the_pairing_the_entry_and_the_
             program: "gh".to_owned(),
             command: vec!["/usr/bin/gh".to_owned(), "pr".to_owned(), "list".to_owned()],
             can_remember: true,
+            host: None,
         }]
     );
 }
