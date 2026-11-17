@@ -198,6 +198,7 @@ mod operator {
     use keefast_agent::admin::{
         self, AdminGroup, AdminReply, AdminRequest, AdminSocket, PairingCreate, PairingSummary,
     };
+    use keefast_agent::audit::parse_log_size;
     use keefast_agent::host::{
         HeadlessHost, HostConfig, HostState, PairingChoice, UnattendedUnlock, describe,
         parse_location,
@@ -205,7 +206,6 @@ mod operator {
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_agent::oauth::OAuthServer;
     use keefast_agent::serve::McpEndpoint;
-    use keefast_agent::audit::parse_log_size;
     use keefast_agent::{ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord};
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,

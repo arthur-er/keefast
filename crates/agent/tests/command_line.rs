@@ -220,7 +220,11 @@ fn serve_refuses_an_audit_log_retention_it_cannot_read() {
     ] {
         let refused = serve_with(&file, &["--listen", "127.0.0.1:0", flag, value]);
 
-        assert!(!refused.status.success(), "{flag} {value}: {}", text(&refused));
+        assert!(
+            !refused.status.success(),
+            "{flag} {value}: {}",
+            text(&refused)
+        );
         assert!(text(&refused).contains(flag), "{}", text(&refused));
     }
 }

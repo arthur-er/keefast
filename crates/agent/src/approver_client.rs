@@ -15,9 +15,11 @@ use std::time::{Duration, Instant};
 
 use zeroize::Zeroizing;
 
+use crate::audit::AuditRecord;
+
 use crate::approver::{
-    APPROVER_CONSENTS_PATH, APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, AgentPrompt,
-    ApproverAnswer, ApproverEvent, ConsentAnswer, ConsentPrompt,
+    APPROVER_ACTIVITY_PATH, APPROVER_CONSENTS_PATH, APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH,
+    AgentPrompt, ApproverAnswer, ApproverEvent, ConsentAnswer, ConsentPrompt,
 };
 
 /// A Headless host an Approver is paired with.
@@ -183,6 +185,54 @@ pub fn answer_consent(
                 ))),
             }
         }
+    }
+}
+
+/// Why the Activity couldn't be read.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActivityError {
+    #[error("the Agent host refused this Approver's token: pair it again")]
+    Unpaired,
+    #[error("the Agent host can't be reached: {0}")]
+    Unreachable(String),
+}
+
+/// The latest `lines` records of `host`'s audit log, oldest first: what its Agents did.
+pub fn agent_activity(host: &AgentHost, lines: usize) -> Result<Vec<AuditRecord>, ActivityError> {
+    #[derive(serde::Deserialize)]
+    struct Activity {
+        records: Vec<AuditRecord>,
+    }
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build(),
+    );
+    let url = format!("{}{APPROVER_ACTIVITY_PATH}?lines={lines}", host.base());
+    let mut response = agent
+        .get(&url)
+        .header("Authorization", &host.authorization())
+        .call()
+        .map_err(|error| ActivityError::Unreachable(error.to_string()))?;
+    match response.status().as_u16() {
+        200 => response
+            .body_mut()
+            .with_config()
+            .limit(64 << 20)
+            .read_to_string()
+            .map_err(|error| error.to_string())
+            .and_then(|body| {
+                serde_json::from_str::<Activity>(&body).map_err(|error| error.to_string())
+            })
+            .map(|activity| activity.records)
+            .map_err(ActivityError::Unreachable),
+        401 => Err(ActivityError::Unpaired),
+        // A host from before the Activity view.
+        404 => Err(ActivityError::Unreachable(
+            "it has no Activity: update keefast-agent on the host".to_owned(),
+        )),
+        status => Err(ActivityError::Unreachable(format!("it answered {status}"))),
     }
 }
 

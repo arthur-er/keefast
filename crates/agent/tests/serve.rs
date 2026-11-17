@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use keefast_agent::approver::ApproverAnswer;
 use keefast_agent::approver_client::{
-    AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent,
+    ActivityError, AgentHost, AnswerPromptError, ApproverClient, ApproverClientEvent,
+    agent_activity,
 };
 use keefast_agent::host::{HeadlessHost, HostConfig};
 use keefast_agent::listen::Listen;
@@ -1111,4 +1112,50 @@ async fn reveal_secret_of_an_unmarked_entry_is_refused_and_says_what_to_use_inst
     let said = text(&result);
     assert!(said.contains("Agents may reveal"), "{said}");
     assert!(!said.contains("secret-value"), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_paired_approver_reads_the_audit_log_even_while_locked_and_nobody_else_can() {
+    let served = Served::unlocked().await;
+    let laptop = served.pair_approver("laptop");
+    served
+        .use_secrets(&served.claude, &["claude/claude token#password"], "gh")
+        .await;
+    served.allow_claude_token("gh").await;
+    served
+        .use_secrets(&served.claude, &["claude/claude token#password"], "gh")
+        .await;
+    let host = |token: &str| AgentHost {
+        url: served.endpoint.url(),
+        token: zeroize::Zeroizing::new(token.to_owned()),
+    };
+
+    let all = tokio::task::block_in_place(|| agent_activity(&host(&laptop), 100)).unwrap();
+    let last = tokio::task::block_in_place(|| agent_activity(&host(&laptop), 1)).unwrap();
+    let locked = {
+        let locker = Arc::clone(&served.host);
+        tokio::task::spawn_blocking(move || locker.lock())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::task::block_in_place(|| agent_activity(&host(&laptop), 100)).unwrap()
+    };
+    let agent = tokio::task::block_in_place(|| agent_activity(&host(&served.claude), 100));
+
+    let outcomes: Vec<_> = all
+        .iter()
+        .map(|record| (record.action.as_str(), record.outcome))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("use", AuditOutcome::Denied),
+            ("use", AuditOutcome::Allowed)
+        ]
+    );
+    assert_eq!(all[1].pairing, "claude");
+    assert_eq!(all[1].entry.as_ref().unwrap().title, "claude token");
+    assert_eq!(last, all[1..]);
+    assert_eq!(locked, all);
+    assert_eq!(agent, Err(ActivityError::Unpaired));
 }

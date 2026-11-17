@@ -55,7 +55,10 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use crate::approver::{APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH, ApproverAnswer, ApproverEvent};
+use crate::approver::{
+    ACTIVITY_LINES, APPROVER_ACTIVITY_PATH, APPROVER_EVENTS_PATH, APPROVER_PROMPTS_PATH,
+    ApproverAnswer, ApproverEvent, MAX_ACTIVITY_LINES,
+};
 use crate::host::{HeadlessHost, TokenOwner};
 use crate::http::{BasicAuth, HttpRequest};
 use crate::listen::{Listen, TlsFiles};
@@ -193,6 +196,7 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken, tls: bool) -> Router
     // connect while it is locked too.
     let approvers = Router::new()
         .route(APPROVER_EVENTS_PATH, get(approver_events))
+        .route(APPROVER_ACTIVITY_PATH, get(approver_activity))
         .route(
             &format!("{APPROVER_PROMPTS_PATH}/{{id}}"),
             post(answer_prompt),
@@ -234,6 +238,37 @@ async fn approver_events(State(host): State<Arc<HeadlessHost>>, headers: HeaderM
     Sse::new(events)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response()
+}
+
+/// The audit log's latest records, for a paired Approver's Activity view. It holds no values,
+/// so it is served while the Vault is locked too.
+async fn approver_activity(
+    State(host): State<Arc<HeadlessHost>>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    if approver(&host, &headers).is_none() {
+        return unauthorized_approver();
+    }
+    let lines = uri
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("lines=")?.parse::<usize>().ok())
+        .unwrap_or(ACTIVITY_LINES)
+        .min(MAX_ACTIVITY_LINES);
+    match tokio::task::spawn_blocking(move || host.audit_records(lines)).await {
+        Ok(Ok(records)) => {
+            let body = serde_json::json!({ "records": records }).to_string();
+            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+        }
+        Ok(Err(error)) => refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "log",
+            format!("the audit log can't be read: {error}"),
+        ),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Takes a paired Approver's answer to the prompt `id`: 204, or 409 if another Approver

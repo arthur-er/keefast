@@ -65,7 +65,9 @@ fn every_kind_of_request_is_in_the_log_with_its_decision_and_no_value_is() {
             },
         )
         .unwrap();
-    workspace.set_agents_may_reveal(vault, wallet, true).unwrap();
+    workspace
+        .set_agents_may_reveal(vault, wallet, true)
+        .unwrap();
 
     let log = file.audit_log();
     let audit: Arc<dyn AuditSink> = log.clone();
@@ -189,6 +191,9 @@ fn every_kind_of_request_is_in_the_log_with_its_decision_and_no_value_is() {
     assert_eq!(generated.chars().count(), 32);
     let written = std::fs::read_to_string(log.path()).unwrap();
     for value in [TOKEN, SEED, STORED, API_KEY, generated.as_str()] {
-        assert!(!written.contains(value), "{value} is in the log:\n{written}");
+        assert!(
+            !written.contains(value),
+            "{value} is in the log:\n{written}"
+        );
     }
 }

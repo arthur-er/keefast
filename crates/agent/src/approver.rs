@@ -30,6 +30,14 @@ pub const APPROVER_PROMPTS_PATH: &str = "/approver/prompts";
 /// `/approver/consents/<id>`.
 pub const APPROVER_CONSENTS_PATH: &str = "/approver/consents";
 
+/// Where an Approver reads the host's audit log, newest last, as `{"records": [...]}`:
+/// `/approver/activity?lines=<n>`, the last [`ACTIVITY_LINES`] records unless it says.
+pub const APPROVER_ACTIVITY_PATH: &str = "/approver/activity";
+/// How many records the Activity view reads unless it asks for more.
+pub const ACTIVITY_LINES: usize = 500;
+/// The most records one read of the Activity returns.
+pub const MAX_ACTIVITY_LINES: usize = 10_000;
+
 /// How long a prompt waits for an answer before the use is denied.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
