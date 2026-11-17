@@ -2881,6 +2881,7 @@ dependencies = [
  "auto-launch",
  "base64 0.23.1",
  "dirs 5.0.1",
+ "keefast-agent",
  "keefast-core",
  "keefast-native-host",
  "keefast-plugins",

@@ -18,6 +18,8 @@ tauri-build.workspace = true
 arboard.workspace = true
 base64.workspace = true
 dirs.workspace = true
+# Agent settings only: not the Headless host's MCP endpoint (its `serve` feature).
+keefast-agent.workspace = true
 keefast-core.workspace = true
 keefast-native-host.workspace = true
 keefast-plugins.workspace = true

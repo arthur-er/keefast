@@ -367,6 +367,21 @@ export const commands = {
 	 *  Vault any more. Ask the user first.
 	 */
 	revokePairing: (vault: VaultId, name: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_pairing", { vault, name })),
+	getAgentSettings: (vault: VaultId) => typedError<AgentSettingsView, ApiError>(__TAURI_INVOKE("get_agent_settings", { vault })),
+	/**  Makes the Group the Vault's Agent group: Agents reach only Entries in its subgroups. */
+	setAgentGroup: (vault: VaultId, group: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_group", { vault, group })),
+	/**
+	 *  Pairs an Agent called `name`, with its own subgroup of the Agent group by that name, which
+	 *  also reads the subgroups `reads`. The reply has its token, which no command returns again.
+	 */
+	createAgentPairing: (vault: VaultId, name: string, reads: GroupId[]) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_agent_pairing", { vault, name, reads })),
+	/**  Sets which other subgroups of the Agent group a pairing reads. */
+	setAgentPairingReads: (vault: VaultId, pairing: string, reads: GroupId[]) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_pairing_reads", { vault, pairing, reads })),
+	/**
+	 *  Revokes an Agent pairing: its token is refused from now on. Its subgroup and Entries stay.
+	 *  Ask the user first.
+	 */
+	revokeAgentPairing: (vault: VaultId, pairing: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_agent_pairing", { vault, pairing })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -432,6 +447,31 @@ export type AccessPolicy = "ask" | "alwaysAllow" | "alwaysDeny";
 export type AddedAttachments = {
 	added: string[],
 	errors: string[],
+};
+
+/**  An Agent pairing, without its token. */
+export type AgentPairingView = {
+	id: string,
+	name: string,
+	/**  Its own subgroup of the Agent group, which it always reads. */
+	group: GroupId,
+	/**  The other subgroups of the Agent group it reads. */
+	reads: GroupId[],
+};
+
+export type AgentSettingsView = {
+	agentGroup: GroupId | null,
+	agentGroupName: string | null,
+	/**  The Agent group's subgroups, in Vault file order. */
+	subgroups: AgentSubgroup[],
+	/**  The Agent pairings, without revoked ones, in the order they were made. */
+	pairings: AgentPairingView[],
+};
+
+/**  A subgroup of the Agent group: one pairing's own, and any others may read it. */
+export type AgentSubgroup = {
+	id: GroupId,
+	name: string,
 };
 
 /**
@@ -561,6 +601,12 @@ export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "
  *  one.
  */
 { kind: "customField"; name: string };
+
+/**  A pairing just created, with its bearer token: the only time anyone sees it. */
+export type CreatedAgentPairing = {
+	pairing: AgentPairingView,
+	token: string,
+};
 
 /**
  *  A custom field to give an Entry. A `value` of `None` keeps the value the field had at

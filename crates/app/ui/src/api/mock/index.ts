@@ -1454,6 +1454,57 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
+    getAgentSettings: command((id) => {
+      const v = vault(id);
+      const agentGroup = v.agentGroup ? v.groups.find((g) => g.id === v.agentGroup) : undefined;
+      return {
+        agentGroup: agentGroup?.id ?? null,
+        agentGroupName: agentGroup?.name ?? null,
+        subgroups: agentGroup ? v.groups.filter((g) => g.parent === agentGroup.id).map((g) => ({ id: g.id, name: g.name })) : [],
+        pairings: (v.agentPairings ?? []).map((p) => ({ ...p, reads: [...p.reads] })),
+      };
+    }),
+    setAgentGroup: command((id, groupId) => {
+      const v = vault(id);
+      group(v, groupId);
+      v.agentGroup = groupId;
+      edited(v);
+      return null;
+    }),
+    createAgentPairing: command((id, name, reads) => {
+      const v = vault(id);
+      const trimmed = name.trim();
+      if (!trimmed) throw new MockError("invalid", "Give this Agent a name.");
+      if (trimmed.includes("/")) throw new MockError("invalid", "An Agent's name can't have a / in it: it names its subgroup.");
+      if (!v.agentGroup) throw new MockError("invalid", "Choose the Agent group before pairing an Agent.");
+      const pairings = (v.agentPairings ??= []);
+      if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has an Agent with this name.");
+      let own = v.groups.find((g) => g.parent === v.agentGroup && g.name === trimmed);
+      if (!own) {
+        own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };
+        v.groups.push(own);
+      }
+      const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads] };
+      pairings.push(pairing);
+      edited(v);
+      const token = `kfa_${Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+      return { pairing: { ...pairing, reads: [...reads] }, token };
+    }),
+    setAgentPairingReads: command((id, pairingId, reads) => {
+      const v = vault(id);
+      const pairing = v.agentPairings?.find((p) => p.id === pairingId);
+      if (!pairing) throw new MockError("invalid", "This Agent pairing was revoked.");
+      pairing.reads = [...reads];
+      edited(v);
+      return null;
+    }),
+    revokeAgentPairing: command((id, pairingId) => {
+      const v = vault(id);
+      if (!v.agentPairings?.some((p) => p.id === pairingId)) throw new MockError("invalid", "This Agent pairing was revoked.");
+      v.agentPairings = v.agentPairings.filter((p) => p.id !== pairingId);
+      edited(v);
+      return null;
+    }),
     dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
       // "Allowed in the browser" after a few seconds, unless stopped first.
