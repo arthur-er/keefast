@@ -19,6 +19,7 @@
 //! keefast-agent pairing approvers [--admin-socket <path>]
 //! keefast-agent pairing revoke-approver <name> [--admin-socket <path>]
 //! keefast-agent log [--lines <n>] [--admin-socket <path>]
+//! keefast-agent mcp
 //! keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
 //! keefast-agent store <Secret reference>#<field> < value
 //! ```
@@ -31,12 +32,19 @@ const USAGE: &str = "\
 keefast-agent: serve a keefast Vault to Agents, and look after it
 
 usage:
+  keefast-agent mcp
+      An MCP server on standard input and output, for an Agent on the same machine as the
+      keefast desktop app: it relays the Agent's calls to the app, which must be running and
+      unlocked. Give it the Agent pairing's token in $KEEFAST_AGENT_TOKEN. Configure it in the
+      Agent, such as `claude mcp add keefast --env KEEFAST_AGENT_TOKEN=kfa_... --
+      keefast-agent mcp`.
+
   keefast-agent run --env NAME=<Secret reference>... -- <program> [args...]
       Runs <program> with the secrets the Secret references name in its environment, such as
       `run --env GH_TOKEN=GitHub/token#password -- gh auth status`, and redacts them from its
       output. It reaches keefast at $KEEFAST_AGENT_URL with the Agent pairing's token in
-      $KEEFAST_AGENT_TOKEN. It exits with the program's exit code, or 125 if keefast refused
-      or couldn't be reached.
+      $KEEFAST_AGENT_TOKEN; without $KEEFAST_AGENT_URL, the desktop app on this machine. It
+      exits with the program's exit code, or 125 if keefast refused or couldn't be reached.
 
   keefast-agent store <Secret reference>#<field>
       Saves the value on its input to that field of an Entry in the Agent pairing's own
@@ -117,6 +125,7 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
+        Some("mcp") => mcp(&args[1..]),
         Some("run") => run(&args[1..]),
         Some("store") => store(&args[1..]),
         #[cfg(unix)]
@@ -137,6 +146,43 @@ fn main() -> ExitCode {
         Some(other) => {
             eprintln!("keefast-agent: unknown command {other}\n\n{USAGE}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// `keefast-agent mcp`: the MCP tools on stdio, answered by the desktop app. Only errors go to
+/// stderr; stdout is the MCP client's.
+fn mcp(args: &[String]) -> ExitCode {
+    use std::sync::Arc;
+
+    use keefast_agent::local::DesktopApp;
+    use zeroize::Zeroizing;
+
+    let served = (|| {
+        if let Some(arg) = args.first() {
+            return Err(format!("mcp takes no arguments, not {arg}"));
+        }
+        let token = std::env::var("KEEFAST_AGENT_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .ok_or("KEEFAST_AGENT_TOKEN isn't set: set it to the Agent pairing's token")?;
+        let app = DesktopApp::from_env()
+            .map_err(|error| format!("the keefast desktop app can't be reached: {error}"))?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|error| format!("can't start: {error}"))?;
+        runtime.block_on(keefast_agent::serve::serve_stdio(
+            Arc::new(app),
+            Zeroizing::new(token),
+        ))
+    })();
+    match served {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("keefast-agent: {error}");
+            ExitCode::FAILURE
         }
     }
 }

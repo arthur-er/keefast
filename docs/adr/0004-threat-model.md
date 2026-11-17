@@ -17,3 +17,7 @@ ADR 0012 lets AI Agents use secrets from the Agent group. A connected Agent that
 ## Update 2026-11-16: keefast running hidden
 
 With Close to tray on, keefast keeps running, its Vaults unlocked, after the window closes; ADR 0013 says why the protections for an unattended machine still cover it.
+
+## Update 2026-11-17: `keefast-agent`'s endpoint
+
+`keefast-agent` reaches the desktop app at a socket or pipe of its own (`agent.sock`, `keefast-agent-<user>`), made and checked as the browser's above: only the user can connect, and `keefast-agent` relays only to an app of its own user. Keeping it apart from the browser's means no extension the native host relays for can send Agent requests. Any process of the user's can connect, as to the browser's; it still needs an Agent pairing's token (ADR 0012 update "In-app host").

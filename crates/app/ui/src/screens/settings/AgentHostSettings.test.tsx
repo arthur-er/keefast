@@ -9,6 +9,7 @@ vi.mock("@/api", () => ({
   api: {
     addAgentHost: vi.fn(),
     getAgentActivity: vi.fn(),
+    getVaultAgentActivity: vi.fn(),
   },
 }));
 
@@ -119,5 +120,21 @@ describe("an Agent host's Activity", () => {
     showActivity();
 
     expect((await screen.findByRole("alert")).textContent).toContain("couldn't be reached");
+  });
+});
+
+describe("a Vault's own Activity", () => {
+  it("reads the Vault's log in this desktop's in-app host, not a host's", async () => {
+    vi.mocked(api.getVaultAgentActivity).mockResolvedValue([record({})]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ActivityDialog vault={{ id: 1, name: "Work" }} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    const list = await screen.findByRole("list", { name: "Activity" });
+    expect(within(list).getAllByRole("listitem")[0]!.textContent).toContain("Run gh with “GitHub”");
+    expect(screen.getByText("Activity on Work")).toBeTruthy();
+    expect(api.getVaultAgentActivity).toHaveBeenCalledWith(1);
   });
 });

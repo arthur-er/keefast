@@ -55,8 +55,10 @@ use crate::{
 const HINT_FROM_LENGTH: usize = 12;
 const HINT_LENGTH: usize = 4;
 
-/// What an Agent asks of keefast.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What an Agent asks of keefast. It travels as JSON between `keefast-agent` and the desktop
+/// app (see [`crate::local`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentRequest {
     /// The secrets the pairing can read, without their values.
     ListSecrets,
@@ -84,7 +86,8 @@ pub struct UseSecrets {
 }
 
 /// keefast's answer to an [`AgentRequest`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentReply {
     Secrets(Vec<SecretListing>),
     /// One value per reference asked for, in the same order.
@@ -155,7 +158,8 @@ impl std::fmt::Debug for SecretValue {
 }
 
 /// Why an Agent's request was refused.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentError {
     #[error("keefast is locked: ask the user to unlock it, then try again. Agents can't unlock it")]
     Locked,
@@ -243,12 +247,17 @@ pub enum AgentError {
          try again"
     )]
     NoApproverToReveal(String),
+    #[error(
+        "keefast-agent and the keefast desktop app don't understand each other ({0}): update \
+         both to the same version"
+    )]
+    Mismatch(String),
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name
 /// it, but never a value and never the Entry's notes. All of it is text the Agent didn't
 /// write, which hosts mark as untrusted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretListing {
     pub title: String,
     pub username: String,
@@ -259,7 +268,7 @@ pub struct SecretListing {
     pub fields: Vec<String>,
     pub reference: SecretReference,
     /// The password's last four characters, when it is long enough that they give little away.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
 }
 
@@ -281,6 +290,13 @@ pub trait VaultAccess {
     fn read<T>(&self, f: impl FnOnce(&Workspace, VaultId) -> T) -> Option<T>;
     /// As [`Self::read`], for a change to the Vault, which the host saves after.
     fn edit<T>(&self, f: impl FnOnce(&mut Workspace, VaultId) -> T) -> Option<T>;
+}
+
+/// Whatever answers Agents' requests by their Agent pairing's token: a Headless host, the
+/// desktop app, or `keefast-agent`'s connection to the desktop app, for the MCP tools to call.
+/// It blocks on the Workspace and on prompts, so async callers run it on a blocking thread.
+pub trait ServesAgents: Send + Sync + 'static {
+    fn handle_agent(&self, token: &str, request: AgentRequest) -> Result<AgentReply, AgentError>;
 }
 
 /// One Agent pairing's requests.

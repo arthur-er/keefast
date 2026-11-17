@@ -9,7 +9,8 @@
 //!
 //! It reaches keefast at `KEEFAST_AGENT_URL` with the Agent pairing's token from
 //! `KEEFAST_AGENT_TOKEN`, through the endpoint [`USE_SECRETS_PATH`] the Headless host serves
-//! beside `/mcp`. It works the same on Linux and Windows.
+//! beside `/mcp`; without `KEEFAST_AGENT_URL`, it reaches the desktop app on this machine over
+//! its socket or pipe ([`crate::local`]). It works the same on Linux and Windows.
 
 use std::io::{self, Read, Write};
 use std::process::{Command, ExitStatus, Stdio};
@@ -19,7 +20,9 @@ use std::time::Duration;
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
-use crate::{SecretValue, UseSecrets};
+use crate::local::DesktopApp;
+use crate::store::STORE_PATH;
+use crate::{AgentReply, AgentRequest, SecretValue, StoreSecret, UseSecrets, WrittenEntry};
 
 /// Where the Headless host answers `run`, beside its MCP endpoint at `/mcp`.
 pub const USE_SECRETS_PATH: &str = "/agent/use-secrets";
@@ -80,35 +83,63 @@ impl RunArgs {
 
 /// Where keefast is, and the token to show it.
 pub struct Connection {
-    pub url: String,
+    to: Keefast,
     pub token: Zeroizing<String>,
 }
 
+enum Keefast {
+    /// A Headless host, at its URL or its MCP endpoint's.
+    Host(String),
+    /// The desktop app on this machine.
+    DesktopApp(DesktopApp),
+}
+
 impl Connection {
-    /// From `KEEFAST_AGENT_URL` and `KEEFAST_AGENT_TOKEN`.
+    /// The Headless host at `url`, or its MCP endpoint at `url`.
+    pub fn host(url: String, token: Zeroizing<String>) -> Self {
+        Self {
+            to: Keefast::Host(url),
+            token,
+        }
+    }
+
+    /// The desktop app on this machine.
+    pub fn desktop_app(app: DesktopApp, token: Zeroizing<String>) -> Self {
+        Self {
+            to: Keefast::DesktopApp(app),
+            token,
+        }
+    }
+
+    /// From `KEEFAST_AGENT_URL` and `KEEFAST_AGENT_TOKEN`; without a URL, the desktop app.
     pub fn from_env() -> Result<Self, String> {
-        let url = std::env::var("KEEFAST_AGENT_URL")
-            .ok()
-            .filter(|url| !url.is_empty())
-            .ok_or(
-                "KEEFAST_AGENT_URL isn't set: set it to the keefast Headless host's address, such \
-                 as https://keefast.example.net/mcp, and KEEFAST_AGENT_TOKEN to the Agent \
-                 pairing's token",
-            )?;
         let token = std::env::var("KEEFAST_AGENT_TOKEN")
             .ok()
             .filter(|token| !token.is_empty())
             .ok_or("KEEFAST_AGENT_TOKEN isn't set: set it to the Agent pairing's token")?;
-        Ok(Self {
-            url,
-            token: Zeroizing::new(token),
-        })
+        let token = Zeroizing::new(token);
+        match std::env::var("KEEFAST_AGENT_URL")
+            .ok()
+            .filter(|url| !url.is_empty())
+        {
+            Some(url) => Ok(Self::host(url, token)),
+            None => {
+                let app = DesktopApp::from_env().map_err(|error| {
+                    format!(
+                        "KEEFAST_AGENT_URL isn't set, and the keefast desktop app can't be \
+                         reached: {error}. Set KEEFAST_AGENT_URL to a Headless host's address, \
+                         such as https://keefast.example.net/mcp"
+                    )
+                })?;
+                Ok(Self::desktop_app(app, token))
+            }
+        }
     }
 
     /// The endpoint at `path` beside the MCP endpoint: the URL given may be the host's own or
     /// its MCP endpoint's.
-    fn endpoint(&self, path: &str) -> String {
-        let base = self.url.trim_end_matches('/');
+    fn endpoint(url: &str, path: &str) -> String {
+        let base = url.trim_end_matches('/');
         let base = base.strip_suffix("/mcp").unwrap_or(base);
         format!("{base}{path}")
     }
@@ -119,18 +150,45 @@ impl Connection {
         struct Values {
             values: Vec<SecretValue>,
         }
-        let body = Zeroizing::new(serde_json::to_string(request).expect("a request is plain JSON"));
-        let values: Values = self.post(USE_SECRETS_PATH, &body)?;
-        Ok(values.values)
+        match &self.to {
+            Keefast::Host(_) => {
+                let body = Zeroizing::new(
+                    serde_json::to_string(request).expect("a request is plain JSON"),
+                );
+                let values: Values = self.post(USE_SECRETS_PATH, &body)?;
+                Ok(values.values)
+            }
+            Keefast::DesktopApp(app) => app
+                .call(&self.token, AgentRequest::UseSecrets(request.clone()))
+                .map(AgentReply::into_values)
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Sets the field `request` names to its value; answers with the Entry it wrote.
+    pub fn store(&self, request: StoreSecret) -> Result<WrittenEntry, String> {
+        match &self.to {
+            Keefast::Host(_) => {
+                let body = Zeroizing::new(
+                    serde_json::to_string(&request).expect("a request is plain JSON"),
+                );
+                self.post(STORE_PATH, &body)
+            }
+            Keefast::DesktopApp(app) => match app.call(&self.token, AgentRequest::Store(request)) {
+                Ok(reply) => reply
+                    .into_written()
+                    .ok_or_else(|| "keefast answered a store with something else".to_owned()),
+                Err(error) => Err(error.to_string()),
+            },
+        }
     }
 
     /// POSTs `body`, JSON, to the endpoint at `path`, and reads its JSON answer, or the message
     /// of keefast's refusal.
-    pub(crate) fn post<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &str,
-    ) -> Result<T, String> {
+    fn post<T: serde::de::DeserializeOwned>(&self, path: &str, body: &str) -> Result<T, String> {
+        let Keefast::Host(url) = &self.to else {
+            unreachable!("only a Headless host is posted to");
+        };
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
@@ -138,7 +196,7 @@ impl Connection {
                 .timeout_global(Some(Duration::from_secs(90)))
                 .build(),
         );
-        let endpoint = self.endpoint(path);
+        let endpoint = Self::endpoint(url, path);
         let mut response = agent
             .post(&endpoint)
             .header("Authorization", &format!("Bearer {}", self.token.as_str()))

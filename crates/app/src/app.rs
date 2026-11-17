@@ -23,6 +23,7 @@ use crate::events::{
     AppEvent, BrowserRequest, ClipboardCleared, Launched, MergeNotice, Notifier, SaveFailed,
     WorkspaceChanged,
 };
+use crate::in_app_agents;
 use crate::{background, browser, icon_protocol, tray};
 
 /// The label of keefast's one window, as `tauri.conf.json` names it.
@@ -136,6 +137,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::agent_hosts::answer_agent_prompt,
             commands::agent_hosts::answer_agent_consent,
             commands::agent_hosts::get_agent_activity,
+            commands::agents::get_vault_agent_activity,
             commands::dropbox::dropbox_status,
             commands::dropbox::dropbox_connect,
             commands::dropbox::dropbox_connect_another,
@@ -349,6 +351,11 @@ pub fn run(args: Args) {
             if let Some(file) = AgentHosts::file_in_os_config_dir() {
                 agent_hosts::start(&core, file, Arc::new(OsSecretStore));
             }
+            in_app_agents::start(
+                &core,
+                in_app_agents::logs_in_os_data_dir(),
+                keefast_agent::local::endpoint(),
+            );
             if core.read(Workspace::browser_integration) {
                 browser::serve(&core);
             }

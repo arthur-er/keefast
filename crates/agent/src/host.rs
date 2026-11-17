@@ -640,6 +640,12 @@ impl HeadlessHost {
     }
 }
 
+impl crate::ServesAgents for HeadlessHost {
+    fn handle_agent(&self, token: &str, request: AgentRequest) -> Result<AgentReply, AgentError> {
+        HeadlessHost::handle_agent(self, token, request)
+    }
+}
+
 /// An [`AgentSession`] reaches the served Vault through the host's lock, and its changes are
 /// saved at once.
 impl VaultAccess for HeadlessHost {

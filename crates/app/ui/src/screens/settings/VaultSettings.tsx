@@ -150,7 +150,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
               }],
         ],
       },
-      ...(agents ? [agentsSection(vault, agents)] : []),
+      ...(agents ? [agentsSection(vault, agents, summary?.name ?? "")] : []),
       {
         id: "security",
         name: "Security",

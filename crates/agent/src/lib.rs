@@ -14,6 +14,7 @@ pub mod hosts;
 pub mod http;
 pub mod installed;
 pub mod listen;
+pub mod local;
 pub mod oauth;
 #[cfg(feature = "serve")]
 mod oauth_endpoint;
@@ -32,7 +33,7 @@ pub use approver::{
 pub use audit::{AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, CreateEntry, SecretListing,
-    SecretReference, SecretValue, StoreSecret, UseSecrets, VaultAccess, WrittenEntry,
+    SecretReference, SecretValue, ServesAgents, StoreSecret, UseSecrets, VaultAccess, WrittenEntry,
     pairings_reading,
 };
 pub use settings::{

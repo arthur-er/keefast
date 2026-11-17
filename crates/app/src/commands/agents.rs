@@ -423,3 +423,20 @@ pub async fn set_entry_agents_may_reveal(
     core.autosave();
     Ok(())
 }
+
+/// What Agents on this computer did with the Vault's secrets, newest first: the Vault's own
+/// audit log, which this desktop keeps as its in-app host (ADR 0012 "Audit").
+#[tauri::command]
+#[specta::specta]
+pub async fn get_vault_agent_activity(
+    core: Core<'_>,
+    vault: VaultId,
+) -> ApiResult<Vec<super::agent_hosts::AgentActivityRecord>> {
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    let core = std::sync::Arc::clone(&core);
+    let records = super::blocking(move || {
+        crate::in_app_agents::activity(&core, vault, keefast_agent::approver::ACTIVITY_LINES)
+    })
+    .await??;
+    Ok(records.into_iter().rev().map(Into::into).collect())
+}

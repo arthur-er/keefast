@@ -23,6 +23,7 @@ use crate::events::{
     AppEvent, BrowserRequest, BrowserRequestKind, ClipboardCleared, Launched, MergeNotice,
     Notifier, SaveFailed, WorkspaceChanged,
 };
+use crate::in_app_agents::InAppAgents;
 use crate::merge_notice;
 
 /// What the command line asked to open first.
@@ -64,6 +65,8 @@ pub struct AppCore {
     /// The Headless hosts this desktop is an Approver for, and their prompts. Never locked
     /// while waiting for the Workspace, nor the other way round.
     agent_hosts: Mutex<AgentHosts>,
+    /// Agents on this computer, served from the unlocked Vaults (`keefast-agent mcp`).
+    in_app_agents: InAppAgents,
 }
 
 /// The browser requests waiting for the user, by number: the one put to the user now of each
@@ -175,6 +178,7 @@ impl AppCore {
             plugins: RwLock::new(plugins),
             plugin_store: Mutex::new(PluginStore::bundled_only()),
             agent_hosts: Mutex::new(AgentHosts::empty()),
+            in_app_agents: InAppAgents::new(keefast_agent::ApproverHub::new()),
         })
     }
 
@@ -257,6 +261,10 @@ impl AppCore {
         self.agent_hosts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn in_app_agents(&self) -> &InAppAgents {
+        &self.in_app_agents
     }
 
     /// Tells the UI the Agent hosts or their prompts changed, and brings keefast to the front

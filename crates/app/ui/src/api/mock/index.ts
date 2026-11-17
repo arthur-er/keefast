@@ -1703,6 +1703,10 @@ export function createMockBackend(): Backend & {
       if (found.state === "disconnected") throw new MockError("unavailable", "The Agent host couldn't be reached, so its Activity can't be shown.");
       return mockActivity();
     }),
+    getVaultAgentActivity: command((vault) => {
+      if (!state.vaults.some((v) => v.id === vault)) throw new MockError("notFound", "That Vault isn't open.");
+      return mockActivity();
+    }),
     addAgentHost: command((name, url, token) => {
       const address = url.trim().replace(/\/+$/, "");
       if (token.trim().startsWith("kfa_"))

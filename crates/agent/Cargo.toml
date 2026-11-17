@@ -24,8 +24,11 @@ dirs.workspace = true
 getrandom.workspace = true
 hyper-util = { workspace = true, optional = true }
 keefast-core.workspace = true
+# The socket or pipe `keefast-agent` reaches the desktop app at, made and checked as the
+# browser's is (ADR 0004).
+keefast-native-host.workspace = true
 keefast-workspace.workspace = true
-rmcp = { workspace = true, optional = true, features = ["macros", "server", "transport-streamable-http-server"] }
+rmcp = { workspace = true, optional = true, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
 rustls = { workspace = true, optional = true }
 secrecy.workspace = true
 serde.workspace = true
@@ -33,7 +36,7 @@ serde_json.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, optional = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, optional = true, features = ["io-std", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }

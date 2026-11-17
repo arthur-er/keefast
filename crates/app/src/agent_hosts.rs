@@ -31,6 +31,7 @@ use zeroize::Zeroizing;
 
 use crate::core::AppCore;
 use crate::error::{ApiError, ApiResult, ErrorKind};
+use crate::in_app_agents::{LOCAL_HOST, LOCAL_HOST_NAME};
 
 /// The hosts, their connections, and the prompts waiting for the user.
 pub struct AgentHosts {
@@ -185,15 +186,21 @@ impl AgentHosts {
 
     /// Takes in what a host's client heard; whether anything the UI shows changed.
     fn heard(&mut self, host: &str, event: ApproverClientEvent) -> bool {
-        let Some(at) = self.hosts.iter().position(|known| known.saved.id == host) else {
+        // This computer's own Agents ask too, through the in-app host, which is no saved host.
+        let at = self.hosts.iter().position(|known| known.saved.id == host);
+        let host_name = match at {
+            Some(at) => self.hosts[at].saved.name.clone(),
+            None if host == LOCAL_HOST => LOCAL_HOST_NAME.to_owned(),
             // A host removed while its client still ran.
-            return false;
+            None => return false,
         };
         match event {
             ApproverClientEvent::Connected => {
+                let Some(at) = at else { return false };
                 self.hosts[at].connection = Connection::Connected;
             }
             ApproverClientEvent::Disconnected(why) => {
+                let Some(at) = at else { return false };
                 self.hosts[at].connection = Connection::Disconnected(why);
                 self.prompts.retain(|prompt| prompt.host != host);
                 self.consents.retain(|consent| consent.host != host);
@@ -209,7 +216,7 @@ impl AgentHosts {
                 }
                 self.prompts.push(WaitingPrompt {
                     host: host.to_owned(),
-                    host_name: self.hosts[at].saved.name.clone(),
+                    host_name: host_name.clone(),
                     id,
                     prompt,
                     expires: SystemTime::now() + Duration::from_secs(seconds_left.into()),
@@ -225,7 +232,7 @@ impl AgentHosts {
                 }
                 self.consents.push(WaitingConsent {
                     host: host.to_owned(),
-                    host_name: self.hosts[at].saved.name.clone(),
+                    host_name,
                     id,
                     consent,
                     expires: SystemTime::now() + Duration::from_secs(seconds_left.into()),
@@ -471,6 +478,9 @@ pub fn remove(core: &AppCore, id: &str) -> ApiResult<()> {
 /// prompt goes either way: if another Approver answered first, or it timed out, the user is
 /// told so.
 pub fn answer(core: &AppCore, host: &str, id: &str, allow: bool, remember: bool) -> ApiResult<()> {
+    if host == LOCAL_HOST {
+        return answer_locally(core, id, allow, remember);
+    }
     let agent_host = {
         let hosts = core.agent_hosts();
         let prompt = hosts
@@ -513,6 +523,31 @@ pub fn answer(core: &AppCore, host: &str, id: &str, allow: bool, remember: bool)
         .with_detail(why),
         AnswerPromptError::Refused(why) => ApiError::invalid(why),
     })
+}
+
+/// Answers the in-app host's prompt `id`: the Agent waiting on it goes on at once.
+fn answer_locally(core: &AppCore, id: &str, allow: bool, remember: bool) -> ApiResult<()> {
+    let remember = {
+        let hosts = core.agent_hosts();
+        let prompt = hosts
+            .prompts
+            .iter()
+            .find(|prompt| prompt.id == id && prompt.host == LOCAL_HOST)
+            .ok_or_else(gone)?;
+        remember && prompt.prompt.can_remember
+    };
+    // Answering tells this desktop, among the in-app host's Approvers, to dismiss the prompt.
+    let answered = core
+        .in_app_agents()
+        .approvers()
+        .answer(id, ApproverAnswer { allow, remember });
+    let news = {
+        let mut hosts = core.agent_hosts();
+        hosts.prompts.retain(|prompt| prompt.id != id);
+        hosts.news()
+    };
+    core.agent_hosts_changed(news);
+    answered.map_err(|_| gone())
 }
 
 /// Answers the OAuth consent `id` from the host `host`. It blocks while the answer travels.

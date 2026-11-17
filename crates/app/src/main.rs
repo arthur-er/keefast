@@ -15,6 +15,7 @@ mod dto;
 mod error;
 mod events;
 mod icon_protocol;
+mod in_app_agents;
 mod merge_notice;
 mod shortcuts;
 mod tray;
