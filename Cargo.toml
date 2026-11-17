@@ -9,6 +9,7 @@ members = [
     "crates/plugin-cli",
     "crates/app",
     "crates/native-host",
+    "crates/agent",
 ]
 # Plugins are built to WebAssembly on their own, each its own Cargo workspace
 # (`keefast-plugin build`, docs/plugins/README.md).
@@ -24,6 +25,8 @@ repository = "https://github.com/arthur-er/keefast"
 keefast-core = { path = "crates/core" }
 keefast-workspace = { path = "crates/workspace" }
 keefast-native-host = { path = "crates/native-host" }
+# Agents (ADR 0012): the Agent model on top of `workspace`, and the `keefast-agent` command.
+keefast-agent = { path = "crates/agent" }
 # Plugins (ADR 0009, docs/plugins/README.md): the host keefast runs them in, the package format,
 # the SDK Plugin authors write against, and the `keefast-plugin` command that builds and signs
 # packages.

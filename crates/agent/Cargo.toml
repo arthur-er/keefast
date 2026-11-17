@@ -1,0 +1,20 @@
+[package]
+name = "keefast-agent"
+description = "Agents (ADR 0012): Agent pairings, the Agent group and Agent access decisions kept in the Vault, and the keefast-agent command with its Headless host. No Tauri, no WebKit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+keefast-core.workspace = true
+keefast-workspace.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,334 @@
+//! Agent settings kept in the Vault's custom data (ADR 0005 update 2026-11-16): the Agent group,
+//! the Default agent policy, Agent pairings and Agent access decisions. Each is read back after
+//! the Vault is saved and opened again, and survives a Merge with changes made elsewhere.
+
+mod support;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use keefast_agent::{
+    AgentCredential, AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse,
+    DefaultAgentPolicy, NewAgentPairing,
+};
+use keefast_core::{EntryFields, EntryId, GroupId};
+use keefast_workspace::{VaultId, Workspace};
+use support::{FakeClock, KEEPASSXC_KDBX4, VaultFile};
+
+const TOKEN: &str = "kfa_the-pairings-token";
+
+/// A Vault file whose Vault has an Agent group, `Agents`, with subgroups `claude` and `shared`.
+fn vault_with_agent_group(clock: &Arc<FakeClock>) -> (VaultFile, [GroupId; 3]) {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (mut workspace, vault) = file.open(clock);
+    let root = workspace.readable_vault(vault).unwrap().vault().root().id();
+    let agents = workspace.create_group(vault, root, "Agents").unwrap();
+    let claude = workspace.create_group(vault, agents, "claude").unwrap();
+    let shared = workspace.create_group(vault, agents, "shared").unwrap();
+    workspace.set_agent_group(vault, agents).unwrap();
+    workspace.save_vault(vault).unwrap();
+    (file, [agents, claude, shared])
+}
+
+fn pairing_named(name: &str, group: GroupId, readable: Vec<GroupId>) -> NewAgentPairing {
+    NewAgentPairing {
+        name: name.to_owned(),
+        group,
+        readable,
+        can_create: true,
+        credential: AgentCredential::token(TOKEN),
+    }
+}
+
+fn pairing_names(workspace: &Workspace, vault: VaultId) -> Vec<String> {
+    let settings = workspace.agent_settings(vault).unwrap();
+    settings
+        .pairings()
+        .iter()
+        .map(|p| p.name().to_owned())
+        .collect()
+}
+
+#[test]
+fn the_agent_group_and_default_agent_policy_are_read_back_after_a_save() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (mut workspace, vault) = file.open(&clock);
+    let root = workspace.readable_vault(vault).unwrap().vault().root().id();
+    let group = workspace.create_group(vault, root, "Agents").unwrap();
+
+    workspace.set_agent_group(vault, group).unwrap();
+    workspace
+        .set_default_agent_policy(vault, DefaultAgentPolicy::Deny)
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert_eq!(settings.agent_group(), Some(group));
+    assert_eq!(settings.default_agent_policy(), DefaultAgentPolicy::Deny);
+}
+
+#[test]
+fn a_vault_without_agent_settings_has_no_agent_group_and_asks() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
+
+    let settings: AgentSettings = workspace.agent_settings(vault).unwrap();
+
+    assert_eq!(settings.agent_group(), None);
+    assert_eq!(settings.default_agent_policy(), DefaultAgentPolicy::Ask);
+}
+
+#[test]
+fn an_agent_pairing_is_read_back_after_a_save() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, claude, shared]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+
+    let made = workspace
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![shared]))
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    let [pairing] = settings.pairings() else {
+        panic!("expected one pairing, got {:?}", settings.pairings());
+    };
+    assert_eq!(pairing.id(), made.id());
+    assert_eq!(pairing.name(), "claude");
+    assert_eq!(pairing.group(), claude);
+    assert_eq!(pairing.readable(), [shared]);
+    assert!(pairing.can_create());
+    assert!(pairing.credential().accepts_token(TOKEN));
+    assert!(!pairing.credential().accepts_token("kfa_another-token"));
+}
+
+#[test]
+fn a_pairings_token_is_kept_in_the_vault_only_as_a_hash() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, claude, _]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+
+    workspace
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![]))
+        .unwrap();
+
+    let custom_data: Vec<(String, String)> = workspace
+        .readable_vault(vault)
+        .unwrap()
+        .vault()
+        .custom_data()
+        .collect();
+    assert!(
+        custom_data
+            .iter()
+            .all(|(key, value)| !key.contains(TOKEN) && !value.contains(TOKEN))
+    );
+}
+
+#[test]
+fn an_agent_pairing_can_be_found_by_its_token() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [agents, claude, _]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    let codex_group = workspace.create_group(vault, agents, "codex").unwrap();
+    workspace
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![]))
+        .unwrap();
+    let mut codex = pairing_named("codex", codex_group, vec![]);
+    codex.credential = AgentCredential::token("kfa_codexs-token");
+    workspace.add_agent_pairing(vault, codex).unwrap();
+
+    let settings = workspace.agent_settings(vault).unwrap();
+
+    let found = settings.pairing_with_token("kfa_codexs-token").unwrap();
+    assert_eq!(found.name(), "codex");
+    assert!(settings.pairing_with_token("kfa_nobodys-token").is_none());
+}
+
+#[test]
+fn a_revoked_pairing_stays_revoked_through_a_merge_with_a_copy_that_still_has_it() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, claude, _]) = vault_with_agent_group(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    let pairing = desktop
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![]))
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    let (mut host, host_vault) = file.open(&clock);
+
+    clock.advance(Duration::from_secs(60));
+    desktop.revoke_agent_pairing(vault, pairing.id()).unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.set_default_agent_policy(host_vault, DefaultAgentPolicy::Deny)
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    assert!(pairing_names(&reopened, vault).is_empty());
+    assert!(pairing_names(&host, host_vault).is_empty());
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert!(settings.pairing_with_token(TOKEN).is_none());
+}
+
+#[test]
+fn pairings_made_on_two_copies_of_the_vault_are_both_kept_after_a_merge() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [agents, claude, _]) = vault_with_agent_group(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    let (mut host, host_vault) = file.open(&clock);
+    let codex = host.create_group(host_vault, agents, "codex").unwrap();
+
+    desktop
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![]))
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.add_agent_pairing(host_vault, pairing_named("codex", codex, vec![]))
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    assert_eq!(pairing_names(&reopened, vault), ["claude", "codex"]);
+}
+
+/// A Vault file with an Agent group whose `claude` subgroup holds an Entry `token`, and an
+/// Agent pairing for it.
+fn vault_with_paired_entry(clock: &Arc<FakeClock>) -> (VaultFile, AgentPairing, EntryId) {
+    let (file, [_, claude, _]) = vault_with_agent_group(clock);
+    let (mut workspace, vault) = file.open(clock);
+    let pairing = workspace
+        .add_agent_pairing(vault, pairing_named("claude", claude, vec![]))
+        .unwrap();
+    let fields = EntryFields {
+        title: "token".to_owned(),
+        ..EntryFields::default()
+    };
+    let entry = workspace.create_entry(vault, claude, &fields).unwrap();
+    workspace.save_vault(vault).unwrap();
+    (file, pairing, entry)
+}
+
+fn gh() -> AgentUse {
+    AgentUse::Program("gh".to_owned())
+}
+
+#[test]
+fn an_agent_access_decision_is_read_back_after_a_save_for_its_pairing_entry_and_program() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, pairing, entry) = vault_with_paired_entry(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+
+    workspace
+        .remember_agent_decision(vault, entry, pairing.id(), &gh(), AgentDecision::Allow)
+        .unwrap();
+    let api = AgentUse::Host("api.github.com".to_owned());
+    workspace
+        .remember_agent_decision(vault, entry, pairing.id(), &api, AgentDecision::Deny)
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert_eq!(
+        settings.decision(entry, pairing.id(), &gh()),
+        Some(AgentDecision::Allow)
+    );
+    assert_eq!(
+        settings.decision(entry, pairing.id(), &api),
+        Some(AgentDecision::Deny)
+    );
+    let curl = AgentUse::Program("curl".to_owned());
+    assert_eq!(settings.decision(entry, pairing.id(), &curl), None);
+    let decisions: Vec<_> = settings
+        .decisions_on(entry)
+        .map(|decision| (decision.agent_use.clone(), decision.decision))
+        .collect();
+    assert_eq!(
+        decisions,
+        [(api, AgentDecision::Deny), (gh(), AgentDecision::Allow)]
+    );
+}
+
+#[test]
+fn a_decision_for_one_pairing_is_not_another_pairings() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, pairing, entry) = vault_with_paired_entry(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    let other = workspace
+        .add_agent_pairing(vault, pairing_named("codex", pairing.group(), vec![]))
+        .unwrap();
+
+    workspace
+        .remember_agent_decision(vault, entry, pairing.id(), &gh(), AgentDecision::Allow)
+        .unwrap();
+
+    let settings = workspace.agent_settings(vault).unwrap();
+    assert_eq!(settings.decision(entry, other.id(), &gh()), None);
+}
+
+#[test]
+fn decisions_remembered_on_two_copies_of_the_vault_are_both_kept_after_a_merge() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, pairing, entry) = vault_with_paired_entry(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    let (mut laptop, laptop_vault) = file.open(&clock);
+    let api = AgentUse::Host("api.github.com".to_owned());
+
+    desktop
+        .remember_agent_decision(vault, entry, pairing.id(), &gh(), AgentDecision::Allow)
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    laptop
+        .remember_agent_decision(
+            laptop_vault,
+            entry,
+            pairing.id(),
+            &api,
+            AgentDecision::Allow,
+        )
+        .unwrap();
+    laptop.save_vault(laptop_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert_eq!(
+        settings.decision(entry, pairing.id(), &gh()),
+        Some(AgentDecision::Allow)
+    );
+    assert_eq!(
+        settings.decision(entry, pairing.id(), &api),
+        Some(AgentDecision::Allow)
+    );
+}
+
+#[test]
+fn a_forgotten_decision_stays_forgotten_through_a_merge_with_a_copy_that_still_has_it() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, pairing, entry) = vault_with_paired_entry(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    desktop
+        .remember_agent_decision(vault, entry, pairing.id(), &gh(), AgentDecision::Allow)
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    let (mut host, host_vault) = file.open(&clock);
+
+    clock.advance(Duration::from_secs(60));
+    desktop
+        .forget_agent_decision(vault, entry, pairing.id(), &gh())
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.set_default_agent_policy(host_vault, DefaultAgentPolicy::Allow)
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    let (reopened, vault) = file.open(&clock);
+    let settings = reopened.agent_settings(vault).unwrap();
+    assert_eq!(settings.decision(entry, pairing.id(), &gh()), None);
+    assert_eq!(settings.decisions_on(entry).count(), 0);
+}
