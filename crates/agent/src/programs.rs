@@ -83,6 +83,20 @@ const NEVER_REMEMBERED: &[&str] = &[
     "strace",
     "gdb",
     "start",
+    // Launchers that run scripts, hooks, aliases or remote commands they are given: a
+    // package.json script, a Makefile, a git alias or hook, a command on another machine or in
+    // a container.
+    "npm",
+    "pnpm",
+    "yarn",
+    "make",
+    "gmake",
+    "ssh",
+    "git",
+    "docker",
+    "podman",
+    "kubectl",
+    "nerdctl",
 ];
 
 /// Prefixes of interpreters that come in versions: `python3.12`, `pypy3`, `lua5.4`.

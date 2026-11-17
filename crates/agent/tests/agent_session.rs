@@ -497,6 +497,16 @@ fn shells_and_interpreters_are_never_allowed_by_a_decision_or_the_default_agent_
         "pwsh.exe",
         "CMD.EXE",
         "env",
+        // Launchers that run scripts, hooks, aliases or commands they are given.
+        "npm",
+        "pnpm",
+        "yarn",
+        "make",
+        "/usr/bin/ssh",
+        "git",
+        "docker",
+        "podman",
+        "kubectl",
     ] {
         let error = fixture
             .use_secrets(

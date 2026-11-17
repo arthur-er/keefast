@@ -122,6 +122,8 @@ pub fn is_private_address(address: IpAddr) -> bool {
                 || (segments[0] & 0xffc0) == 0xfec0 // site-local, fec0::/10
                 || (segments[0] == 0x2001 && segments[1] == 0x0db8) // documentation
                 || segments[0] == 0x2002 // 6to4, which may wrap any IPv4 address
+                || (segments[0] == 0x2001 && segments[1] == 0) // Teredo, 2001::/32
+                || segments[..3] == [0x64, 0xff9b, 1] // local-use NAT64, 64:ff9b:1::/48
         }
     }
 }
