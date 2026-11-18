@@ -311,6 +311,13 @@ describe("an MCP client pairing with an Agent host by OAuth", () => {
     expect(document.activeElement).toBe(code());
   });
 
+  it("never offers to pair it as a Gateway: OAuth makes Agent pairings only", () => {
+    show(consent());
+
+    expect(screen.queryByText(/gateway/i)).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /logins/i })).toBeNull();
+  });
+
   it("approves only with the whole code, once armed, with the pairing's name and what it reads", () => {
     show(consent());
     act(() => vi.advanceTimersByTime(ARM_DELAY_MS));

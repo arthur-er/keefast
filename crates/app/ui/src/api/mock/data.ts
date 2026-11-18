@@ -116,13 +116,16 @@ export interface MockAgentDecision {
   allow: boolean;
 }
 
-/** An Agent pairing: its own subgroup of the Agent group, and the others it reads. */
+/** An Agent or Gateway pairing: its own subgroup of the Agent group, and the others it reads. */
 export interface MockAgentPairing {
   id: string;
   name: string;
   group: string;
   reads: string[];
+  /** For a Gateway pairing, whether it creates and changes logins in its own subgroup. */
   canCreate: boolean;
+  /** A Gateway pairing (ADR 0015), listed apart from the Agents; an Agent pairing without it. */
+  gateway?: boolean;
 }
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
@@ -306,7 +309,16 @@ export function fakeVaults(): MockVault[] {
         { id: "infra", name: "Infrastructure", parent: "root", icon: 35 },
         { id: "servers", name: "Servers", parent: "infra", icon: 3 },
         { id: "saas", name: "SaaS", parent: "root", icon: 38 },
+        { id: "agents", name: "Agents", parent: "root", icon: 0 },
+        { id: "agent-claude", name: "claude", parent: "agents", icon: 0 },
+        { id: "agent-agentes", name: "agentes-chat", parent: "agents", icon: 0 },
+        { id: "agent-shared", name: "shared", parent: "agents", icon: 0 },
         { id: "bin", name: "Recycle Bin", parent: "root", icon: 43 },
+      ],
+      agentGroup: "agents",
+      agentPairings: [
+        { id: "ap-claude", name: "claude", group: "agent-claude", reads: ["agent-shared"], canCreate: false },
+        { id: "ap-agentes", name: "agentes-chat", group: "agent-agentes", reads: ["agent-shared"], canCreate: true, gateway: true },
       ],
       recycleBin: "bin",
       recycleBinEnabled: true,

@@ -84,6 +84,7 @@ function record(overrides: Partial<AgentActivityRecord>): AgentActivityRecord {
   return {
     time: 1_900_000_000,
     pairing: "claude",
+    kind: "agent",
     action: "use",
     entryUuid: "00".repeat(16),
     entryTitle: "GitHub",
@@ -93,6 +94,7 @@ function record(overrides: Partial<AgentActivityRecord>): AgentActivityRecord {
     field: null,
     outcome: "allowed",
     reason: null,
+    claimedFor: null,
     ...overrides,
   };
 }
@@ -134,6 +136,19 @@ describe("an Agent host's Activity", () => {
     fireEvent.click(screen.getByRole("radio", { name: "All" }));
     fireEvent.change(screen.getByLabelText("Entry"), { target: { value: "github" } });
     expect(rows()).toHaveLength(2);
+  });
+
+  it("shows a Gateway's resolve as a Gateway's, with whom it said it was for, unverified", async () => {
+    vi.mocked(api.getAgentActivity).mockResolvedValue([
+      record({ pairing: "agentes", kind: "gateway", action: "resolve", program: null, claimedFor: { agent: "researcher", person: "ana", run: null } }),
+    ]);
+    showActivity();
+
+    const list = await screen.findByRole("list", { name: "Activity" });
+    const [row] = within(list).getAllByRole("listitem");
+    expect(row!.textContent).toContain("Resolve the value of “GitHub”");
+    expect(row!.textContent).toContain("agentes (Gateway)");
+    expect(row!.textContent).toContain("For agent researcher, person ana (claimed, unverified)");
   });
 
   it("says why the host's Activity can't be read", async () => {

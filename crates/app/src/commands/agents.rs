@@ -10,7 +10,8 @@
 //! history.
 
 use keefast_agent::{
-    AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse, pairings_reading,
+    AgentDecision, AgentPairing, AgentSettings, AgentSettingsExt, AgentUse, PairingKind,
+    pairings_reading,
 };
 use keefast_core::Vault;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,25 @@ pub struct AgentSubgroup {
     pub name: String,
 }
 
-/// An Agent pairing, without its token.
+/// What a pairing is for (ADR 0015): an Agent, reaching the Vault through MCP, or a Gateway,
+/// another program's vault resolving values through `/gateway/v1/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentPairingKind {
+    Agent,
+    Gateway,
+}
+
+impl From<PairingKind> for AgentPairingKind {
+    fn from(kind: PairingKind) -> Self {
+        match kind {
+            PairingKind::Agent => Self::Agent,
+            PairingKind::Gateway => Self::Gateway,
+        }
+    }
+}
+
+/// An Agent or Gateway pairing, without its token.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPairingView {
@@ -38,7 +57,8 @@ pub struct AgentPairingView {
     pub group: GroupId,
     /// The other subgroups of the Agent group it reads.
     pub reads: Vec<GroupId>,
-    /// Whether it creates Entries in its own subgroup, and sets their fields.
+    /// Whether it creates Entries in its own subgroup, and sets their fields: for a Gateway
+    /// pairing, whether it creates and changes logins there.
     pub can_create: bool,
 }
 
@@ -63,6 +83,8 @@ pub struct AgentSettingsView {
     pub subgroups: Vec<AgentSubgroup>,
     /// The Agent pairings, without revoked ones, in the order they were made.
     pub pairings: Vec<AgentPairingView>,
+    /// The Gateway pairings, listed apart: without revoked ones, in the order they were made.
+    pub gateways: Vec<AgentPairingView>,
 }
 
 /// A pairing just created, with its bearer token: the only time anyone sees it.
@@ -91,12 +113,18 @@ fn view(vault: &Vault) -> AgentSettingsView {
                     .collect()
             })
             .unwrap_or_default(),
-        pairings: settings
-            .pairings()
-            .iter()
-            .map(AgentPairingView::of)
-            .collect(),
+        pairings: of_kind(&settings, PairingKind::Agent),
+        gateways: of_kind(&settings, PairingKind::Gateway),
     }
+}
+
+fn of_kind(settings: &AgentSettings, kind: PairingKind) -> Vec<AgentPairingView> {
+    settings
+        .pairings()
+        .iter()
+        .filter(|pairing| pairing.kind() == kind)
+        .map(AgentPairingView::of)
+        .collect()
 }
 
 /// The pairing whose id is `id`, among the Vault's.
@@ -159,6 +187,30 @@ pub async fn create_agent_pairing(
     })
 }
 
+/// Pairs a Gateway called `name` (ADR 0015), such as agentes-chat, with its own subgroup of the
+/// Agent group by that name, which also reads the subgroups `reads`, and creates and changes
+/// logins in its own subgroup if `can_write`. The reply has its token, which no command
+/// returns again. Only this makes a Gateway pairing: OAuth never does.
+#[tauri::command]
+#[specta::specta]
+pub async fn create_gateway_pairing(
+    core: Core<'_>,
+    vault: VaultId,
+    name: String,
+    reads: Vec<GroupId>,
+    can_write: bool,
+) -> ApiResult<CreatedAgentPairing> {
+    let reads = groups(&reads)?;
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    let created =
+        core.update(|workspace| workspace.create_gateway_pairing(vault, &name, reads, can_write))?;
+    core.autosave();
+    Ok(CreatedAgentPairing {
+        pairing: AgentPairingView::of(&created.pairing),
+        token: created.token.as_str().to_owned(),
+    })
+}
+
 /// Sets which other subgroups of the Agent group a pairing reads, and whether it creates
 /// Entries in its own subgroup.
 #[tauri::command]
@@ -185,8 +237,8 @@ pub async fn set_agent_pairing_access(
     Ok(())
 }
 
-/// Revokes an Agent pairing: its token is refused from now on. Its subgroup and Entries stay.
-/// Ask the user first.
+/// Revokes an Agent or Gateway pairing: its token is refused from now on. Its subgroup and
+/// Entries stay. Ask the user first.
 #[tauri::command]
 #[specta::specta]
 pub async fn revoke_agent_pairing(
@@ -439,4 +491,72 @@ pub async fn get_vault_agent_activity(
     })
     .await??;
     Ok(records.into_iter().rev().map(Into::into).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use keefast_agent::AgentSettingsExt;
+    use keefast_workspace::{LocalStorage, UnlockSecrets, VaultLocation, Workspace};
+
+    use super::view;
+
+    /// A Vault whose Agent group `Agents` has the subgroup `shared`, with the Agent pairing
+    /// `claude` and the Gateway pairing `agentes`, which reads `shared` and writes.
+    fn vault_with_a_gateway() -> (Workspace, keefast_workspace::VaultId, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.kdbx");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/keepassxc-kdbx4.kdbx"
+            ),
+            &path,
+        )
+        .unwrap();
+        let mut workspace = Workspace::new(Arc::new(LocalStorage));
+        let vault = workspace
+            .open_vault(
+                &VaultLocation::Local(path),
+                &UnlockSecrets::password("fixture-password"),
+            )
+            .unwrap();
+        let root = workspace.vault(vault).unwrap().vault().root().id();
+        let agents = workspace.create_group(vault, root, "Agents").unwrap();
+        let shared = workspace.create_group(vault, agents, "shared").unwrap();
+        workspace.set_agent_group(vault, agents).unwrap();
+        workspace
+            .create_agent_pairing(vault, "claude", vec![], false)
+            .unwrap();
+        workspace
+            .create_gateway_pairing(vault, "agentes", vec![shared], true)
+            .unwrap();
+        (workspace, vault, dir)
+    }
+
+    #[test]
+    fn gateway_pairings_are_listed_apart_with_what_they_read_and_whether_they_write() {
+        let (workspace, vault, _dir) = vault_with_a_gateway();
+
+        let shown = view(workspace.readable_vault(vault).unwrap().vault());
+
+        let agents: Vec<&str> = shown.pairings.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(agents, ["claude"]);
+        let [gateway] = shown.gateways.as_slice() else {
+            panic!("expected one Gateway pairing, got {:?}", shown.gateways);
+        };
+        assert_eq!(gateway.name, "agentes");
+        let id_of = |name: &str| {
+            shown
+                .subgroups
+                .iter()
+                .find(|group| group.name == name)
+                .map(|group| group.id.clone())
+                .unwrap()
+        };
+        assert_eq!(gateway.group, id_of("agentes"));
+        assert_eq!(gateway.reads, [id_of("shared")]);
+        assert!(gateway.can_create);
+    }
 }
