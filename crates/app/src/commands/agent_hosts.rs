@@ -5,6 +5,7 @@
 use serde::Serialize;
 use specta::Type;
 
+use super::agents::AgentPairingKind;
 use super::{Core, blocking};
 use crate::agent_hosts::{self, Connection, HostView, WaitingConsent, WaitingPrompt};
 use crate::error::ApiResult;
@@ -235,6 +236,12 @@ pub enum AgentActivityAction {
     Create,
     Store,
     Reveal,
+    /// A Gateway pairing resolving an Entry's value, with no prompt.
+    Resolve,
+    /// A Gateway pairing creating a login in its own subgroup.
+    CreateLogin,
+    /// A Gateway pairing changing a login's username or password in its own subgroup.
+    UpdateLogin,
     /// One a later host logs and this keefast doesn't know.
     Other,
 }
@@ -249,6 +256,9 @@ impl From<keefast_agent::AuditAction> for AgentActivityAction {
             AuditAction::Create => Self::Create,
             AuditAction::Store => Self::Store,
             AuditAction::Reveal => Self::Reveal,
+            AuditAction::Resolve => Self::Resolve,
+            AuditAction::CreateLogin => Self::CreateLogin,
+            AuditAction::UpdateLogin => Self::UpdateLogin,
             AuditAction::Other => Self::Other,
         }
     }
@@ -262,15 +272,27 @@ pub enum AgentActivityOutcome {
     Denied,
 }
 
-/// One record of a Headless host's audit log: something an Agent did, or was refused. It
-/// never holds a value.
+/// Whom a Gateway said a call was for: its claim, which keefast can't verify, so the Activity
+/// view marks it unverified.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActivityClaim {
+    pub agent: Option<String>,
+    pub person: Option<String>,
+    pub run: Option<String>,
+}
+
+/// One record of a Headless host's audit log: something an Agent or a Gateway did, or was
+/// refused. It never holds a value.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentActivityRecord {
     /// When, in seconds since 1970 UTC.
     pub time: u32,
-    /// The Agent pairing's name, as it was then.
+    /// The pairing's name, as it was then.
     pub pairing: String,
+    /// Whether that pairing is an Agent's or a Gateway's.
+    pub kind: AgentPairingKind,
     pub action: AgentActivityAction,
     pub entry_uuid: Option<String>,
     pub entry_title: Option<String>,
@@ -284,6 +306,8 @@ pub struct AgentActivityRecord {
     pub outcome: AgentActivityOutcome,
     /// What decided it, such as "allowed once at a prompt", when the host says.
     pub reason: Option<String>,
+    /// Whom a Gateway said it was for, unverified.
+    pub claimed_for: Option<AgentActivityClaim>,
 }
 
 impl From<keefast_agent::AuditRecord> for AgentActivityRecord {
@@ -295,6 +319,7 @@ impl From<keefast_agent::AuditRecord> for AgentActivityRecord {
         Self {
             time: u32::try_from(record.time).unwrap_or(u32::MAX),
             pairing: record.pairing,
+            kind: record.kind.into(),
             action: record.action.into(),
             entry_uuid,
             entry_title,
@@ -307,6 +332,11 @@ impl From<keefast_agent::AuditRecord> for AgentActivityRecord {
                 keefast_agent::AuditOutcome::Denied => AgentActivityOutcome::Denied,
             },
             reason: record.reason,
+            claimed_for: record.claimed_for.map(|claim| AgentActivityClaim {
+                agent: claim.agent,
+                person: claim.person,
+                run: claim.run,
+            }),
         }
     }
 }
@@ -324,4 +354,75 @@ pub async fn get_agent_activity(
     })
     .await??;
     Ok(records.into_iter().rev().map(Into::into).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use keefast_agent::{
+        AuditAction, AuditEntry, AuditOutcome, AuditRecord, ClaimedFor, PairingKind,
+    };
+
+    use super::{AgentActivityAction, AgentActivityRecord, AgentPairingKind};
+
+    fn gateway_record(action: AuditAction) -> AuditRecord {
+        AuditRecord {
+            time: 1_900_000_000,
+            pairing: "agentes".to_owned(),
+            pairing_id: "0123456789abcdef".to_owned(),
+            kind: PairingKind::Gateway,
+            action,
+            entry: Some(AuditEntry {
+                uuid: "00".repeat(16),
+                title: "GitHub".to_owned(),
+            }),
+            program: None,
+            method: None,
+            host: None,
+            field: None,
+            outcome: AuditOutcome::Allowed,
+            reason: None,
+            claimed_for: Some(ClaimedFor {
+                agent: Some("researcher".to_owned()),
+                person: Some("ana".to_owned()),
+                run: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_gateways_resolves_and_writes_show_as_themselves_with_the_claim_it_made() {
+        let actions = [
+            AuditAction::Resolve,
+            AuditAction::CreateLogin,
+            AuditAction::UpdateLogin,
+        ]
+        .map(|action| AgentActivityRecord::from(gateway_record(action)).action);
+
+        assert_eq!(
+            actions,
+            [
+                AgentActivityAction::Resolve,
+                AgentActivityAction::CreateLogin,
+                AgentActivityAction::UpdateLogin,
+            ]
+        );
+        let shown = AgentActivityRecord::from(gateway_record(AuditAction::Resolve));
+        assert_eq!(shown.kind, AgentPairingKind::Gateway);
+        let claim = shown.claimed_for.unwrap();
+        assert_eq!(claim.agent.as_deref(), Some("researcher"));
+        assert_eq!(claim.person.as_deref(), Some("ana"));
+        assert_eq!(claim.run, None);
+    }
+
+    #[test]
+    fn an_agents_record_shows_its_kind_and_no_claim() {
+        let mut record = gateway_record(AuditAction::Use);
+        record.kind = PairingKind::Agent;
+        record.claimed_for = None;
+
+        let shown = AgentActivityRecord::from(record);
+
+        assert_eq!(shown.kind, AgentPairingKind::Agent);
+        assert!(shown.claimed_for.is_none());
+    }
 }

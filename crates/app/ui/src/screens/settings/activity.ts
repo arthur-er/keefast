@@ -1,5 +1,6 @@
 // What the Activity view shows of a Headless host's audit log (ADR 0012 "Audit"): each record
-// as a sentence, and the filters by Agent pairing, Entry and outcome.
+// as a sentence, with whom a Gateway said it was for (ADR 0015), and the filters by pairing,
+// Entry and outcome.
 
 import type { AgentActivityRecord } from "@/bindings";
 
@@ -46,7 +47,22 @@ export function describeActivity(record: AgentActivityRecord): string {
       return `Store ${record.field ?? "a value"} in ${entry}`;
     case "reveal":
       return `Reveal ${record.field ?? "a value"} of ${entry}`;
+    case "resolve":
+      return `Resolve the value of ${entry}`;
+    case "create_login":
+      return `Create the login ${entry}`;
+    case "update_login":
+      return `Change the login ${entry}`;
     case "other":
       return record.entryTitle ? `Something with ${entry}` : "Something keefast doesn't know";
   }
+}
+
+/** Whom a Gateway said the request was for, as `keefast-agent log` shows it: its own claim,
+ * which keefast can't verify. Null when it named nobody. */
+export function claimText(record: AgentActivityRecord): string | null {
+  const claim = record.claimedFor;
+  if (!claim) return null;
+  const parts = (["agent", "person", "run"] as const).flatMap((part) => (claim[part] ? [`${part} ${claim[part]}`] : []));
+  return parts.length > 0 ? `For ${parts.join(", ")} (claimed, unverified)` : null;
 }

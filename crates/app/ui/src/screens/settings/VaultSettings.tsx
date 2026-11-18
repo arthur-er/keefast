@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { useShell } from "@/shell/state";
 import { vaultStatus } from "@/shell/vaultStatus";
 
-import { agentsSection } from "./AgentSettings";
+import { agentsSection, gatewaysSection } from "./AgentSettings";
 import { ConfirmPop } from "./ConfirmPop";
 import { GroupPicker } from "./GroupPicker";
 import { pairedText, usedText } from "./pairings";
@@ -151,7 +151,7 @@ export function VaultSettingsPage({ vault, section }: { vault: VaultId; section?
               }],
         ],
       },
-      ...(agents ? [agentsSection(vault, agents, summary?.name ?? "")] : []),
+      ...(agents ? [agentsSection(vault, agents, summary?.name ?? ""), gatewaysSection(vault, agents)] : []),
       {
         id: "security",
         name: "Security",

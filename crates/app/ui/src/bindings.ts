@@ -389,13 +389,20 @@ export const commands = {
 	 */
 	createAgentPairing: (vault: VaultId, name: string, reads: GroupId[], canCreate: boolean) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_agent_pairing", { vault, name, reads, canCreate })),
 	/**
+	 *  Pairs a Gateway called `name` (ADR 0015), such as agentes-chat, with its own subgroup of the
+	 *  Agent group by that name, which also reads the subgroups `reads`, and creates and changes
+	 *  logins in its own subgroup if `can_write`. The reply has its token, which no command
+	 *  returns again. Only this makes a Gateway pairing: OAuth never does.
+	 */
+	createGatewayPairing: (vault: VaultId, name: string, reads: GroupId[], canWrite: boolean) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_gateway_pairing", { vault, name, reads, canWrite })),
+	/**
 	 *  Sets which other subgroups of the Agent group a pairing reads, and whether it creates
 	 *  Entries in its own subgroup.
 	 */
 	setAgentPairingAccess: (vault: VaultId, pairing: string, reads: GroupId[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_pairing_access", { vault, pairing, reads, canCreate })),
 	/**
-	 *  Revokes an Agent pairing: its token is refused from now on. Its subgroup and Entries stay.
-	 *  Ask the user first.
+	 *  Revokes an Agent or Gateway pairing: its token is refused from now on. Its subgroup and
+	 *  Entries stay. Ask the user first.
 	 */
 	revokeAgentPairing: (vault: VaultId, pairing: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_agent_pairing", { vault, pairing })),
 	getEntryAgentAccess: (vault: VaultId, entry: EntryId) => typedError<EntryAgentAccess, ApiError>(__TAURI_INVOKE("get_entry_agent_access", { vault, entry })),
@@ -510,21 +517,39 @@ export type AddedAttachments = {
 
 /**  What an Agent did, or asked to do, as a Headless host's audit log names it. */
 export type AgentActivityAction = "list" | "use" | "http_request" | "create" | "store" | "reveal" | 
+/**  A Gateway pairing resolving an Entry's value, with no prompt. */
+"resolve" | 
+/**  A Gateway pairing creating a login in its own subgroup. */
+"create_login" | 
+/**  A Gateway pairing changing a login's username or password in its own subgroup. */
+"update_login" | 
 /**  One a later host logs and this keefast doesn't know. */
 "other";
+
+/**
+ *  Whom a Gateway said a call was for: its claim, which keefast can't verify, so the Activity
+ *  view marks it unverified.
+ */
+export type AgentActivityClaim = {
+	agent: string | null,
+	person: string | null,
+	run: string | null,
+};
 
 /**  Whether an Agent's request went through. */
 export type AgentActivityOutcome = "allowed" | "denied";
 
 /**
- *  One record of a Headless host's audit log: something an Agent did, or was refused. It
- *  never holds a value.
+ *  One record of a Headless host's audit log: something an Agent or a Gateway did, or was
+ *  refused. It never holds a value.
  */
 export type AgentActivityRecord = {
 	/**  When, in seconds since 1970 UTC. */
 	time: number,
-	/**  The Agent pairing's name, as it was then. */
+	/**  The pairing's name, as it was then. */
 	pairing: string,
+	/**  Whether that pairing is an Agent's or a Gateway's. */
+	kind: AgentPairingKind,
 	action: AgentActivityAction,
 	entryUuid: string | null,
 	entryTitle: string | null,
@@ -538,6 +563,8 @@ export type AgentActivityRecord = {
 	outcome: AgentActivityOutcome,
 	/**  What decided it, such as "allowed once at a prompt", when the host says. */
 	reason: string | null,
+	/**  Whom a Gateway said it was for, unverified. */
+	claimedFor: AgentActivityClaim | null,
 };
 
 /**
@@ -567,7 +594,13 @@ export type AgentHostView = {
 	problem: string | null,
 };
 
-/**  An Agent pairing, without its token. */
+/**
+ *  What a pairing is for (ADR 0015): an Agent, reaching the Vault through MCP, or a Gateway,
+ *  another program's vault resolving values through `/gateway/v1/`.
+ */
+export type AgentPairingKind = "agent" | "gateway";
+
+/**  An Agent or Gateway pairing, without its token. */
 export type AgentPairingView = {
 	id: string,
 	name: string,
@@ -575,7 +608,10 @@ export type AgentPairingView = {
 	group: GroupId,
 	/**  The other subgroups of the Agent group it reads. */
 	reads: GroupId[],
-	/**  Whether it creates Entries in its own subgroup, and sets their fields. */
+	/**
+	 *  Whether it creates Entries in its own subgroup, and sets their fields: for a Gateway
+	 *  pairing, whether it creates and changes logins there.
+	 */
 	canCreate: boolean,
 };
 
@@ -586,6 +622,8 @@ export type AgentSettingsView = {
 	subgroups: AgentSubgroup[],
 	/**  The Agent pairings, without revoked ones, in the order they were made. */
 	pairings: AgentPairingView[],
+	/**  The Gateway pairings, listed apart: without revoked ones, in the order they were made. */
+	gateways: AgentPairingView[],
 };
 
 /**  A subgroup of the Agent group: one pairing's own, and any others may read it. */

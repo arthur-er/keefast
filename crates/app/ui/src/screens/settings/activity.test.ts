@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentActivityRecord } from "@/bindings";
 
-import { describeActivity, filterActivity, NO_FILTER, pairingsIn } from "./activity";
+import { claimText, describeActivity, filterActivity, NO_FILTER, pairingsIn } from "./activity";
 
 function record(overrides: Partial<AgentActivityRecord>): AgentActivityRecord {
   return {
     time: 1_900_000_000,
     pairing: "claude",
+    kind: "agent",
     action: "use",
     entryUuid: "00".repeat(16),
     entryTitle: "GitHub",
@@ -17,6 +18,7 @@ function record(overrides: Partial<AgentActivityRecord>): AgentActivityRecord {
     field: null,
     outcome: "allowed",
     reason: null,
+    claimedFor: null,
     ...overrides,
   };
 }
@@ -38,6 +40,22 @@ describe("the Activity view", () => {
     expect(describeActivity(record({ action: "list", entryTitle: null, program: null }))).toBe("List its secrets");
     expect(describeActivity(record({ action: "store", entryTitle: "Database", program: null, field: "Stripe key" }))).toBe("Store Stripe key in “Database”");
     expect(describeActivity(record({ action: "other", entryTitle: "Database", program: null }))).toBe("Something with “Database”");
+  });
+
+  it("says what a Gateway did with an Entry", () => {
+    const gateway = { pairing: "agentes", kind: "gateway", program: null } as const;
+    expect(describeActivity(record({ ...gateway, action: "resolve" }))).toBe("Resolve the value of “GitHub”");
+    expect(describeActivity(record({ ...gateway, action: "create_login" }))).toBe("Create the login “GitHub”");
+    expect(describeActivity(record({ ...gateway, action: "update_login" }))).toBe("Change the login “GitHub”");
+    expect(describeActivity(record({ ...gateway, action: "resolve", entryTitle: null, outcome: "denied", reason: "not found" }))).toBe("Resolve the value of an Entry");
+  });
+
+  it("marks whom a Gateway said it was for as its unverified claim", () => {
+    expect(claimText(record({ claimedFor: { agent: "researcher", person: "ana", run: "r-42" } }))).toBe(
+      "For agent researcher, person ana, run r-42 (claimed, unverified)",
+    );
+    expect(claimText(record({ claimedFor: { agent: null, person: "ana", run: null } }))).toBe("For person ana (claimed, unverified)");
+    expect(claimText(record({}))).toBeNull();
   });
 
   it("filters by pairing, Entry and outcome together", () => {

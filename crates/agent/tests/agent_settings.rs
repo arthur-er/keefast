@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use keefast_agent::{
     AgentCredential, AgentDecision, AgentPairing, AgentSettings, AgentSettingsError,
-    AgentSettingsExt, AgentUse, DefaultAgentPolicy, NewAgentPairing,
+    AgentSettingsExt, AgentUse, DefaultAgentPolicy, NewAgentPairing, PairingKind,
 };
 use keefast_core::{EntryFields, EntryId, GroupId};
 use keefast_workspace::{VaultId, Workspace};
@@ -37,6 +37,7 @@ fn pairing_named(name: &str, group: GroupId, readable: Vec<GroupId>) -> NewAgent
         readable,
         can_create: true,
         credential: AgentCredential::token(TOKEN),
+        kind: PairingKind::Agent,
     }
 }
 
@@ -558,5 +559,87 @@ fn agents_may_reveal_is_read_back_after_a_save_and_taking_it_off_later_wins_a_me
             .agent_settings(vault)
             .unwrap()
             .agents_may_reveal(entry)
+    );
+}
+
+#[test]
+fn a_gateway_pairing_keeps_its_kind_through_a_save_and_a_merge() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, _, shared]) = vault_with_agent_group(&clock);
+    let (mut desktop, vault) = file.open(&clock);
+    let (mut host, host_vault) = file.open(&clock);
+
+    let created = desktop
+        .create_gateway_pairing(vault, "agentes", vec![shared], true)
+        .unwrap();
+    desktop
+        .create_agent_pairing(vault, "codex", vec![], false)
+        .unwrap();
+    desktop.save_vault(vault).unwrap();
+    clock.advance(Duration::from_secs(60));
+    host.set_default_agent_policy(host_vault, DefaultAgentPolicy::Deny)
+        .unwrap();
+    host.save_vault(host_vault).unwrap();
+
+    for (workspace, vault) in [file.open(&clock), (host, host_vault)] {
+        let settings = workspace.agent_settings(vault).unwrap();
+        let gateway = settings.pairing_with_token(&created.token).unwrap();
+        assert_eq!(gateway.name(), "agentes");
+        assert_eq!(gateway.kind(), PairingKind::Gateway);
+        assert_eq!(gateway.readable(), [shared]);
+        assert!(gateway.can_create());
+        let codex = settings
+            .pairings()
+            .iter()
+            .find(|p| p.name() == "codex")
+            .unwrap();
+        assert_eq!(codex.kind(), PairingKind::Agent);
+    }
+}
+
+#[test]
+fn a_pairing_stored_without_a_kind_reads_as_an_agent_pairing() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, [_, claude, _]) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    let stored = serde_json::json!({
+        "name": "claude",
+        "group": claude.to_hex(),
+        "token_sha256": "00",
+    });
+
+    workspace
+        .set_vault_custom_data(
+            vault,
+            &[(
+                "keefast_AGENT_PAIRING_0123456789abcdef".to_owned(),
+                stored.to_string(),
+            )],
+        )
+        .unwrap();
+
+    let settings = workspace.agent_settings(vault).unwrap();
+    let [pairing] = settings.pairings() else {
+        panic!("expected one pairing, got {:?}", settings.pairings());
+    };
+    assert_eq!(pairing.kind(), PairingKind::Agent);
+}
+
+#[test]
+fn a_gateway_pairing_shares_the_names_of_agent_pairings() {
+    let clock = FakeClock::at_unix_seconds(1_900_000_000);
+    let (file, _) = vault_with_agent_group(&clock);
+    let (mut workspace, vault) = file.open(&clock);
+    workspace
+        .create_agent_pairing(vault, "agentes", vec![], false)
+        .unwrap();
+
+    let refused = workspace
+        .create_gateway_pairing(vault, "agentes", vec![], false)
+        .unwrap_err();
+
+    assert_eq!(
+        refused,
+        AgentSettingsError::PairingNameTaken("agentes".to_owned())
     );
 }

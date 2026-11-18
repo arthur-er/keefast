@@ -9,9 +9,11 @@
 //! keefast-agent unlock [--key-file <path>] [--no-password] [--remember] [--admin-socket <path>]
 //! keefast-agent lock [--admin-socket <path>]
 //! keefast-agent status [--admin-socket <path>]
-//! keefast-agent pairing create <name> [--reads <subgroup>]... [--can-create]
+//! keefast-agent pairing add <name> [--read <subgroup>]... [--write]
 //!                       [--agent-group <path>] [--admin-socket <path>]
-//! keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+//! keefast-agent pairing add --gateway <name> [--read <subgroup>]... [--write]
+//!                       [--agent-group <path>] [--admin-socket <path>]
+//! keefast-agent pairing approve <code> [--name <name>] [--read <subgroup>]... [--write]
 //!                        [--admin-socket <path>]
 //! keefast-agent pairing list [--admin-socket <path>]
 //! keefast-agent pairing revoke <name> [--admin-socket <path>]
@@ -82,25 +84,36 @@ usage:
   keefast-agent status [--admin-socket <path>]
       Says whether the Headless host is locked.
 
-  keefast-agent pairing create <name> [--reads <subgroup>]... [--can-create]
-                               [--agent-group <path>] [--admin-socket <path>]
+  keefast-agent pairing add <name> [--read <subgroup>]... [--write]
+                            [--agent-group <path>] [--admin-socket <path>]
       Pairs an Agent with the unlocked Vault: makes its subgroup <name> of the Agent group and
-      prints its bearer token, once. It reads its own subgroup and each --reads subgroup.
-      --can-create lets it create Entries in its own subgroup. If the Vault has no Agent group
+      prints its bearer token, once. It reads its own subgroup and each --read subgroup.
+      --write lets it create Entries in its own subgroup. If the Vault has no Agent group
       yet, --agent-group makes the Group at that path (such as Agents) the Agent group.
+      (`pairing create`, --reads and --can-create are the same.)
 
-  keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+  keefast-agent pairing add --gateway <name> [--read <subgroup>]... [--write]
+                            [--agent-group <path>] [--admin-socket <path>]
+      Pairs a gateway, such as agentes-chat, as add does an Agent. Its token reaches only the
+      gateway API, /gateway/v1/, which lists its subgroups' logins and keys and hands their
+      values to the gateway without asking. --write lets it create and change logins in its
+      own subgroup.
+
+  keefast-agent pairing approve <code> [--name <name>] [--read <subgroup>]... [--write]
                                 [--admin-socket <path>]
       Approves an MCP client pairing by OAuth, whose consent page shows <code>: makes its
       Agent pairing, called <name> or else as the client calls itself, with its subgroup of
-      the Agent group, reading each --reads subgroup too. The page then sends the browser back
-      to the client, which gets its tokens. A client paired already is just let in again.
+      the Agent group, reading each --read subgroup too. --write lets it create Entries in its
+      own subgroup. The page then sends the browser back to the client, which gets its
+      tokens. A client paired already is just let in again. (--reads and --can-create are the
+      same.)
 
   keefast-agent pairing list [--admin-socket <path>]
-      Lists the Vault's Agent pairings.
+      Lists the Vault's Agent and Gateway pairings.
 
   keefast-agent pairing revoke <name> [--admin-socket <path>]
-      Revokes an Agent pairing: its token stops working at once. Its subgroup stays.
+      Revokes an Agent or Gateway pairing: its token stops working at once. Its subgroup
+      stays.
 
   keefast-agent pairing approver <name> [--admin-socket <path>]
       Pairs a desktop keefast as an Approver called <name>, which shows the prompts for uses
@@ -261,7 +274,9 @@ mod operator {
     use keefast_agent::listen::{DEFAULT_LISTEN, Listen};
     use keefast_agent::oauth::OAuthServer;
     use keefast_agent::serve::McpEndpoint;
-    use keefast_agent::{ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord};
+    use keefast_agent::{
+        ApproverCredentials, ApproverHub, AuditLog, AuditOutcome, AuditRecord, PairingKind,
+    };
     use keefast_workspace::{
         Dropbox, DropboxConfig, FileVaultCache, LocalStorage, OsSecretStore, VaultLocation,
         Workspace,
@@ -461,31 +476,60 @@ mod operator {
 
     fn pairing(args: &[String]) -> Result<(), String> {
         let (action, rest) = args.split_first().ok_or(
-            "pairing needs create, approve, list, revoke, approver, approvers or revoke-approver: see \
-                 keefast-agent --help",
+            "pairing needs add, approve, list, revoke, approver, approvers or revoke-approver: \
+             see keefast-agent --help",
         )?;
         match action.as_str() {
-            "create" => {
-                let (name, rest) = rest
-                    .split_first()
-                    .filter(|(name, _)| !name.starts_with("--"))
-                    .ok_or("pairing create needs the pairing's name")?;
+            // `create` is the name `add` had before Gateway pairings.
+            "add" | "create" => {
+                let named = rest.first().filter(|name| !name.starts_with("--"));
                 let flags = Flags::new(
-                    rest,
-                    &["--can-create"],
-                    &["--reads", "--agent-group", "--admin-socket"],
+                    &rest[usize::from(named.is_some())..],
+                    &["--write", "--can-create"],
+                    &[
+                        "--gateway",
+                        "--read",
+                        "--reads",
+                        "--agent-group",
+                        "--admin-socket",
+                    ],
                 )?;
+                let (name, kind) = match (flags.value("--gateway"), named) {
+                    (Some(name), None) => (name.to_owned(), PairingKind::Gateway),
+                    (None, Some(name)) => (name.clone(), PairingKind::Agent),
+                    (Some(_), Some(_)) => {
+                        return Err("pairing add takes the name of an Agent pairing, or \
+                                    --gateway and a Gateway pairing's name, not both"
+                            .to_owned());
+                    }
+                    (None, None) => {
+                        return Err("pairing add needs the pairing's name, or --gateway and \
+                                    its name"
+                            .to_owned());
+                    }
+                };
+                let mut reads = flags.values("--read");
+                reads.extend(flags.values("--reads"));
                 let request = AdminRequest::PairingCreate(PairingCreate {
-                    name: name.clone(),
-                    reads: flags.values("--reads"),
-                    can_create: flags.has("--can-create"),
+                    name,
+                    reads,
+                    can_create: flags.has("--write") || flags.has("--can-create"),
                     agent_group: flags.value("--agent-group").map(str::to_owned),
+                    kind,
                 });
                 match ask(&flags, &request)? {
                     AdminReply::PairingCreated { pairing, token } => {
+                        let give = match pairing.kind {
+                            PairingKind::Agent => {
+                                "Give it to the Agent as `Authorization: Bearer <token>`."
+                            }
+                            PairingKind::Gateway => {
+                                "Give it to the gateway, such as agentes-chat's keefast source, \
+                                 with this host's address."
+                            }
+                        };
                         eprintln!(
-                            "Paired {}. Its token is below; it isn't shown again. Give it to \
-                             the Agent as `Authorization: Bearer <token>`.",
+                            "Paired {}. Its token is below; it isn't shown again. {give}",
                             describe_pairing(&pairing)
                         );
                         println!("{}", token.0.as_str());
@@ -501,15 +545,17 @@ mod operator {
                     .ok_or("pairing approve needs the code the consent page shows")?;
                 let flags = Flags::new(
                     rest,
-                    &["--can-create"],
-                    &["--name", "--reads", "--admin-socket"],
+                    &["--write", "--can-create"],
+                    &["--name", "--read", "--reads", "--admin-socket"],
                 )?;
+                let mut reads = flags.values("--read");
+                reads.extend(flags.values("--reads"));
                 let request = AdminRequest::PairingApprove {
                     code: code.clone(),
                     pairing: PairingChoice {
                         name: flags.value("--name").unwrap_or_default().to_owned(),
-                        reads: flags.values("--reads"),
-                        can_create: flags.has("--can-create"),
+                        reads,
+                        can_create: flags.has("--write") || flags.has("--can-create"),
                     },
                 };
                 show(ask(&flags, &request)?, "")
@@ -564,19 +610,25 @@ mod operator {
                 )
             }
             other => Err(format!(
-                "unknown pairing command {other}: it is create, approve, list, revoke, \
+                "unknown pairing command {other}: it is add, approve, list, revoke, \
                  approver, approvers or revoke-approver"
             )),
         }
     }
 
     fn describe_pairing(pairing: &PairingSummary) -> String {
-        let mut text = pairing.name.clone();
+        let mut text = match pairing.kind {
+            PairingKind::Agent => format!("{}, an Agent pairing", pairing.name),
+            PairingKind::Gateway => format!("{}, a Gateway pairing", pairing.name),
+        };
         if !pairing.reads.is_empty() {
             text += &format!(", which also reads {}", pairing.reads.join(", "));
         }
         if pairing.can_create {
-            text += ", and may create Entries";
+            text += match pairing.kind {
+                PairingKind::Agent => ", and may create Entries",
+                PairingKind::Gateway => ", and may create and change logins",
+            };
         }
         text
     }
@@ -780,7 +832,11 @@ mod operator {
     /// One line of the audit log: when, who, what, with what, and the outcome.
     fn describe_record(record: &AuditRecord) -> String {
         let time = keefast_core::Timestamp::from_unix_seconds(record.time).to_iso_8601();
-        let mut line = format!("{time}  {}  {}", record.pairing, record.action);
+        let mut line = format!("{time}  {}", record.pairing);
+        if record.kind == PairingKind::Gateway {
+            line += " (gateway)";
+        }
+        line += &format!("  {}", record.action);
         if let Some(entry) = &record.entry {
             line += &format!(" {} ({})", entry.title, entry.uuid);
         }
@@ -789,6 +845,17 @@ mod operator {
         }
         if let Some(field) = &record.field {
             line += &format!(" field {field}");
+        }
+        if let Some(claim) = &record.claimed_for {
+            let parts: Vec<String> = [
+                ("agent", &claim.agent),
+                ("person", &claim.person),
+                ("run", &claim.run),
+            ]
+            .into_iter()
+            .filter_map(|(name, part)| part.as_ref().map(|part| format!("{name} {part}")))
+            .collect();
+            line += &format!(" for {} (claimed, unverified)", parts.join(", "));
         }
         line += match record.outcome {
             AuditOutcome::Allowed => "  allowed",

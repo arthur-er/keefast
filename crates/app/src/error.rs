@@ -95,7 +95,7 @@ impl From<keefast_agent::AgentSettingsError> for ApiError {
                 Self::invalid("An Agent's name can't have a / in it: it names its subgroup.")
             }
             AgentSettingsError::PairingNameTaken(_) => {
-                Self::invalid("This Vault already has an Agent with this name.")
+                Self::invalid("This Vault already has a pairing with this name.")
             }
             AgentSettingsError::PairingNotFound => Self::invalid("This Agent pairing was revoked."),
             AgentSettingsError::NoAgentGroup => {

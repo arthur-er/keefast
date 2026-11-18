@@ -8,6 +8,7 @@ fn record(n: i64) -> AuditRecord {
         time: 1_900_000_000 + n,
         pairing: "claude".to_owned(),
         pairing_id: "0123".to_owned(),
+        kind: keefast_agent::PairingKind::Agent,
         action: AuditAction::Use,
         entry: Some(AuditEntry {
             uuid: "00112233445566778899aabbccddeeff".to_owned(),
@@ -19,6 +20,7 @@ fn record(n: i64) -> AuditRecord {
         program: Some("gh".to_owned()),
         outcome: AuditOutcome::Allowed,
         reason: None,
+        claimed_for: None,
     }
 }
 

@@ -130,6 +130,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::agents::get_agent_settings,
             commands::agents::set_agent_group,
             commands::agents::create_agent_pairing,
+            commands::agents::create_gateway_pairing,
             commands::agents::set_agent_pairing_access,
             commands::agents::revoke_agent_pairing,
             commands::agents::get_entry_agent_access,

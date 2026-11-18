@@ -28,13 +28,14 @@ use keefast_core::{GroupId, Vault};
 
 use crate::approver::{Approver, ApproverCredentials, ApproverHub, ConsentAnswer, ConsentPrompt};
 use crate::audit::{AuditLog, AuditRecord, AuditSink};
+use crate::gateway::{GatewayError, GatewaySession};
 use crate::oauth::{
     ACCESS_TOKEN_PREFIX, AuthorizeError, AuthorizeRequest, BegunConsent, CONSENT_LIFETIME,
     ConsentError, IssuedTokens, OAuthServer, PendingConsent, TokenError, TokenRequest,
 };
 use crate::{
     AgentError, AgentPairingId, AgentReply, AgentRequest, AgentSession, AgentSettings,
-    AgentSettingsError, AgentSettingsExt, VaultAccess,
+    AgentSettingsError, AgentSettingsExt, PairingKind, VaultAccess,
 };
 
 /// How a Headless host is set up.
@@ -58,8 +59,9 @@ pub struct HostConfig {
 /// Whose a bearer token is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenOwner {
-    /// An Agent pairing's, by its own token or an OAuth access token.
-    Pairing(AgentPairingId),
+    /// A pairing's, of this kind: an Agent pairing's own token or an OAuth access token, or a
+    /// Gateway pairing's token.
+    Pairing(AgentPairingId, PairingKind),
     /// Nobody's: refuse it.
     Unknown,
     /// Perhaps an Agent pairing's, but its hash is in the Vault, which is locked.
@@ -339,8 +341,10 @@ impl HeadlessHost {
         request: AgentRequest,
     ) -> Result<AgentReply, AgentError> {
         let pairing = match self.token_owner(token) {
-            TokenOwner::Pairing(pairing) => pairing,
-            TokenOwner::Unknown => return Err(AgentError::NotPaired),
+            TokenOwner::Pairing(pairing, PairingKind::Agent) => pairing,
+            TokenOwner::Pairing(_, PairingKind::Gateway) | TokenOwner::Unknown => {
+                return Err(AgentError::NotPaired);
+            }
             TokenOwner::Locked => return Err(AgentError::Locked),
         };
         let audit: Arc<dyn AuditSink> = self.audit_log.clone();
@@ -363,7 +367,7 @@ impl HeadlessHost {
             return match self.agent_settings() {
                 None => TokenOwner::Locked,
                 Some(settings) => match settings.pairing_with_oauth_client(&client) {
-                    Some(pairing) => TokenOwner::Pairing(pairing.id().clone()),
+                    Some(pairing) => TokenOwner::Pairing(pairing.id().clone(), pairing.kind()),
                     None => {
                         self.oauth.forget_client(&client);
                         TokenOwner::Unknown
@@ -376,8 +380,24 @@ impl HeadlessHost {
             Some(settings) => settings
                 .pairing_with_token(token)
                 .map_or(TokenOwner::Unknown, |pairing| {
-                    TokenOwner::Pairing(pairing.id().clone())
+                    TokenOwner::Pairing(pairing.id().clone(), pairing.kind())
                 }),
+        }
+    }
+
+    /// A [`GatewaySession`] for the Gateway pairing whose token is `token`, recording in the
+    /// audit log. Any other token, an Agent pairing's included, is unauthorized; while the
+    /// Vault is locked no token can be told, so it is locked. It blocks on the Workspace.
+    pub fn gateway_session(&self, token: &str) -> Result<GatewaySession, GatewayError> {
+        match self.token_owner(token) {
+            TokenOwner::Pairing(pairing, PairingKind::Gateway) => {
+                let audit: Arc<dyn AuditSink> = self.audit_log.clone();
+                Ok(GatewaySession::new(pairing, audit))
+            }
+            TokenOwner::Pairing(_, PairingKind::Agent) | TokenOwner::Unknown => {
+                Err(GatewayError::Unauthorized)
+            }
+            TokenOwner::Locked => Err(GatewayError::Locked),
         }
     }
 

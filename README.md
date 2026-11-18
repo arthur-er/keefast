@@ -89,8 +89,9 @@ The Cargo workspace lives in `crates/`:
   (ADR 0008). See [`crates/app/ui/README.md`](crates/app/ui/README.md) for working on it.
 - `agent`: Agents (ADR 0012), on top of `workspace`: the Agent settings kept in the Vault, and
   the `keefast-agent` command with its Headless host. No Tauri, no WebKit. See
-  [Running a Headless host](docs/headless-host.md) and
-  [Agents on this computer](docs/agents-on-this-computer.md).
+  [Running a Headless host](docs/headless-host.md),
+  [Agents on this computer](docs/agents-on-this-computer.md) and
+  [Connecting agentes-chat](docs/agentes-chat.md).
 - `native-host`: the native-messaging host Chromium starts for the browser extension
   (`keefast-native-host`). It relays messages to the running app over a local socket.
 - `plugins`: the Plugin host (`keefast-plugins`), which runs Plugins in wasmtime and installs

@@ -14,7 +14,7 @@ import { useAgentHosts } from "@/api/queries";
 import { Badge, Button, Dialog, Field, Input, Popover, PopoverTrigger, Segmented, Select, toast } from "@/kit";
 
 import { ConfirmPop } from "./ConfirmPop";
-import { type ActivityFilter, describeActivity, filterActivity, NO_FILTER, type OutcomeFilter, pairingsIn } from "./activity";
+import { type ActivityFilter, claimText, describeActivity, filterActivity, NO_FILTER, type OutcomeFilter, pairingsIn } from "./activity";
 
 import { CrumbSep, Hl, SettingRow, SettingsLayout, type SettingsSection } from "./SettingsLayout";
 
@@ -266,7 +266,7 @@ export function ActivityDialog({ host, vault, onClose }: ActivitySource & { onCl
       onOpenChange={(next) => next || onClose()}
       className="activity-dialog"
       title={<>Activity on {name}</>}
-      description={`What Agents asked ${place} for, and whether they got it. Values are never recorded.`}
+      description={`What Agents and Gateways asked ${place} for, and whether they got it. Values are never recorded.`}
       footer={
         <>
           <Button variant="ghost" disabled={activity.isFetching} onClick={() => void activity.refetch()}>
@@ -310,6 +310,7 @@ export function ActivityDialog({ host, vault, onClose }: ActivitySource & { onCl
 
 function ActivityRow({ record }: { record: AgentActivityRecord }) {
   const when = new Date(record.time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const claim = claimText(record);
   return (
     <li className="activity-row">
       <div className="activity-what">
@@ -317,10 +318,11 @@ function ActivityRow({ record }: { record: AgentActivityRecord }) {
         <Badge tone={record.outcome === "allowed" ? "ok" : "danger"}>{record.outcome === "allowed" ? "Allowed" : "Denied"}</Badge>
       </div>
       <div className="activity-meta">
-        <span>{record.pairing}</span>
+        <span>{record.kind === "gateway" ? `${record.pairing} (Gateway)` : record.pairing}</span>
         <span>{when}</span>
         {record.reason && <span>{record.reason}</span>}
       </div>
+      {claim && <div className="activity-meta activity-claim">{claim}</div>}
     </li>
   );
 }

@@ -17,7 +17,9 @@ use keefast_agent::host::{HeadlessHost, HostConfig, PairingChoice};
 use keefast_agent::listen::Listen;
 use keefast_agent::oauth::OAuthServer;
 use keefast_agent::serve::McpEndpoint;
-use keefast_agent::{AgentCredential, AgentSettingsExt, ApproverCredentials, ApproverHub};
+use keefast_agent::{
+    AgentCredential, AgentSettingsExt, ApproverCredentials, ApproverHub, PairingKind,
+};
 use keefast_core::EntryFields;
 use keefast_workspace::{LocalStorage, UnlockSecrets, Workspace};
 use rmcp::ServiceExt;
@@ -674,6 +676,38 @@ async fn refresh_tokens_rotate_and_one_used_twice_revokes_the_client() {
     assert_eq!((reused, &refusal["error"]), (400, &json!("invalid_grant")));
     assert_eq!(new_refresh_after, 400);
     assert_eq!(served.mcp_status(Some(&new_access)).await.0, 401);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oauth_makes_an_agent_pairing_even_when_an_answer_asks_for_a_gateway() {
+    let served = Served::start().await;
+    let mut laptop = served.approver_stream().await;
+    let client = served.register("Executor").await;
+    let (consent, _) = served.begin(&client).await;
+    let (_, offered) = laptop.next().await;
+    let id = offered["id"].as_str().unwrap();
+
+    let (status, body) = served
+        .answer_consent(
+            id,
+            json!({
+                "approve": true,
+                "code": consent.code,
+                "name": "executor",
+                "kind": "gateway",
+            }),
+        )
+        .await;
+
+    assert_eq!(status, 204, "{body}");
+    assert!(offered["consent"].get("kind").is_none(), "{offered}");
+    let settings = served.host.agent_settings().unwrap();
+    let pairing = settings
+        .pairings()
+        .iter()
+        .find(|pairing| pairing.name() == "executor")
+        .unwrap();
+    assert_eq!(pairing.kind(), PairingKind::Agent);
 }
 
 #[tokio::test(flavor = "multi_thread")]

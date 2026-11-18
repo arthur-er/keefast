@@ -62,6 +62,7 @@ import {
   BRAND_COLORS,
   fakeRecents,
   fakeVaults,
+  type MockAgentPairing,
   type MockEntry,
   type MockField,
   type MockGroup,
@@ -1546,7 +1547,8 @@ export function createMockBackend(): Backend & {
         agentGroup: agentGroup?.id ?? null,
         agentGroupName: agentGroup?.name ?? null,
         subgroups: agentGroup ? v.groups.filter((g) => g.parent === agentGroup.id).map((g) => ({ id: g.id, name: g.name })) : [],
-        pairings: (v.agentPairings ?? []).map((p) => ({ ...p, reads: [...p.reads] })),
+        pairings: (v.agentPairings ?? []).filter((p) => !p.gateway).map(pairingView),
+        gateways: (v.agentPairings ?? []).filter((p) => p.gateway).map(pairingView),
       };
     }),
     setAgentGroup: command((id, groupId) => {
@@ -1556,25 +1558,8 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
-    createAgentPairing: command((id, name, reads, canCreate) => {
-      const v = vault(id);
-      const trimmed = name.trim();
-      if (!trimmed) throw new MockError("invalid", "Give this Agent a name.");
-      if (trimmed.includes("/")) throw new MockError("invalid", "An Agent's name can't have a / in it: it names its subgroup.");
-      if (!v.agentGroup) throw new MockError("invalid", "Choose the Agent group before pairing an Agent.");
-      const pairings = (v.agentPairings ??= []);
-      if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has an Agent with this name.");
-      let own = v.groups.find((g) => g.parent === v.agentGroup && g.name === trimmed);
-      if (!own) {
-        own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };
-        v.groups.push(own);
-      }
-      const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads], canCreate };
-      pairings.push(pairing);
-      edited(v);
-      const token = `kfa_${Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
-      return { pairing: { ...pairing, reads: [...reads] }, token };
-    }),
+    createAgentPairing: command((id, name, reads, canCreate) => createPairing(id, name, reads, canCreate, false)),
+    createGatewayPairing: command((id, name, reads, canWrite) => createPairing(id, name, reads, canWrite, true)),
     setAgentPairingAccess: command((id, pairingId, reads, canCreate) => {
       const v = vault(id);
       const pairing = v.agentPairings?.find((p) => p.id === pairingId);
@@ -1594,7 +1579,7 @@ export function createMockBackend(): Backend & {
     getEntryAgentAccess: command((id, entryId) => {
       const [v, e] = entryOf(id, entryId);
       const pairings = (v.agentPairings ?? []).filter((p) =>
-        [p.group, ...p.reads].some((g) => v.groups.some((x) => x.id === g) && descendants(v, g).has(e.group)),
+        !p.gateway && [p.group, ...p.reads].some((g) => v.groups.some((x) => x.id === g) && descendants(v, g).has(e.group)),
       );
       const decisions = (v.agentDecisions ?? [])
         .filter((d) => d.entry === e.id)
@@ -1610,7 +1595,7 @@ export function createMockBackend(): Backend & {
         );
       const allowedHosts = [...(v.agentAllowedHosts?.[e.id] ?? [])];
       const agentsMayReveal = (v.agentsMayReveal ?? []).includes(e.id);
-      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions, allowedHosts, agentsMayReveal };
+      return { pairings: pairings.map(pairingView), decisions, allowedHosts, agentsMayReveal };
     }),
     rememberAgentDecision: command((id, entryId, pairingId, kind, given, allow) => {
       const [v, e] = entryOf(id, entryId);
@@ -1888,13 +1873,45 @@ export function createMockBackend(): Backend & {
     ]),
   ) as unknown as Events;
 
-  /** The build server's audit log, newest first: a run, an http_request, a create, a denied reveal. */
+  /** Pairs an Agent, or a Gateway, with its own subgroup of the Agent group by its name. */
+  function createPairing(id: number, name: string, reads: string[], canCreate: boolean, gateway: boolean) {
+    const v = vault(id);
+    const trimmed = name.trim();
+    if (!trimmed) throw new MockError("invalid", "Give this Agent a name.");
+    if (trimmed.includes("/")) throw new MockError("invalid", "An Agent's name can't have a / in it: it names its subgroup.");
+    if (!v.agentGroup) throw new MockError("invalid", "Choose the Agent group before pairing an Agent.");
+    const pairings = (v.agentPairings ??= []);
+    if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has a pairing with this name.");
+    let own = v.groups.find((g) => g.parent === v.agentGroup && g.name === trimmed);
+    if (!own) {
+      own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };
+      v.groups.push(own);
+    }
+    const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads], canCreate, ...(gateway ? { gateway } : {}) };
+    pairings.push(pairing);
+    edited(v);
+    const token = `kfa_${Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+    return { pairing: pairingView(pairing), token };
+  }
+
+  /** A pairing as the app shows it, without its kind: Gateways are listed apart. */
+  function pairingView(pairing: MockAgentPairing) {
+    return { id: pairing.id, name: pairing.name, group: pairing.group, reads: [...pairing.reads], canCreate: pairing.canCreate };
+  }
+
+  /** The build server's audit log, newest first: an Agent's run, http_request, create and denied
+   * reveal, and a Gateway's resolves and writes with whom it said they were for. */
   function mockActivity(): AgentActivityRecord[] {
     const now = Math.floor(Date.now() / 1000);
     const at = (minutesAgo: number) => now - minutesAgo * 60;
-    const base = { pairing: "claude", entryUuid: "e1", program: null, method: null, httpHost: null, field: null, reason: null } as const;
+    const base = { pairing: "claude", kind: "agent", entryUuid: "e1", program: null, method: null, httpHost: null, field: null, reason: null, claimedFor: null } as const;
+    const gateway = { ...base, pairing: "agentes-chat", kind: "gateway" } as const;
     return [
+      { ...gateway, time: at(1), action: "resolve", entryTitle: "Vercel", outcome: "allowed", claimedFor: { agent: "deployer", person: "arthur", run: "run_8f2c" } },
       { ...base, time: at(2), action: "reveal", entryTitle: "Wallet seed", field: "password", outcome: "denied", reason: "denied once at a prompt" },
+      { ...gateway, time: at(5), action: "update_login", entryTitle: "Linear", outcome: "allowed", claimedFor: { agent: "researcher", person: null, run: null } },
+      { ...gateway, time: at(6), action: "create_login", entryTitle: "Hacker News", outcome: "allowed", claimedFor: { agent: "researcher", person: "arthur", run: null } },
+      { ...gateway, time: at(7), action: "resolve", entryUuid: null, entryTitle: null, outcome: "denied", reason: "not found" },
       { ...base, time: at(9), action: "create", entryTitle: "Fly.io deploy", outcome: "allowed" },
       { ...base, time: at(14), action: "http_request", entryTitle: "deploy token", method: "GET", httpHost: "api.github.com", outcome: "allowed", reason: "allowed once at a prompt" },
       { ...base, time: at(15), action: "use", entryTitle: "deploy token", program: "gh", outcome: "allowed", reason: "allowed and remembered at a prompt" },
