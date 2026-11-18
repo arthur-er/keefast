@@ -70,17 +70,18 @@ Agent group, the other subgroups it may read, and a bearer token. Make one on th
 Vault unlocked:
 
 ```sh
-keefast-agent pairing create claude --agent-group Agents   # the first time: makes Agents the Agent group
-keefast-agent pairing create codex --reads shared          # also reads the subgroup "shared"
-keefast-agent pairing create ci --can-create               # may create Entries in Agents/ci
+keefast-agent pairing add claude --agent-group Agents   # the first time: makes Agents the Agent group
+keefast-agent pairing add codex --read shared           # also reads the subgroup "shared"
+keefast-agent pairing add ci --write                    # may create Entries in Agents/ci
 keefast-agent pairing list
-keefast-agent pairing revoke codex                         # its token stops working at once
+keefast-agent pairing revoke codex                      # its token stops working at once
 ```
 
-`create` makes the subgroup `Agents/claude` (or uses one already there) and prints the token,
+`add` makes the subgroup `Agents/claude` (or uses one already there) and prints the token,
 **once**: the Vault keeps only its hash. `--agent-group <path>` is needed only while the Vault
 has no Agent group; it makes the Group at that path if it is missing. The desktop app does the
 same under Vault settings → Agents. Revoking leaves the subgroup and its Entries where they are.
+`pairing create`, `--reads` and `--can-create`, the names these had before, still work.
 
 Give the token to the Agent. For Claude Code:
 
@@ -113,7 +114,7 @@ Approve that code either
 
   Without `--name`, the pairing is named as the client calls itself.
 
-Either way the Agent pairing is made in the Vault, with its subgroup, as `pairing create` makes
+Either way the Agent pairing is made in the Vault, with its subgroup, as `pairing add` makes
 one, and the page sends your browser back to the client, which gets its tokens. Nobody approves
 in ten minutes, and the page expires; Cancel on the page sends the client away. A client that is
 paired already is let in again as the same pairing.
@@ -124,6 +125,13 @@ other (`keefast-agent pairing revoke executor`, or in the desktop app), and its 
 working as soon as the host has the change. Behind a proxy, the host builds the addresses it
 publishes from the `X-Forwarded-Host` and `X-Forwarded-Proto` headers, or else from `Host`: let
 your proxy set them (Caddy does by default; with nginx, `proxy_set_header`), or forward the public `Host`.
+
+## Gateway pairings
+
+A Gateway pairing is for another program's vault, such as agentes-chat's, which resolves values
+for its own agents rather than using them through keefast: `keefast-agent pairing add --gateway
+<name>`. Its token works only at `/gateway/v1/`, never at `/mcp`, and it gets the values in its
+subgroups without a prompt. [Connecting agentes-chat](agentes-chat.md) covers it.
 
 ## Self-signed certificates
 
@@ -209,7 +217,7 @@ it as `reveal`, with the Entry and field, never the value.
 
 ## Creating secrets
 
-A pairing made with `--can-create` (or with **Creates Entries in its own subgroup** checked in
+A pairing made with `--write` (or with **Creates Entries in its own subgroup** checked in
 the desktop app's Vault settings → Agents) can save secrets in its own subgroup without seeing
 them. With MCP, the `create_entry` tool makes an Entry there, with a title, username, URL, tags
 and non-secret custom fields, and can have keefast generate its password, which is never
@@ -269,8 +277,9 @@ Every list, use, `http_request`, `create_entry`, `store` and `reveal_secret` is 
 the time, the pairing, the Entry, the program (or an HTTP request's method and host, or the
 field stored or revealed), whether it was allowed and what decided it (a prompt's answer, a
 remembered decision, the Default agent policy), never a value, in `audit.log` in the state
-directory (`--state-dir`). It is append-only and readable only by the host's user. Read it over
-the admin socket:
+directory (`--state-dir`). A [Gateway pairing](#gateway-pairings)'s lists, resolves and login
+writes are recorded too, with whom the gateway said they were for, marked unverified. The log is
+append-only and readable only by the host's user. Read it over the admin socket:
 
 ```sh
 keefast-agent log              # the last 50 records
