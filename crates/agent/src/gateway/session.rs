@@ -46,6 +46,18 @@ pub enum GatewayError {
     /// sent, which may hold a value.
     #[error("keefast can't read that request: {0}")]
     InvalidInput(&'static str),
+    /// A write by a pairing without the right to write, or whose own subgroup is gone.
+    #[error(
+        "this Gateway pairing may only read: give it the right to write, with `keefast-agent \
+         pairing add --gateway <name> --write` or in the desktop app, to create and change logins"
+    )]
+    ReadOnly,
+    /// A change to an Entry the pairing sees outside its own subgroup.
+    #[error(
+        "keefast doesn't let this pairing change that Entry: a Gateway changes only the logins \
+         in its own subgroup"
+    )]
+    NotWritable,
 }
 
 impl GatewayError {
@@ -56,6 +68,8 @@ impl GatewayError {
             Self::Locked => "locked",
             Self::NotFound => "not_found",
             Self::InvalidInput(_) => "invalid_input",
+            Self::ReadOnly => "read_only",
+            Self::NotWritable => "not_writable",
         }
     }
 }
@@ -116,6 +130,10 @@ impl GatewaySession {
 
     pub fn pairing(&self) -> &AgentPairingId {
         &self.pairing
+    }
+
+    pub(super) fn audit_sink(&self) -> &dyn AuditSink {
+        &*self.audit
     }
 
     pub fn whoami(&self, vault: &impl VaultAccess) -> Result<Whoami, GatewayError> {

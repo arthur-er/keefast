@@ -454,7 +454,11 @@ fn check_custom_field(name: &str) -> Result<(), AgentError> {
 
 /// The path of the pairing's own subgroup below the Agent group, ending in `/`, as Secret
 /// references start with it; `None` if it is no longer in the Agent group.
-fn own_path(vault: &Vault, settings: &AgentSettings, pairing: &AgentPairing) -> Option<String> {
+pub(crate) fn own_path(
+    vault: &Vault,
+    settings: &AgentSettings,
+    pairing: &AgentPairing,
+) -> Option<String> {
     let agent_group = vault.group(settings.agent_group()?)?;
     let mut stack: Vec<(&keefast_core::Group, String)> = agent_group
         .groups()

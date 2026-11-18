@@ -66,7 +66,7 @@ agentes-chat keeps its own rules: which of its agents and people may use an item
 - **Pairing kind.** Agent pairings in the Vault's custom data gain `kind`: `agent` (the default, so pairings stored before this read as Agent pairings) or `gateway`. A Gateway pairing has the same name, readable subgroups, own subgroup, create right and token hash. It has no OAuth client, and Agent access decisions don't apply to it.
 - **`GatewaySession`**, in the `agent` crate beside `AgentSession`, built for one Gateway pairing over a `Workspace`, with the same audit sink and clock. It handles `whoami`, `list`, `resolve`, `create_login` and `update_login`. Visibility (the Agent group, the pairing's subgroups, notes never exposed) is shared with `AgentSession`, not duplicated.
 - **The Entry mapping** is a pure function from an Entry to an optional gateway item, in the `agent` crate:
-  - **login**: an `https` URL and a non-empty password. Its websites are the URL and every `KP2A_URL*` field that is `https`, each `{ url, match: "exact" }`. Its username is the Entry's.
+  - **login**: an `https` URL and a non-empty password. Its websites are the URL and every `KP2A_URL*` field that is `https`, each `{ url, match: "exact" }`. Its username is the Entry's. An Entry tagged `login` (case-insensitive) with a non-empty password is a login too, with only its `https` websites, possibly none: that is what `POST /logins` without a `website` makes, so the login it answers is the one the next list shows.
   - **key**: tagged `key` (case-insensitive), or no URL and a title matching `^[A-Z][A-Z0-9_]*$`. `keyName` is the title, which must match that pattern; a `key`-tagged Entry whose title doesn't is left out.
   - A login takes precedence over a key when both match.
   - Every item has `ref` (the UUID, hyphenated lower case), `kind`, `title`, and `updatedAt` (the Entry's modification time, ISO 8601). A login has `username` and `websites`; a key has `keyName`. Nothing else.
@@ -74,7 +74,7 @@ agentes-chat keeps its own rules: which of its agents and people may use an item
   - `GET /whoami` → `{ vault, pairing, subgroups, canWrite }`.
   - `GET /items` → `{ items: [...] }`, with an `ETag` from the Vault's revision. `If-None-Match` with the current one answers `304`.
   - `POST /items/{ref}/resolve` with `{ field: "password" | "key", for?: { agent?, person?, run? } }` → `{ value }`. Both fields read the Entry's password. `for` is free text, length-capped, logged as the gateway's unverified claim.
-  - `POST /logins` with `{ title, username?, password, website?, notes?, for? }` → `201` and the item. Created in `Agent group/<pairing name>`. A `website` must be `https`.
+  - `POST /logins` with `{ title, username?, password, website?, notes?, for? }` → `201` and the item. Created in `Agent group/<pairing name>`. A `website` must be `https`; without one, the Entry is tagged `login`.
   - `PATCH /logins/{ref}` with `{ username?, password?, for? }` → the item. Only Entries in the pairing's own subgroup. The change goes through Entry history.
 - **Errors** are `{ code, message }`, the message keefast's own and never containing a value:
 

@@ -16,8 +16,8 @@ use keefast_agent::store::STORE_PATH;
 use keefast_agent::{AgentSettingsExt, AuditAction, PairingKind};
 use keefast_core::EntryFields;
 use keefast_workspace::{LocalStorage, UnlockSecrets, Workspace};
-use reqwest::StatusCode;
-use secrecy::SecretString;
+use reqwest::{Method, StatusCode};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use support::{FakeClock, FakeSecretStore, KEEPASSXC_KDBX4, PASSWORD, VaultFile};
 
@@ -28,10 +28,12 @@ struct Served {
     endpoint: McpEndpoint,
     gateway: String,
     agent: String,
+    /// A second Gateway pairing's, `builder`, which may write and reads `agentes` too.
+    writer: String,
     _file: VaultFile,
 }
 
-fn vault_file() -> (VaultFile, String, String) {
+fn vault_file() -> (VaultFile, String, String, String) {
     let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
     let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
     let root = workspace.readable_vault(vault).unwrap().vault().root().id();
@@ -43,6 +45,9 @@ fn vault_file() -> (VaultFile, String, String) {
         .unwrap();
     let agent = workspace
         .create_agent_pairing(vault, "claude", vec![shared], true)
+        .unwrap();
+    let writer = workspace
+        .create_gateway_pairing(vault, "builder", vec![gateway.pairing.group()], true)
         .unwrap();
     let mut add = |group, fields: EntryFields| {
         workspace.create_entry(vault, group, &fields).unwrap();
@@ -83,13 +88,18 @@ fn vault_file() -> (VaultFile, String, String) {
         },
     );
     workspace.save_vault(vault).unwrap();
-    (file, gateway.token.to_string(), agent.token.to_string())
+    (
+        file,
+        gateway.token.to_string(),
+        agent.token.to_string(),
+        writer.token.to_string(),
+    )
 }
 
 impl Served {
     async fn locked() -> Self {
         support::install_tls_provider();
-        let (file, gateway, agent) = vault_file();
+        let (file, gateway, agent, writer) = vault_file();
         let (host, _) = HeadlessHost::start(
             Workspace::new(Arc::new(LocalStorage)),
             HostConfig {
@@ -111,6 +121,7 @@ impl Served {
             endpoint,
             gateway,
             agent,
+            writer,
             _file: file,
         }
     }
@@ -532,4 +543,314 @@ async fn resolve_answers_locked_while_the_host_is() {
 
     assert_eq!(status, StatusCode::LOCKED);
     assert_eq!(body["code"], "locked");
+}
+
+impl Served {
+    /// `<method> /gateway/v1/<route>` with `token` and `body`, never following a redirect.
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        route: &str,
+        token: &str,
+        body: &str,
+    ) -> reqwest::Response {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+            .request(method, self.url(&format!("/gateway/v1/{route}")))
+            .bearer_auth(token)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .body(body.to_owned())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// The history of the Entry `reference` names: each old version's password.
+    async fn history_of(&self, reference: &str) -> Vec<String> {
+        let host = Arc::clone(&self.host);
+        let wanted = reference.replace('-', "");
+        tokio::task::spawn_blocking(move || {
+            host.with_vault(|workspace, vault| {
+                let open = workspace.readable_vault(vault).unwrap().vault();
+                let id = keefast_core::EntryId::from_hex(&wanted).unwrap();
+                open.entry(id)
+                    .unwrap()
+                    .history()
+                    .iter()
+                    .map(|old| old.password().expose_secret().to_owned())
+                    .collect()
+            })
+            .unwrap()
+        })
+        .await
+        .unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_created_login_answers_201_with_its_item_and_shows_in_the_next_list() {
+    let served = Served::unlocked().await;
+
+    let (status, item) = json_of(
+        served
+            .send(
+                Method::POST,
+                "logins",
+                &served.writer,
+                r#"{"title":"Fly.io","username":"deploy","password":"fly-secret-value","website":"https://fly.io","notes":"by agentes","for":{"agent":"deploy-bot"}}"#,
+            )
+            .await,
+    )
+    .await;
+    let (bare_status, bare) = json_of(
+        served
+            .send(
+                Method::POST,
+                "logins",
+                &served.writer,
+                r#"{"title":"Shop","password":"shop-secret-value"}"#,
+            )
+            .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{item}");
+    assert_eq!(item["kind"], "login");
+    assert_eq!(item["title"], "Fly.io");
+    assert_eq!(item["username"], "deploy");
+    assert_eq!(
+        item["websites"],
+        json!([{ "url": "https://fly.io", "match": "exact" }])
+    );
+    assert_eq!(bare_status, StatusCode::CREATED, "{bare}");
+    assert_eq!(bare["kind"], "login");
+    let (_, listed) = json_of(served.get("items", Some(&served.writer), &[]).await).await;
+    let listed = listed["items"].as_array().unwrap();
+    assert!(listed.contains(&item), "{listed:?}");
+    assert!(listed.contains(&bare), "{listed:?}");
+    assert!(!item.to_string().contains("secret-value"));
+    let creates: Vec<_> = served
+        .audit()
+        .into_iter()
+        .filter(|record| record.action == AuditAction::CreateLogin)
+        .collect();
+    assert_eq!(creates.len(), 2, "{creates:?}");
+    assert_eq!(
+        creates[0].claimed_for.as_ref().unwrap().agent.as_deref(),
+        Some("deploy-bot")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_changed_login_answers_200_with_its_item_and_keeps_the_old_password_in_history() {
+    let served = Served::unlocked().await;
+    let (_, created) = json_of(
+        served
+            .send(
+                Method::POST,
+                "logins",
+                &served.writer,
+                r#"{"title":"Fly.io","username":"deploy","password":"old-secret-value","website":"https://fly.io"}"#,
+            )
+            .await,
+    )
+    .await;
+    let reference = created["ref"].as_str().unwrap().to_owned();
+
+    let (status, item) = json_of(
+        served
+            .send(
+                Method::PATCH,
+                &format!("logins/{reference}"),
+                &served.writer,
+                r#"{"username":"ops","password":"new-secret-value","for":{"run":"r-9"}}"#,
+            )
+            .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["ref"], reference.as_str());
+    assert_eq!(item["kind"], "login");
+    assert_eq!(item["username"], "ops");
+    assert_eq!(served.history_of(&reference).await, ["old-secret-value"]);
+    let (_, resolved) = json_of(
+        served
+            .send(
+                Method::POST,
+                &format!("items/{reference}/resolve"),
+                &served.writer,
+                r#"{"field":"password"}"#,
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(resolved["value"], "new-secret-value");
+    let update = served
+        .audit()
+        .into_iter()
+        .find(|record| record.action == AuditAction::UpdateLogin)
+        .unwrap();
+    assert_eq!(update.claimed_for.unwrap().run.as_deref(), Some("r-9"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_refuse_with_the_right_status_and_code_and_never_a_value() {
+    let served = Served::unlocked().await;
+    let github = served.ref_of("GitHub").await;
+    let good = r#"{"title":"x","password":"x-secret-value"}"#;
+    let change = r#"{"password":"x-secret-value"}"#;
+    let unknown = "logins/00000000-0000-4000-8000-000000000000";
+    let github_route = format!("logins/{github}");
+    let (reader, writer, agent) = (&served.gateway, &served.writer, &served.agent);
+    let cases: Vec<(StatusCode, &str, Method, &str, &str, &str)> = vec![
+        // The pairing without the right to write.
+        (
+            StatusCode::FORBIDDEN,
+            "read_only",
+            Method::POST,
+            "logins",
+            reader,
+            good,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "read_only",
+            Method::PATCH,
+            &github_route,
+            reader,
+            change,
+        ),
+        // A login the writer reads, in another pairing's subgroup.
+        (
+            StatusCode::FORBIDDEN,
+            "not_writable",
+            Method::PATCH,
+            &github_route,
+            writer,
+            change,
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            "not_found",
+            Method::PATCH,
+            unknown,
+            writer,
+            change,
+        ),
+        (
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            Method::POST,
+            "logins",
+            agent,
+            good,
+        ),
+        (
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            Method::PATCH,
+            &github_route,
+            agent,
+            change,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            r#"{"title":"x","password":"x-secret-value","website":"http://x.example"}"#,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            r#"{"title":"x"}"#,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            r#"{"password":"x-secret-value"}"#,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            "not json x-secret-value",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            "",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::POST,
+            "logins",
+            writer,
+            r#"{"title":7,"password":"x-secret-value"}"#,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::PATCH,
+            unknown,
+            writer,
+            r#"{"password":7}"#,
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            Method::PATCH,
+            unknown,
+            writer,
+            "[",
+        ),
+    ];
+
+    for (expected, code, method, route, token, body) in cases {
+        let (status, answer) = json_of(served.send(method.clone(), route, token, body).await).await;
+
+        assert_eq!(status, expected, "{method} {route} {body}: {answer}");
+        assert_eq!(answer["code"], code, "{method} {route} {body}: {answer}");
+        assert!(answer["message"].is_string(), "{answer}");
+        assert!(!answer.to_string().contains("secret-value"), "{answer}");
+    }
+    assert!(served.history_of(&github).await.is_empty());
+    let log = serde_json::to_string(&served.audit()).unwrap();
+    assert!(!log.contains("secret-value"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_answer_locked_while_the_host_is() {
+    let served = Served::locked().await;
+
+    for (method, route, body) in [
+        (Method::POST, "logins", r#"{"title":"x","password":"x"}"#),
+        (
+            Method::PATCH,
+            "logins/00000000-0000-4000-8000-000000000000",
+            r#"{"password":"x"}"#,
+        ),
+    ] {
+        let (status, body) = json_of(served.send(method, route, &served.writer, body).await).await;
+
+        assert_eq!(status, StatusCode::LOCKED, "{body}");
+        assert_eq!(body["code"], "locked");
+    }
 }

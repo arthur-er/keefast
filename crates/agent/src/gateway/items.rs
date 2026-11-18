@@ -70,8 +70,13 @@ pub fn gateway_item(entry: &Entry) -> Option<GatewayItem> {
     })
 }
 
+/// The tag that makes an Entry with a password a login even without an `https` URL: what a
+/// Gateway's `POST /logins` with no website makes, so the login it was answered is listed.
+pub const LOGIN_TAG: &str = "login";
+
 fn login(entry: &Entry) -> Option<ItemDetails> {
-    if !is_https(entry.url()) || entry.password().expose_secret().is_empty() {
+    let site = is_https(entry.url()) || has_tag(entry, LOGIN_TAG);
+    if !site || entry.password().expose_secret().is_empty() {
         return None;
     }
     let websites = std::iter::once(entry.url())
@@ -89,10 +94,7 @@ fn login(entry: &Entry) -> Option<ItemDetails> {
 }
 
 fn key(entry: &Entry) -> Option<ItemDetails> {
-    let tagged = entry
-        .tags()
-        .iter()
-        .any(|tag| tag.eq_ignore_ascii_case("key"));
+    let tagged = has_tag(entry, "key");
     let unnamed_site = entry.url().trim().is_empty();
     let title = entry.title();
     ((tagged || unnamed_site) && is_upper_snake(title)).then(|| ItemDetails::Key {
@@ -100,8 +102,13 @@ fn key(entry: &Entry) -> Option<ItemDetails> {
     })
 }
 
+/// Whether `entry` is tagged `tag`, in any case.
+fn has_tag(entry: &Entry, tag: &str) -> bool {
+    entry.tags().iter().any(|t| t.eq_ignore_ascii_case(tag))
+}
+
 /// `https://` and a host: a password is never typed into a page that isn't encrypted.
-fn is_https(url: &str) -> bool {
+pub(super) fn is_https(url: &str) -> bool {
     url::Url::parse(url.trim())
         .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some_and(|h| !h.is_empty()))
 }

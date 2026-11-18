@@ -249,8 +249,11 @@ impl From<keefast_agent::AuditAction> for AgentActivityAction {
             AuditAction::Create => Self::Create,
             AuditAction::Store => Self::Store,
             AuditAction::Reveal => Self::Reveal,
-            // The Activity view doesn't show Gateways' resolves apart yet.
-            AuditAction::Resolve | AuditAction::Other => Self::Other,
+            // The Activity view doesn't show Gateways' resolves and writes apart yet.
+            AuditAction::Resolve
+            | AuditAction::CreateLogin
+            | AuditAction::UpdateLogin
+            | AuditAction::Other => Self::Other,
         }
     }
 }

@@ -41,6 +41,7 @@ use crate::http::{
 };
 use crate::programs::{is_shell_or_interpreter, program_name};
 use crate::run::Redactor;
+pub(crate) use writes::own_path;
 pub use writes::{CreateEntry, StoreSecret, WrittenEntry};
 
 mod writes;

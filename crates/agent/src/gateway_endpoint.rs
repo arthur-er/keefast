@@ -8,8 +8,8 @@
 //! `{ "code", "message" }`. No route redirects: agentes-chat's client treats a 3xx as failure.
 //!
 //! Each route is a handler that takes the [`GatewaySession`] the bearer check left in the
-//! request; later ones (create and change a login) slot in beside these in [`router`]. A body
-//! that doesn't parse is `400 invalid_input` with keefast's own message, never echoing it.
+//! request, in [`router`]. A body that doesn't parse is `400 invalid_input` with keefast's own
+//! message, never echoing it: a login's body holds its password.
 
 use std::sync::Arc;
 
@@ -20,11 +20,11 @@ use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use secrecy::ExposeSecret;
 use serde_json::json;
 
-use crate::gateway::{GatewayError, GatewaySession, Resolve};
+use crate::gateway::{GatewayError, GatewaySession, LoginChange, NewLogin, Resolve};
 use crate::host::HeadlessHost;
 use crate::serve::bearer;
 
@@ -39,6 +39,11 @@ pub(crate) fn router(host: Arc<HeadlessHost>) -> Router {
         .route(
             &format!("{GATEWAY_PATH}/items/{{reference}}/resolve"),
             post(resolve),
+        )
+        .route(&format!("{GATEWAY_PATH}/logins"), post(create_login))
+        .route(
+            &format!("{GATEWAY_PATH}/logins/{{reference}}"),
+            patch(update_login),
         )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&host),
@@ -121,6 +126,48 @@ async fn resolve(
     }
 }
 
+/// `POST /logins` with `{ title, username?, password, website?, notes?, for? }`: `201` and the
+/// login, as `/items` lists it.
+async fn create_login(
+    State(host): State<Arc<HeadlessHost>>,
+    Extension(session): Extension<GatewaySession>,
+    body: Bytes,
+) -> Response {
+    let Ok(request) = serde_json::from_slice::<NewLogin>(&body) else {
+        return refusal(&GatewayError::InvalidInput(
+            "send { \"title\", \"password\", \"username\"?, \"website\"?, \"notes\"?, \"for\"?: \
+             { \"agent\"?, \"person\"?, \"run\"? } } as JSON, each a string",
+        ));
+    };
+    match tokio::task::spawn_blocking(move || session.create_login(&*host, &request)).await {
+        Ok(Ok(item)) => json_response(StatusCode::CREATED, &item, []),
+        Ok(Err(error)) => refusal(&error),
+        Err(error) => internal(&error),
+    }
+}
+
+/// `PATCH /logins/{ref}` with `{ username?, password?, for? }`: the login, as `/items` lists it.
+async fn update_login(
+    State(host): State<Arc<HeadlessHost>>,
+    Extension(session): Extension<GatewaySession>,
+    Path(reference): Path<String>,
+    body: Bytes,
+) -> Response {
+    let Ok(request) = serde_json::from_slice::<LoginChange>(&body) else {
+        return refusal(&GatewayError::InvalidInput(
+            "send { \"username\"?, \"password\"?, \"for\"?: { \"agent\"?, \"person\"?, \"run\"? } \
+             } as JSON, each a string",
+        ));
+    };
+    match tokio::task::spawn_blocking(move || session.update_login(&*host, &reference, &request))
+        .await
+    {
+        Ok(Ok(item)) => json_response(StatusCode::OK, &item, []),
+        Ok(Err(error)) => refusal(&error),
+        Err(error) => internal(&error),
+    }
+}
+
 /// Whether `If-None-Match` names `etag`, or any version.
 fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
     headers
@@ -139,6 +186,7 @@ fn refusal(error: &GatewayError) -> Response {
         GatewayError::Locked => StatusCode::LOCKED,
         GatewayError::NotFound => StatusCode::NOT_FOUND,
         GatewayError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        GatewayError::ReadOnly | GatewayError::NotWritable => StatusCode::FORBIDDEN,
     };
     let body = json!({ "code": error.code(), "message": error.to_string() });
     let challenge = match error {

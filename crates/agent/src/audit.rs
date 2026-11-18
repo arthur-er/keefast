@@ -42,6 +42,10 @@ pub enum AuditAction {
     Reveal,
     /// A Gateway's resolve: a value handed to another program's vault.
     Resolve,
+    /// A Gateway's `POST /logins`.
+    CreateLogin,
+    /// A Gateway's `PATCH /logins/{ref}`.
+    UpdateLogin,
     /// One a later keefast logs and this one doesn't know.
     #[serde(other)]
     Other,
@@ -58,6 +62,8 @@ impl AuditAction {
             Self::Store => "store",
             Self::Reveal => "reveal",
             Self::Resolve => "resolve",
+            Self::CreateLogin => "create_login",
+            Self::UpdateLogin => "update_login",
             Self::Other => "other",
         }
     }

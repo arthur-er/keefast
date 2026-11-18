@@ -110,6 +110,31 @@ fn an_entry_with_an_https_url_but_no_password_is_no_login() {
 }
 
 #[test]
+fn an_entry_tagged_login_with_a_password_is_a_login_with_only_its_https_websites() {
+    // What a Gateway's create makes without a website: an UPPER_SNAKE title with no URL would
+    // otherwise be a key.
+    let mut no_site = login("SHOP_ADMIN", "");
+    no_site.tags = vec!["Login".to_owned()];
+    let mut http_site = login("Router", "http://192.168.1.1");
+    http_site.tags = vec!["login".to_owned()];
+    let mut no_password = login("Empty", "");
+    no_password.tags = vec!["login".to_owned()];
+    no_password.password = SecretString::from(String::new());
+
+    let (no_site, _) = item(no_site);
+    let (http_site, _) = item(http_site);
+    let (no_password, _) = item(no_password);
+
+    let no_site = no_site.unwrap();
+    assert_eq!(no_site["kind"], "login");
+    assert_eq!(no_site["websites"], json!([]));
+    let http_site = http_site.unwrap();
+    assert_eq!(http_site["kind"], "login");
+    assert_eq!(http_site["websites"], json!([]));
+    assert_eq!(no_password, None);
+}
+
+#[test]
 fn an_entry_tagged_key_is_a_key_named_by_its_title() {
     // With a URL, so only the tag makes it a key; without a password, so it is no login.
     let fields = EntryFields {
