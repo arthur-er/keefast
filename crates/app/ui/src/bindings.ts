@@ -379,6 +379,67 @@ export const commands = {
 	 *  Vault any more. Ask the user first.
 	 */
 	revokePairing: (vault: VaultId, name: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_pairing", { vault, name })),
+	getAgentSettings: (vault: VaultId) => typedError<AgentSettingsView, ApiError>(__TAURI_INVOKE("get_agent_settings", { vault })),
+	/**  Makes the Group the Vault's Agent group: Agents reach only Entries in its subgroups. */
+	setAgentGroup: (vault: VaultId, group: GroupId) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_group", { vault, group })),
+	/**
+	 *  Pairs an Agent called `name`, with its own subgroup of the Agent group by that name, which
+	 *  also reads the subgroups `reads`, and creates Entries in its subgroup if `can_create`. The
+	 *  reply has its token, which no command returns again.
+	 */
+	createAgentPairing: (vault: VaultId, name: string, reads: GroupId[], canCreate: boolean) => typedError<CreatedAgentPairing, ApiError>(__TAURI_INVOKE("create_agent_pairing", { vault, name, reads, canCreate })),
+	/**
+	 *  Sets which other subgroups of the Agent group a pairing reads, and whether it creates
+	 *  Entries in its own subgroup.
+	 */
+	setAgentPairingAccess: (vault: VaultId, pairing: string, reads: GroupId[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_agent_pairing_access", { vault, pairing, reads, canCreate })),
+	/**
+	 *  Revokes an Agent pairing: its token is refused from now on. Its subgroup and Entries stay.
+	 *  Ask the user first.
+	 */
+	revokeAgentPairing: (vault: VaultId, pairing: string) => typedError<null, ApiError>(__TAURI_INVOKE("revoke_agent_pairing", { vault, pairing })),
+	getEntryAgentAccess: (vault: VaultId, entry: EntryId) => typedError<EntryAgentAccess, ApiError>(__TAURI_INVOKE("get_entry_agent_access", { vault, entry })),
+	/**
+	 *  Remembers that the Agent pairing `pairing` may (`allow`) or may not use the Entry with a
+	 *  program, by its executable's name, or at a host. Shells and interpreters are refused: they
+	 *  ask every time.
+	 */
+	rememberAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, kind: AgentUseKind, name: string, allow: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("remember_agent_decision", { vault, entry, pairing, kind, name, allow })),
+	/**  Forgets a remembered decision, so the use follows the Default agent policy again. */
+	forgetAgentDecision: (vault: VaultId, entry: EntryId, pairing: string, kind: AgentUseKind, name: string) => typedError<null, ApiError>(__TAURI_INVOKE("forget_agent_decision", { vault, entry, pairing, kind, name })),
+	/**
+	 *  Sets the hosts `http_request` may send the Entry's secrets to, and returns them as kept:
+	 *  lower case, without schemes or paths, without repeats. Refused whole if one isn't a host.
+	 */
+	setEntryAllowedHosts: (vault: VaultId, entry: EntryId, hosts: string[]) => typedError<string[], ApiError>(__TAURI_INVOKE("set_entry_allowed_hosts", { vault, entry, hosts })),
+	/**  Marks the Entry "Agents may reveal", or takes the mark off. Each reveal still asks. */
+	setEntryAgentsMayReveal: (vault: VaultId, entry: EntryId, mayReveal: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("set_entry_agents_may_reveal", { vault, entry, mayReveal })),
+	getAgentHosts: () => typedError<AgentHostView[], ApiError>(__TAURI_INVOKE("get_agent_hosts")),
+	/**
+	 *  Becomes an Approver for the Agent host at `url`, with the token `keefast-agent pairing
+	 *  approver` printed there. An empty name names it by its address.
+	 */
+	addAgentHost: (name: string, url: string, token: string, certificate: string | null) => typedError<AgentHostView, ApiError>(__TAURI_INVOKE("add_agent_host", { name, url, token, certificate })),
+	removeAgentHost: (host: string) => typedError<null, ApiError>(__TAURI_INVOKE("remove_agent_host", { host })),
+	/**
+	 *  Answers the prompt `id` from `host`: allow or deny, and with `remember`, as an Agent access
+	 *  decision saved in the Vault.
+	 */
+	answerAgentPrompt: (host: string, id: string, allow: boolean, remember: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_prompt", { host, id, allow, remember })),
+	/**
+	 *  Answers the OAuth consent `id` from `host`. Approving needs the `code` its consent page
+	 *  shows, and makes the Agent pairing `name` (or as the client calls itself, if empty), reading
+	 *  the subgroups `reads` too and creating Entries if `can_create`. Denying sends the client
+	 *  away.
+	 */
+	answerAgentConsent: (host: string, id: string, approve: boolean, code: string, name: string, reads: string[], canCreate: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("answer_agent_consent", { host, id, approve, code, name, reads, canCreate })),
+	/**  The Activity of the Agent host `host`: its audit log's latest records, newest first. */
+	getAgentActivity: (host: string) => typedError<AgentActivityRecord[], ApiError>(__TAURI_INVOKE("get_agent_activity", { host })),
+	/**
+	 *  What Agents on this computer did with the Vault's secrets, newest first: the Vault's own
+	 *  audit log, which this desktop keeps as its in-app host (ADR 0012 "Audit").
+	 */
+	getVaultAgentActivity: (vault: VaultId) => typedError<AgentActivityRecord[], ApiError>(__TAURI_INVOKE("get_vault_agent_activity", { vault })),
 	/**  Whether Dropbox can be reached, and which account is connected. Reads the OS secret store. */
 	dropboxStatus: () => typedError<DropboxStatus, ApiError>(__TAURI_INVOKE("dropbox_status")),
 	/**
@@ -446,6 +507,99 @@ export type AddedAttachments = {
 	added: string[],
 	errors: string[],
 };
+
+/**  What an Agent did, or asked to do, as a Headless host's audit log names it. */
+export type AgentActivityAction = "list" | "use" | "http_request" | "create" | "store" | "reveal" | 
+/**  One a later host logs and this keefast doesn't know. */
+"other";
+
+/**  Whether an Agent's request went through. */
+export type AgentActivityOutcome = "allowed" | "denied";
+
+/**
+ *  One record of a Headless host's audit log: something an Agent did, or was refused. It
+ *  never holds a value.
+ */
+export type AgentActivityRecord = {
+	/**  When, in seconds since 1970 UTC. */
+	time: number,
+	/**  The Agent pairing's name, as it was then. */
+	pairing: string,
+	action: AgentActivityAction,
+	entryUuid: string | null,
+	entryTitle: string | null,
+	/**  The program a `use` was for. */
+	program: string | null,
+	/**  An `http_request`'s method and host. */
+	method: string | null,
+	httpHost: string | null,
+	/**  The field a `store` set or a `reveal` showed, by name. */
+	field: string | null,
+	outcome: AgentActivityOutcome,
+	/**  What decided it, such as "allowed once at a prompt", when the host says. */
+	reason: string | null,
+};
+
+/**
+ *  A remembered Agent access decision: an Agent pairing using an Entry with a program, or at
+ *  a host.
+ */
+export type AgentDecisionView = {
+	pairing: string,
+	pairingName: string,
+	kind: AgentUseKind,
+	/**  The program's executable name, such as `gh`, or the host, such as `api.github.com`. */
+	name: string,
+	allow: boolean,
+};
+
+/**  How an Agent host's prompt stream stands. */
+export type AgentHostState = "connecting" | "connected" | "disconnected";
+
+export type AgentHostView = {
+	id: string,
+	name: string,
+	url: string,
+	/**  Whether it is trusted by a certificate the user gave rather than the public roots. */
+	trustsOwnCertificate: boolean,
+	state: AgentHostState,
+	/**  Why it is disconnected; keefast connects again by itself. */
+	problem: string | null,
+};
+
+/**  An Agent pairing, without its token. */
+export type AgentPairingView = {
+	id: string,
+	name: string,
+	/**  Its own subgroup of the Agent group, which it always reads. */
+	group: GroupId,
+	/**  The other subgroups of the Agent group it reads. */
+	reads: GroupId[],
+	/**  Whether it creates Entries in its own subgroup, and sets their fields. */
+	canCreate: boolean,
+};
+
+export type AgentSettingsView = {
+	agentGroup: GroupId | null,
+	agentGroupName: string | null,
+	/**  The Agent group's subgroups, in Vault file order. */
+	subgroups: AgentSubgroup[],
+	/**  The Agent pairings, without revoked ones, in the order they were made. */
+	pairings: AgentPairingView[],
+};
+
+/**  A subgroup of the Agent group: one pairing's own, and any others may read it. */
+export type AgentSubgroup = {
+	id: GroupId,
+	name: string,
+};
+
+/**  What an Agent access decision is for. */
+export type AgentUseKind = 
+/**  A program `keefast-agent run` starts, by its executable's name. */
+"program" | 
+/**  A host an `http_request` goes to. */
+"host";
 
 /**
  *  A failed command. `message` is a whole sentence for the user; `detail` is the technical
@@ -584,6 +738,12 @@ export type CopyTarget = { kind: "username" } | { kind: "password" } | { kind: "
  */
 { kind: "customField"; name: string };
 
+/**  A pairing just created, with its bearer token: the only time anyone sees it. */
+export type CreatedAgentPairing = {
+	pairing: AgentPairingView,
+	token: string,
+};
+
 /**
  *  A custom field to give an Entry. A `value` of `None` keeps the value the field had at
  *  `original` (its index in the Entry's custom fields), so an unrevealed protected value never
@@ -649,6 +809,27 @@ export type DropboxStatus = {
 export type EncryptionSettings = {
 	cipher: CipherChoice,
 	kdf: KdfChoice,
+};
+
+/**  What the Entry editor's Agents section shows for an Entry. */
+export type EntryAgentAccess = {
+	/**
+	 *  The Agent pairings that can use the Entry, from their own subgroup or one they read.
+	 *  Empty when the Entry is outside the Agent group.
+	 */
+	pairings: AgentPairingView[],
+	/**  Its remembered decisions, by pairing name, then programs before hosts, then name. */
+	decisions: AgentDecisionView[],
+	/**
+	 *  The hosts `http_request` may send its secrets to, as kept: host names, IP addresses, or
+	 *  `*.` and a domain for its subdomains.
+	 */
+	allowedHosts: string[],
+	/**
+	 *  Whether it is marked "Agents may reveal": `reveal_secret` may hand its values to a
+	 *  model, when the user allows it at the prompt, every time.
+	 */
+	agentsMayReveal: boolean,
 };
 
 /**  Everything about an Entry the detail shows, except its secrets. */
@@ -1170,6 +1351,65 @@ export type PendingAccess = {
 	asked: number | null,
 };
 
+/**
+ *  An MCP client pairing with a Headless host by OAuth, which this Approver may let in by
+ *  typing the code its consent page shows: the oldest one waiting, once no prompt does.
+ */
+export type PendingAgentConsent = {
+	id: string,
+	/**  The Agent host asking, by its id and the name the user gave it. */
+	host: string,
+	hostName: string,
+	/**  The name the client registered with: its own claim. */
+	client: string,
+	/**  Where the browser goes back to once approved, by its host. */
+	redirect: string,
+	/**  The Agent group's subgroups the new pairing may also read. */
+	subgroups: string[],
+	/**  The Agent pairing the client has already, which approving lets in again. */
+	pairedAs: string | null,
+	/**  When the host forgets it, in seconds since 1970 UTC. */
+	expires: number,
+	/**  How many consents wait besides this one. */
+	more: number,
+};
+
+/**
+ *  An Agent's use of a secret that a Headless host asks this Approver about: the oldest one
+ *  waiting.
+ */
+export type PendingAgentPrompt = {
+	id: string,
+	/**  The Agent host asking, by its id and the name the user gave it. */
+	host: string,
+	hostName: string,
+	/**  The Agent pairing whose Agent asks. */
+	pairing: string,
+	entryTitle: string,
+	/**  The Secret reference the Agent named the Entry by. */
+	reference: string,
+	/**  The program a remembered answer is remembered for. */
+	program: string,
+	/**  The program and its arguments, whole. */
+	command: string[],
+	/**  Whether the answer may be remembered: never for shells and interpreters. */
+	canRemember: boolean,
+	/**
+	 *  For an `http_request`, the host it goes to; `command` is then its method and URL, with
+	 *  placeholders where the secrets go.
+	 */
+	httpHost: string | null,
+	/**
+	 *  For a `reveal_secret`: allowing it hands the value to the Agent, and so to the model
+	 *  behind it. It can never be remembered.
+	 */
+	reveal: boolean,
+	/**  When the host denies it unanswered, in seconds since 1970 UTC. */
+	expires: number,
+	/**  How many prompts wait besides this one. */
+	more: number,
+};
+
 export type PendingLock = {
 	vault: VaultId,
 	vaultName: string,
@@ -1545,6 +1785,10 @@ export type WorkspaceSnapshot = {
 	pendingPairing: PendingPairing | null,
 	pendingAccess: PendingAccess | null,
 	pendingLogin: PendingLogin | null,
+	/**  The oldest use of a secret an Agent host asks this Approver about. */
+	pendingAgentPrompt: PendingAgentPrompt | null,
+	/**  The oldest MCP client an Agent host asks this Approver to let in by OAuth. */
+	pendingAgentConsent: PendingAgentConsent | null,
 	/**  Seconds until what keefast copied is cleared from the clipboard, if it will be. */
 	clipboardClearsIn: number | null,
 	/**  Whether this build can reach Dropbox (it has an app key). */

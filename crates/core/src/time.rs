@@ -37,7 +37,7 @@ impl Timestamp {
     }
 
     /// `2026-10-07T23:15:22Z`: UTC in ISO 8601, as KeePassXC reads its Pairing dates.
-    pub(crate) fn to_iso_8601(self) -> String {
+    pub fn to_iso_8601(self) -> String {
         let ((year, month, day), (hour, minute, second)) = self.utc();
         format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
     }

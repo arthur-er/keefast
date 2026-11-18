@@ -85,6 +85,34 @@ impl ApiError {
     }
 }
 
+impl From<keefast_agent::AgentSettingsError> for ApiError {
+    fn from(error: keefast_agent::AgentSettingsError) -> Self {
+        use keefast_agent::AgentSettingsError;
+        match error {
+            AgentSettingsError::Vault(error) => error.into(),
+            AgentSettingsError::PairingNameEmpty => Self::invalid("Give this Agent a name."),
+            AgentSettingsError::PairingNameHasSlash => {
+                Self::invalid("An Agent's name can't have a / in it: it names its subgroup.")
+            }
+            AgentSettingsError::PairingNameTaken(_) => {
+                Self::invalid("This Vault already has an Agent with this name.")
+            }
+            AgentSettingsError::PairingNotFound => Self::invalid("This Agent pairing was revoked."),
+            AgentSettingsError::NoAgentGroup => {
+                Self::invalid("Choose the Agent group before pairing an Agent.")
+            }
+            AgentSettingsError::NotAHost(host) => Self::invalid(format!(
+                "{host} isn't a host: write a host name such as api.github.com, *. and a domain \
+                 for its subdomains, or an IP address, without a port."
+            )),
+            AgentSettingsError::NeverRemembered(program) => Self::invalid(format!(
+                "{program} is a shell or interpreter, which can run anything, so keefast asks \
+                 every time it is used and never remembers an answer."
+            )),
+        }
+    }
+}
+
 const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";
 
 impl From<EditVaultError> for ApiError {

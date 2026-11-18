@@ -91,6 +91,34 @@ fn connecting_uses_pkce_without_a_client_secret_and_keeps_tokens_in_the_secret_s
 }
 
 #[test]
+fn a_machine_without_a_browser_connects_by_the_code_dropboxs_page_shows() {
+    // `keefast-agent dropbox connect` on a server: the user opens the page on another machine,
+    // and pastes the code Dropbox shows there.
+    let fake = FakeDropbox::start();
+    let secrets = Arc::new(FakeSecretStore::default());
+    let dropbox = dropbox(&fake, &secrets);
+
+    let authorization = dropbox.begin_connect_by_code().unwrap();
+    assert!(!authorization.url().contains("redirect_uri"));
+    assert!(authorization.url().contains("code_challenge_method=S256"));
+    let page = FakeDropbox::visit_in_browser(authorization.url())
+        .join()
+        .unwrap();
+    let code = page
+        .strip_prefix("Your code: ")
+        .expect("the page shows a code");
+    let wrong = dropbox.finish_connect_with_code(&authorization, "not-the-code");
+    let account = dropbox
+        .finish_connect_with_code(&authorization, &format!("  {code}\n"))
+        .unwrap();
+
+    assert!(wrong.is_err());
+    assert_eq!(account.email, ACCOUNT_EMAIL);
+    assert_eq!(dropbox.account().unwrap(), Some(account));
+    assert!(secrets.secret("dropbox").unwrap().contains("refresh-"));
+}
+
+#[test]
 fn another_account_is_connected_after_dropbox_asks_to_sign_in_and_the_first_stays_till_then() {
     let fake = FakeDropbox::start();
     let (dropbox, _) = connected(&fake);

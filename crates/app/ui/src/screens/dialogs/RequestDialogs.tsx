@@ -1,10 +1,27 @@
 // Browser requests & confirms A: what waits for the user's answer, as centred dialogs over
 // everything (the command palette closes; other overlays wait under them). One at a time: a Vault
-// locking with unsaved changes, else a Pairing request, an Access request, a captured login, in
-// the order the GPUI app asked them. The backend brings keefast to the front when a browser asks.
+// locking with unsaved changes, else an Agent host's prompt, else an MCP client pairing with an
+// Agent host by OAuth, else a Pairing request, an Access request, a captured login, in the order
+// the GPUI app asked them. The backend brings keefast to
+// the front when a browser or an Agent host asks.
 
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { CircleAlert, Folder, FolderPlus, Globe, Info, Link2, Lock, LockOpen, Shield, Timer } from "lucide-react";
+import {
+  Bot,
+  CircleAlert,
+  Eye,
+  Plug,
+  Folder,
+  FolderPlus,
+  Globe,
+  Info,
+  KeyRound,
+  Link2,
+  Lock,
+  LockOpen,
+  Shield,
+  Timer,
+} from "lucide-react";
 
 import { api, errorMessage } from "@/api";
 import type { AskedEntry, LoginOption, LoginTarget, VaultSummary, WorkspaceSnapshot } from "@/bindings";
@@ -18,7 +35,19 @@ import { useShell } from "@/shell/state";
 import { vaultIcon } from "@/shell/vaultStatus";
 
 import { DialogFrame, Kicker, Tile } from "./DialogFrame";
-import { type FrontRequest, frontRequest, requestKey, sameTarget, splitNewGroup, splitOrigin, stepTarget } from "./logic";
+import {
+  commandLine,
+  formatCode,
+  type FrontRequest,
+  frontRequest,
+  normaliseCode,
+  requestKey,
+  sameTarget,
+  secondsLeft,
+  splitNewGroup,
+  splitOrigin,
+  stepTarget,
+} from "./logic";
 
 import "./dialogs.css";
 
@@ -45,6 +74,10 @@ function RequestDialog({ request, vaults }: { request: FrontRequest; vaults: Vau
       return <AccessDialog access={request.access} />;
     case "login":
       return <LoginDialog login={request.login} />;
+    case "agent":
+      return <AgentPromptDialog prompt={request.prompt} />;
+    case "agentConsent":
+      return <AgentConsentDialog consent={request.consent} />;
   }
 }
 
@@ -315,6 +348,336 @@ function AccessDialog({ access }: { access: NonNullable<WorkspaceSnapshot["pendi
           )}
         </span>
       </button>
+    </DialogFrame>
+  );
+}
+
+/** An Agent host asks whether an Agent pairing may use an Entry's secret to run a command, send it
+ * in an HTTP request, or have it revealed. Allow or Deny, remembered for the program or host as an
+ * Agent access decision in the Vault if the user wants, except for shells and interpreters, and
+ * reveals, which ask every time. A reveal is the one use that hands the value to the Agent's model,
+ * so its prompt says so, in place of a command, and its button says Reveal. Escape denies; nothing
+ * on the keyboard allows. The host denies it by itself once the countdown runs out, and the dialog
+ * goes. */
+function AgentPromptDialog({ prompt }: { prompt: NonNullable<WorkspaceSnapshot["pendingAgentPrompt"]> }) {
+  const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const armed = useArmed();
+  const now = useNow(1000);
+  const left = secondsLeft(prompt.expires, now);
+  const answer = (allow: boolean) => {
+    if ((allow && !armed) || busy) return;
+    setBusy(true);
+    const remembered = remember && prompt.canRemember;
+    void api
+      .answerAgentPrompt(prompt.host, prompt.id, allow, remembered)
+      .then(() =>
+        toast(
+          <>
+            {prompt.reveal ? (
+              <>
+                {allow ? "Revealed" : "Didn't reveal"} <b>{prompt.entryTitle}</b> to <b>{prompt.pairing}</b>
+              </>
+            ) : (
+              <>
+                {allow ? "Allowed" : "Denied"} <b>{prompt.pairing}</b> using <b>{prompt.entryTitle}</b>{" "}
+                {prompt.httpHost ? "at" : "with"} <b>{prompt.program}</b>
+              </>
+            )}
+            {remembered && <span className="subtle"> · remembered</span>}
+          </>,
+          { icon: allow ? "check" : Shield },
+        ),
+      )
+      .catch(fail)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <DialogFrame
+      role="alertdialog"
+      width={520}
+      autoFocus={false}
+      lead={
+        <Kicker icon={<Bot />}>
+          {[`${prompt.pairing} on ${prompt.hostName}`, "Agent request", ...(prompt.more > 0 ? [`${prompt.more} more waiting`] : [])]}
+        </Kicker>
+      }
+      title={
+        prompt.reveal ? `Reveal “${prompt.entryTitle}” to ${prompt.pairing}?` : `Let ${prompt.pairing} use “${prompt.entryTitle}”?`
+      }
+      onEscape={() => answer(false)}
+      hint={
+        <>
+          <Timer />
+          Denied in {left} s
+        </>
+      }
+      actions={
+        <>
+          <Button disabled={busy} onClick={() => answer(false)} shortcut="Esc">
+            Deny
+          </Button>
+          <Button variant={prompt.reveal ? "danger" : "primary"} disabled={!armed || busy} onClick={() => answer(true)}>
+            {prompt.reveal ? "Reveal" : "Allow"}
+          </Button>
+        </>
+      }
+    >
+      <div className="dg-subject">
+        <span className="dg-gico">
+          <KeyRound />
+        </span>
+        <div className="min-w-0">
+          <div className="t truncate">{prompt.entryTitle}</div>
+          <div className="u truncate">{prompt.reference}</div>
+        </div>
+      </div>
+      {prompt.reveal ? (
+        <div className="dg-reveal" role="note">
+          <Eye />
+          <span>
+            An Agent paired as <b>{prompt.pairing}</b> on <b>{prompt.hostName}</b> asks to see this secret. If you
+            reveal it, <b>the value itself goes to the Agent and into its model's context</b>, where keefast can no
+            longer hide or take it back. Reveal only a secret that must be written somewhere, and only if you expect it.
+          </span>
+        </div>
+      ) : prompt.httpHost ? (
+        <>
+          <div className="dg-command" aria-label="Request">
+            <span className="prompt" aria-hidden>
+              →
+            </span>
+            <code>{prompt.command.join(" ")}</code>
+          </div>
+          <p className="dialog-desc m-0">
+            An Agent paired as <b>{prompt.pairing}</b> asks <b>{prompt.hostName}</b> to send this request to{" "}
+            <b>{prompt.httpHost}</b>, with the secret where its placeholder is. Allow only if you expect it.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="dg-command" aria-label="Command">
+            <span className="prompt" aria-hidden>
+              $
+            </span>
+            <code>{commandLine(prompt.command)}</code>
+          </div>
+          <p className="dialog-desc m-0">
+            An Agent paired as <b>{prompt.pairing}</b> asks to run this on <b>{prompt.hostName}</b>, with the secret in
+            the program's environment. Allow only if you expect it.
+          </p>
+        </>
+      )}
+      {prompt.canRemember ? (
+        <button type="button" className="dg-checkrow" role="checkbox" aria-checked={remember} onClick={() => setRemember(!remember)}>
+          <span className={cn("check", remember && "is-on")} />
+          <span>
+            Remember this decision for <b>{prompt.program}</b>
+          </span>
+        </button>
+      ) : (
+        <p className="dg-note m-0">
+          <Info />
+          <span>
+            {prompt.reveal ? (
+              "This answer is never remembered: keefast asks every time a value is revealed."
+            ) : (
+              <>
+                <b>{prompt.program}</b> can run anything, so keefast asks every time it is used.
+              </>
+            )}
+          </span>
+        </p>
+      )}
+    </DialogFrame>
+  );
+}
+
+/** An MCP client asks an Agent host to pair by OAuth: its consent page, in the user's browser,
+ * shows a code, which the user types here to approve it, naming the Agent pairing and choosing the
+ * subgroups it also reads. Typing the code, not just pressing Approve, is what proves the request
+ * is the one in the user's own browser. A client paired already is just let in again. Escape
+ * denies; a wrong code says so and lets the user try again. */
+function AgentConsentDialog({ consent }: { consent: NonNullable<WorkspaceSnapshot["pendingAgentConsent"]> }) {
+  const again = consent.pairedAs !== null;
+  const [code, setCode] = useState("");
+  const [name, setName] = useState(() => consent.client.replaceAll("/", "-"));
+  const [reads, setReads] = useState<string[]>([]);
+  const [canCreate, setCanCreate] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  const armed = useArmed();
+  const now = useNow(1000);
+  const left = secondsLeft(consent.expires, now);
+  const typed = normaliseCode(code);
+  const complete = typed.length === 8;
+  const approve = async () => {
+    if (!armed || busy || !complete) return;
+    setBusy(true);
+    try {
+      await api.answerAgentConsent(consent.host, consent.id, true, typed, name, reads, canCreate);
+      toast(
+        <>
+          {again ? "Let in" : "Paired"} <b>{consent.client}</b> as <b>{consent.pairedAs ?? name.trim()}</b> on{" "}
+          {consent.hostName}
+        </>,
+        { icon: Plug },
+      );
+    } catch (failure) {
+      setError(errorMessage(failure));
+      field.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deny = () => {
+    if (busy) return;
+    void api
+      .answerAgentConsent(consent.host, consent.id, false, "", "", [], false)
+      .then(() => toast(<>Sent <b>{consent.client}</b> away</>, { icon: Shield }))
+      .catch(fail);
+  };
+  const toggle = (subgroup: string) =>
+    setReads((current) => (current.includes(subgroup) ? current.filter((known) => known !== subgroup) : [...current, subgroup]));
+  return (
+    <DialogFrame
+      role="alertdialog"
+      width={500}
+      lead={
+        <Kicker icon={<Bot />}>
+          {[consent.hostName, "Agent pairing by OAuth", ...(consent.more > 0 ? [`${consent.more} more waiting`] : [])]}
+        </Kicker>
+      }
+      title={again ? `Let “${consent.client}” in again?` : `Pair “${consent.client}” as an Agent?`}
+      onEscape={deny}
+      hint={
+        <>
+          <Timer />
+          Expires in {left >= 60 ? `${Math.ceil(left / 60)} min` : `${left} s`}
+        </>
+      }
+      actions={
+        <>
+          <Button disabled={busy} onClick={deny} shortcut="Esc">
+            Deny
+          </Button>
+          <Button variant="primary" disabled={!armed || busy || !complete} onClick={() => void approve()} shortcut="↵">
+            {again ? "Let in" : "Approve"}
+          </Button>
+        </>
+      }
+    >
+      <div className="dg-subject">
+        <span className="dg-gico">
+          <Plug />
+        </span>
+        <div className="min-w-0">
+          <div className="t truncate">{consent.client}</div>
+          <div className="u truncate">Returns to {consent.redirect}</div>
+        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="consent-code">Code on the consent page</label>
+        <div className={cn("input dg-code", error && "invalid")}>
+          <input
+            ref={field}
+            id="consent-code"
+            autoFocus
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            inputMode="text"
+            value={formatCode(code)}
+            placeholder="ABCD-EFGH"
+            aria-invalid={error !== null}
+            onChange={(event) => {
+              setCode(event.target.value);
+              setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void approve();
+              }
+            }}
+          />
+        </div>
+        {error ? (
+          <div className="error-msg">
+            <CircleAlert className="ico-sm" />
+            <span>{error}</span>
+          </div>
+        ) : (
+          <p className="dg-note m-0">
+            <Info />
+            <span>
+              Only the browser that asked shows this code. If you didn't just connect <b>{consent.client}</b>, deny.
+            </span>
+          </p>
+        )}
+      </div>
+      {again ? (
+        <p className="dg-note m-0">
+          <Info />
+          <span>
+            It is paired already as <b>{consent.pairedAs}</b>, and keeps what that pairing reads.
+          </span>
+        </p>
+      ) : (
+        <>
+          <div className="field">
+            <label htmlFor="consent-name">Agent pairing name</label>
+            <div className="input">
+              <Bot className="ico-sm subtle" />
+              <input
+                id="consent-name"
+                autoComplete="off"
+                spellCheck={false}
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setError(null);
+                }}
+              />
+            </div>
+            <p className="dg-note m-0">
+              <Folder />
+              <span>
+                It reads and writes its own subgroup, <b>{name.trim() || consent.client}</b>, of the Agent group.
+              </span>
+            </p>
+          </div>
+          {consent.subgroups.length > 0 && (
+            <div className="field" role="group" aria-label="Also reads">
+              <label>Also reads</label>
+              {consent.subgroups.map((subgroup) => (
+                <button
+                  key={subgroup}
+                  type="button"
+                  className="dg-checkrow"
+                  role="checkbox"
+                  aria-checked={reads.includes(subgroup)}
+                  onClick={() => toggle(subgroup)}
+                >
+                  <span className={cn("check", reads.includes(subgroup) && "is-on")} />
+                  <span>{subgroup}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            className="dg-checkrow"
+            role="checkbox"
+            aria-checked={canCreate}
+            onClick={() => setCanCreate(!canCreate)}
+          >
+            <span className={cn("check", canCreate && "is-on")} />
+            <span>May create Entries in its own subgroup</span>
+          </button>
+        </>
+      )}
     </DialogFrame>
   );
 }

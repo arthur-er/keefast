@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::Core;
+use super::agent_hosts::{PendingAgentConsent, PendingAgentPrompt};
 use crate::core::AppCore;
 use crate::dto::{
     Color, EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View,
@@ -38,6 +39,10 @@ pub struct WorkspaceSnapshot {
     pub pending_pairing: Option<PendingPairing>,
     pub pending_access: Option<PendingAccess>,
     pub pending_login: Option<PendingLogin>,
+    /// The oldest use of a secret an Agent host asks this Approver about.
+    pub pending_agent_prompt: Option<PendingAgentPrompt>,
+    /// The oldest MCP client an Agent host asks this Approver to let in by OAuth.
+    pub pending_agent_consent: Option<PendingAgentConsent>,
     /// Seconds until what keefast copied is cleared from the clipboard, if it will be.
     pub clipboard_clears_in: Option<f64>,
     /// Whether this build can reach Dropbox (it has an app key).
@@ -409,6 +414,9 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             pairings: pending.pairings,
             asked: seconds(pending.asked),
         }),
+        // Agent hosts aren't the Workspace's: `get_workspace` adds their prompt.
+        pending_agent_prompt: None,
+        pending_agent_consent: None,
         clipboard_clears_in: workspace
             .clipboard_clears_in()
             .map(|wait| wait.as_secs_f64()),
@@ -529,7 +537,15 @@ pub fn flatten_groups<'a>(groups: &'a [Group], depth: u32, out: &mut Vec<(&'a Gr
 #[specta::specta]
 pub async fn get_workspace(core: Core<'_>) -> ApiResult<WorkspaceSnapshot> {
     // The revision is read with the Workspace held, so it is never newer than the snapshot.
-    Ok(core.read(|workspace| snapshot(workspace, core.revision())))
+    let mut snapshot = core.read(|workspace| snapshot(workspace, core.revision()));
+    let hosts = core.agent_hosts();
+    snapshot.pending_agent_prompt = hosts
+        .front()
+        .map(|front| PendingAgentPrompt::of(front, hosts.waiting() - 1));
+    snapshot.pending_agent_consent = hosts
+        .front_consent()
+        .map(|front| PendingAgentConsent::of(front, hosts.consents_waiting() - 1));
+    Ok(snapshot)
 }
 
 /// What the command line asked to open first: a Vault file, and its Key file. After a later

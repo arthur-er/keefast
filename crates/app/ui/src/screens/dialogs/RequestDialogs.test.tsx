@@ -8,6 +8,8 @@ import type { WorkspaceSnapshot } from "@/bindings";
 vi.mock("@/api", () => ({
   api: {
     answerAccess: vi.fn(() => new Promise(() => {})),
+    answerAgentPrompt: vi.fn(() => new Promise(() => {})),
+    answerAgentConsent: vi.fn(() => Promise.resolve(null)),
     approvePairing: vi.fn(() => new Promise(() => {})),
     denyPairing: vi.fn(() => new Promise(() => {})),
     getEntry: () => new Promise(() => {}),
@@ -38,6 +40,8 @@ function snapshot(pending: Partial<WorkspaceSnapshot>): WorkspaceSnapshot {
     pendingPairing: null,
     pendingAccess: null,
     pendingLogin: null,
+    pendingAgentPrompt: null,
+    pendingAgentConsent: null,
     clipboardClearsIn: null,
     dropboxAvailable: false,
     configError: null,
@@ -60,6 +64,42 @@ const access = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAccess"]>
     },
   });
 
+const agent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentPrompt"]>> = {}) =>
+  snapshot({
+    pendingAgentPrompt: {
+      id: "5f1c",
+      host: "h1",
+      hostName: "Build server",
+      pairing: "claude",
+      entryTitle: "deploy token",
+      reference: "claude/GitHub/deploy token#password",
+      program: "gh",
+      command: ["gh", "pr", "create", "--title", "Fix the login"],
+      canRemember: true,
+      httpHost: null,
+      reveal: false,
+      expires: NOW / 1000 + 60,
+      more: 0,
+      ...changes,
+    },
+  });
+
+const consent = (changes: Partial<NonNullable<WorkspaceSnapshot["pendingAgentConsent"]>> = {}) =>
+  snapshot({
+    pendingAgentConsent: {
+      id: "c1",
+      host: "h1",
+      hostName: "Build server",
+      client: "Executor",
+      redirect: "executor.sh",
+      subgroups: ["shared", "deploy"],
+      pairedAs: null,
+      expires: NOW / 1000 + 600,
+      more: 0,
+      ...changes,
+    },
+  });
+
 const pairing = snapshot({ pendingPairing: { id: 3, vault: 0, vaultName: "Personal" } });
 
 function show(shown: WorkspaceSnapshot) {
@@ -76,6 +116,8 @@ const button = (name: RegExp) => screen.getByRole<HTMLButtonElement>("button", {
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW });
   vi.mocked(api.answerAccess).mockClear();
+  vi.mocked(api.answerAgentPrompt).mockClear();
+  vi.mocked(api.answerAgentConsent).mockClear();
   vi.mocked(api.approvePairing).mockClear();
 });
 
@@ -167,5 +209,149 @@ describe("the Access prompt", () => {
     ]);
     expect(addresses.map((address) => address.querySelector(".scheme")!.textContent)).toEqual(["https://", "http://"]);
     expect(addresses.map((address) => address.querySelector(".lockico")!.classList.contains("insecure"))).toEqual([false, true]);
+  });
+});
+
+describe("an Agent host's prompt", () => {
+  it("names the pairing, the host, the Entry and the whole command line", () => {
+    show(agent());
+
+    expect(screen.getByRole("alertdialog", { name: "Let claude use “deploy token”?" })).toBeTruthy();
+    expect(screen.getByText("claude on Build server")).toBeTruthy();
+    expect(screen.getByText("claude/GitHub/deploy token#password")).toBeTruthy();
+    expect(screen.getByText("gh pr create --title 'Fix the login'")).toBeTruthy();
+  });
+
+  it("allows only once armed, remembered for the program if asked", () => {
+    show(agent());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Remember this decision for gh/ }));
+    fireEvent.click(button(/^Allow/));
+    expect(api.answerAgentPrompt).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+    fireEvent.click(button(/^Allow/));
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", true, true);
+  });
+
+  it("denies with Escape", () => {
+    show(agent());
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", false, false);
+  });
+
+  it("offers no remembering for a shell, which asks every time", () => {
+    show(agent({ program: "bash", command: ["bash", "-c", "gh auth status"], canRemember: false }));
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText(/can run anything, so keefast asks every time/)).toBeTruthy();
+  });
+
+  it("shows an HTTP request's method and URL, and remembers the answer for its host", () => {
+    show(
+      agent({
+        program: "api.github.com",
+        command: ["POST", "https://api.github.com/user?q={{secret:claude/GitHub#username}}"],
+        httpHost: "api.github.com",
+      }),
+    );
+
+    expect(screen.getByLabelText("Request").textContent).toContain(
+      "POST https://api.github.com/user?q={{secret:claude/GitHub#username}}",
+    );
+    expect(screen.queryByLabelText("Command")).toBeNull();
+    expect(screen.getByText(/send this request to/)).toBeTruthy();
+    expect(screen.getByRole("checkbox").textContent).toContain("Remember this decision for api.github.com");
+  });
+
+  it("says plainly that a reveal hands the value to the model, and never offers to remember it", () => {
+    show(
+      agent({
+        program: "reveal_secret",
+        command: ["reveal_secret", "claude/Wallet#password"],
+        canRemember: false,
+        reveal: true,
+      }),
+    );
+
+    expect(screen.getByRole("alertdialog", { name: "Reveal “deploy token” to claude?" })).toBeTruthy();
+    expect(screen.getByText(/the value itself goes to the Agent and into its model's context/)).toBeTruthy();
+    expect(screen.getByText(/keefast asks every time a value is revealed/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByLabelText("Command")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+
+    expect(api.answerAgentPrompt).toHaveBeenCalledWith("h1", "5f1c", true, false);
+  });
+
+  it("counts down to when the host denies it", () => {
+    show(agent());
+    expect(screen.getByText(/Denied in 60 s/)).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(15_000));
+
+    expect(screen.getByText(/Denied in 45 s/)).toBeTruthy();
+  });
+});
+
+describe("an MCP client pairing with an Agent host by OAuth", () => {
+  const code = () => screen.getByLabelText<HTMLInputElement>("Code on the consent page");
+
+  it("names the client, where it returns to and the host, and asks for the code its page shows", () => {
+    show(consent());
+
+    expect(screen.getByRole("alertdialog", { name: "Pair “Executor” as an Agent?" })).toBeTruthy();
+    expect(screen.getByText("Returns to executor.sh")).toBeTruthy();
+    expect(screen.getByText(/Build server/)).toBeTruthy();
+    expect(screen.getByText(/Expires in 10 min/)).toBeTruthy();
+    expect(document.activeElement).toBe(code());
+  });
+
+  it("approves only with the whole code, once armed, with the pairing's name and what it reads", () => {
+    show(consent());
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+
+    fireEvent.change(code(), { target: { value: "abcd-efg" } });
+    expect(button(/^Approve/).disabled).toBe(true);
+    fireEvent.change(code(), { target: { value: "abcd-efgh" } });
+    expect(code().value).toBe("ABCD-EFGH");
+    fireEvent.change(screen.getByLabelText("Agent pairing name"), { target: { value: "executor" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "shared" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /May create Entries/ }));
+    fireEvent.click(button(/^Approve/));
+
+    expect(api.answerAgentConsent).toHaveBeenCalledWith("h1", "c1", true, "ABCDEFGH", "executor", ["shared"], true);
+  });
+
+  it("denies with Escape", () => {
+    show(consent());
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    expect(api.answerAgentConsent).toHaveBeenCalledWith("h1", "c1", false, "", "", [], false);
+  });
+
+  it("says a wrong code is wrong and keeps the dialog to try again", async () => {
+    vi.mocked(api.answerAgentConsent).mockRejectedValueOnce("that isn't the code the consent page shows");
+    show(consent());
+    act(() => vi.advanceTimersByTime(ARM_DELAY_MS));
+
+    fireEvent.change(code(), { target: { value: "ZZZZZZZZ" } });
+    await act(async () => fireEvent.click(button(/^Approve/)));
+
+    expect(screen.getByText("that isn't the code the consent page shows")).toBeTruthy();
+    expect(code().getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("lets a client paired already in again, without asking for a name", () => {
+    show(consent({ pairedAs: "executor" }));
+
+    expect(screen.getByRole("alertdialog", { name: "Let “Executor” in again?" })).toBeTruthy();
+    expect(screen.queryByLabelText("Agent pairing name")).toBeNull();
+    expect(screen.getByText(/paired already as/)).toBeTruthy();
   });
 });

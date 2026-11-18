@@ -2,10 +2,29 @@ import { describe, expect, it } from "vitest";
 
 import type { GroupNode, LoginOption, WorkspaceSnapshot } from "@/bindings";
 
-import { contentsLine, findGroup, frontRequest, requestKey, sameTarget, splitNewGroup, splitOrigin, stepTarget } from "./logic";
+import {
+  commandLine,
+  contentsLine,
+  findGroup,
+  formatCode,
+  frontRequest,
+  requestKey,
+  sameTarget,
+  secondsLeft,
+  splitNewGroup,
+  splitOrigin,
+  stepTarget,
+} from "./logic";
 
-type Pending = Partial<Pick<WorkspaceSnapshot, "pendingLock" | "pendingPairing" | "pendingAccess" | "pendingLogin">>;
-const none: Pending = { pendingLock: null, pendingPairing: null, pendingAccess: null, pendingLogin: null };
+type Pending = Partial<Pick<WorkspaceSnapshot, "pendingLock" | "pendingPairing" | "pendingAccess" | "pendingLogin" | "pendingAgentPrompt" | "pendingAgentConsent">>;
+const none: Pending = {
+  pendingLock: null,
+  pendingPairing: null,
+  pendingAccess: null,
+  pendingLogin: null,
+  pendingAgentPrompt: null,
+  pendingAgentConsent: null,
+};
 const snapshot = (pending: Pending) => ({ ...none, ...pending }) as unknown as WorkspaceSnapshot;
 
 const lock = { vault: 2, vaultName: "Work", canCancel: true };
@@ -30,7 +49,47 @@ const login = {
   asked: null,
 };
 
+const agent = {
+  id: "5f1c",
+  host: "h1",
+  hostName: "Build server",
+  pairing: "claude",
+  entryTitle: "deploy token",
+  reference: "claude/GitHub/deploy token#password",
+  program: "gh",
+  command: ["gh", "auth", "status"],
+  canRemember: true,
+  httpHost: null,
+  reveal: false,
+  expires: 1_900_000_060,
+  more: 0,
+};
+
+const consent = {
+  id: "c1",
+  host: "h1",
+  hostName: "Build server",
+  client: "Executor",
+  redirect: "executor.sh",
+  subgroups: ["shared"],
+  pairedAs: null,
+  expires: 1_900_000_600,
+  more: 0,
+};
+
 describe("frontRequest", () => {
+  it("asks an MCP client's OAuth consent after an Agent host's prompt and before browser requests", () => {
+    expect(frontRequest(snapshot({ pendingAgentPrompt: agent, pendingAgentConsent: consent }))?.kind).toBe("agent");
+    expect(frontRequest(snapshot({ pendingPairing: pairing, pendingAgentConsent: consent }))?.kind).toBe("agentConsent");
+    expect(requestKey(frontRequest(snapshot({ pendingAgentConsent: consent }))!)).toBe("consent-h1-c1");
+  });
+
+  it("asks an Agent host's prompt after a lock and before browser requests, since it times out", () => {
+    expect(frontRequest(snapshot({ pendingLock: lock, pendingAgentPrompt: agent }))?.kind).toBe("lock");
+    expect(frontRequest(snapshot({ pendingPairing: pairing, pendingAccess: access, pendingAgentPrompt: agent }))?.kind).toBe("agent");
+    expect(requestKey(frontRequest(snapshot({ pendingAgentPrompt: agent }))!)).toBe("agent-h1-5f1c");
+  });
+
   it("asks a lock first, then Pairing, Access and login requests in that order", () => {
     expect(frontRequest(snapshot({ pendingLock: lock, pendingPairing: pairing, pendingAccess: access, pendingLogin: login }))?.kind).toBe("lock");
     expect(frontRequest(snapshot({ pendingPairing: pairing, pendingAccess: access, pendingLogin: login }))?.kind).toBe("pairing");
@@ -111,5 +170,27 @@ describe("splitOrigin", () => {
     expect(splitOrigin("https://github.com")).toEqual({ scheme: "https://", rest: "github.com" });
     expect(splitOrigin("http://example.com:8080")).toEqual({ scheme: "http://", rest: "example.com:8080" });
     expect(splitOrigin("github.com")).toEqual({ scheme: "", rest: "github.com" });
+  });
+});
+
+describe("an Agent's prompt", () => {
+  it("shows the command line whole, quoting what a shell would split or expand", () => {
+    expect(commandLine(["gh", "auth", "status"])).toBe("gh auth status");
+    expect(commandLine(["bash", "-c", "echo $TOKEN | base64"])).toBe("bash -c 'echo $TOKEN | base64'");
+    expect(commandLine(["printf", "it's", ""])).toBe("printf 'it'\\''s' ''");
+  });
+
+  it("counts down whole seconds and stops at none", () => {
+    expect(secondsLeft(1_900_000_060, 1_900_000_000)).toBe(60);
+    expect(secondsLeft(1_900_000_060, 1_900_000_059.2)).toBe(1);
+    expect(secondsLeft(1_900_000_060, 1_900_000_070)).toBe(0);
+  });
+});
+
+describe("formatCode", () => {
+  it("shows a typed consent code in capitals, dashed after four letters, and no longer than eight", () => {
+    expect(formatCode("abcd")).toBe("ABCD");
+    expect(formatCode("abcde")).toBe("ABCD-E");
+    expect(formatCode(" ab-cd efgh xyz")).toBe("ABCD-EFGH");
   });
 });

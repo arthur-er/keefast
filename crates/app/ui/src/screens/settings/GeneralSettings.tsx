@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, errorMessage } from "@/api";
 import type { AppSettings, Theme, VaultSummary } from "@/bindings";
-import { keys, usePlugins, useSettings, useVaultSettings, useWorkspace } from "@/api/queries";
+import { keys, useAgentHosts, usePlugins, useSettings, useVaultSettings, useWorkspace } from "@/api/queries";
 import { Button, Kbd, Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Switch, toast } from "@/kit";
 import { comboFromEvent, comboLabel, DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, holderOf, type ShortcutName, useShortcuts } from "@/lib/shortcuts";
 import { useOsDark } from "@/lib/theme";
@@ -192,6 +192,12 @@ export function GeneralSettings({ section }: { section?: string }) {
         name: "Plugins",
         desc: "Teach keefast kinds of data kept on Entries, such as payment cards.",
         cards: [[{ id: "plugins", search: "Plugins install enable disable remove card kfplugin", render: () => <PluginsLink onManage={() => actions.openPlugins()} /> }]],
+      },
+      {
+        id: "agents",
+        name: "Agents",
+        desc: "Answer the prompts of keefast Headless hosts that serve your Vaults to AI Agents.",
+        cards: [[{ id: "agentHosts", search: "Agent hosts Approver Headless host prompts pair keefast-agent", render: () => <AgentHostsLink onManage={() => actions.openAgentHosts()} /> }]],
       },
       {
         id: "network",
@@ -453,6 +459,26 @@ function PluginsLink({ onManage }: { onManage: () => void }) {
   const desc = !plugins ? "" : names.length === 0 ? "None enabled" : `Enabled: ${names.join(", ")}`;
   return (
     <SettingRow label="Plugins" desc={desc}>
+      <Button size="sm" onClick={onManage}>
+        Manage <ArrowUpRight />
+      </Button>
+    </SettingRow>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Agents
+
+function AgentHostsLink({ onManage }: { onManage: () => void }) {
+  const hosts = useAgentHosts().data;
+  const connected = hosts?.filter((host) => host.state === "connected").length ?? 0;
+  const desc = !hosts
+    ? ""
+    : hosts.length === 0
+      ? "This desktop isn't an Approver for any Agent host"
+      : `${hosts.length} ${hosts.length === 1 ? "host" : "hosts"}, ${connected} connected`;
+  return (
+    <SettingRow label="Agent hosts" desc={desc}>
       <Button size="sm" onClick={onManage}>
         Manage <ArrowUpRight />
       </Button>

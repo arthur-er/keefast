@@ -10,13 +10,18 @@
 //     | "browserError" | "browserNone" | "browserServed" | "configError" | "noTray" | "launched"
 //     | "updates-asked" | "update-available" | "update-manual" | "update-failed"
 //     | "plugin-new" | "plugin-update" | "plugin-clash" | "plugin-key-changed" | "plugin-malformed"
-//     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build")   (the Plugin scenes: ./plugin-store.ts)
+//     | "plugin-keefast" | "plugin-fill" | "plugin-cancel" | "plugins-installed" | "plugins-dev-build"   (the Plugin scenes: ./plugin-store.ts)
+//     | "agentHosts" | "agentPrompt" | "agentPrompt-shell" | "agentPrompt-http" | "agentPrompt-reveal"
+//     | "agentPrompt-many"
+//     | "agentConsent" | "agentConsent-again")   (an MCP client pairing by OAuth; its code is ABCD-EFGH)
 //   __keefastMock.reset()
 // or load the page with `?mock=<same names>` (comma-separated), and `?mock=unlocked-none` to
 // start with every Vault locked; `?latency=300` makes commands slow and out of order. The unlock
 // password is anything but "wrong".
 
 import type {
+  AgentActivityRecord,
+  AgentHostView,
   ApiError,
   AppSettings,
   CopyTarget,
@@ -35,6 +40,8 @@ import type {
   GroupNode,
   IconView,
   LaunchInfo,
+  PendingAgentConsent,
+  PendingAgentPrompt,
   Location,
   LocationView,
   LoginOption,
@@ -285,6 +292,10 @@ interface MockState {
   launch: LaunchInfo;
   /** Whether keefast is "registered with the OS" to start on boot. */
   startOnBoot: boolean;
+  /** The Agent hosts this desktop is "an Approver for", and their prompts, oldest first. */
+  agentHosts: AgentHostView[];
+  agentPrompts: (Omit<PendingAgentPrompt, "more">)[];
+  agentConsents: (Omit<PendingAgentConsent, "more">)[];
   updates: UpdateState;
   /** The version the mock's update endpoint offers, if any. */
   release: string | null;
@@ -324,6 +335,9 @@ function initialState(): MockState {
     configError: null,
     trayAvailable: true,
     launch: { vaultFile: null, keyFile: null, number: 0 },
+    agentHosts: [],
+    agentPrompts: [],
+    agentConsents: [],
     startOnBoot: false,
     updates: { currentVersion: "0.1.0", installsUpdates: true, status: { kind: "unchecked" } },
     release: null,
@@ -340,6 +354,21 @@ const MOCK_BROWSER = "Chrome on my laptop";
 
 /** When the mock started, in seconds since 1970. */
 const MOCK_START = Date.now() / 1000;
+
+/** A host as keefast keeps it in an Entry's allowed hosts, roughly: lower case, without a scheme,
+ * path or trailing dot; `null` when it isn't one or has a port. */
+function mockHost(given: string): string | null {
+  let host = given.trim().toLowerCase();
+  const scheme = host.indexOf("://");
+  if (scheme >= 0) host = host.slice(scheme + 3).split(/[/?#]/)[0]!;
+  host = host.replace(/\.$/, "");
+  const wildcard = host.startsWith("*.");
+  const rest = wildcard ? host.slice(2) : host;
+  if (/^\[[0-9a-f:.]+\]$/.test(rest) && !wildcard) return host;
+  if (!/^[a-z0-9_-]+(\.[a-z0-9_-]+)*$/.test(rest)) return null;
+  if (wildcard && !rest.includes(".")) return null;
+  return host;
+}
 
 /** The scenes `?mock=` and `__keefastMock.simulate` set up. */
 export type MockScene =
@@ -361,11 +390,22 @@ export type MockScene =
   | "configError"
   | "noTray"
   | "launched"
+  | "agentHosts"
+  | "agentPrompt"
+  | "agentPrompt-shell"
+  | "agentPrompt-http"
+  | "agentPrompt-reveal"
+  | "agentPrompt-many"
+  | "agentConsent"
+  | "agentConsent-again"
   | "updates-asked"
   | "update-available"
   | "update-manual"
   | "update-failed"
   | PluginScene;
+
+/** The code the mock's consent pages show. */
+export const MOCK_CONSENT_CODE = "ABCDEFGH";
 
 export function createMockBackend(): Backend & {
   simulate(scene: MockScene): void;
@@ -788,6 +828,8 @@ export function createMockBackend(): Backend & {
           ? { kind: "update", vault: login.entries[0][0], entry: login.entries[0][1] }
           : { kind: "newEntry", vault: readable()[0]?.id ?? 0, group: readable()[0]?.browserGroup ?? null },
       },
+      pendingAgentPrompt: state.agentPrompts[0] ? { ...state.agentPrompts[0], more: state.agentPrompts.length - 1 } : null,
+      pendingAgentConsent: state.agentConsents[0] ? { ...state.agentConsents[0], more: state.agentConsents.length - 1 } : null,
       clipboardClearsIn: state.clipboardClearsAt === null ? null : Math.max(0, state.clipboardClearsAt - Date.now() / 1000),
       dropboxAvailable: true,
       configError: state.configError,
@@ -1497,6 +1539,133 @@ export function createMockBackend(): Backend & {
       edited(v);
       return null;
     }),
+    getAgentSettings: command((id) => {
+      const v = vault(id);
+      const agentGroup = v.agentGroup ? v.groups.find((g) => g.id === v.agentGroup) : undefined;
+      return {
+        agentGroup: agentGroup?.id ?? null,
+        agentGroupName: agentGroup?.name ?? null,
+        subgroups: agentGroup ? v.groups.filter((g) => g.parent === agentGroup.id).map((g) => ({ id: g.id, name: g.name })) : [],
+        pairings: (v.agentPairings ?? []).map((p) => ({ ...p, reads: [...p.reads] })),
+      };
+    }),
+    setAgentGroup: command((id, groupId) => {
+      const v = vault(id);
+      group(v, groupId);
+      v.agentGroup = groupId;
+      edited(v);
+      return null;
+    }),
+    createAgentPairing: command((id, name, reads, canCreate) => {
+      const v = vault(id);
+      const trimmed = name.trim();
+      if (!trimmed) throw new MockError("invalid", "Give this Agent a name.");
+      if (trimmed.includes("/")) throw new MockError("invalid", "An Agent's name can't have a / in it: it names its subgroup.");
+      if (!v.agentGroup) throw new MockError("invalid", "Choose the Agent group before pairing an Agent.");
+      const pairings = (v.agentPairings ??= []);
+      if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has an Agent with this name.");
+      let own = v.groups.find((g) => g.parent === v.agentGroup && g.name === trimmed);
+      if (!own) {
+        own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };
+        v.groups.push(own);
+      }
+      const pairing = { id: `ap${state.nextId++}`, name: trimmed, group: own.id, reads: [...reads], canCreate };
+      pairings.push(pairing);
+      edited(v);
+      const token = `kfa_${Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+      return { pairing: { ...pairing, reads: [...reads] }, token };
+    }),
+    setAgentPairingAccess: command((id, pairingId, reads, canCreate) => {
+      const v = vault(id);
+      const pairing = v.agentPairings?.find((p) => p.id === pairingId);
+      if (!pairing) throw new MockError("invalid", "This Agent pairing was revoked.");
+      pairing.reads = [...reads];
+      pairing.canCreate = canCreate;
+      edited(v);
+      return null;
+    }),
+    revokeAgentPairing: command((id, pairingId) => {
+      const v = vault(id);
+      if (!v.agentPairings?.some((p) => p.id === pairingId)) throw new MockError("invalid", "This Agent pairing was revoked.");
+      v.agentPairings = v.agentPairings.filter((p) => p.id !== pairingId);
+      edited(v);
+      return null;
+    }),
+    getEntryAgentAccess: command((id, entryId) => {
+      const [v, e] = entryOf(id, entryId);
+      const pairings = (v.agentPairings ?? []).filter((p) =>
+        [p.group, ...p.reads].some((g) => v.groups.some((x) => x.id === g) && descendants(v, g).has(e.group)),
+      );
+      const decisions = (v.agentDecisions ?? [])
+        .filter((d) => d.entry === e.id)
+        .flatMap((d) => {
+          const pairing = v.agentPairings?.find((p) => p.id === d.pairing);
+          return pairing ? [{ pairing: pairing.id, pairingName: pairing.name, kind: d.kind, name: d.name, allow: d.allow }] : [];
+        })
+        .sort(
+          (a, b) =>
+            a.pairingName.localeCompare(b.pairingName) ||
+            (a.kind === b.kind ? 0 : a.kind === "program" ? -1 : 1) ||
+            a.name.localeCompare(b.name),
+        );
+      const allowedHosts = [...(v.agentAllowedHosts?.[e.id] ?? [])];
+      const agentsMayReveal = (v.agentsMayReveal ?? []).includes(e.id);
+      return { pairings: pairings.map((p) => ({ ...p, reads: [...p.reads] })), decisions, allowedHosts, agentsMayReveal };
+    }),
+    rememberAgentDecision: command((id, entryId, pairingId, kind, given, allow) => {
+      const [v, e] = entryOf(id, entryId);
+      if (!v.agentPairings?.some((p) => p.id === pairingId)) throw new MockError("invalid", "This Agent pairing was revoked.");
+      let name: string;
+      if (kind === "program") {
+        name = given.trim().split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+        if (!name) throw new MockError("invalid", "Name the program, such as gh.");
+        if (/^(sh|bash|zsh|fish|dash|pwsh|powershell|cmd|node|deno|bun|ruby|perl|php|env|xargs|python.*)$/i.test(name)) {
+          throw new MockError("invalid", `${name} is a shell or interpreter, which can run anything, so keefast asks every time it is used and never remembers an answer.`);
+        }
+      } else {
+        const host = mockHost(given);
+        if (!host || host.startsWith("*.")) throw new MockError("invalid", "Name the host, such as api.github.com.");
+        name = host;
+      }
+      const decisions = (v.agentDecisions ??= []);
+      const known = decisions.find((d) => d.entry === e.id && d.pairing === pairingId && d.kind === kind && d.name === name);
+      if (known) known.allow = allow;
+      else decisions.push({ entry: e.id, pairing: pairingId, kind, name, allow });
+      edited(v);
+      return null;
+    }),
+    forgetAgentDecision: command((id, entryId, pairingId, kind, name) => {
+      const [v, e] = entryOf(id, entryId);
+      v.agentDecisions = (v.agentDecisions ?? []).filter(
+        (d) => !(d.entry === e.id && d.pairing === pairingId && d.kind === kind && d.name === name),
+      );
+      edited(v);
+      return null;
+    }),
+    setEntryAllowedHosts: command((id, entryId, hosts) => {
+      const [v, e] = entryOf(id, entryId);
+      const kept: string[] = [];
+      for (const given of hosts) {
+        const host = mockHost(given);
+        if (!host) {
+          throw new MockError(
+            "invalid",
+            `${given} isn't a host: write a host name such as api.github.com, *. and a domain for its subdomains, or an IP address, without a port.`,
+          );
+        }
+        if (!kept.includes(host)) kept.push(host);
+      }
+      (v.agentAllowedHosts ??= {})[e.id] = kept;
+      edited(v);
+      return kept;
+    }),
+    setEntryAgentsMayReveal: command((id, entryId, mayReveal) => {
+      const [v, e] = entryOf(id, entryId);
+      const others = (v.agentsMayReveal ?? []).filter((marked) => marked !== e.id);
+      v.agentsMayReveal = mayReveal ? [...others, e.id] : others;
+      edited(v);
+      return null;
+    }),
     dropboxStatus: command(() => ({ available: true, account: state.dropboxAccount, connecting: state.dropboxConnecting !== null })),
     dropboxConnect: command(async () => {
       // "Allowed in the browser" after a few seconds, unless stopped first.
@@ -1567,6 +1736,61 @@ export function createMockBackend(): Backend & {
     }),
     denyPairing: command((id) => {
       if (state.pendingPairing?.id === id) state.pendingPairing = null;
+      changed();
+      return null;
+    }),
+    getAgentHosts: command(() => structuredClone(state.agentHosts)),
+    getAgentActivity: command((host) => {
+      const found = state.agentHosts.find((h) => h.id === host);
+      if (!found) throw new MockError("notFound", "That Agent host is gone.");
+      if (found.state === "disconnected") throw new MockError("unavailable", "The Agent host couldn't be reached, so its Activity can't be shown.");
+      return mockActivity();
+    }),
+    getVaultAgentActivity: command((vault) => {
+      if (!state.vaults.some((v) => v.id === vault)) throw new MockError("notFound", "That Vault isn't open.");
+      return mockActivity();
+    }),
+    addAgentHost: command((name, url, token, certificate) => {
+      const address = url.trim().replace(/\/+$/, "");
+      if (token.trim().startsWith("kfa_"))
+        throw new MockError("invalid", "That is an Agent pairing's token. Pair this desktop on the host with `keefast-agent pairing approver <name>`, and paste the token it prints.");
+      if (!token.trim().startsWith("kfapprover_")) throw new MockError("invalid", "An Approver's token starts with kfapprover_: get one on the host with `keefast-agent pairing approver <name>`.");
+      if (!/^https:\/\/.+/.test(address) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(address))
+        throw new MockError("invalid", "An Agent host on another machine needs an https:// address.");
+      if (state.agentHosts.some((h) => h.url === address)) throw new MockError("conflict", "keefast is an Approver for that Agent host already.");
+      if (certificate !== null && certificate.trim() !== "" && !certificate.includes("-----BEGIN CERTIFICATE-----"))
+        throw new MockError("invalid", "keefast can't use that certificate: that isn't a certificate: give the host's certificate, or its CA's, as PEM (-----BEGIN CERTIFICATE-----).");
+      const trustsOwnCertificate = certificate !== null && certificate.trim() !== "";
+      const host: AgentHostView = { id: `h${state.nextId++}`, name: name.trim() || address.replace(/^https?:\/\//, "").split("/")[0]!, url: address, trustsOwnCertificate, state: "connecting", problem: null };
+      state.agentHosts.push(host);
+      changed();
+      // "Connects" a moment later, as the real one does.
+      setTimeout(() => {
+        host.state = "connected";
+        changed();
+      }, 600);
+      return structuredClone(host);
+    }),
+    removeAgentHost: command((id) => {
+      state.agentHosts = state.agentHosts.filter((h) => h.id !== id);
+      state.agentPrompts = state.agentPrompts.filter((p) => p.host !== id);
+      state.agentConsents = state.agentConsents.filter((c) => c.host !== id);
+      changed();
+      return null;
+    }),
+    answerAgentPrompt: command((host, id) => {
+      const before = state.agentPrompts.length;
+      state.agentPrompts = state.agentPrompts.filter((p) => !(p.host === host && p.id === id));
+      changed();
+      if (state.agentPrompts.length === before) throw new MockError("conflict", "Another Approver answered first, or the request timed out.");
+      return null;
+    }),
+    answerAgentConsent: command((host, id, approve, code, name) => {
+      const consent = state.agentConsents.find((c) => c.host === host && c.id === id);
+      if (!consent) throw new MockError("conflict", "That request was answered already, or it expired: connect again from the MCP client.");
+      if (approve && code !== MOCK_CONSENT_CODE) throw new MockError("invalid", "That isn't the code the consent page shows.");
+      if (approve && !consent.pairedAs && name.trim() === "") throw new MockError("invalid", "An Agent pairing needs a name.");
+      state.agentConsents = state.agentConsents.filter((c) => c !== consent);
       changed();
       return null;
     }),
@@ -1664,6 +1888,83 @@ export function createMockBackend(): Backend & {
     ]),
   ) as unknown as Events;
 
+  /** The build server's audit log, newest first: a run, an http_request, a create, a denied reveal. */
+  function mockActivity(): AgentActivityRecord[] {
+    const now = Math.floor(Date.now() / 1000);
+    const at = (minutesAgo: number) => now - minutesAgo * 60;
+    const base = { pairing: "claude", entryUuid: "e1", program: null, method: null, httpHost: null, field: null, reason: null } as const;
+    return [
+      { ...base, time: at(2), action: "reveal", entryTitle: "Wallet seed", field: "password", outcome: "denied", reason: "denied once at a prompt" },
+      { ...base, time: at(9), action: "create", entryTitle: "Fly.io deploy", outcome: "allowed" },
+      { ...base, time: at(14), action: "http_request", entryTitle: "deploy token", method: "GET", httpHost: "api.github.com", outcome: "allowed", reason: "allowed once at a prompt" },
+      { ...base, time: at(15), action: "use", entryTitle: "deploy token", program: "gh", outcome: "allowed", reason: "allowed and remembered at a prompt" },
+      { ...base, pairing: "codex", time: at(40), action: "use", entryTitle: "publish", program: "bash", outcome: "denied", reason: "nobody answered the prompt in time" },
+      { ...base, time: at(41), action: "list", entryUuid: null, entryTitle: null, outcome: "allowed" },
+    ];
+  }
+
+  /** Two Agent hosts: one connected, one that can't be reached. */
+  function mockAgentHosts() {
+    if (state.agentHosts.length > 0) return;
+    state.agentHosts = [
+      { id: "h-build", name: "Build server", url: "https://build.tail4e2a.ts.net:7807", trustsOwnCertificate: false, state: "connected", problem: null },
+      {
+        id: "h-home",
+        name: "Home lab",
+        url: "https://keefast.home.example:7807",
+        trustsOwnCertificate: true,
+        state: "disconnected",
+        problem: "can't reach https://keefast.home.example:7807: Connection refused",
+      },
+    ];
+  }
+
+  /** A prompt from the build server, denied by itself after a minute as the host would. */
+  function agentPrompt(command: string[], reference: string, title: string, httpHost: string | null = null) {
+    mockAgentHosts();
+    const program = httpHost ?? command[0]!;
+    const reveal = program === "reveal_secret";
+    const prompt = {
+      id: `p${state.nextId++}`,
+      host: "h-build",
+      hostName: "Build server",
+      pairing: "claude",
+      entryTitle: title,
+      reference: `claude/${reference}`,
+      program,
+      command,
+      canRemember: !["bash", "sh", "zsh", "python3", "node", "reveal_secret"].includes(program),
+      httpHost,
+      reveal,
+      expires: Date.now() / 1000 + 60,
+    };
+    state.agentPrompts.push(prompt);
+    setTimeout(() => {
+      state.agentPrompts = state.agentPrompts.filter((p) => p.id !== prompt.id);
+      changed();
+    }, 60_000);
+  }
+
+  /** An MCP client asking the build server to pair by OAuth, forgotten after ten minutes. */
+  function agentConsent(pairedAs: string | null) {
+    mockAgentHosts();
+    const consent = {
+      id: `c${state.nextId++}`,
+      host: "h-build",
+      hostName: "Build server",
+      client: "Executor",
+      redirect: "executor.sh",
+      subgroups: ["shared", "deploy"],
+      pairedAs,
+      expires: Date.now() / 1000 + 600,
+    };
+    state.agentConsents.push(consent);
+    setTimeout(() => {
+      state.agentConsents = state.agentConsents.filter((c) => c.id !== consent.id);
+      changed();
+    }, 600_000);
+  }
+
   function setUpdates(status: UpdateState["status"]) {
     state.updates = { ...state.updates, status };
     emit("updateState", structuredClone(state.updates));
@@ -1678,6 +1979,36 @@ export function createMockBackend(): Backend & {
     const open = readable();
     const first = open[0];
     switch (scene) {
+      case "agentHosts":
+        mockAgentHosts();
+        break;
+      case "agentPrompt":
+        agentPrompt(["gh", "pr", "create", "--title", "Fix the login redirect", "--body", "Closes #212"], "GitHub/deploy token#password", "deploy token");
+        break;
+      case "agentPrompt-shell":
+        agentPrompt(["bash", "-c", "curl -fsS -H \"Authorization: Bearer $NPM_TOKEN\" https://registry.npmjs.org/-/whoami"], "npm/publish#password", "publish");
+        break;
+      case "agentConsent":
+        agentConsent(null);
+        break;
+      case "agentConsent-again":
+        agentConsent("executor");
+        break;
+      case "agentPrompt-http":
+        agentPrompt(
+          ["POST", "https://api.github.com/repos/acme/web/issues/212/comments"],
+          "GitHub/deploy token#password",
+          "deploy token",
+          "api.github.com",
+        );
+        break;
+      case "agentPrompt-reveal":
+        agentPrompt(["reveal_secret", "claude/deploy/Wallet seed#password"], "deploy/Wallet seed#password", "Wallet seed");
+        break;
+      case "agentPrompt-many":
+        agentPrompt(["gh", "release", "create", "v2.4.0"], "GitHub/deploy token#password", "deploy token");
+        agentPrompt(["npm", "publish", "--access", "public"], "npm/publish#password", "publish");
+        break;
       case "pairing":
         if (!first) return;
         state.pendingPairing = { id: state.nextId++, vault: first.id };

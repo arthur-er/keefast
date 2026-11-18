@@ -1,0 +1,58 @@
+[package]
+name = "keefast-agent"
+description = "Agents (ADR 0012): Agent pairings, the Agent group and Agent access decisions kept in the Vault, and the keefast-agent command with its Headless host. No Tauri, no WebKit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["serve"]
+# The Headless host's MCP endpoint, over HTTP: `keefast-agent serve` needs it, the desktop app,
+# which only reads and changes Agent settings, doesn't.
+serve = ["dep:axum", "dep:hyper-util", "dep:rmcp", "dep:rustls", "dep:tokio", "dep:tokio-rustls", "dep:tokio-stream", "dep:tokio-util"]
+
+[[bin]]
+name = "keefast-agent"
+path = "src/main.rs"
+required-features = ["serve"]
+
+[dependencies]
+axum = { workspace = true, optional = true }
+base64.workspace = true
+dirs.workspace = true
+getrandom.workspace = true
+hyper-util = { workspace = true, optional = true }
+keefast-core.workspace = true
+# The socket or pipe `keefast-agent` reaches the desktop app at, made and checked as the
+# browser's is (ADR 0004).
+keefast-native-host.workspace = true
+keefast-workspace.workspace = true
+rmcp = { workspace = true, optional = true, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
+rustls = { workspace = true, optional = true }
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["io-std", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+# `keefast-agent run` asks the Headless host for values over HTTPS.
+ureq.workspace = true
+# Redirect URIs and form bodies of the OAuth authorization server.
+url.workspace = true
+zeroize = { workspace = true, features = ["serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+libc.workspace = true
+reqwest.workspace = true
+rmcp = { workspace = true, features = ["auth", "client", "transport-streamable-http-client-reqwest"] }
+tempfile.workspace = true
+tiny_http.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

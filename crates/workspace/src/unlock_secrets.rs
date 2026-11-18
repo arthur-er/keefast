@@ -13,7 +13,17 @@ use crate::OpenVaultError;
 #[derive(Clone)]
 pub struct UnlockSecrets {
     password: SecretString,
-    key_file: Option<PathBuf>,
+    key_file: Option<KeyFile>,
+}
+
+/// Where a key file comes from.
+#[derive(Clone)]
+enum KeyFile {
+    /// Read from disk when the Vault file is unlocked.
+    Path(PathBuf),
+    /// Already read, as by `keefast-agent unlock`, which reads the operator's key file and
+    /// hands its contents to a Headless host that may not be able to read it (ADR 0012).
+    Contents(Zeroizing<Vec<u8>>),
 }
 
 /// Why secrets can't be a Vault's new master key.
@@ -55,7 +65,18 @@ impl From<KeyFileRead> for NewKeyError {
 
 impl UnlockSecrets {
     pub fn new(password: SecretString, key_file: Option<PathBuf>) -> Self {
-        Self { password, key_file }
+        Self {
+            password,
+            key_file: key_file.map(KeyFile::Path),
+        }
+    }
+
+    /// Secrets whose key file was read already, given as its contents.
+    pub fn with_key_file_contents(password: SecretString, contents: Zeroizing<Vec<u8>>) -> Self {
+        Self {
+            password,
+            key_file: Some(KeyFile::Contents(contents)),
+        }
     }
 
     pub fn password(password: impl Into<String>) -> Self {
@@ -95,8 +116,10 @@ impl UnlockSecrets {
     }
 
     fn read_key_file(&self) -> Result<Option<Zeroizing<Vec<u8>>>, KeyFileRead> {
-        let Some(path) = &self.key_file else {
-            return Ok(None);
+        let path = match &self.key_file {
+            None => return Ok(None),
+            Some(KeyFile::Contents(contents)) => return Ok(Some(contents.clone())),
+            Some(KeyFile::Path(path)) => path,
         };
         let contents = fs::read(path).map_err(|error| KeyFileRead {
             path: path.clone(),

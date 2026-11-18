@@ -97,6 +97,32 @@ export interface MockVault {
   customIcons: { id: string; png: string }[];
   /** The colours chosen for tags, by tag. */
   tagColors?: Record<string, Color>;
+  /** The Agent group's id, once chosen. */
+  agentGroup?: string | null;
+  agentPairings?: MockAgentPairing[];
+  /** Agent access decisions: an Agent pairing using an Entry with a program or at a host. */
+  agentDecisions?: MockAgentDecision[];
+  /** Each Entry's allowed hosts for `http_request`, by Entry id. */
+  agentAllowedHosts?: Record<string, string[]>;
+  /** The Entries marked "Agents may reveal", by id. */
+  agentsMayReveal?: string[];
+}
+
+export interface MockAgentDecision {
+  entry: string;
+  pairing: string;
+  kind: "program" | "host";
+  name: string;
+  allow: boolean;
+}
+
+/** An Agent pairing: its own subgroup of the Agent group, and the others it reads. */
+export interface MockAgentPairing {
+  id: string;
+  name: string;
+  group: string;
+  reads: string[];
+  canCreate: boolean;
 }
 
 /** A day ("2026-10-07", at noon UTC) or a local time ("2026-10-07T14:32:00"), in seconds. */
