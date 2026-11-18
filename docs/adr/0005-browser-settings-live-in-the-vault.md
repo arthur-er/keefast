@@ -22,3 +22,7 @@ Every Agent setting is a Vault-level custom data item of keefast's own, timed li
 - `keefast_AGENT_REVEAL_<Entry UUID>`: an Entry's "Agents may reveal" mark, `true`, or `false` once taken off.
 
 Agent access decisions are "on each Entry" as far as the user sees them, but they are not kept in the Entry's own custom data, as KeePassXC-Browser's Access decisions are. An Entry is Merged whole, newest version winning, so two Approvers remembering decisions on the same Entry at once would lose one of them to Entry history. One timed Vault-level item per decision keeps both, and remembering a decision doesn't add an Entry history version.
+
+## Update 2026-11-17: Gateway pairings live there too
+
+Agent pairings gain a kind, `agent` or `gateway` (ADR 0015). Gateway pairings are stored beside Agent pairings, with their token hash, for the same reason: one made on a desktop must reach the Headless host that serves the Vault. A pairing stored before kinds existed is an Agent pairing.
