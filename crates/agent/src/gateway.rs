@@ -9,6 +9,8 @@ mod items;
 mod session;
 mod writes;
 
-pub use items::{GatewayItem, ItemDetails, LOGIN_TAG, Matching, Website, gateway_item, reference};
+pub use items::{
+    GatewayItem, ItemDetails, KEY_TAG, LOGIN_TAG, Matching, Website, gateway_item, reference,
+};
 pub use session::{Field, GatewayError, GatewaySession, Listing, Resolve, Whoami};
 pub use writes::{LoginChange, NewLogin};

@@ -137,7 +137,7 @@ pub enum AgentSettingsError {
     PairingNameEmpty,
     #[error("an Agent pairing's name can't have a / in it: it names its subgroup")]
     PairingNameHasSlash,
-    #[error("an Agent pairing called {0} exists already")]
+    #[error("a pairing called {0} exists already")]
     PairingNameTaken(String),
     #[error("the Vault has no such Agent pairing")]
     PairingNotFound,
@@ -571,27 +571,40 @@ pub trait AgentSettingsExt {
         pairing: NewAgentPairing,
     ) -> Result<AgentPairing, AgentSettingsError>;
 
-    /// Creates an Agent pairing called `name` with a new bearer token, and its own subgroup of
-    /// the Agent group by the same name, unless one is there already, such as one a revoked
-    /// pairing left. It reads `readable` too, and creates Entries if `can_create`.
+    /// Creates a pairing of `kind` called `name` with a new bearer token, and its own subgroup
+    /// of the Agent group by the same name, unless one is there already, such as one a revoked
+    /// pairing left. It reads `readable` too, and, if `can_create`, creates Entries there (an
+    /// Agent) or creates and changes logins there (a Gateway).
+    fn create_pairing(
+        &mut self,
+        vault: VaultId,
+        kind: PairingKind,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_create: bool,
+    ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+
+    /// Creates an Agent pairing, as [`Self::create_pairing`] does.
     fn create_agent_pairing(
         &mut self,
         vault: VaultId,
         name: &str,
         readable: Vec<GroupId>,
         can_create: bool,
-    ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+    ) -> Result<CreatedAgentPairing, AgentSettingsError> {
+        self.create_pairing(vault, PairingKind::Agent, name, readable, can_create)
+    }
 
-    /// Creates a Gateway pairing called `name` with a new bearer token and its own subgroup,
-    /// as [`Self::create_agent_pairing`] does. It reads `readable` too, and creates and changes
-    /// logins in its own subgroup if `can_write`.
+    /// Creates a Gateway pairing, as [`Self::create_pairing`] does.
     fn create_gateway_pairing(
         &mut self,
         vault: VaultId,
         name: &str,
         readable: Vec<GroupId>,
         can_write: bool,
-    ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+    ) -> Result<CreatedAgentPairing, AgentSettingsError> {
+        self.create_pairing(vault, PairingKind::Gateway, name, readable, can_write)
+    }
 
     /// Creates an Agent pairing called `name` for the OAuth client `client`, whose tokens the
     /// Headless host it registered with keeps, with its own subgroup as
@@ -696,44 +709,25 @@ impl AgentSettingsExt for Workspace {
         Ok(AgentPairing { id, stored })
     }
 
-    fn create_agent_pairing(
+    fn create_pairing(
         &mut self,
         vault: VaultId,
+        kind: PairingKind,
         name: &str,
         readable: Vec<GroupId>,
         can_create: bool,
     ) -> Result<CreatedAgentPairing, AgentSettingsError> {
         let token = new_token();
-        let credential = AgentCredential::token(&token);
         let pairing = pair_in_subgroup(
             self,
             vault,
-            name,
-            readable,
-            can_create,
-            credential,
-            PairingKind::Agent,
-        )?;
-        Ok(CreatedAgentPairing { pairing, token })
-    }
-
-    fn create_gateway_pairing(
-        &mut self,
-        vault: VaultId,
-        name: &str,
-        readable: Vec<GroupId>,
-        can_write: bool,
-    ) -> Result<CreatedAgentPairing, AgentSettingsError> {
-        let token = new_token();
-        let credential = AgentCredential::token(&token);
-        let pairing = pair_in_subgroup(
-            self,
-            vault,
-            name,
-            readable,
-            can_write,
-            credential,
-            PairingKind::Gateway,
+            InSubgroup {
+                name,
+                readable,
+                can_create,
+                credential: AgentCredential::token(&token),
+                kind,
+            },
         )?;
         Ok(CreatedAgentPairing { pairing, token })
     }
@@ -746,16 +740,17 @@ impl AgentSettingsExt for Workspace {
         can_create: bool,
         client: &str,
     ) -> Result<AgentPairing, AgentSettingsError> {
-        let credential = AgentCredential::OAuthClient(client.to_owned());
-        // OAuth only ever makes Agent pairings (ADR 0015).
         pair_in_subgroup(
             self,
             vault,
-            name,
-            readable,
-            can_create,
-            credential,
-            PairingKind::Agent,
+            InSubgroup {
+                name,
+                readable,
+                can_create,
+                credential: AgentCredential::OAuthClient(client.to_owned()),
+                // OAuth only ever makes Agent pairings (ADR 0015).
+                kind: PairingKind::Agent,
+            },
         )
     }
 
@@ -874,17 +869,29 @@ impl AgentSettingsExt for Workspace {
     }
 }
 
-/// Adds an Agent pairing called `name` with `credential`, and its own subgroup of the Agent
-/// group by the same name, unless one is there already, such as one a revoked pairing left.
-fn pair_in_subgroup(
-    workspace: &mut Workspace,
-    vault: VaultId,
-    name: &str,
+/// A pairing to add in its own subgroup: a [`NewAgentPairing`] whose subgroup is named after it.
+struct InSubgroup<'a> {
+    name: &'a str,
     readable: Vec<GroupId>,
     can_create: bool,
     credential: AgentCredential,
     kind: PairingKind,
+}
+
+/// Adds `pairing`, and its own subgroup of the Agent group by the same name, unless one is
+/// there already, such as one a revoked pairing left.
+fn pair_in_subgroup(
+    workspace: &mut Workspace,
+    vault: VaultId,
+    pairing: InSubgroup<'_>,
 ) -> Result<AgentPairing, AgentSettingsError> {
+    let InSubgroup {
+        name,
+        readable,
+        can_create,
+        credential,
+        kind,
+    } = pairing;
     let name = name.trim();
     if name.is_empty() {
         return Err(AgentSettingsError::PairingNameEmpty);

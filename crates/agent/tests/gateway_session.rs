@@ -711,6 +711,68 @@ fn update_login_refuses_an_empty_password_and_a_key() {
 }
 
 #[test]
+fn writes_refused_as_invalid_input_are_audited_as_denied_with_their_claim_and_never_a_value() {
+    let fixture = Fixture::new();
+    let key = add_key(&fixture, fixture.own, "FLY_TOKEN");
+    let claim = serde_json::json!({ "agent": "deploy-bot" });
+
+    fixture
+        .session
+        .create_login(
+            &*fixture.shared,
+            &new_login(serde_json::json!({
+                "title": "intranet",
+                "password": "pw-secret-value",
+                "website": "http://intranet.example",
+                "for": claim,
+            })),
+        )
+        .unwrap_err();
+    fixture
+        .session
+        .create_login(
+            &*fixture.shared,
+            &new_login(serde_json::json!({ "password": "pw-secret-value" })),
+        )
+        .unwrap_err();
+    fixture
+        .session
+        .update_login(
+            &*fixture.shared,
+            &reference(key),
+            &change(serde_json::json!({ "password": "new-secret-value", "for": claim })),
+        )
+        .unwrap_err();
+
+    let records = fixture.audit.records();
+    let [http, untitled, of_key] = records.as_slice() else {
+        panic!("expected three records, got {records:?}");
+    };
+    for record in [http, untitled] {
+        assert_eq!(record.action, AuditAction::CreateLogin);
+        assert_eq!(record.outcome, AuditOutcome::Denied);
+        assert_eq!(record.kind, PairingKind::Gateway);
+        assert!(record.entry.is_none());
+        assert!(record.reason.is_some());
+    }
+    assert_eq!(
+        http.claimed_for.as_ref().unwrap().agent.as_deref(),
+        Some("deploy-bot")
+    );
+    assert!(untitled.claimed_for.is_none());
+    assert_eq!(of_key.action, AuditAction::UpdateLogin);
+    assert_eq!(of_key.outcome, AuditOutcome::Denied);
+    assert_eq!(of_key.entry.as_ref().unwrap().title, "FLY_TOKEN");
+    assert_eq!(
+        of_key.claimed_for.as_ref().unwrap().agent.as_deref(),
+        Some("deploy-bot")
+    );
+    let json = serde_json::to_string(&records).unwrap();
+    assert!(!json.contains("secret-value"), "{json}");
+    assert!(!json.contains("intranet.example"), "{json}");
+}
+
+#[test]
 fn writes_answer_locked_while_the_vault_is() {
     let fixture = Fixture::new();
     let github = fixture.add_login(fixture.own, "github");

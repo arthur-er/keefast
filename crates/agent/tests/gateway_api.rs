@@ -254,6 +254,7 @@ async fn a_second_list_with_the_etag_is_not_modified_until_the_vault_changes() {
             let own = settings.pairings()[0].group();
             let fields = EntryFields {
                 title: "SENTRY_DSN".to_owned(),
+                password: "https://key@sentry.example/1".to_owned().into(),
                 ..EntryFields::default()
             };
             workspace.create_entry(vault, own, &fields).unwrap();
@@ -833,6 +834,44 @@ async fn writes_refuse_with_the_right_status_and_code_and_never_a_value() {
     }
     assert!(served.history_of(&github).await.is_empty());
     let log = serde_json::to_string(&served.audit()).unwrap();
+    assert!(!log.contains("secret-value"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_whose_body_cant_be_read_is_audited_as_denied_with_its_claim_if_any() {
+    let served = Served::unlocked().await;
+    let unknown = "logins/00000000-0000-4000-8000-000000000000";
+
+    for (method, route, body) in [
+        (
+            Method::POST,
+            "logins",
+            r#"{"title":7,"password":"x-secret-value","for":{"agent":"deploy-bot"}}"#,
+        ),
+        (Method::PATCH, unknown, "[ x-secret-value"),
+    ] {
+        let response = served.send(method, route, &served.writer, body).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let records: Vec<_> = served
+        .audit()
+        .into_iter()
+        .filter(|record| record.kind == PairingKind::Gateway)
+        .collect();
+    let [create, update] = records.as_slice() else {
+        panic!("expected two records, got {records:?}");
+    };
+    assert_eq!(create.action, AuditAction::CreateLogin);
+    assert_eq!(create.outcome, keefast_agent::AuditOutcome::Denied);
+    assert_eq!(
+        create.claimed_for.as_ref().unwrap().agent.as_deref(),
+        Some("deploy-bot")
+    );
+    assert_eq!(update.action, AuditAction::UpdateLogin);
+    assert_eq!(update.outcome, keefast_agent::AuditOutcome::Denied);
+    assert!(update.claimed_for.is_none());
+    let log = serde_json::to_string(&records).unwrap();
     assert!(!log.contains("secret-value"), "{log}");
 }
 

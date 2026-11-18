@@ -86,13 +86,13 @@ describe("Pair an Agent", () => {
   });
 
   it("says why a pairing was refused, and shows no token", async () => {
-    vi.mocked(api.createAgentPairing).mockRejectedValue(new Error("This Vault already has an Agent with this name."));
+    vi.mocked(api.createAgentPairing).mockRejectedValue(new Error("This Vault already has a pairing with this name."));
     render(<PairAgentDialog vault={1} settings={settings} onClose={() => {}} />);
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "claude" } });
     fireEvent.click(screen.getByRole("button", { name: "Pair" }));
 
-    await waitFor(() => expect(screen.getByText("This Vault already has an Agent with this name.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("This Vault already has a pairing with this name.")).toBeTruthy());
     expect(screen.queryByLabelText("Token")).toBeNull();
   });
 });
@@ -145,13 +145,13 @@ describe("Pair a Gateway", () => {
   });
 
   it("says why a pairing was refused, and shows no token", async () => {
-    vi.mocked(api.createGatewayPairing).mockRejectedValue(new Error("This Vault already has an Agent with this name."));
+    vi.mocked(api.createGatewayPairing).mockRejectedValue(new Error("This Vault already has a pairing with this name."));
     render(<PairGatewayDialog vault={1} settings={settings} onClose={() => {}} />);
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "agentes" } });
     fireEvent.click(screen.getByRole("button", { name: "Pair" }));
 
-    await waitFor(() => expect(screen.getByText("This Vault already has an Agent with this name.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("This Vault already has a pairing with this name.")).toBeTruthy());
     expect(screen.queryByLabelText("Token")).toBeNull();
   });
 });

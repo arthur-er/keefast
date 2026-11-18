@@ -1,12 +1,13 @@
 //! The Entry mapping (ADR 0015): which Entries a Gateway lists, and as what. It is pure, so the
 //! rules live and are tested here, and the Gateway's client stays thin.
 //!
-//! - **login**: an `https` URL and a non-empty password. Its websites are that URL and each
-//!   `https` `KP2A_URL*` field, matched exactly; its username is the Entry's.
-//! - **key**: tagged `key` (in any case), or with no URL and an `UPPER_SNAKE` title, which names
-//!   the key. A `key`-tagged Entry whose title isn't `UPPER_SNAKE` is left out.
-//! - A login wins over a key. Anything else is left out, and no item ever carries a value,
-//!   the notes or a custom field.
+//! - **login**: a non-empty password and an `https` URL or the [`LOGIN_TAG`]. Its websites are
+//!   that URL and each `https` `KP2A_URL*` field, matched exactly; its username is the Entry's.
+//! - **key**: a non-empty password, and tagged [`KEY_TAG`] (in any case) or with no URL, with an
+//!   `UPPER_SNAKE` title, which names the key. A `key`-tagged Entry whose title isn't
+//!   `UPPER_SNAKE` is left out.
+//! - A login wins over a key. An Entry with a blank title, which agentes-chat drops, or anything
+//!   else is left out, and no item ever carries a value, the notes or a custom field.
 
 use keefast_core::{Entry, EntryId, Timestamp};
 use secrecy::ExposeSecret;
@@ -57,6 +58,9 @@ pub enum Matching {
 
 /// The item `entry` is listed as, or `None` when it is left out.
 pub fn gateway_item(entry: &Entry) -> Option<GatewayItem> {
+    if entry.title().trim().is_empty() || entry.password().expose_secret().is_empty() {
+        return None;
+    }
     let details = login(entry).or_else(|| key(entry))?;
     Some(GatewayItem {
         reference: reference(entry.id()),
@@ -74,9 +78,11 @@ pub fn gateway_item(entry: &Entry) -> Option<GatewayItem> {
 /// Gateway's `POST /logins` with no website makes, so the login it was answered is listed.
 pub const LOGIN_TAG: &str = "login";
 
+/// The tag that makes an Entry with an `UPPER_SNAKE` title a key even with a URL.
+pub const KEY_TAG: &str = "key";
+
 fn login(entry: &Entry) -> Option<ItemDetails> {
-    let site = is_https(entry.url()) || has_tag(entry, LOGIN_TAG);
-    if !site || entry.password().expose_secret().is_empty() {
+    if !is_https(entry.url()) && !has_tag(entry, LOGIN_TAG) {
         return None;
     }
     let websites = std::iter::once(entry.url())
@@ -94,7 +100,7 @@ fn login(entry: &Entry) -> Option<ItemDetails> {
 }
 
 fn key(entry: &Entry) -> Option<ItemDetails> {
-    let tagged = has_tag(entry, "key");
+    let tagged = has_tag(entry, KEY_TAG);
     let unnamed_site = entry.url().trim().is_empty();
     let title = entry.title();
     ((tagged || unnamed_site) && is_upper_snake(title)).then(|| ItemDetails::Key {

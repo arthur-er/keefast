@@ -323,7 +323,7 @@ pub fn handle(host: &HeadlessHost, request: AdminRequest) -> AdminReply {
                 .ok_or_else(|| {
                     AdminReply::error(
                         AdminErrorKind::Pairing,
-                        format!("there is no Agent pairing called {name}"),
+                        format!("there is no pairing called {name}"),
                     )
                 })?;
             workspace
@@ -420,15 +420,9 @@ fn create_pairing(
             format!("the Agent group has no subgroup called {name}"),
         )
     })?;
-    let created = match create.kind {
-        PairingKind::Agent => {
-            workspace.create_agent_pairing(vault, &create.name, reads, create.can_create)
-        }
-        PairingKind::Gateway => {
-            workspace.create_gateway_pairing(vault, &create.name, reads, create.can_create)
-        }
-    }
-    .map_err(failed)?;
+    let created = workspace
+        .create_pairing(vault, create.kind, &create.name, reads, create.can_create)
+        .map_err(failed)?;
     let vault = workspace
         .readable_vault(vault)
         .ok_or_else(locked_error)?

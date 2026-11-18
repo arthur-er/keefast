@@ -165,14 +165,14 @@ logins and keys, by these rules:
   URL and each of its `KP2A_URL*` fields (KeePassXC's additional URLs) that is `https`, matched
   exactly. Its username is the Entry's. An Entry tagged `login` with a password is a login too,
   even without an `https` URL; that is how a login agentes-chat creates without a website is kept.
-- **A key** is an Entry tagged `key`, or one with no URL, whose title is `UPPER_SNAKE`
-  (`GITHUB_TOKEN`, `OPENAI_API_KEY`): a capital letter, then capitals, digits and `_`. The title
-  is the key's name in agentes-chat's commands, and the Entry's password is its value. A `key`-tagged
-  Entry whose title isn't `UPPER_SNAKE` is left out.
+- **A key** is an Entry with a non-empty password, tagged `key` or with no URL, whose title is
+  `UPPER_SNAKE` (`GITHUB_TOKEN`, `OPENAI_API_KEY`): a capital letter, then capitals, digits and
+  `_`. The title is the key's name in agentes-chat's commands, and the Entry's password is its
+  value. A `key`-tagged Entry whose title isn't `UPPER_SNAKE` is left out.
 - An Entry that is both is a login.
-- **Left out**: every other Entry, such as one with only an `http://` URL, or no password and
-  no key title; `http` websites; and every Entry's notes, custom fields, attachments and history.
-  A value always comes from the password field, never a custom field.
+- **Left out**: every other Entry, such as one with only an `http://` URL, an empty password or
+  a blank title; `http` websites; and every Entry's notes, custom fields, attachments and
+  history. A value always comes from the password field, never a custom field.
 
 Each item's ref is its Entry's UUID, so renaming or moving an Entry within the subgroups keeps
 it the same item in agentes-chat. Moving it out of them makes it missing there.
@@ -181,7 +181,8 @@ it the same item in agentes-chat. Moving it out of them makes it missing there.
 
 Each list, resolve, created login and changed login is a record in the host's audit log, with
 the time, the pairing (marked as a gateway), the action (`list`, `resolve`, `create_login`,
-`update_login`), the Entry and the outcome, never a value. A list is one record, not one per
+`update_login`), the Entry and the outcome, never a value. A create or change keefast refuses is
+logged as denied, even one whose body it couldn't read. A list is one record, not one per
 Entry. Read it on the host:
 
 ```sh

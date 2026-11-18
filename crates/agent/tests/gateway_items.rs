@@ -136,10 +136,11 @@ fn an_entry_tagged_login_with_a_password_is_a_login_with_only_its_https_websites
 
 #[test]
 fn an_entry_tagged_key_is_a_key_named_by_its_title() {
-    // With a URL, so only the tag makes it a key; without a password, so it is no login.
+    // With an `http` URL, so only the tag makes it a key, and it is no login.
     let fields = EntryFields {
         title: "OPENAI_API_KEY".to_owned(),
-        url: "https://platform.openai.com".to_owned(),
+        password: SecretString::from("sk-the-value".to_owned()),
+        url: "http://platform.openai.example".to_owned(),
         tags: vec!["Key".to_owned()],
         ..EntryFields::default()
     };
@@ -171,6 +172,36 @@ fn an_entry_with_no_url_and_an_upper_snake_title_is_a_key() {
     let item = item.unwrap();
     assert_eq!(item["kind"], "key");
     assert_eq!(item["keyName"], "STRIPE_SECRET_KEY_2");
+}
+
+#[test]
+fn a_key_without_a_password_is_left_out() {
+    // agentes-chat's client reads an empty value as no value, so a key needs one to be listed.
+    let tagged = EntryFields {
+        title: "OPENAI_API_KEY".to_owned(),
+        tags: vec!["key".to_owned()],
+        ..EntryFields::default()
+    };
+    let untagged = EntryFields {
+        title: "STRIPE_SECRET_KEY".to_owned(),
+        ..EntryFields::default()
+    };
+
+    let (tagged, _) = item(tagged);
+    let (untagged, _) = item(untagged);
+
+    assert_eq!(tagged, None);
+    assert_eq!(untagged, None);
+}
+
+#[test]
+fn a_login_with_a_blank_title_is_left_out() {
+    // agentes-chat's client drops an item whose title is blank.
+    for title in ["", "   "] {
+        let (item, _) = item(login(title, "https://github.com"));
+
+        assert_eq!(item, None, "{title:?}");
+    }
 }
 
 #[test]

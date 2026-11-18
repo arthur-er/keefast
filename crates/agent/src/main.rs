@@ -13,7 +13,7 @@
 //!                       [--agent-group <path>] [--admin-socket <path>]
 //! keefast-agent pairing add --gateway <name> [--read <subgroup>]... [--write]
 //!                       [--agent-group <path>] [--admin-socket <path>]
-//! keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+//! keefast-agent pairing approve <code> [--name <name>] [--read <subgroup>]... [--write]
 //!                        [--admin-socket <path>]
 //! keefast-agent pairing list [--admin-socket <path>]
 //! keefast-agent pairing revoke <name> [--admin-socket <path>]
@@ -99,18 +99,21 @@ usage:
       values to the gateway without asking. --write lets it create and change logins in its
       own subgroup.
 
-  keefast-agent pairing approve <code> [--name <name>] [--reads <subgroup>]... [--can-create]
+  keefast-agent pairing approve <code> [--name <name>] [--read <subgroup>]... [--write]
                                 [--admin-socket <path>]
       Approves an MCP client pairing by OAuth, whose consent page shows <code>: makes its
       Agent pairing, called <name> or else as the client calls itself, with its subgroup of
-      the Agent group, reading each --reads subgroup too. The page then sends the browser back
-      to the client, which gets its tokens. A client paired already is just let in again.
+      the Agent group, reading each --read subgroup too. --write lets it create Entries in its
+      own subgroup. The page then sends the browser back to the client, which gets its
+      tokens. A client paired already is just let in again. (--reads and --can-create are the
+      same.)
 
   keefast-agent pairing list [--admin-socket <path>]
       Lists the Vault's Agent and Gateway pairings.
 
   keefast-agent pairing revoke <name> [--admin-socket <path>]
-      Revokes an Agent pairing: its token stops working at once. Its subgroup stays.
+      Revokes an Agent or Gateway pairing: its token stops working at once. Its subgroup
+      stays.
 
   keefast-agent pairing approver <name> [--admin-socket <path>]
       Pairs a desktop keefast as an Approver called <name>, which shows the prompts for uses
@@ -542,15 +545,17 @@ mod operator {
                     .ok_or("pairing approve needs the code the consent page shows")?;
                 let flags = Flags::new(
                     rest,
-                    &["--can-create"],
-                    &["--name", "--reads", "--admin-socket"],
+                    &["--write", "--can-create"],
+                    &["--name", "--read", "--reads", "--admin-socket"],
                 )?;
+                let mut reads = flags.values("--read");
+                reads.extend(flags.values("--reads"));
                 let request = AdminRequest::PairingApprove {
                     code: code.clone(),
                     pairing: PairingChoice {
                         name: flags.value("--name").unwrap_or_default().to_owned(),
-                        reads: flags.values("--reads"),
-                        can_create: flags.has("--can-create"),
+                        reads,
+                        can_create: flags.has("--write") || flags.has("--can-create"),
                     },
                 };
                 show(ask(&flags, &request)?, "")

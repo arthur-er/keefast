@@ -109,10 +109,11 @@ Approve that code either
 - on the host:
 
   ```sh
-  keefast-agent pairing approve ABCD-EFGH --name executor --reads shared
+  keefast-agent pairing approve ABCD-EFGH --name executor --read shared
   ```
 
-  Without `--name`, the pairing is named as the client calls itself.
+  Without `--name`, the pairing is named as the client calls itself. `--read` and `--write` work
+  as for `pairing add`.
 
 Either way the Agent pairing is made in the Vault, with its subgroup, as `pairing add` makes
 one, and the page sends your browser back to the client, which gets its tokens. Nobody approves

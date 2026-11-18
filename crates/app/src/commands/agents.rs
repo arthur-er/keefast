@@ -176,15 +176,7 @@ pub async fn create_agent_pairing(
     reads: Vec<GroupId>,
     can_create: bool,
 ) -> ApiResult<CreatedAgentPairing> {
-    let reads = groups(&reads)?;
-    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
-    let created =
-        core.update(|workspace| workspace.create_agent_pairing(vault, &name, reads, can_create))?;
-    core.autosave();
-    Ok(CreatedAgentPairing {
-        pairing: AgentPairingView::of(&created.pairing),
-        token: created.token.as_str().to_owned(),
-    })
+    create_pairing(core, vault, PairingKind::Agent, name, reads, can_create)
 }
 
 /// Pairs a Gateway called `name` (ADR 0015), such as agentes-chat, with its own subgroup of the
@@ -200,10 +192,22 @@ pub async fn create_gateway_pairing(
     reads: Vec<GroupId>,
     can_write: bool,
 ) -> ApiResult<CreatedAgentPairing> {
+    create_pairing(core, vault, PairingKind::Gateway, name, reads, can_write)
+}
+
+/// Pairs a pairing of `kind`, for [`create_agent_pairing`] and [`create_gateway_pairing`].
+fn create_pairing(
+    core: Core<'_>,
+    vault: VaultId,
+    kind: PairingKind,
+    name: String,
+    reads: Vec<GroupId>,
+    can_create: bool,
+) -> ApiResult<CreatedAgentPairing> {
     let reads = groups(&reads)?;
     let vault = core.read(|workspace| vault.resolve_open(workspace))?;
     let created =
-        core.update(|workspace| workspace.create_gateway_pairing(vault, &name, reads, can_write))?;
+        core.update(|workspace| workspace.create_pairing(vault, kind, &name, reads, can_create))?;
     core.autosave();
     Ok(CreatedAgentPairing {
         pairing: AgentPairingView::of(&created.pairing),

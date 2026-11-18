@@ -841,7 +841,9 @@ fn pairing_approve_lets_an_oauth_client_in_by_the_code_its_consent_page_shows() 
 
     let approved = run(
         &served.socket,
-        &["pairing", "approve", &code, "--name", "executor"],
+        &[
+            "pairing", "approve", &code, "--name", "executor", "--read", "GitHub", "--write",
+        ],
         "",
     );
     let back = browser()
@@ -874,6 +876,7 @@ fn pairing_approve_lets_an_oauth_client_in_by_the_code_its_consent_page_shows() 
     let paired = mcp_status(&mcp, &access);
     let revoked = run(&served.socket, &["pairing", "revoke", "executor"], "");
     let after_revoking = mcp_status(&mcp, &access);
+    let revoked_again = run(&served.socket, &["pairing", "revoke", "executor"], "");
 
     assert!(approved.status.success(), "{}", text(&approved));
     assert!(
@@ -883,10 +886,22 @@ fn pairing_approve_lets_an_oauth_client_in_by_the_code_its_consent_page_shows() 
     );
     assert!(back.starts_with(redirect), "{back}");
     assert_eq!(query_param(&back, "state").as_deref(), Some("s1"));
-    assert!(text(&listed).contains("executor"), "{}", text(&listed));
+    assert!(
+        text(&listed).contains(
+            "executor, an Agent pairing, which also reads GitHub, and may create Entries"
+        ),
+        "{}",
+        text(&listed)
+    );
     assert_eq!(paired, 200);
     assert!(revoked.status.success(), "{}", text(&revoked));
     assert_eq!(after_revoking, 401);
+    assert!(!revoked_again.status.success());
+    assert!(
+        text(&revoked_again).contains("there is no pairing called executor"),
+        "{}",
+        text(&revoked_again)
+    );
 }
 
 /// `keefast-agent store <reference>` as an Agent runs it, with `value` piped in.

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use keefast_core::EntryId;
+use keefast_core::{Entry, EntryId, Vault};
 use keefast_workspace::{VaultId, VaultLocation, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -115,6 +115,12 @@ pub enum Field {
     Key,
 }
 
+/// What a call is audited as: its action and the Gateway's claim of whom it was for.
+pub(super) struct Call<'a> {
+    pub action: AuditAction,
+    pub claimed_for: Option<&'a ClaimedFor>,
+}
+
 /// One Gateway pairing's requests.
 #[derive(Clone)]
 pub struct GatewaySession {
@@ -132,8 +138,50 @@ impl GatewaySession {
         &self.pairing
     }
 
-    pub(super) fn audit_sink(&self) -> &dyn AuditSink {
-        &*self.audit
+    /// The Vault's Agent settings and this session's pairing in them, read afresh: `Locked`
+    /// while the Vault is, and `Unauthorized` once the pairing is gone or if it isn't a Gateway
+    /// pairing.
+    pub(super) fn pairing_in(
+        &self,
+        workspace: &Workspace,
+        id: VaultId,
+    ) -> Result<(AgentSettings, AgentPairing), GatewayError> {
+        let open = workspace.readable_vault(id).ok_or(GatewayError::Locked)?;
+        let settings = AgentSettings::of(open.vault());
+        let pairing = settings
+            .pairing_of_kind(&self.pairing, PairingKind::Gateway)
+            .ok_or(GatewayError::Unauthorized)?
+            .clone();
+        Ok((settings, pairing))
+    }
+
+    /// Audits `call` on `entry`: allowed without a `refusal`, denied with one, and never with a
+    /// value.
+    pub(super) fn audit(
+        &self,
+        workspace: &Workspace,
+        pairing: &AgentPairing,
+        call: &Call<'_>,
+        entry: Option<(EntryId, &str)>,
+        refusal: Option<&str>,
+    ) {
+        let outcome = match refusal {
+            Some(_) => AuditOutcome::Denied,
+            None => AuditOutcome::Allowed,
+        };
+        let mut record = AuditRecord::of(
+            workspace.now().unix_seconds(),
+            pairing,
+            call.action,
+            outcome,
+        );
+        record.entry = entry.map(|(id, title)| AuditEntry {
+            uuid: id.to_hex(),
+            title: title.to_owned(),
+        });
+        record.reason = refusal.map(str::to_owned);
+        record.claimed_for = call.claimed_for.and_then(ClaimedFor::capped);
+        self.audit.record(record);
     }
 
     pub fn whoami(&self, vault: &impl VaultAccess) -> Result<Whoami, GatewayError> {
@@ -163,12 +211,11 @@ impl GatewaySession {
                 .into_iter()
                 .filter_map(|(entry, _)| gateway_item(entry))
                 .collect();
-            self.audit.record(AuditRecord::of(
-                workspace.now().unix_seconds(),
-                pairing,
-                AuditAction::List,
-                AuditOutcome::Allowed,
-            ));
+            let list = Call {
+                action: AuditAction::List,
+                claimed_for: None,
+            };
+            self.audit(workspace, pairing, &list, None, None);
             let json = serde_json::to_vec(&items).expect("items are plain JSON");
             let digest = Sha256::digest(&json);
             let etag: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
@@ -193,34 +240,21 @@ impl GatewaySession {
                 .readable_vault(id)
                 .ok_or(GatewayError::Locked)?
                 .vault();
-            let found = EntryId::from_hex(reference).and_then(|wanted| {
-                readable_entries(vault, settings, pairing)
-                    .into_iter()
-                    .map(|(entry, _)| entry)
-                    .find(|entry| entry.id() == wanted && gateway_item(entry).is_some())
-            });
-            let outcome = if found.is_some() {
-                AuditOutcome::Allowed
-            } else {
-                AuditOutcome::Denied
+            let call = Call {
+                action: AuditAction::Resolve,
+                claimed_for: request.claimed_for.as_ref(),
             };
-            let mut record = AuditRecord::of(
-                workspace.now().unix_seconds(),
-                pairing,
-                AuditAction::Resolve,
-                outcome,
-            );
-            record.claimed_for = request.claimed_for.as_ref().and_then(ClaimedFor::capped);
-            let Some(entry) = found else {
-                record.reason = Some("not found".to_owned());
-                self.audit.record(record);
+            let Some((entry, _)) = find_item(vault, settings, pairing, reference) else {
+                self.audit(workspace, pairing, &call, None, Some("not found"));
                 return Err(GatewayError::NotFound);
             };
-            record.entry = Some(AuditEntry {
-                uuid: entry.id().to_hex(),
-                title: entry.title().to_owned(),
-            });
-            self.audit.record(record);
+            self.audit(
+                workspace,
+                pairing,
+                &call,
+                Some((entry.id(), entry.title())),
+                None,
+            );
             Ok(SecretString::from(
                 entry.password().expose_secret().to_owned(),
             ))
@@ -236,15 +270,27 @@ impl GatewaySession {
     ) -> Result<T, GatewayError> {
         vault
             .read(|workspace, id| {
-                let open = workspace.readable_vault(id).ok_or(GatewayError::Locked)?;
-                let settings = AgentSettings::of(open.vault());
-                let pairing = settings
-                    .pairing_of_kind(&self.pairing, PairingKind::Gateway)
-                    .ok_or(GatewayError::Unauthorized)?;
-                f(workspace, id, &settings, pairing)
+                let (settings, pairing) = self.pairing_in(workspace, id)?;
+                f(workspace, id, &settings, &pairing)
             })
             .unwrap_or(Err(GatewayError::Locked))
     }
+}
+
+/// The Entry `reference` names among those `pairing` reads, with the item it is listed as, or
+/// `None` when it names none, or one that isn't an item.
+pub(super) fn find_item<'v>(
+    vault: &'v Vault,
+    settings: &AgentSettings,
+    pairing: &AgentPairing,
+    reference: &str,
+) -> Option<(&'v Entry, GatewayItem)> {
+    let wanted = EntryId::from_hex(reference)?;
+    let entry = readable_entries(vault, settings, pairing)
+        .into_iter()
+        .map(|(entry, _)| entry)
+        .find(|entry| entry.id() == wanted)?;
+    Some((entry, gateway_item(entry)?))
 }
 
 /// The name `whoami` gives the Vault: its own, or else its file's, never empty.

@@ -9,7 +9,8 @@
 //!
 //! Each route is a handler that takes the [`GatewaySession`] the bearer check left in the
 //! request, in [`router`]. A body that doesn't parse is `400 invalid_input` with keefast's own
-//! message, never echoing it: a login's body holds its password.
+//! message, never echoing it: a login's body holds its password. A write's is audited as
+//! refused all the same.
 
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ use axum::routing::{get, patch, post};
 use secrecy::ExposeSecret;
 use serde_json::json;
 
+use crate::AuditAction;
 use crate::gateway::{GatewayError, GatewaySession, LoginChange, NewLogin, Resolve};
 use crate::host::HeadlessHost;
 use crate::serve::bearer;
@@ -134,10 +136,15 @@ async fn create_login(
     body: Bytes,
 ) -> Response {
     let Ok(request) = serde_json::from_slice::<NewLogin>(&body) else {
-        return refusal(&GatewayError::InvalidInput(
+        return unreadable_write(
+            host,
+            session,
+            AuditAction::CreateLogin,
+            body,
             "send { \"title\", \"password\", \"username\"?, \"website\"?, \"notes\"?, \"for\"?: \
              { \"agent\"?, \"person\"?, \"run\"? } } as JSON, each a string",
-        ));
+        )
+        .await;
     };
     match tokio::task::spawn_blocking(move || session.create_login(&*host, &request)).await {
         Ok(Ok(item)) => json_response(StatusCode::CREATED, &item, []),
@@ -154,16 +161,40 @@ async fn update_login(
     body: Bytes,
 ) -> Response {
     let Ok(request) = serde_json::from_slice::<LoginChange>(&body) else {
-        return refusal(&GatewayError::InvalidInput(
+        return unreadable_write(
+            host,
+            session,
+            AuditAction::UpdateLogin,
+            body,
             "send { \"username\"?, \"password\"?, \"for\"?: { \"agent\"?, \"person\"?, \"run\"? } \
              } as JSON, each a string",
-        ));
+        )
+        .await;
     };
     match tokio::task::spawn_blocking(move || session.update_login(&*host, &reference, &request))
         .await
     {
         Ok(Ok(item)) => json_response(StatusCode::OK, &item, []),
         Ok(Err(error)) => refusal(&error),
+        Err(error) => internal(&error),
+    }
+}
+
+/// A write whose `body` can't be read: audited as refused, then answered `invalid_input` with
+/// `message`, which says what the route takes.
+async fn unreadable_write(
+    host: Arc<HeadlessHost>,
+    session: GatewaySession,
+    action: AuditAction,
+    body: Bytes,
+    message: &'static str,
+) -> Response {
+    let audited = tokio::task::spawn_blocking(move || {
+        session.refuse_unreadable_write(&*host, action, &body);
+    })
+    .await;
+    match audited {
+        Ok(()) => refusal(&GatewayError::InvalidInput(message)),
         Err(error) => internal(&error),
     }
 }

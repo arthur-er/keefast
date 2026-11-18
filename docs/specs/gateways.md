@@ -67,8 +67,8 @@ agentes-chat keeps its own rules: which of its agents and people may use an item
 - **`GatewaySession`**, in the `agent` crate beside `AgentSession`, built for one Gateway pairing over a `Workspace`, with the same audit sink and clock. It handles `whoami`, `list`, `resolve`, `create_login` and `update_login`. Visibility (the Agent group, the pairing's subgroups, notes never exposed) is shared with `AgentSession`, not duplicated.
 - **The Entry mapping** is a pure function from an Entry to an optional gateway item, in the `agent` crate:
   - **login**: an `https` URL and a non-empty password. Its websites are the URL and every `KP2A_URL*` field that is `https`, each `{ url, match: "exact" }`. Its username is the Entry's. An Entry tagged `login` (case-insensitive) with a non-empty password is a login too, with only its `https` websites, possibly none: that is what `POST /logins` without a `website` makes, so the login it answers is the one the next list shows.
-  - **key**: tagged `key` (case-insensitive), or no URL and a title matching `^[A-Z][A-Z0-9_]*$`. `keyName` is the title, which must match that pattern; a `key`-tagged Entry whose title doesn't is left out.
-  - A login takes precedence over a key when both match.
+  - **key**: a non-empty password, and tagged `key` (case-insensitive) or no URL, with a title matching `^[A-Z][A-Z0-9_]*$`. `keyName` is the title, which must match that pattern; a `key`-tagged Entry whose title doesn't is left out.
+  - A login takes precedence over a key when both match. An Entry with a blank title is left out: agentes-chat drops it.
   - Every item has `ref` (the UUID, hyphenated lower case), `kind`, `title`, and `updatedAt` (the Entry's modification time, ISO 8601). A login has `username` and `websites`; a key has `keyName`. Nothing else.
 - **The API**, served by `keefast-agent serve` under `/gateway/v1/`, JSON in and out, with `Authorization: Bearer <token>`:
   - `GET /whoami` → `{ vault, pairing, subgroups, canWrite }`.

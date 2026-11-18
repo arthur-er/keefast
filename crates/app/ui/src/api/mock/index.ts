@@ -1881,7 +1881,7 @@ export function createMockBackend(): Backend & {
     if (trimmed.includes("/")) throw new MockError("invalid", "An Agent's name can't have a / in it: it names its subgroup.");
     if (!v.agentGroup) throw new MockError("invalid", "Choose the Agent group before pairing an Agent.");
     const pairings = (v.agentPairings ??= []);
-    if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has an Agent with this name.");
+    if (pairings.some((p) => p.name === trimmed)) throw new MockError("invalid", "This Vault already has a pairing with this name.");
     let own = v.groups.find((g) => g.parent === v.agentGroup && g.name === trimmed);
     if (!own) {
       own = { id: `g${state.nextId++}`, name: trimmed, parent: v.agentGroup };

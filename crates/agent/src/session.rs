@@ -418,6 +418,17 @@ impl AgentSession {
         self
     }
 
+    /// This session's pairing in `settings`: `NotPaired` once it is gone, or if it is a
+    /// Gateway pairing.
+    pub(crate) fn own_pairing<'s>(
+        &self,
+        settings: &'s AgentSettings,
+    ) -> Result<&'s AgentPairing, AgentError> {
+        settings
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
+            .ok_or(AgentError::NotPaired)
+    }
+
     pub fn pairing(&self) -> &AgentPairingId {
         &self.pairing
     }
@@ -448,9 +459,7 @@ impl AgentSession {
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?;
+        let pairing = self.own_pairing(&settings)?;
         self.audit.record(self.record(
             workspace,
             pairing,
@@ -501,9 +510,7 @@ impl AgentSession {
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?;
+        let pairing = self.own_pairing(&settings)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut resolved = Vec::with_capacity(request.references.len());
         for reference in &request.references {
@@ -601,9 +608,7 @@ impl AgentSession {
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?;
+        let pairing = self.own_pairing(&settings)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut values = Vec::with_capacity(request.references.len());
         for reference in request.references {
@@ -865,9 +870,7 @@ impl AgentSession {
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?;
+        let pairing = self.own_pairing(&settings)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut values: HashMap<&str, Zeroizing<String>> = HashMap::new();
         let mut used: Vec<UsedEntry> = Vec::new();
@@ -1107,9 +1110,7 @@ impl AgentSession {
     ) {
         let Some(Some(pairing)) = vault.read(|workspace, id| {
             let settings = workspace.agent_settings(id)?;
-            let pairing = settings
-                .pairing_of_kind(&self.pairing, PairingKind::Agent)?
-                .clone();
+            let pairing = self.own_pairing(&settings).ok()?.clone();
             Some(self.record(
                 workspace,
                 &pairing,
@@ -1153,9 +1154,7 @@ impl AgentSession {
                     .ok_or(AgentError::Locked)?
                     .vault();
                 let settings = AgentSettings::of(vault);
-                let pairing = settings
-                    .pairing_of_kind(&self.pairing, PairingKind::Agent)
-                    .ok_or(AgentError::NotPaired)?;
+                let pairing = self.own_pairing(&settings)?;
                 let readable = readable_entries(vault, &settings, pairing);
                 let (entry, value) = resolve(&readable, &reference)?;
                 if !settings.agents_may_reveal(entry.id()) {
@@ -1182,9 +1181,7 @@ impl AgentSession {
             .ok_or(AgentError::Locked)?
             .vault();
         let settings = AgentSettings::of(vault);
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?;
+        let pairing = self.own_pairing(&settings)?;
         let readable = readable_entries(vault, &settings, pairing);
         let (entry, _) = resolve(&readable, reference)?;
         let refusal = if !settings.agents_may_reveal(entry.id()) {

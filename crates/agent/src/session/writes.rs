@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use super::{AgentError, AgentReply, AgentSession, SecretReference, VaultAccess, readable_entries};
 use crate::audit::{AuditAction, AuditEntry, AuditOutcome};
-use crate::{AgentPairing, AgentSettings, PairingKind};
+use crate::{AgentPairing, AgentSettings};
 
 /// What `create_entry` makes: an Entry with this title in the pairing's own subgroup.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -398,10 +398,7 @@ impl AgentSession {
         settings: &AgentSettings,
         write: &Write<'_>,
     ) -> Result<AgentPairing, AgentError> {
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)?
-            .clone();
+        let pairing = self.own_pairing(settings)?.clone();
         if !pairing.can_create() {
             self.audit_write(
                 workspace,
