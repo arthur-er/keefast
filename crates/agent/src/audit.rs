@@ -1,10 +1,11 @@
-//! The audit log: a record of every list and use of a Vault's secrets by Agents (ADR 0012
-//! "Audit").
+//! The audit log: a record of every list and use of a Vault's secrets by Agents and Gateways
+//! (ADR 0012 "Audit", ADR 0015).
 //!
-//! Each record has the time, the Agent pairing, the Entry, the program, or the method and host
-//! of an `http_request`, and the outcome, never
-//! a value. [`AgentSession`](crate::AgentSession) writes them to the [`AuditSink`] its host
-//! gives it; the Headless host's is [`AuditLog`], an append-only file in its state directory,
+//! Each record has the time, the pairing, the Entry, the program, or the method and host of an
+//! `http_request`, a Gateway's unverified claim of whom it was for, and the outcome, never a
+//! value. [`AgentSession`](crate::AgentSession) and
+//! [`GatewaySession`](crate::gateway::GatewaySession) write them to the [`AuditSink`] their host
+//! gives them; the Headless host's is [`AuditLog`], an append-only file in its state directory,
 //! rotated by size, that `keefast-agent log` reads.
 
 use std::fs::{self, File, OpenOptions};
@@ -39,6 +40,8 @@ pub enum AuditAction {
     Store,
     /// `reveal_secret`.
     Reveal,
+    /// A Gateway's resolve: a value handed to another program's vault.
+    Resolve,
     /// One a later keefast logs and this one doesn't know.
     #[serde(other)]
     Other,
@@ -54,6 +57,7 @@ impl AuditAction {
             Self::Create => "create",
             Self::Store => "store",
             Self::Reveal => "reveal",
+            Self::Resolve => "resolve",
             Self::Other => "other",
         }
     }
@@ -70,6 +74,43 @@ impl std::fmt::Display for AuditAction {
 pub struct AuditEntry {
     pub uuid: String,
     pub title: String,
+}
+
+/// Whom a Gateway says a call was for: the agent, person and run it names, as free text. It is
+/// the Gateway's claim, which keefast can't verify, so the log keeps it apart as `claimed_for`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimedFor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+}
+
+impl ClaimedFor {
+    /// The longest each part is logged, in characters; the rest is cut off.
+    pub const MAX_CHARS: usize = 256;
+
+    /// This claim as the log keeps it: each part cut to [`Self::MAX_CHARS`], on one line, and
+    /// `None` when it names nothing. A control character, such as a line break, reads as a
+    /// space, so that a claim can't pass for another line of the log.
+    pub fn capped(&self) -> Option<Self> {
+        let cap = |part: &Option<String>| {
+            part.as_deref().filter(|text| !text.is_empty()).map(|text| {
+                text.chars()
+                    .take(Self::MAX_CHARS)
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect::<String>()
+            })
+        };
+        let capped = Self {
+            agent: cap(&self.agent),
+            person: cap(&self.person),
+            run: cap(&self.run),
+        };
+        (capped != Self::default()).then_some(capped)
+    }
 }
 
 /// One thing an Agent did, or was refused.
@@ -102,6 +143,9 @@ pub struct AuditRecord {
     /// Why it was denied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Whom a Gateway said the call was for: its claim, unverified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_for: Option<ClaimedFor>,
 }
 
 impl AuditRecord {
@@ -125,6 +169,7 @@ impl AuditRecord {
             field: None,
             outcome,
             reason: None,
+            claimed_for: None,
         }
     }
 }

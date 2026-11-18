@@ -9,12 +9,14 @@
 
 use std::sync::Arc;
 
+use keefast_core::EntryId;
 use keefast_workspace::{VaultId, VaultLocation, Workspace};
-use serde::Serialize;
+use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::items::{GatewayItem, gateway_item};
-use crate::audit::{AuditAction, AuditOutcome, AuditRecord, AuditSink};
+use crate::audit::{AuditAction, AuditEntry, AuditOutcome, AuditRecord, AuditSink, ClaimedFor};
 use crate::session::readable_entries;
 use crate::{AgentPairing, AgentPairingId, AgentSettings, PairingKind, VaultAccess};
 
@@ -35,6 +37,15 @@ pub enum GatewayError {
          again"
     )]
     Locked,
+    #[error(
+        "keefast has no such item for this pairing: its Entry is gone, or no longer in the \
+         pairing's subgroups"
+    )]
+    NotFound,
+    /// A body that isn't what the route takes. The message says what it takes, never what was
+    /// sent, which may hold a value.
+    #[error("keefast can't read that request: {0}")]
+    InvalidInput(&'static str),
 }
 
 impl GatewayError {
@@ -43,6 +54,8 @@ impl GatewayError {
         match self {
             Self::Unauthorized => "unauthorized",
             Self::Locked => "locked",
+            Self::NotFound => "not_found",
+            Self::InvalidInput(_) => "invalid_input",
         }
     }
 }
@@ -68,6 +81,24 @@ pub struct Listing {
     /// changed hears "not modified".
     #[serde(skip)]
     pub etag: String,
+}
+
+/// A resolve, as `POST /items/{ref}/resolve` takes it: `{ field, for? }`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Resolve {
+    pub field: Field,
+    /// Whom the Gateway says the value is for: its claim, which keefast logs and can't verify.
+    #[serde(default, rename = "for")]
+    pub claimed_for: Option<ClaimedFor>,
+}
+
+/// The field a resolve asks for. Both read the Entry's password: a login's is its password,
+/// and a key's is its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Field {
+    Password,
+    Key,
 }
 
 /// One Gateway pairing's requests.
@@ -127,6 +158,54 @@ impl GatewaySession {
                 items,
                 etag: format!("\"{etag}\""),
             })
+        })
+    }
+
+    /// The value of the item `reference`: the Entry's password, whichever field is asked for.
+    /// Being in the pairing's subgroups is the approval: nothing is asked, and neither Agent
+    /// access decisions nor the Default agent policy apply.
+    pub fn resolve(
+        &self,
+        vault: &impl VaultAccess,
+        reference: &str,
+        request: &Resolve,
+    ) -> Result<SecretString, GatewayError> {
+        self.read(vault, |workspace, id, settings, pairing| {
+            let vault = workspace
+                .readable_vault(id)
+                .ok_or(GatewayError::Locked)?
+                .vault();
+            let found = EntryId::from_hex(reference).and_then(|wanted| {
+                readable_entries(vault, settings, pairing)
+                    .into_iter()
+                    .map(|(entry, _)| entry)
+                    .find(|entry| entry.id() == wanted && gateway_item(entry).is_some())
+            });
+            let outcome = if found.is_some() {
+                AuditOutcome::Allowed
+            } else {
+                AuditOutcome::Denied
+            };
+            let mut record = AuditRecord::of(
+                workspace.now().unix_seconds(),
+                pairing,
+                AuditAction::Resolve,
+                outcome,
+            );
+            record.claimed_for = request.claimed_for.as_ref().and_then(ClaimedFor::capped);
+            let Some(entry) = found else {
+                record.reason = Some("not found".to_owned());
+                self.audit.record(record);
+                return Err(GatewayError::NotFound);
+            };
+            record.entry = Some(AuditEntry {
+                uuid: entry.id().to_hex(),
+                title: entry.title().to_owned(),
+            });
+            self.audit.record(record);
+            Ok(SecretString::from(
+                entry.password().expose_secret().to_owned(),
+            ))
         })
     }
 

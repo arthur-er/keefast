@@ -841,6 +841,17 @@ mod operator {
         if let Some(field) = &record.field {
             line += &format!(" field {field}");
         }
+        if let Some(claim) = &record.claimed_for {
+            let parts: Vec<String> = [
+                ("agent", &claim.agent),
+                ("person", &claim.person),
+                ("run", &claim.run),
+            ]
+            .into_iter()
+            .filter_map(|(name, part)| part.as_ref().map(|part| format!("{name} {part}")))
+            .collect();
+            line += &format!(" for {} (claimed, unverified)", parts.join(", "));
+        }
         line += match record.outcome {
             AuditOutcome::Allowed => "  allowed",
             AuditOutcome::Denied => "  denied",

@@ -7,6 +7,7 @@ mod support;
 
 use std::sync::Arc;
 
+use keefast_agent::gateway::reference;
 use keefast_agent::host::{HeadlessHost, HostConfig};
 use keefast_agent::listen::Listen;
 use keefast_agent::run::USE_SECRETS_PATH;
@@ -345,4 +346,190 @@ async fn mcp_run_and_store_refuse_a_gateways_token_as_unauthorized() {
         served.post_status("/mcp", &agent, initialize).await,
         StatusCode::OK
     );
+}
+
+impl Served {
+    /// `POST /gateway/v1/<route>` with the Gateway's token and `body`, never following a
+    /// redirect, as agentes-chat's client sends it.
+    async fn post(&self, route: &str, body: &str) -> reqwest::Response {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+            .post(self.url(&format!("/gateway/v1/{route}")))
+            .bearer_auth(&self.gateway)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .body(body.to_owned())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// The ref of the listed item titled `title`.
+    async fn ref_of(&self, title: &str) -> String {
+        let (_, body) = json_of(self.get("items", Some(&self.gateway), &[]).await).await;
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["title"] == title)
+            .unwrap_or_else(|| panic!("no {title} in {body}"))["ref"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn set_policy(&self, policy: keefast_agent::DefaultAgentPolicy) {
+        let host = Arc::clone(&self.host);
+        tokio::task::spawn_blocking(move || {
+            host.with_vault(|workspace, vault| {
+                workspace.set_default_agent_policy(vault, policy).unwrap();
+            })
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_answers_a_logins_password_and_a_keys_value_with_no_prompt_whatever_the_policy() {
+    for policy in [
+        keefast_agent::DefaultAgentPolicy::Ask,
+        keefast_agent::DefaultAgentPolicy::Deny,
+    ] {
+        let served = Served::unlocked().await;
+        served.set_policy(policy).await;
+        let github = served.ref_of("GitHub").await;
+        let openai = served.ref_of("OPENAI_API_KEY").await;
+
+        // agentes-chat sends `{ field }` alone; `for` is optional.
+        let (status, login) = json_of(
+            served
+                .post(
+                    &format!("items/{github}/resolve"),
+                    r#"{"field":"password"}"#,
+                )
+                .await,
+        )
+        .await;
+        let (key_status, key) = json_of(
+            served
+                .post(
+                    &format!("items/{openai}/resolve"),
+                    r#"{"field":"key","for":{"agent":"deploy-bot","person":"ana","run":"r-1"}}"#,
+                )
+                .await,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{policy:?} {login}");
+        assert_eq!(login, json!({ "value": "github-secret-value" }));
+        assert_eq!(key_status, StatusCode::OK, "{policy:?} {key}");
+        assert_eq!(key, json!({ "value": "openai-secret-value" }));
+        let resolves: Vec<_> = served
+            .audit()
+            .into_iter()
+            .filter(|record| record.action == AuditAction::Resolve)
+            .collect();
+        assert_eq!(resolves.len(), 2, "{resolves:?}");
+        assert_eq!(resolves[0].entry.as_ref().unwrap().title, "GitHub");
+        assert!(resolves[0].claimed_for.is_none());
+        assert_eq!(resolves[1].entry.as_ref().unwrap().title, "OPENAI_API_KEY");
+        let claim = resolves[1].claimed_for.as_ref().unwrap();
+        assert_eq!(claim.agent.as_deref(), Some("deploy-bot"));
+        assert_eq!(claim.person.as_deref(), Some("ana"));
+        assert_eq!(claim.run.as_deref(), Some("r-1"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_refuses_what_it_cant_answer_with_a_code_and_never_a_value() {
+    let served = Served::unlocked().await;
+    let github = served.ref_of("GitHub").await;
+    let password = r#"{"field":"password"}"#;
+    // Entries the Gateway can't see: another pairing's, and one outside the Agent group.
+    let host = Arc::clone(&served.host);
+    let hidden = tokio::task::spawn_blocking(move || {
+        host.with_vault(|workspace, vault| {
+            let open = workspace.readable_vault(vault).unwrap().vault();
+            let mut hidden = Vec::new();
+            let mut groups = vec![open.root()];
+            while let Some(group) = groups.pop() {
+                groups.extend(group.groups());
+                hidden.extend(
+                    group
+                        .entries()
+                        .iter()
+                        .filter(|entry| ["CLAUDE_ONLY", "BANK"].contains(&entry.title()))
+                        .map(|entry| reference(entry.id())),
+                );
+            }
+            hidden
+        })
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(hidden.len(), 2);
+
+    let mut refusals = Vec::new();
+    for missing in hidden
+        .iter()
+        .map(String::as_str)
+        .chain(["00000000-0000-4000-8000-000000000000", "not-a-uuid"])
+    {
+        refusals.push((
+            StatusCode::NOT_FOUND,
+            "not_found",
+            served
+                .post(&format!("items/{missing}/resolve"), password)
+                .await,
+        ));
+    }
+    for malformed in [
+        "",
+        "not json",
+        "{}",
+        r#"{"field":"notes"}"#,
+        r#"{"field":"password","for":"ana"}"#,
+        r#"{"field":"password","for":{"agent":7}}"#,
+    ] {
+        refusals.push((
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            served
+                .post(&format!("items/{github}/resolve"), malformed)
+                .await,
+        ));
+    }
+
+    for (expected, code, response) in refusals {
+        let (status, body) = json_of(response).await;
+        assert_eq!(status, expected, "{body}");
+        assert_eq!(body["code"], code, "{body}");
+        assert!(body["message"].is_string(), "{body}");
+        assert!(!body.to_string().contains("secret-value"), "{body}");
+    }
+    let log = serde_json::to_string(&served.audit()).unwrap();
+    assert!(!log.contains("secret-value"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resolve_answers_locked_while_the_host_is() {
+    let served = Served::locked().await;
+
+    let (status, body) = json_of(
+        served
+            .post(
+                "items/00000000-0000-4000-8000-000000000000/resolve",
+                r#"{"field":"password"}"#,
+            )
+            .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::LOCKED);
+    assert_eq!(body["code"], "locked");
 }

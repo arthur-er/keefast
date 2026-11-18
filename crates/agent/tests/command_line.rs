@@ -14,6 +14,7 @@ mod support;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,6 +36,8 @@ struct Serve {
     socket: PathBuf,
     /// Where Agents reach it, from the line it prints when it starts.
     url: std::sync::mpsc::Receiver<String>,
+    /// Every line it has printed, on its output and error streams.
+    printed: Arc<Mutex<Vec<String>>>,
     _dir: TempDir,
 }
 
@@ -56,12 +59,24 @@ fn serve(file: &VaultFile) -> Serve {
         .arg(&socket)
         .arg("--state-dir")
         .arg(dir.path().join("state"))
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut child = child;
+    let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
+    let printed = Arc::new(Mutex::new(Vec::new()));
     let (send, url) = std::sync::mpsc::channel();
+    let output_printed = Arc::clone(&printed);
+    thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            output_printed.lock().unwrap().push(line);
+        }
+    });
+    let error_printed = Arc::clone(&printed);
     thread::spawn(move || {
         use std::io::BufRead;
         for line in std::io::BufReader::new(stderr).lines() {
@@ -69,6 +84,7 @@ fn serve(file: &VaultFile) -> Serve {
             if let Some((_, url)) = line.split_once("Agents connect to ") {
                 let _ = send.send(url.trim().to_owned());
             }
+            error_printed.lock().unwrap().push(line);
         }
     });
     let until = Instant::now() + Duration::from_secs(10);
@@ -79,6 +95,7 @@ fn serve(file: &VaultFile) -> Serve {
         child,
         socket,
         url,
+        printed,
         _dir: dir,
     }
 }
@@ -408,6 +425,96 @@ fn pairing_add_gateway_prints_its_token_once_list_shows_its_kind_and_it_reaches_
     );
     assert_eq!(whoami["canWrite"], true);
     assert_eq!(get(&url, "/gateway/v1/items", &claude).0, 401);
+}
+
+/// The status and body of `POST <route>` at the host `url` with `token` and the JSON `body`.
+fn post(url: &str, route: &str, token: &str, body: &str) -> (u16, String) {
+    let agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let mut response = agent
+        .post(&url.replace("/mcp", route))
+        .header("authorization", &format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .send(body)
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.body_mut().read_to_string().unwrap())
+}
+
+#[test]
+fn a_gateways_resolves_are_in_the_log_with_their_unverified_claim_and_no_value_is_printed() {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let (mut workspace, vault) = file.open(&FakeClock::at_unix_seconds(1_900_000_000));
+    let root = workspace.readable_vault(vault).unwrap().vault().root().id();
+    let agents = workspace.create_group(vault, root, "Agents").unwrap();
+    workspace.set_agent_group(vault, agents).unwrap();
+    let gateway = workspace
+        .create_gateway_pairing(vault, "agentes", vec![], false)
+        .unwrap();
+    let fields = EntryFields {
+        title: "OPENAI_API_KEY".to_owned(),
+        password: SecretString::from("sk-the-real-key-value"),
+        ..EntryFields::default()
+    };
+    let key = workspace
+        .create_entry(vault, gateway.pairing.group(), &fields)
+        .unwrap();
+    workspace.save_vault(vault).unwrap();
+    drop(workspace);
+    let token = gateway.token.to_string();
+    let served = serve(&file);
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let resolve = format!(
+        "/gateway/v1/items/{}/resolve",
+        keefast_agent::gateway::reference(key)
+    );
+
+    let resolved = post(
+        &url,
+        &resolve,
+        &token,
+        r#"{"field":"key","for":{"agent":"deploy-bot","person":"ana","run":"r-42"}}"#,
+    );
+    let unclaimed = post(&url, &resolve, &token, r#"{"field":"key"}"#);
+    let malformed = post(
+        &url,
+        &resolve,
+        &token,
+        r#"{"field":"sk-the-real-key-value"}"#,
+    );
+    let missing = post(
+        &url,
+        "/gateway/v1/items/00000000-0000-4000-8000-000000000000/resolve",
+        &token,
+        r#"{"field":"key"}"#,
+    );
+    let log = text(&run(&served.socket, &["log"], ""));
+
+    assert_eq!(resolved.0, 200, "{}", resolved.1);
+    assert!(resolved.1.contains("sk-the-real-key-value"));
+    assert_eq!(unclaimed.0, 200, "{}", unclaimed.1);
+    assert_eq!(malformed.0, 400, "{}", malformed.1);
+    assert!(
+        !malformed.1.contains("sk-the-real-key-value"),
+        "{}",
+        malformed.1
+    );
+    assert_eq!(missing.0, 404, "{}", missing.1);
+    assert!(
+        log.contains("agentes (gateway)  resolve OPENAI_API_KEY ("),
+        "{log}"
+    );
+    assert!(
+        log.contains("for agent deploy-bot, person ana, run r-42 (claimed, unverified)"),
+        "{log}"
+    );
+    assert!(log.contains("resolve  denied: not found"), "{log}");
+    assert!(!log.contains("sk-the-real-key-value"), "{log}");
+    let printed = served.printed.lock().unwrap().join("\n");
+    assert!(!printed.contains("sk-the-real-key-value"), "{printed}");
 }
 
 /// The status of opening the Approver prompt stream at the host `url` with `token`.

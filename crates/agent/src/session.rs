@@ -698,6 +698,7 @@ impl AgentSession {
                     AuditOutcome::Allowed
                 },
                 reason: Some(reason.to_owned()),
+                claimed_for: None,
             }));
             if refusal.is_some() {
                 refused = refusal;

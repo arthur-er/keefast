@@ -34,7 +34,9 @@ pub use approver::{
     AgentPrompt, Approval, Approver, ApproverCredentials, ApproverHub, ConsentAnswer,
     ConsentPrompt, NoApprover,
 };
-pub use audit::{AuditAction, AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink};
+pub use audit::{
+    AuditAction, AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink, ClaimedFor,
+};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, CreateEntry, SecretListing,
     SecretReference, SecretValue, ServesAgents, StoreSecret, UseSecrets, VaultAccess, WrittenEntry,

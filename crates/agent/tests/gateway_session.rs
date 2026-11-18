@@ -7,14 +7,14 @@ mod support;
 
 use std::sync::{Arc, MutexGuard};
 
-use keefast_agent::gateway::{GatewayError, GatewaySession};
+use keefast_agent::gateway::{GatewayError, GatewaySession, Resolve, reference};
 use keefast_agent::{
     AgentError, AgentRequest, AgentSession, AgentSettingsExt, AuditAction, AuditOutcome,
-    PairingKind,
+    ClaimedFor, DefaultAgentPolicy, PairingKind,
 };
 use keefast_core::{EntryFields, GroupId};
 use keefast_workspace::{Clipboard, UnsavedLock, VaultId, Workspace};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use support::{FakeClock, KEEPASSXC_KDBX4, MemoryAudit, SharedVault, VaultFile};
 
 /// A Vault with an Agent group, `Agents`, whose subgroups are `shared`, `codex` and a Gateway
@@ -265,4 +265,169 @@ fn an_agents_list_is_audited_as_an_agent_pairings() {
         .unwrap();
 
     assert_eq!(audit.records()[0].kind, PairingKind::Agent);
+}
+
+/// What agentes-chat sends: `{ field }` alone, without `for`.
+fn asking_for(field: &str) -> Resolve {
+    serde_json::from_value(serde_json::json!({ "field": field })).unwrap()
+}
+
+fn add_key(fixture: &Fixture, group: GroupId, name: &str) -> keefast_core::EntryId {
+    fixture.add(
+        group,
+        EntryFields {
+            title: name.to_owned(),
+            password: SecretString::from(format!("{name}-secret-value")),
+            ..EntryFields::default()
+        },
+    )
+}
+
+#[test]
+fn resolve_reads_a_logins_password_and_a_keys_value_by_ref() {
+    let fixture = Fixture::new();
+    let login = fixture.add_login(fixture.own, "github");
+    let key = add_key(&fixture, fixture.shared_group, "OPENAI_API_KEY");
+
+    let password = fixture
+        .session
+        .resolve(&*fixture.shared, &reference(login), &asking_for("password"))
+        .unwrap();
+    let value = fixture
+        .session
+        .resolve(&*fixture.shared, &reference(key), &asking_for("key"))
+        .unwrap();
+
+    assert_eq!(password.expose_secret(), "github-secret-value");
+    assert_eq!(value.expose_secret(), "OPENAI_API_KEY-secret-value");
+}
+
+#[test]
+fn resolve_answers_not_found_for_an_entry_gone_outside_the_subgroups_or_not_an_item() {
+    let fixture = Fixture::new();
+    let gone = fixture.add_login(fixture.own, "gone");
+    fixture
+        .workspace()
+        .delete_entry(fixture.vault, gone)
+        .unwrap();
+    let codex = fixture.add_login(fixture.codex_group, "codex login");
+    let bank = add_key(&fixture, fixture.root, "BANK");
+    let note = fixture.add(
+        fixture.own,
+        EntryFields {
+            title: "a plain note".to_owned(),
+            password: SecretString::from("note-secret-value".to_owned()),
+            url: "http://intranet".to_owned(),
+            ..EntryFields::default()
+        },
+    );
+
+    for missing in [
+        reference(gone),
+        reference(codex),
+        reference(bank),
+        reference(note),
+        "not-a-uuid".to_owned(),
+    ] {
+        let refused = fixture
+            .session
+            .resolve(&*fixture.shared, &missing, &asking_for("password"))
+            .unwrap_err();
+
+        assert_eq!(refused, GatewayError::NotFound, "{missing}");
+        assert_eq!(refused.code(), "not_found");
+        assert!(!refused.to_string().contains("secret-value"));
+    }
+}
+
+#[test]
+fn resolve_asks_nobody_and_ignores_the_default_agent_policy() {
+    for policy in [DefaultAgentPolicy::Ask, DefaultAgentPolicy::Deny] {
+        let fixture = Fixture::new();
+        fixture
+            .workspace()
+            .set_default_agent_policy(fixture.vault, policy)
+            .unwrap();
+        let login = fixture.add_login(fixture.own, "github");
+
+        let value = fixture
+            .session
+            .resolve(&*fixture.shared, &reference(login), &asking_for("password"))
+            .unwrap();
+
+        assert_eq!(value.expose_secret(), "github-secret-value", "{policy:?}");
+    }
+}
+
+#[test]
+fn resolve_answers_locked_while_the_vault_is() {
+    let fixture = Fixture::new();
+    let login = fixture.add_login(fixture.own, "github");
+    fixture.lock();
+
+    assert_eq!(
+        fixture
+            .session
+            .resolve(&*fixture.shared, &reference(login), &asking_for("password"))
+            .unwrap_err(),
+        GatewayError::Locked
+    );
+}
+
+#[test]
+fn each_resolve_is_audited_with_its_entry_outcome_and_capped_claim_and_never_its_value() {
+    let fixture = Fixture::new();
+    let login = fixture.add_login(fixture.own, "github");
+    let codex = fixture.add_login(fixture.codex_group, "codex login");
+    let claimed: Resolve = serde_json::from_value(serde_json::json!({
+        "field": "password",
+        "for": { "agent": "deploy-bot", "person": "ana\nforged line", "run": "r".repeat(10_000) },
+    }))
+    .unwrap();
+
+    fixture
+        .session
+        .resolve(&*fixture.shared, &reference(login), &claimed)
+        .unwrap();
+    fixture
+        .session
+        .resolve(&*fixture.shared, &reference(login), &asking_for("password"))
+        .unwrap();
+    fixture
+        .session
+        .resolve(&*fixture.shared, &reference(codex), &claimed)
+        .unwrap_err();
+
+    let records = fixture.audit.records();
+    let [claimed, unclaimed, refused] = records.as_slice() else {
+        panic!("expected three records, got {records:?}");
+    };
+    assert_eq!(claimed.action, AuditAction::Resolve);
+    assert_eq!(claimed.kind, PairingKind::Gateway);
+    assert_eq!(claimed.outcome, AuditOutcome::Allowed);
+    let entry = claimed.entry.as_ref().unwrap();
+    assert_eq!(entry.title, "github");
+    assert_eq!(entry.uuid, login.to_hex());
+    let claim = claimed.claimed_for.as_ref().unwrap();
+    assert_eq!(claim.agent.as_deref(), Some("deploy-bot"));
+    // A claim is one line in the log: it can't forge another.
+    assert_eq!(claim.person.as_deref(), Some("ana forged line"));
+    assert_eq!(
+        claim.run.as_ref().unwrap().chars().count(),
+        ClaimedFor::MAX_CHARS
+    );
+    assert_eq!(unclaimed.action, AuditAction::Resolve);
+    assert_eq!(unclaimed.outcome, AuditOutcome::Allowed);
+    assert!(unclaimed.claimed_for.is_none());
+    assert_eq!(refused.action, AuditAction::Resolve);
+    assert_eq!(refused.outcome, AuditOutcome::Denied);
+    assert!(refused.entry.is_none(), "{refused:?}");
+    assert_eq!(refused.reason.as_deref(), Some("not found"));
+    let json = serde_json::to_string(&records).unwrap();
+    assert!(
+        json.contains("\"claimed_for\":{\"agent\":\"deploy-bot\""),
+        "{json}"
+    );
+    assert!(json.contains("\"action\":\"resolve\""), "{json}");
+    assert!(!json.contains("secret-value"), "{json}");
 }

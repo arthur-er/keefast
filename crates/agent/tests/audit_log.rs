@@ -20,6 +20,7 @@ fn record(n: i64) -> AuditRecord {
         program: Some("gh".to_owned()),
         outcome: AuditOutcome::Allowed,
         reason: None,
+        claimed_for: None,
     }
 }
 

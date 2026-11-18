@@ -7,21 +7,24 @@
 //! `423 locked` while the Vault is locked, when no token can be checked. Errors are
 //! `{ "code", "message" }`. No route redirects: agentes-chat's client treats a 3xx as failure.
 //!
-//! Later routes (resolve, create and change a login) slot in beside these in [`router`], each
-//! a handler that takes the [`GatewaySession`] the bearer check left in the request.
+//! Each route is a handler that takes the [`GatewaySession`] the bearer check left in the
+//! request; later ones (create and change a login) slot in beside these in [`router`]. A body
+//! that doesn't parse is `400 invalid_input` with keefast's own message, never echoing it.
 
 use std::sync::Arc;
 
 use axum::Extension;
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::body::Bytes;
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
+use secrecy::ExposeSecret;
 use serde_json::json;
 
-use crate::gateway::{GatewayError, GatewaySession};
+use crate::gateway::{GatewayError, GatewaySession, Resolve};
 use crate::host::HeadlessHost;
 use crate::serve::bearer;
 
@@ -33,6 +36,10 @@ pub(crate) fn router(host: Arc<HeadlessHost>) -> Router {
     Router::new()
         .route(&format!("{GATEWAY_PATH}/whoami"), get(whoami))
         .route(&format!("{GATEWAY_PATH}/items"), get(items))
+        .route(
+            &format!("{GATEWAY_PATH}/items/{{reference}}/resolve"),
+            post(resolve),
+        )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&host),
             require_gateway,
@@ -90,6 +97,30 @@ async fn items(
     json_response(StatusCode::OK, &listing, [(header::ETAG, etag)])
 }
 
+/// `POST /items/{ref}/resolve` with `{ field, for? }`: `{ value }`, the Entry's password.
+async fn resolve(
+    State(host): State<Arc<HeadlessHost>>,
+    Extension(session): Extension<GatewaySession>,
+    Path(reference): Path<String>,
+    body: Bytes,
+) -> Response {
+    let Ok(request) = serde_json::from_slice::<Resolve>(&body) else {
+        return refusal(&GatewayError::InvalidInput(
+            "send { \"field\": \"password\" or \"key\", \"for\"?: { \"agent\"?, \"person\"?, \
+             \"run\"? } } as JSON",
+        ));
+    };
+    match tokio::task::spawn_blocking(move || session.resolve(&*host, &reference, &request)).await {
+        Ok(Ok(value)) => json_response(
+            StatusCode::OK,
+            &json!({ "value": value.expose_secret() }),
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        ),
+        Ok(Err(error)) => refusal(&error),
+        Err(error) => internal(&error),
+    }
+}
+
 /// Whether `If-None-Match` names `etag`, or any version.
 fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
     headers
@@ -106,6 +137,8 @@ fn refusal(error: &GatewayError) -> Response {
     let status = match error {
         GatewayError::Unauthorized => StatusCode::UNAUTHORIZED,
         GatewayError::Locked => StatusCode::LOCKED,
+        GatewayError::NotFound => StatusCode::NOT_FOUND,
+        GatewayError::InvalidInput(_) => StatusCode::BAD_REQUEST,
     };
     let body = json!({ "code": error.code(), "message": error.to_string() });
     let challenge = match error {

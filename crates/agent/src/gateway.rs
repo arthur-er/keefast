@@ -9,4 +9,4 @@ mod items;
 mod session;
 
 pub use items::{GatewayItem, ItemDetails, Matching, Website, gateway_item, reference};
-pub use session::{GatewayError, GatewaySession, Listing, Whoami};
+pub use session::{Field, GatewayError, GatewaySession, Listing, Resolve, Whoami};
