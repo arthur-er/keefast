@@ -13,6 +13,9 @@
 //! those commands, which put them in a program's environment or read them from a pipe, and
 //! never through MCP to the model.
 //!
+//! Gateway pairings' tokens are refused at all of these, as if nobody had them; they reach only
+//! the gateway API, [`crate::gateway_endpoint`], served beside them (ADR 0015).
+//!
 //! Approvers, desktop keefasts paired with the host by `keefast-agent pairing approver`, hold
 //! a stream of server-sent events open at [`APPROVER_EVENTS_PATH`] with their own token, and
 //! answer prompts at [`APPROVER_PROMPTS_PATH`]. The first answer wins; every Approver is then
@@ -66,8 +69,8 @@ use crate::listen::{Listen, TlsFiles};
 use crate::run::USE_SECRETS_PATH;
 use crate::store::STORE_PATH;
 use crate::{
-    AgentError, AgentReply, AgentRequest, CreateEntry, SecretListing, ServesAgents, StoreSecret,
-    UseSecrets,
+    AgentError, AgentReply, AgentRequest, CreateEntry, PairingKind, SecretListing, ServesAgents,
+    StoreSecret, UseSecrets,
 };
 use keefast_core::{CharacterRecipe, PassphraseRecipe, PasswordRecipe};
 
@@ -207,6 +210,7 @@ fn router(host: Arc<HeadlessHost>, stop: CancellationToken, tls: bool) -> Router
         .with_state(Arc::clone(&host));
     agents
         .merge(approvers)
+        .merge(crate::gateway_endpoint::router(Arc::clone(&host)))
         .merge(crate::oauth_endpoint::router(host, tls))
 }
 
@@ -430,9 +434,13 @@ async fn require_bearer(
         .await
         .unwrap_or(TokenOwner::Unknown);
     match owner {
-        TokenOwner::Unknown => unauthorized(request.headers(), request.uri(), tls, true),
+        // A Gateway pairing's token is refused as if nobody had it: nothing hints that it
+        // works at the gateway API (ADR 0015).
+        TokenOwner::Unknown | TokenOwner::Pairing(_, PairingKind::Gateway) => {
+            unauthorized(request.headers(), request.uri(), tls, true)
+        }
         TokenOwner::Locked => locked(request).await,
-        TokenOwner::Pairing(_) => {
+        TokenOwner::Pairing(_, PairingKind::Agent) => {
             request.extensions_mut().insert(Bearer(token));
             next.run(request).await
         }

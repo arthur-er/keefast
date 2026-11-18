@@ -9,6 +9,9 @@ pub mod admin;
 pub mod approver;
 pub mod approver_client;
 pub mod audit;
+pub mod gateway;
+#[cfg(feature = "serve")]
+pub mod gateway_endpoint;
 pub mod host;
 pub mod hosts;
 pub mod http;
@@ -40,5 +43,5 @@ pub use session::{
 pub use settings::{
     AgentAccessDecision, AgentCredential, AgentDecision, AgentPairing, AgentPairingId,
     AgentSettings, AgentSettingsError, AgentSettingsExt, AgentUse, CreatedAgentPairing,
-    DefaultAgentPolicy, NewAgentPairing, TOKEN_PREFIX,
+    DefaultAgentPolicy, NewAgentPairing, PairingKind, TOKEN_PREFIX,
 };

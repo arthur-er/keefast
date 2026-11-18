@@ -310,6 +310,7 @@ fn a_vault_with_agent_pairings_and_decisions_round_trips_through_serve_unchanged
                 readable: vec![],
                 can_create: true,
                 credential: AgentCredential::token("kfa_claudes-token"),
+                kind: keefast_agent::PairingKind::Agent,
             },
         )
         .unwrap();

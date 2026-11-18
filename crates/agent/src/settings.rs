@@ -245,6 +245,28 @@ pub struct NewAgentPairing {
     /// Whether it may create Entries in its own subgroup.
     pub can_create: bool,
     pub credential: AgentCredential,
+    pub kind: PairingKind,
+}
+
+/// What a pairing is for (ADR 0015): an Agent, which reaches the Vault through MCP and `run`
+/// and `store`, or a Gateway, another program's vault that resolves values through
+/// `/gateway/v1/`. A token works only where its kind is accepted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairingKind {
+    /// The kind of every pairing stored before Gateway pairings existed.
+    #[default]
+    Agent,
+    Gateway,
+}
+
+impl PairingKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Gateway => "gateway",
+        }
+    }
 }
 
 /// A pairing just created, with its token: the only time the token is known, since the Vault
@@ -298,6 +320,10 @@ impl AgentPairing {
         self.stored.create
     }
 
+    pub fn kind(&self) -> PairingKind {
+        self.stored.kind
+    }
+
     pub fn credential(&self) -> AgentCredential {
         match (&self.stored.token_sha256, &self.stored.oauth_client) {
             (Some(hash), _) => AgentCredential::TokenHash(hash.clone()),
@@ -323,6 +349,9 @@ struct StoredPairing {
     token_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     oauth_client: Option<String>,
+    /// Absent from pairings stored before Gateway pairings, which read as Agent pairings.
+    #[serde(default)]
+    kind: PairingKind,
     #[serde(flatten)]
     unknown: Map<String, Value>,
 }
@@ -340,6 +369,7 @@ impl StoredPairing {
             create: pairing.can_create,
             token_sha256,
             oauth_client,
+            kind: pairing.kind,
             unknown: Map::new(),
         }
     }
@@ -488,6 +518,11 @@ impl AgentSettings {
         self.pairings.iter().find(|pairing| &pairing.id == id)
     }
 
+    /// The pairing `id`, if it is still there and of `kind`.
+    pub fn pairing_of_kind(&self, id: &AgentPairingId, kind: PairingKind) -> Option<&AgentPairing> {
+        self.pairing(id).filter(|pairing| pairing.kind() == kind)
+    }
+
     /// The Agent pairing whose token is `token`, if one is.
     pub fn pairing_with_token(&self, token: &str) -> Option<&AgentPairing> {
         self.pairings
@@ -545,6 +580,17 @@ pub trait AgentSettingsExt {
         name: &str,
         readable: Vec<GroupId>,
         can_create: bool,
+    ) -> Result<CreatedAgentPairing, AgentSettingsError>;
+
+    /// Creates a Gateway pairing called `name` with a new bearer token and its own subgroup,
+    /// as [`Self::create_agent_pairing`] does. It reads `readable` too, and creates and changes
+    /// logins in its own subgroup if `can_write`.
+    fn create_gateway_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_write: bool,
     ) -> Result<CreatedAgentPairing, AgentSettingsError>;
 
     /// Creates an Agent pairing called `name` for the OAuth client `client`, whose tokens the
@@ -659,7 +705,36 @@ impl AgentSettingsExt for Workspace {
     ) -> Result<CreatedAgentPairing, AgentSettingsError> {
         let token = new_token();
         let credential = AgentCredential::token(&token);
-        let pairing = pair_in_subgroup(self, vault, name, readable, can_create, credential)?;
+        let pairing = pair_in_subgroup(
+            self,
+            vault,
+            name,
+            readable,
+            can_create,
+            credential,
+            PairingKind::Agent,
+        )?;
+        Ok(CreatedAgentPairing { pairing, token })
+    }
+
+    fn create_gateway_pairing(
+        &mut self,
+        vault: VaultId,
+        name: &str,
+        readable: Vec<GroupId>,
+        can_write: bool,
+    ) -> Result<CreatedAgentPairing, AgentSettingsError> {
+        let token = new_token();
+        let credential = AgentCredential::token(&token);
+        let pairing = pair_in_subgroup(
+            self,
+            vault,
+            name,
+            readable,
+            can_write,
+            credential,
+            PairingKind::Gateway,
+        )?;
         Ok(CreatedAgentPairing { pairing, token })
     }
 
@@ -672,7 +747,16 @@ impl AgentSettingsExt for Workspace {
         client: &str,
     ) -> Result<AgentPairing, AgentSettingsError> {
         let credential = AgentCredential::OAuthClient(client.to_owned());
-        pair_in_subgroup(self, vault, name, readable, can_create, credential)
+        // OAuth only ever makes Agent pairings (ADR 0015).
+        pair_in_subgroup(
+            self,
+            vault,
+            name,
+            readable,
+            can_create,
+            credential,
+            PairingKind::Agent,
+        )
     }
 
     fn set_agent_pairing_access(
@@ -799,6 +883,7 @@ fn pair_in_subgroup(
     readable: Vec<GroupId>,
     can_create: bool,
     credential: AgentCredential,
+    kind: PairingKind,
 ) -> Result<AgentPairing, AgentSettingsError> {
     let name = name.trim();
     if name.is_empty() {
@@ -837,6 +922,7 @@ fn pair_in_subgroup(
             readable,
             can_create,
             credential,
+            kind,
         },
     )
 }

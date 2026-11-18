@@ -14,6 +14,8 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::{AgentPairing, PairingKind};
+
 /// What happened when an Agent asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +80,9 @@ pub struct AuditRecord {
     /// The Agent pairing's name, as it was then.
     pub pairing: String,
     pub pairing_id: String,
+    /// Whether an Agent or a Gateway pairing; records written before Gateways read as Agents'.
+    #[serde(default)]
+    pub kind: PairingKind,
     pub action: AuditAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<AuditEntry>,
@@ -97,6 +102,31 @@ pub struct AuditRecord {
     /// Why it was denied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+impl AuditRecord {
+    /// A record of `pairing` doing `action` at `time`, about no Entry in particular.
+    pub(crate) fn of(
+        time: i64,
+        pairing: &AgentPairing,
+        action: AuditAction,
+        outcome: AuditOutcome,
+    ) -> Self {
+        Self {
+            time,
+            pairing: pairing.name().to_owned(),
+            pairing_id: pairing.id().as_str().to_owned(),
+            kind: pairing.kind(),
+            action,
+            entry: None,
+            program: None,
+            method: None,
+            host: None,
+            field: None,
+            outcome,
+            reason: None,
+        }
+    }
 }
 
 /// Where an [`AgentSession`](crate::AgentSession) writes its records.

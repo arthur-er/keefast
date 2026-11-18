@@ -47,7 +47,7 @@ mod writes;
 
 use crate::{
     AgentDecision, AgentPairing, AgentPairingId, AgentSettings, AgentSettingsExt, AgentUse,
-    DefaultAgentPolicy,
+    DefaultAgentPolicy, PairingKind,
 };
 
 /// A password at least this long gets a hint of its last four characters; a shorter one would
@@ -448,7 +448,7 @@ impl AgentSession {
             .vault();
         let settings = AgentSettings::of(vault);
         let pairing = settings
-            .pairing(&self.pairing)
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
             .ok_or(AgentError::NotPaired)?;
         self.audit.record(self.record(
             workspace,
@@ -501,7 +501,7 @@ impl AgentSession {
             .vault();
         let settings = AgentSettings::of(vault);
         let pairing = settings
-            .pairing(&self.pairing)
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
             .ok_or(AgentError::NotPaired)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut resolved = Vec::with_capacity(request.references.len());
@@ -601,7 +601,7 @@ impl AgentSession {
             .vault();
         let settings = AgentSettings::of(vault);
         let pairing = settings
-            .pairing(&self.pairing)
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
             .ok_or(AgentError::NotPaired)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut values = Vec::with_capacity(request.references.len());
@@ -619,19 +619,7 @@ impl AgentSession {
         action: AuditAction,
         outcome: AuditOutcome,
     ) -> AuditRecord {
-        AuditRecord {
-            time: workspace.now().unix_seconds(),
-            pairing: pairing.name().to_owned(),
-            pairing_id: pairing.id().as_str().to_owned(),
-            action,
-            entry: None,
-            program: None,
-            method: None,
-            host: None,
-            field: None,
-            outcome,
-            reason: None,
-        }
+        AuditRecord::of(workspace.now().unix_seconds(), pairing, action, outcome)
     }
 
     /// Asks the Approver about each Entry in `asking`, auditing each answer, and remembers the
@@ -694,6 +682,7 @@ impl AgentSession {
                 time,
                 pairing: asking.prompt.pairing.clone(),
                 pairing_id: self.pairing.as_str().to_owned(),
+                kind: PairingKind::Agent,
                 action: used_for.action(),
                 entry: Some(AuditEntry {
                     uuid: asking.prompt.entry_uuid.clone(),
@@ -875,7 +864,7 @@ impl AgentSession {
             .vault();
         let settings = AgentSettings::of(vault);
         let pairing = settings
-            .pairing(&self.pairing)
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
             .ok_or(AgentError::NotPaired)?;
         let readable = readable_entries(vault, &settings, pairing);
         let mut values: HashMap<&str, Zeroizing<String>> = HashMap::new();
@@ -1116,7 +1105,9 @@ impl AgentSession {
     ) {
         let Some(Some(pairing)) = vault.read(|workspace, id| {
             let settings = workspace.agent_settings(id)?;
-            let pairing = settings.pairing(&self.pairing)?.clone();
+            let pairing = settings
+                .pairing_of_kind(&self.pairing, PairingKind::Agent)?
+                .clone();
             Some(self.record(
                 workspace,
                 &pairing,
@@ -1161,7 +1152,7 @@ impl AgentSession {
                     .vault();
                 let settings = AgentSettings::of(vault);
                 let pairing = settings
-                    .pairing(&self.pairing)
+                    .pairing_of_kind(&self.pairing, PairingKind::Agent)
                     .ok_or(AgentError::NotPaired)?;
                 let readable = readable_entries(vault, &settings, pairing);
                 let (entry, value) = resolve(&readable, &reference)?;
@@ -1190,7 +1181,7 @@ impl AgentSession {
             .vault();
         let settings = AgentSettings::of(vault);
         let pairing = settings
-            .pairing(&self.pairing)
+            .pairing_of_kind(&self.pairing, PairingKind::Agent)
             .ok_or(AgentError::NotPaired)?;
         let readable = readable_entries(vault, &settings, pairing);
         let (entry, _) = resolve(&readable, reference)?;
@@ -1324,24 +1315,27 @@ fn resolve<'a>(
 }
 
 /// The Agent pairings that can use `entry`: those whose own subgroup, or a subgroup they read,
-/// holds it. The desktop app's Entry editor offers decisions for these.
+/// holds it. The desktop app's Entry editor offers decisions for these; Gateway pairings take
+/// none, so they aren't among them.
 pub fn pairings_reading(vault: &Vault, entry: EntryId) -> Vec<AgentPairing> {
     let settings = AgentSettings::of(vault);
     settings
         .pairings()
         .iter()
         .filter(|pairing| {
-            readable_entries(vault, &settings, pairing)
-                .iter()
-                .any(|(readable, _)| readable.id() == entry)
+            pairing.kind() == PairingKind::Agent
+                && readable_entries(vault, &settings, pairing)
+                    .iter()
+                    .any(|(readable, _)| readable.id() == entry)
         })
         .cloned()
         .collect()
 }
 
 /// The Entries `pairing` reads, with their paths below the Agent group: those in its own
-/// subgroup and the subgroups it may read, and in their subgroups.
-fn readable_entries<'a>(
+/// subgroup and the subgroups it may read, and in their subgroups. Agent and Gateway pairings
+/// alike see exactly these, and never a note: what they are shown of each is up to them.
+pub(crate) fn readable_entries<'a>(
     vault: &'a Vault,
     settings: &AgentSettings,
     pairing: &AgentPairing,

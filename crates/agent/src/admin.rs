@@ -25,7 +25,7 @@ use crate::audit::AuditRecord;
 use crate::host::{
     ConsentApprovalError, HeadlessHost, HostStatus, PairingChoice, UnlockError, subgroups_named,
 };
-use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt};
+use crate::{AgentPairing, AgentSettings, AgentSettingsError, AgentSettingsExt, PairingKind};
 
 /// The longest request the admin socket reads: a password and a Key file fit many times over.
 #[cfg(unix)]
@@ -66,25 +66,33 @@ pub enum AdminRequest {
     },
 }
 
-/// An Agent pairing to create, as `keefast-agent pairing create` names it.
+/// A pairing to create, as `keefast-agent pairing add` (or `create`) names it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairingCreate {
     pub name: String,
     /// The names of the other subgroups of the Agent group it reads.
     #[serde(default)]
     pub reads: Vec<String>,
+    /// Whether it creates Entries in its own subgroup; for a Gateway pairing, creates and
+    /// changes logins there.
     #[serde(default)]
     pub can_create: bool,
     /// The Group, by its path from the root, to make the Agent group if the Vault has none
     /// yet. It is made if it isn't there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_group: Option<String>,
+    /// An Agent pairing unless `--gateway` asks for a Gateway pairing.
+    #[serde(default)]
+    pub kind: PairingKind,
 }
 
-/// An Agent pairing, as `keefast-agent pairing list` shows it.
+/// A pairing, as `keefast-agent pairing list` shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairingSummary {
     pub name: String,
+    /// Older hosts don't say; theirs are all Agent pairings.
+    #[serde(default)]
+    pub kind: PairingKind,
     /// The names of the other subgroups of the Agent group it reads.
     pub reads: Vec<String>,
     pub can_create: bool,
@@ -371,6 +379,7 @@ fn pairings(workspace: &Workspace, vault: VaultId) -> AdminReply {
 fn summary(vault: &Vault, pairing: &AgentPairing) -> PairingSummary {
     PairingSummary {
         name: pairing.name().to_owned(),
+        kind: pairing.kind(),
         reads: pairing
             .readable()
             .iter()
@@ -411,9 +420,15 @@ fn create_pairing(
             format!("the Agent group has no subgroup called {name}"),
         )
     })?;
-    let created = workspace
-        .create_agent_pairing(vault, &create.name, reads, create.can_create)
-        .map_err(failed)?;
+    let created = match create.kind {
+        PairingKind::Agent => {
+            workspace.create_agent_pairing(vault, &create.name, reads, create.can_create)
+        }
+        PairingKind::Gateway => {
+            workspace.create_gateway_pairing(vault, &create.name, reads, create.can_create)
+        }
+    }
+    .map_err(failed)?;
     let vault = workspace
         .readable_vault(vault)
         .ok_or_else(locked_error)?

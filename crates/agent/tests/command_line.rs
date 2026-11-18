@@ -333,11 +333,81 @@ fn pairing_revoke_removes_the_pairing_and_keeps_it_removed_after_a_restart() {
 
     assert!(revoked.status.success(), "{}", text(&revoked));
     assert!(
-        text(&listed).contains("codex, which also reads claude"),
+        text(&listed).contains("codex, an Agent pairing, which also reads claude"),
         "{}",
         text(&listed)
     );
     assert!(!text(&listed).contains("\nclaude"), "{}", text(&listed));
+}
+
+/// The status and body of `GET <route>` at the host `url` with `token`.
+fn get(url: &str, route: &str, token: &str) -> (u16, String) {
+    let agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let mut response = agent
+        .get(&url.replace("/mcp", route))
+        .header("authorization", &format!("Bearer {token}"))
+        .call()
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.body_mut().read_to_string().unwrap())
+}
+
+#[test]
+fn pairing_add_gateway_prints_its_token_once_list_shows_its_kind_and_it_reaches_only_the_gateway_api()
+ {
+    let file = VaultFile::from_fixture(KEEPASSXC_KDBX4);
+    let served = serve(&file);
+    let url = served.url.recv_timeout(Duration::from_secs(10)).unwrap();
+    run(&served.socket, &["unlock"], &format!("{PASSWORD}\n"));
+    let claude = run(
+        &served.socket,
+        &["pairing", "add", "claude", "--agent-group", "Agents"],
+        "",
+    );
+    let claude = String::from_utf8_lossy(&claude.stdout).trim().to_owned();
+
+    let added = run(
+        &served.socket,
+        &[
+            "pairing",
+            "add",
+            "--gateway",
+            "agentes",
+            "--read",
+            "claude",
+            "--write",
+        ],
+        "",
+    );
+    let listed = run(&served.socket, &["pairing", "list"], "");
+
+    assert!(added.status.success(), "{}", text(&added));
+    let token = String::from_utf8_lossy(&added.stdout).trim().to_owned();
+    assert!(token.starts_with("kfa_"), "{}", text(&added));
+    assert!(
+        text(&listed).contains("agentes, a Gateway pairing, which also reads claude"),
+        "{}",
+        text(&listed)
+    );
+    assert!(
+        text(&listed).contains("claude, an Agent pairing"),
+        "{}",
+        text(&listed)
+    );
+    assert!(!text(&listed).contains(&token), "{}", text(&listed));
+    let (status, whoami) = get(&url, "/gateway/v1/whoami", &token);
+    assert_eq!(status, 200, "{whoami}");
+    let whoami: serde_json::Value = serde_json::from_str(&whoami).unwrap();
+    assert_eq!(whoami["pairing"], "agentes");
+    assert_eq!(
+        whoami["subgroups"],
+        serde_json::json!(["agentes", "claude"])
+    );
+    assert_eq!(whoami["canWrite"], true);
+    assert_eq!(get(&url, "/gateway/v1/items", &claude).0, 401);
 }
 
 /// The status of opening the Approver prompt stream at the host `url` with `token`.
