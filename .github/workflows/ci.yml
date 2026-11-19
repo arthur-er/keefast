@@ -175,6 +175,15 @@ jobs:
         working-directory: plugins/card
         run: nix develop ../..#plugins -c cargo test --locked
 
+      - name: Which toolchain the Plugins' shell finds
+        run: |
+          nix develop .#plugins -c sh -c 'echo "$PATH"; for t in rustc cargo rust-lld wasm-ld lld; do echo "$t: $(command -v $t)"; done; rustc -vV'
+          nix develop -i --keep HOME .#plugins -c sh -c 'for t in rustc rust-lld wasm-ld; do echo "pure $t: $(command -v $t)"; done'
+
+      - name: card.wasm in a pure shell
+        continue-on-error: true
+        run: nix develop -i --keep HOME .#plugins -c plugins/card/build.sh --check
+
       - name: card.wasm is what its source builds
         run: nix develop .#plugins -c plugins/card/build.sh --check
 
