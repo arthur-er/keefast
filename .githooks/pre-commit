@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Runs before each commit (scripts/setup-worktree.sh sets core.hooksPath to .githooks): rustfmt
+# when Rust changes, and the bindings check when what bindings.ts is generated from changes, so
+# neither waits for CI. It checks the working tree. Skip it with `git commit --no-verify`.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+run() {
+  if command -v cargo >/dev/null; then "$@"; else nix develop "$root" -c "$@"; fi
+}
+
+if grep -q '\.rs$' <<< "$staged"; then
+  echo "pre-commit: cargo fmt --all --check"
+  if ! run cargo fmt --all --check > /dev/null; then
+    echo "pre-commit: Rust isn't formatted: run \`nix develop -c cargo fmt --all\` and stage it" >&2
+    exit 1
+  fi
+fi
+
+# The commands, DTOs and events crates/app/ui/src/bindings.ts is generated from.
+bindings='^crates/app/src/(commands/|dto\.rs|error\.rs|events\.rs|updates\.rs|app\.rs)|^crates/app/ui/src/bindings\.ts$'
+if grep -Eq "$bindings" <<< "$staged"; then
+  echo "pre-commit: pnpm bindings:check (builds the keefast crate)"
+  if ! CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" run cargo test --quiet -p keefast --bin keefast \
+    -- bindings_are_up_to_date no_field_reaches_the_ui_as_null_unless_it_is_an_option; then
+    echo "pre-commit: run \`pnpm bindings\` in crates/app/ui and stage src/bindings.ts" >&2
+    exit 1
+  fi
+fi
