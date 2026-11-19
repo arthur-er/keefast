@@ -400,7 +400,7 @@ function EditorForm({
         <span className="spacer" />
         <span className={cn("ee-dirty", changed && "is-on")} role="status">
           <i />
-          {changed ? "Unsaved changes" : "No changes"}
+          <span className="ee-dirty-text">{changed ? "Unsaved changes" : "No changes"}</span>
         </span>
         <span className="vdivider mx-1 h-4 self-center" />
         <Button variant="ghost" onClick={cancel} shortcut="Escape">

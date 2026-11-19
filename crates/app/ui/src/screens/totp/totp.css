@@ -48,4 +48,11 @@
   .C-qt.is-setup.is-action:hover .v { color: var(--fg-0); }
   .C-qt.is-open { border-color: var(--accent); }
   .C-insp-top .ix { margin: 8px 0 0; }
+
+  /* In a narrow detail the algorithm's three choices take a line of their own, under digits and
+   * period. */
+  @container detail (width < 600px) {
+    .tf-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .tf-grid > :nth-child(3) { grid-column: 1 / -1; }
+  }
 }

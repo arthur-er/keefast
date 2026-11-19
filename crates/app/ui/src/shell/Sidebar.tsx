@@ -376,7 +376,7 @@ function ColorSection() {
   const { actions } = useShell();
   return (
     <div className="nav-section">
-      <div className="nav-head h-[30px] pr-0">
+      <div className="nav-head min-h-[30px] pr-0">
         Colours
         <div className="vb-colors ml-auto p-0">
           {COLORS.map((color) => {

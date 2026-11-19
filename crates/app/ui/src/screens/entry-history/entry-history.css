@@ -2,7 +2,7 @@
  * (screens/entry-history.html, "Diff values" and "Variant B"). */
 
 @layer components {
-  .eh { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .eh { container: history / inline-size; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .eh-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
 
   /* Versions */
@@ -47,4 +47,15 @@
   .eh-empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 40px; }
   .eh-empty .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-1); border: 1px solid var(--border); color: var(--fg-2); margin: 0 auto 14px; }
   .eh-empty p { margin: 0 auto 16px; max-width: 320px; color: var(--fg-1); }
+
+  /* A narrow window: a slimmer version list, tighter margins, and the comparison's bar wraps
+   * rather than squeezing its labels onto two lines. */
+  @container history (width < 820px) {
+    .eh-split { grid-template-columns: 240px 1fr; }
+    .eh-top { padding: 16px 20px 12px; flex-wrap: wrap; }
+    .eh-bar { padding: 8px 20px; flex-wrap: wrap; row-gap: 6px; white-space: nowrap; }
+    .eh-bar .vdivider { display: none; }
+    .eh-body { padding: 8px 20px 72px; }
+    .eh-row { grid-template-columns: 96px 1fr; gap: 12px; }
+  }
 }

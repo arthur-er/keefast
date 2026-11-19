@@ -55,10 +55,10 @@
   .b-item .badge { height: 18px; }
   .b-rail-foot { border-top: 1px solid var(--border); padding: 6px 8px 8px; flex: none; }
   .b-rail-foot .nav-item kbd, .b-rail-foot .nav-item .kbds { margin-left: auto; }
-  .b-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .b-main { container: stage / inline-size; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .b-main .toolbar { justify-content: space-between; }
   .b-stage { flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; }
-  .b-pane { width: 420px; }
+  .b-pane { width: min(420px, 100%); }
   .b-id { display: flex; flex-direction: column; align-items: flex-start; }
   .b-id h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; margin-top: 16px; }
   .b-id .path { font-size: 12px; margin-top: 4px; }
@@ -73,7 +73,7 @@
   .b-empty .vtile { margin-bottom: 4px; }
   /* New Vault: a settings-style two-column form (the prototype's "New Vault (shared parts)" and
    * "B · New Vault"). */
-  .b-nv { width: 640px; align-self: start; padding-bottom: 8px; }
+  .b-nv { width: min(640px, 100%); align-self: start; padding-bottom: 8px; }
   .b-nv h2 { font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.015em; }
   .b-nv .lede { color: var(--fg-1); margin-top: 4px; }
   .b-nv-sec { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); }
@@ -108,4 +108,9 @@
   .b-shell .keyfile-chip .x { all: unset; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: var(--fg-2); }
   .b-shell .keyfile-chip .x:hover { background: var(--bg-hover); color: var(--fg-0); }
   .b-shell .keyfile-chip .x:focus-visible { box-shadow: var(--ring); }
+
+  /* A narrow window stacks each New Vault section's title over its fields. */
+  @container stage (width < 720px) {
+    .b-nv-sec { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  }
 }
