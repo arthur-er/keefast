@@ -100,12 +100,12 @@ function useArmed(): boolean {
 
 /** Who asks and when, above the title: "Chrome on my laptop · Browser request · just now". The
  * browser is named by its Pairings, as the user named it when pairing. */
-function RequestKicker({ pairings, what, asked }: { pairings: string[]; what: string; asked: number | null }) {
+function RequestKicker({ pairings, what, asked }: { pairings: string[]; what: string; asked: number }) {
   const now = useNow();
   const parts = [
     ...(pairings.length > 0 ? [pairings.join(", ")] : []),
     what,
-    ...(asked !== null ? [timeAgo(asked, now)] : []),
+    timeAgo(asked, now),
   ];
   return <Kicker icon={<Globe />}>{parts}</Kicker>;
 }

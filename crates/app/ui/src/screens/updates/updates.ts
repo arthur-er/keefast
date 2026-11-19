@@ -54,7 +54,7 @@ export function updateStatusText(state: UpdateState, now: number = Date.now()): 
     case "checking":
       return "Checking for updates…";
     case "upToDate":
-      return `keefast ${state.currentVersion} is up to date · checked ${checkedWhen((status.checkedAt ?? 0) * 1000, now)}`;
+      return `keefast ${state.currentVersion} is up to date · checked ${checkedWhen(status.checkedAt * 1000, now)}`;
     case "available":
       return state.installsUpdates
         ? `keefast ${status.update.version} is available`

@@ -12,7 +12,7 @@ use super::agent_hosts::{PendingAgentConsent, PendingAgentPrompt};
 use crate::core::AppCore;
 use crate::dto::{
     Color, EntryId, GroupId, IconView, Location, LocationView, Scope, VaultId, View,
-    group_icon_view, seconds, title_of,
+    group_icon_view, seconds, title_of, whole_seconds,
 };
 use crate::error::ApiResult;
 
@@ -207,7 +207,7 @@ pub struct PendingAccess {
     /// The browser that asked: the names of its Pairings, as the user named them.
     pub pairings: Vec<String>,
     /// When the site asked, in seconds since 1970 UTC.
-    pub asked: f64,
+    pub asked: u32,
 }
 
 /// An Entry a browser asks for or could update.
@@ -278,7 +278,7 @@ pub struct PendingLogin {
     /// The browser that captured it: the names of its Pairings, as the user named them.
     pub pairings: Vec<String>,
     /// When the browser captured it, in seconds since 1970 UTC.
-    pub asked: f64,
+    pub asked: u32,
     /// The places it can go, as a list: headings (without a target), the Entries it could
     /// update, then every Group of each Vault it may go to.
     pub options: Vec<LoginOption>,
@@ -403,7 +403,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             form_origin: pending.form_origin,
             entries: asked_entries(workspace, &pending.entries),
             pairings: pending.pairings,
-            asked: seconds(pending.asked),
+            asked: whole_seconds(pending.asked),
         }),
         pending_login: workspace.pending_login().map(|pending| PendingLogin {
             id: RequestId::of(pending.id.as_u64()),
@@ -412,7 +412,7 @@ pub fn snapshot(workspace: &Workspace, revision: u32) -> WorkspaceSnapshot {
             site: pending.site,
             username: pending.username,
             pairings: pending.pairings,
-            asked: seconds(pending.asked),
+            asked: whole_seconds(pending.asked),
         }),
         // Agent hosts aren't the Workspace's: `get_workspace` adds their prompt.
         pending_agent_prompt: None,

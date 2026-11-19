@@ -37,7 +37,7 @@ const access = {
   formOrigin: null,
   entries: [],
   pairings: [],
-  asked: null,
+  asked: 0,
 };
 const login = {
   id: 9,
@@ -46,7 +46,7 @@ const login = {
   options: [],
   suggested: { kind: "newEntry" as const, vault: 0, group: null },
   pairings: [],
-  asked: null,
+  asked: 0,
 };
 
 const agent = {

@@ -59,7 +59,7 @@ pub enum UpdateStatus {
     #[serde(rename_all = "camelCase")]
     UpToDate {
         /// When, in seconds since 1970.
-        checked_at: f64,
+        checked_at: u32,
     },
     Available {
         update: AvailableUpdate,
@@ -412,10 +412,12 @@ fn installed_by_the_installer(exe: &Path, local_app_data: &Path) -> bool {
     })
 }
 
-fn now_seconds() -> f64 {
+fn now_seconds() -> u32 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64())
+        .map_or(0, |since| {
+            u32::try_from(since.as_secs()).unwrap_or(u32::MAX)
+        })
 }
 
 #[cfg(test)]

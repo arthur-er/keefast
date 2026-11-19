@@ -1386,7 +1386,7 @@ export type PendingAccess = {
 	/**  The browser that asked: the names of its Pairings, as the user named them. */
 	pairings: string[],
 	/**  When the site asked, in seconds since 1970 UTC. */
-	asked: number | null,
+	asked: number,
 };
 
 /**
@@ -1466,7 +1466,7 @@ export type PendingLogin = {
 	/**  The browser that captured it: the names of its Pairings, as the user named them. */
 	pairings: string[],
 	/**  When the browser captured it, in seconds since 1970 UTC. */
-	asked: number | null,
+	asked: number,
 	/**
 	 *  The places it can go, as a list: headings (without a target), the Entries it could
 	 *  update, then every Group of each Vault it may go to.
@@ -1719,7 +1719,7 @@ export type UpdateStatus =
 /**  Not checked since keefast started. */
 { kind: "unchecked" } | { kind: "checking" } | { kind: "upToDate"; 
 /**  When, in seconds since 1970. */
-checkedAt: number | null } | { kind: "available"; update: AvailableUpdate } | 
+checkedAt: number } | { kind: "available"; update: AvailableUpdate } | 
 /**  Downloading `update`; once downloaded, it is installed and keefast restarts. */
 { kind: "downloading"; update: AvailableUpdate; 
 /**  How much is downloaded, from 0 to 1, when the size is known. */
