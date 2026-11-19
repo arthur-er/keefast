@@ -7,7 +7,7 @@ fields, so any KeePass app reads it: `Card number` (protected), `Cardholder`, `E
 
 - `plugin.json`: the manifest. The facet `card` is detected by a `Card number` field.
 - `src/card.rs`: brands, number and expiry formatting, Luhn, and what `validate` reports.
-- `src/lib.rs`: the hooks, written with keefast's Plugin SDK (`crates/plugin-sdk`), as a
+- `src/lib.rs`: the hooks, written with keefast's Plugin SDK (`plugins/sdk`), as a
   third-party Plugin is. `derive` labels the number "Visa •••• 1111"; `format` groups the number
   and adds the slash in `MM/YY`; `validate` warns about a number failing the Luhn check and an
   expiry that has passed, expires soon or isn't `MM/YY`. It has no clock: the host passes
@@ -34,9 +34,11 @@ Rebuild it after changing the Plugin, the SDK or the host API, and commit it wit
 ```sh
 nix develop .#plugins -c plugins/card/build.sh          # rebuilds card.wasm
 nix develop .#plugins -c plugins/card/build.sh --check  # fails if card.wasm isn't what the source builds
-cd plugins/card && cargo test                            # the card logic and hooks, natively
+cd plugins && cargo test                                 # the card logic and hooks, and the SDK, natively
 ```
 
 The build is reproducible with the same toolchain (the dev shell's rustc and lld): paths are
-remapped out of the binary, and `--check` compares a fresh build with the committed file byte for
-byte. CI runs it (the `Plugins` job).
+remapped out of the binary, and the Card shares its Cargo workspace (`plugins/`) with the SDK, so
+Cargo identifies the SDK by its path within the workspace rather than the checkout's.
+`--check` compares a fresh build with the committed file byte for byte. CI runs it (the `Plugins`
+job).

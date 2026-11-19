@@ -1,0 +1,28 @@
+# keefast's own Plugins and the SDK they're written with: a Cargo workspace apart from keefast's,
+# built for wasm32-unknown-unknown (`keefast-plugin build`, docs/plugins/README.md).
+#
+# The SDK lives here, beside the Card, so that card.wasm builds the same bytes in any checkout.
+# Cargo identifies a path crate inside the workspace by its path relative to the workspace root,
+# but one outside it by its absolute path, which then reaches every symbol name the crate mangles
+# and with them the order of the component's data.
+#
+# The template stays a workspace of its own, as a Plugin copied out of keefast's repository is.
+[workspace]
+resolver = "3"
+members = ["card", "sdk"]
+exclude = ["template"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/arthur-er/keefast"
+
+# Small and deterministic: a Plugin's component should weigh tens of kilobytes.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

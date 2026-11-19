@@ -23,4 +23,4 @@ depend on. Build and pack a Plugin with the `keefast-plugin` command (`keefast-p
 
 **The guide is [docs/plugins/README.md](../../docs/plugins/README.md)**: the manifest, the hooks,
 the contribution kinds, the Plugin capabilities, the sandbox, and packaging and signing. Start from
-the template, [`plugins/template/`](../../plugins/template).
+the template, [`plugins/template/`](../template).

@@ -7,7 +7,8 @@ license.workspace = true
 repository.workspace = true
 readme = "README.md"
 # It reads the host API from crates/plugins/wit, outside the crate, so it is used from git (or a
-# path) until the WIT moves into it for crates.io.
+# path) until the WIT moves into it for crates.io. Its workspace is plugins/, beside the Card
+# Plugin, not keefast's.
 publish = false
 
 [dependencies]
