@@ -1429,7 +1429,7 @@ export function createMockBackend(): Backend & {
     checkForUpdatesNow: command(async () => {
       setUpdates({ kind: "checking" });
       await new Promise((resolve) => setTimeout(resolve, 600));
-      setUpdates(state.release ? { kind: "available", update: mockRelease(state.release) } : { kind: "upToDate", checkedAt: Date.now() / 1000 });
+      setUpdates(state.release ? { kind: "available", update: mockRelease(state.release) } : { kind: "upToDate", checkedAt: Math.floor(Date.now() / 1000) });
       return structuredClone(state.updates);
     }),
     // Downloads in a few steps, then "restarts" into the new version.
@@ -1442,7 +1442,7 @@ export function createMockBackend(): Backend & {
       setTimeout(() => {
         state.updates = { ...state.updates, currentVersion: update.version };
         state.release = null;
-        setUpdates({ kind: "upToDate", checkedAt: Date.now() / 1000 });
+        setUpdates({ kind: "upToDate", checkedAt: Math.floor(Date.now() / 1000) });
       }, 3000);
       return null;
     }),
@@ -2037,7 +2037,7 @@ export function createMockBackend(): Backend & {
           site: "github.com",
           formSite: null,
           entries: entriesFor("github.com"),
-          asked: Date.now() / 1000,
+          asked: Math.floor(Date.now() / 1000),
         };
         emit("browserRequest", { kind: "access" });
         break;
@@ -2049,7 +2049,7 @@ export function createMockBackend(): Backend & {
           site: "github.com",
           formSite: "auth.github-login.net",
           entries: entriesFor("github.com"),
-          asked: Date.now() / 1000,
+          asked: Math.floor(Date.now() / 1000),
         };
         emit("browserRequest", { kind: "access" });
         break;
@@ -2062,7 +2062,7 @@ export function createMockBackend(): Backend & {
           username: "arthur@rezende.dev",
           password: "L1near!Issues-2026",
           entries: entriesFor("linear.app", "arthur@rezende.dev"),
-          asked: Date.now() / 1000,
+          asked: Math.floor(Date.now() / 1000),
         };
         emit("browserRequest", { kind: "login" });
         break;

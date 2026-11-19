@@ -412,6 +412,12 @@ pub fn seconds(time: Timestamp) -> f64 {
     time.unix_seconds() as f64
 }
 
+/// Whole seconds since 1970-01-01 UTC, for a time that is never missing: a `u32` reaches the UI
+/// as `number`, where an `f64` would be `number | null` (crates/app/ui/README.md).
+pub fn whole_seconds(time: Timestamp) -> u32 {
+    u32::try_from(time.unix_seconds().max(0)).unwrap_or(u32::MAX)
+}
+
 /// What an Entry is called: its title, or "(untitled)".
 pub fn title_of(entry: &Entry) -> String {
     match entry.title().trim() {

@@ -21,7 +21,8 @@ Run them in `crates/app/ui` (with Nix: inside `nix develop`, which has Node, pnp
 | Command | What it does |
 |---|---|
 | `pnpm install` | Installs the dependencies (pnpm 10, as `packageManager` says). |
-| `pnpm dev:mock` | Serves the UI on <http://localhost:1421> over the **mock backend**, in any browser. |
+| `pnpm dev:mock` | Serves the UI on <http://localhost:1421> (or `$PORT`) over the **mock backend**, in any browser. |
+| `../../../scripts/ui-mock.sh start` / `stop` | The same in the background, on the worktree's own port (`.t3/ui-mock-port`), stopped by its process ID. Use it rather than `pkill -f "vite --mode mock"`, which also kills the shell that runs it. |
 | `pnpm dev` | Serves the UI on :1420 for the Tauri window (Tauri's `devUrl`). Opened in a plain browser, it falls back to the mock. |
 | `cd .. && cargo tauri dev` | Runs the real app with the UI reloading as you edit (it starts `pnpm dev` itself). App arguments go after `-- --`: `cargo tauri dev -- -- ../../fixtures/keepassxc-kdbx4.kdbx` (master password `fixture-password`). |
 | `pnpm typecheck` | `tsc --noEmit`. |
@@ -243,7 +244,9 @@ const password = await api.revealPassword(vault, entry); // only when the user a
 1. Write it in `crates/app/src/commands/<domain>.rs`: `#[tauri::command] #[specta::specta] pub
    async fn ...(core: Core<'_>, ...) -> ApiResult<T>`. DTOs derive `Serialize`/`Deserialize` and
    `specta::Type` with `#[serde(rename_all = "camelCase")]`; avoid `u64`/`i64`/`f64` in DTOs
-   (specta refuses 64-bit integers, and `f64` becomes `number | null`): use `u32`. Change the
+   (specta refuses 64-bit integers, and `f64` becomes `number | null`): use `u32`. A test
+   (`no_field_reaches_the_ui_as_null_unless_it_is_an_option`) fails on a float outside an
+   `Option`. Change the
    Workspace through `core.update` (or `core.edit`, which autosaves) so the UI hears of it.
 2. Register it in `specta_builder()` in `crates/app/src/app.rs`.
 3. `pnpm bindings`, then implement it in the mock (`pnpm typecheck` tells you it's missing).

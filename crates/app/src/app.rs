@@ -388,6 +388,7 @@ pub fn run(args: Args) {
 mod tests {
     use std::path::PathBuf;
 
+    use specta::datatype::{DataType, Fields, Primitive};
     use specta_typescript::Typescript;
 
     use super::*;
@@ -414,5 +415,91 @@ mod tests {
             committed == fresh,
             "crates/app/ui/src/bindings.ts is out of date: run `pnpm bindings` in crates/app/ui"
         );
+    }
+
+    /// Fails when a DTO or event field that isn't an `Option` would reach the UI as `| null`.
+    /// specta exports every `f32`/`f64` as `number | null` (JSON has no NaN or Infinity), so the
+    /// UI would have to handle a null the backend never sends; `bindings_are_up_to_date` can't
+    /// see that, as an `Option<f64>` looks the same in `bindings.ts`.
+    #[test]
+    fn no_field_reaches_the_ui_as_null_unless_it_is_an_option() {
+        let mut found = Vec::new();
+        specta_builder()
+            .export(NonOptionNulls(&mut found), Path::new(""))
+            .unwrap();
+        assert!(
+            found.is_empty(),
+            "these fields would be `number | null` in bindings.ts without being an Option: {}. Use u32 \
+             or another integer, or make it an Option (crates/app/ui/README.md, \"Adding or \
+             changing a command\")",
+            found.join(", ")
+        );
+    }
+
+    /// A "language" for the builder that writes nothing: it lists the DTO and event fields that
+    /// hold a float outside an `Option`.
+    struct NonOptionNulls<'a>(&'a mut Vec<String>);
+
+    impl tauri_specta::LanguageExt for NonOptionNulls<'_> {
+        type Error = std::io::Error;
+
+        fn export(
+            self,
+            cfg: &tauri_specta::BuilderConfiguration,
+            _: &Path,
+        ) -> Result<(), Self::Error> {
+            for named in cfg.types.into_sorted_iter() {
+                if let Some(ty) = &named.ty {
+                    floats(ty, &named.name, false, self.0);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn floats(ty: &DataType, at: &str, in_option: bool, found: &mut Vec<String>) {
+        match ty {
+            DataType::Primitive(Primitive::f16 | Primitive::f32 | Primitive::f64) => {
+                if !in_option {
+                    found.push(at.to_owned());
+                }
+            }
+            DataType::Nullable(inner) => floats(inner, at, true, found),
+            DataType::List(list) => floats(&list.ty, &format!("{at}[]"), false, found),
+            DataType::Map(map) => floats(map.value_ty(), &format!("{at}[_]"), false, found),
+            DataType::Tuple(tuple) => {
+                for (i, element) in tuple.elements.iter().enumerate() {
+                    floats(element, &format!("{at}.{i}"), false, found);
+                }
+            }
+            DataType::Intersection(parts) => {
+                for part in parts {
+                    floats(part, at, in_option, found);
+                }
+            }
+            DataType::Struct(st) => field_floats(&st.fields, at, found),
+            DataType::Enum(en) => {
+                for (name, variant) in en.variants.iter().filter(|(_, v)| !v.skip) {
+                    field_floats(&variant.fields, &format!("{at}::{name}"), found);
+                }
+            }
+            // Named types are checked on their own, from `cfg.types`.
+            DataType::Primitive(_) | DataType::Generic(_) | DataType::Reference(_) => {}
+        }
+    }
+
+    fn field_floats(fields: &Fields, at: &str, found: &mut Vec<String>) {
+        let fields: Vec<(String, &DataType)> = match fields {
+            Fields::Unit => Vec::new(),
+            Fields::Unnamed(unnamed) => (unnamed.fields.iter().enumerate())
+                .filter_map(|(i, field)| Some((i.to_string(), field.ty.as_ref()?)))
+                .collect(),
+            Fields::Named(named) => (named.fields.iter())
+                .filter_map(|(name, field)| Some((name.to_string(), field.ty.as_ref()?)))
+                .collect(),
+        };
+        for (name, ty) in fields {
+            floats(ty, &format!("{at}.{name}"), false, found);
+        }
     }
 }

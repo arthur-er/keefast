@@ -89,6 +89,9 @@
             GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.libayatana-appindicator ];
             shellHook = ''
+              # Four parallel rustc jobs unless told otherwise: a full build at every core's worth
+              # runs a machine shared with other builds out of memory.
+              export CARGO_BUILD_JOBS="''${CARGO_BUILD_JOBS:-4}"
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';
           };
