@@ -178,6 +178,17 @@ jobs:
       - name: card.wasm is what its source builds
         run: nix develop .#plugins -c plugins/card/build.sh --check
 
+      # The build CI made, to compare with the committed one when they differ.
+      - name: Keep CI's card.wasm
+        if: failure()
+        run: nix develop .#plugins -c plugins/card/build.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: card-wasm-ci
+          path: plugins/card/card.wasm
+
       - name: The template Plugin's tests
         working-directory: plugins/template
         run: nix develop ../..#plugins -c cargo test --locked
