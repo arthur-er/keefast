@@ -23,6 +23,8 @@ new key.) keefast trusts it only for the packages compiled into that same
 binary, never for a package installed from a file. Settings shows those Plugins as "keefast dev
 build", with the key's fingerprint.
 
+The current release key's fingerprint is **`53E4 DC80 93BB 4E84`**.
+
 No private key is committed to this repository, real or for tests.
 
 ## What is checked, and what it protects

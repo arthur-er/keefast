@@ -6,3 +6,4 @@
 # docs/plugins/signing.md says how to make, add and rotate one. Until a key is added here, release
 # builds refuse to build (KEEFAST_REQUIRE_RELEASE_SIGNING), and other builds sign the bundled
 # Plugins with a key of their own, made at build time and thrown away.
+qr7ov5qb/mzA4cgOEY7Xzd/61VuU+5ABVw90Y5Gw0jc=
