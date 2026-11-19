@@ -175,25 +175,24 @@ jobs:
         working-directory: plugins/card
         run: nix develop ../..#plugins -c cargo test --locked
 
-      - name: Which toolchain the Plugins' shell finds
-        run: |
-          nix develop .#plugins -c sh -c 'echo "$PATH"; for t in rustc cargo rust-lld wasm-ld lld; do echo "$t: $(command -v $t)"; done; rustc -vV'
-          nix develop -i --keep HOME .#plugins -c sh -c 'for t in rustc rust-lld wasm-ld; do echo "pure $t: $(command -v $t)"; done'
-
-      - name: card.wasm in a pure shell
-        continue-on-error: true
-        run: nix develop -i --keep HOME .#plugins -c plugins/card/build.sh --check
-
+      # Not blocking for now: GitHub-hosted runners build a card.wasm whose data section is laid
+      # out differently from the committed one, which every build on the maintainer's machine
+      # reproduces. Same Nix toolchain, source and paths, so something machine-dependent leaks in
+      # (#182).
       - name: card.wasm is what its source builds
+        id: card-check
+        continue-on-error: true
         run: nix develop .#plugins -c plugins/card/build.sh --check
 
-      # The build CI made, to compare with the committed one when they differ.
+      # CI's build, to compare with the committed one when they differ.
       - name: Keep CI's card.wasm
-        if: failure()
-        run: nix develop .#plugins -c plugins/card/build.sh
+        if: steps.card-check.outcome == 'failure'
+        run: |
+          nix develop .#plugins -c plugins/card/build.sh
+          echo "::warning file=plugins/card/card.wasm::card.wasm differs from CI's build; it is uploaded as card-wasm-ci"
 
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: steps.card-check.outcome == 'failure'
         with:
           name: card-wasm-ci
           path: plugins/card/card.wasm
