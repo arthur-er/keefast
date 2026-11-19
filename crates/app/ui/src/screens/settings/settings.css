@@ -4,7 +4,7 @@
 
 @layer components {
   /* The page: a toolbar with the search, then the sections beside the "On this page" index */
-  .vc-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .vc-main { container: settings / inline-size; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .vc-main .toolbar .search { width: 280px; margin-left: auto; }
   .vc-main .toolbar .search .btn.icon { width: 20px; height: 20px; }
   .vc-scroll { flex: 1; min-height: 0; overflow-y: auto; scroll-behavior: smooth; scrollbar-gutter: stable; }
@@ -197,4 +197,12 @@
   .key-sum { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
   .key-chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px; border-radius: var(--r-xs); background: var(--bg-active); color: var(--fg-0); font-size: var(--text-sm); font-weight: 500; }
   .key-chip.mono { font-family: var(--font-mono); font-weight: 400; font-size: var(--text-xs); }
+
+  /* A narrow page drops the "On this page" index (the search still finds a setting) and gives
+   * the sections the room. */
+  @container settings (width < 760px) {
+    .vc-wrap { grid-template-columns: minmax(0, 640px); padding: 28px 28px 96px; }
+    .vc-index { display: none; }
+    .vc-main .toolbar .search { width: 220px; }
+  }
 }

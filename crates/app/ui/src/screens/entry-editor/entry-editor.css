@@ -157,4 +157,24 @@
   .ee-icon-cell svg.lucide { width: 16px; height: 16px; }
   .ee-icon-cell img { width: 20px; height: 20px; border-radius: 4px; object-fit: contain; }
   .ee-std-tile { display: inline-grid; place-items: center; flex: none; background: var(--bg-2); color: var(--fg-0); box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+  /* A narrow detail (the shell keeps it at least 440px wide): the bar drops its shortcut hints
+   * and the change note's words, the TOTP its next code, and a custom field's name goes above
+   * its value. */
+  @container detail (width < 600px) {
+    .ee-bar { padding-left: 16px; gap: 6px; }
+    .ee-bar .btn .kbds, .ee-bar .btn > kbd { display: none; }
+    .ee-doc { padding: 20px 20px 40px; }
+    .ee-kv { grid-template-columns: 84px minmax(0, 1fr); }
+    .ee-props, .ee-changed, .ee-errors { margin-left: 0; }
+    .ee-cf { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 4px; }
+    .ee-cf > :first-child { grid-column: 1 / -1; }
+    .ee-cf + .ee-cf { margin-top: 8px; }
+    .ee-kv .tt-next { display: none; }
+  }
+  @container detail (width < 520px) {
+    .ee-bar .crumbs { display: none; }
+    /* The dot says it; screen readers still hear the words. */
+    .ee-dirty-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
 }

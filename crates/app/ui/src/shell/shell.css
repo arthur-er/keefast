@@ -2,7 +2,14 @@
  * (screens/vault-browser.html, "Shell", "Sidebar", "Toolbar", "Merge notice" and variant C). */
 
 @layer components {
-  .vb { display: flex; height: 100%; position: relative; }
+  /* The panes' widths: the saved ones (Shell.tsx), given up when the window is too narrow to keep
+   * the detail at --detail-min. The Entry list gives way first, down to its least, then the sidebar. */
+  .vb {
+    --detail-min: 440px;
+    --sidebar-w: clamp(180px, var(--sidebar-saved, 232px), 100vw - 260px - var(--detail-min));
+    --list-w: clamp(260px, var(--list-saved, 360px), 100vw - var(--sidebar-w) - var(--detail-min));
+    display: flex; height: 100%; position: relative;
+  }
   .vb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
   .vb-panes { flex: 1; min-height: 0; display: flex; position: relative; }
 
@@ -11,7 +18,7 @@
   button.menu-item:disabled { opacity: 0.45; }
 
   /* Sidebar */
-  .vb-side { width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--bg-sidebar); border-right: 1px solid var(--border); min-height: 0; }
+  .vb-side { container: side / inline-size; width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--bg-sidebar); border-right: 1px solid var(--border); min-height: 0; }
   .vb-side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
   .vb-side-scroll::-webkit-scrollbar { width: 6px; }
   .vb-side .nav-section { padding: 2px 8px; }
@@ -34,6 +41,12 @@
   .vb-color.is-selected { background: var(--bg-active); box-shadow: inset 0 0 0 1px var(--border-strong); }
   .vb-color .dot { width: 10px; height: 10px; }
   .vb-side .nav-item .vb-tag-dot { width: 7px; height: 7px; margin: 0 4px; }
+  /* A narrow sidebar puts the colour swatches on a line of their own, under "Colours". */
+  @container side (width < 224px) {
+    .vb-side .nav-head:has(.vb-colors) { flex-wrap: wrap; height: auto; padding-bottom: 4px; }
+    .vb-side .nav-head .vb-colors { margin-left: -4px; }
+    .vb-side .nav-head .vb-color { width: 24px; height: 24px; }
+  }
   .vb-side-bottom { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; }
   .vb-side-foot { flex: none; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; border-top: 1px solid var(--border); }
   .vb-side-foot .btn.ghost { color: var(--fg-1); }

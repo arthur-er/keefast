@@ -32,9 +32,9 @@ export function Shell() {
   const { state } = useShell();
   useVaultSettingsCommands();
   return (
-    <div className="vb" style={{ "--sidebar-w": `${widths.current.sidebar}px`, "--list-w": `${widths.current.entryList}px` } as CSSProperties}>
+    <div className="vb" style={{ "--sidebar-saved": `${widths.current.sidebar}px`, "--list-saved": `${widths.current.entryList}px` } as CSSProperties}>
       <Sidebar />
-      <Edge pane="sidebar" widths={widths} left={0} />
+      <Edge pane="sidebar" widths={widths} />
       <div className="vb-main">
         {state.page.kind !== "browser" ? (
           <SettingsPage page={state.page} />
@@ -98,7 +98,7 @@ function Browser({ widths }: { widths: PaneWidths }) {
   return (
     <>
       <EntryList />
-      <Edge pane="entryList" widths={widths} left={widths.current.entryList} />
+      <Edge pane="entryList" widths={widths} />
       <DetailArea />
     </>
   );
@@ -131,7 +131,7 @@ function usePaneWidths(): PaneWidths {
   };
 }
 
-function Edge({ pane, widths, left }: { pane: keyof PaneWidthsView; widths: PaneWidths; left: number }) {
+function Edge({ pane, widths }: { pane: keyof PaneWidthsView; widths: PaneWidths }) {
   const [dragging, setDragging] = useState(false);
   const start = useRef<{ x: number; width: number } | null>(null);
   useEffect(() => {
@@ -160,10 +160,12 @@ function Edge({ pane, widths, left }: { pane: keyof PaneWidthsView; widths: Pane
       aria-orientation="vertical"
       aria-label={pane === "sidebar" ? "Resize the sidebar" : "Resize the Entry list"}
       className={cn("vb-edge", dragging && "is-dragging")}
-      style={{ left: pane === "sidebar" ? `var(--sidebar-w)` : left }}
+      style={{ left: pane === "sidebar" ? "var(--sidebar-w)" : "var(--list-w)" }}
       onPointerDown={(event) => {
         event.preventDefault();
-        start.current = { x: event.clientX, width: widths.current[pane] };
+        // From the width drawn, which a narrow window can hold under the one saved (shell.css).
+        const drawn = event.currentTarget.previousElementSibling?.getBoundingClientRect().width;
+        start.current = { x: event.clientX, width: drawn ?? widths.current[pane] };
         setDragging(true);
       }}
       onDoubleClick={() => {
