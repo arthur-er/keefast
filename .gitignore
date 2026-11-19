@@ -3,3 +3,4 @@
 /dist
 /crates/app/gen/schemas
 /crates/app/binaries
+/.t3
