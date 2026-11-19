@@ -5,14 +5,13 @@ members = [
     "crates/workspace",
     "crates/plugins",
     "crates/plugin-package",
-    "crates/plugin-sdk",
     "crates/plugin-cli",
     "crates/app",
     "crates/native-host",
     "crates/agent",
 ]
-# Plugins are built to WebAssembly on their own, each its own Cargo workspace
-# (`keefast-plugin build`, docs/plugins/README.md).
+# Plugins and the SDK they're written with are built to WebAssembly in their own Cargo workspace,
+# plugins/ (`keefast-plugin build`, docs/plugins/README.md).
 exclude = ["plugins"]
 
 [workspace.package]
@@ -29,11 +28,10 @@ keefast-native-host = { path = "crates/native-host" }
 # Without its `serve` feature (the MCP endpoint), which only the `keefast-agent` binary needs.
 keefast-agent = { path = "crates/agent", default-features = false }
 # Plugins (ADR 0009, docs/plugins/README.md): the host keefast runs them in, the package format,
-# the SDK Plugin authors write against, and the `keefast-plugin` command that builds and signs
-# packages.
+# and the `keefast-plugin` command that builds and signs packages. The SDK Plugin authors write
+# against is in plugins/sdk.
 keefast-plugins = { path = "crates/plugins" }
 keefast-plugin-package = { path = "crates/plugin-package" }
-keefast-plugin-sdk = { path = "crates/plugin-sdk" }
 aes = "0.9"
 # The Headless host's MCP endpoint (crates/agent/src/serve.rs): Streamable-HTTP MCP from rmcp,
 # served by axum on hyper, with rustls (ring, as ureq uses) for TLS. Only `keefast-agent` links

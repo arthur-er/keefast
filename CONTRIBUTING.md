@@ -15,12 +15,14 @@ The Cargo workspace lives in `crates/`:
 - `native-host`: the native-messaging host Chromium starts for the browser extension
   (`keefast-native-host`). It relays messages to the running app over a local socket.
 - `plugins`: the Plugin host (`keefast-plugins`), which runs Plugins in wasmtime and installs
-  and checks their packages. Beside it, for Plugin authors: `plugin-sdk` (`keefast-plugin-sdk`),
-  `plugin-cli` (the `keefast-plugin` command) and `plugin-package` (the `.kfplugin` format).
+  and checks their packages. Beside it, for Plugin authors: `plugin-cli` (the `keefast-plugin`
+  command) and `plugin-package` (the `.kfplugin` format).
 
 Plugins teach keefast kinds of data kept on Entries, such as payment cards, and third parties can
 write them. **[Writing a keefast Plugin](docs/plugins/README.md)** is the guide; keefast's own Card
-Plugin is in `plugins/card/`, and a template to start from in `plugins/template/`.
+Plugin is in `plugins/card/`, and a template to start from in `plugins/template/`. The SDK Plugins
+are written with, `keefast-plugin-sdk`, is in `plugins/sdk/`: `plugins/` is a Cargo workspace of
+its own, which builds for WebAssembly.
 
 The Companion extension, a Chromium MV3 extension in TypeScript, lives in `extension/`.
 

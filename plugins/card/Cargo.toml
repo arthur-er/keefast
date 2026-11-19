@@ -6,20 +6,10 @@ edition = "2024"
 license = "MIT"
 publish = false
 
-# Built for wasm32-unknown-unknown on its own, not as part of keefast's workspace.
-[workspace]
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Written with the SDK, as any third-party Plugin is (docs/plugins/README.md).
-keefast-plugin-sdk = { path = "../../crates/plugin-sdk" }
+keefast-plugin-sdk = { path = "../sdk" }
 
-[profile.release]
-opt-level = "s"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
-debug = false

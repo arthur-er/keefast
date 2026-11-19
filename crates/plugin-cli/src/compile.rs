@@ -2,7 +2,10 @@
 //! WebAssembly component keefast runs, from the metadata the SDK's bindings leave in it.
 //!
 //! The build is reproducible: paths on the building machine are remapped out of the binary, so
-//! the same source, lockfile and toolchain give the same bytes anywhere.
+//! the same source, lockfile and toolchain give the same bytes anywhere. Except for a crate the
+//! Plugin depends on by a path outside its Cargo workspace: Cargo identifies that one by its
+//! absolute path, which reaches its symbol names and with them the layout of the component's
+//! data, so the build warns of it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -13,8 +16,20 @@ const TARGET: &str = "wasm32-unknown-unknown";
 /// The component of the Plugin crate in `dir` (canonical), built in release mode.
 pub fn component(dir: &Path) -> Result<Vec<u8>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let locked = dir.join("Cargo.lock").exists();
+    let workspace = workspace_root(&cargo, dir)?;
+    let locked = workspace.join("Cargo.lock").exists();
     let crate_ = Crate::read(&cargo, dir, locked)?;
+    for (name, path) in &crate_.path_dependencies {
+        if !path.starts_with(&workspace) {
+            eprintln!(
+                "warning: {name} ({}) is outside the Plugin's Cargo workspace ({}), so the \
+                 component's bytes depend on where it is checked out. Make it a workspace member, \
+                 or depend on it from git or crates.io",
+                path.display(),
+                workspace.display()
+            );
+        }
+    }
     let target_dir = dir.join("target");
 
     let mut build = Command::new(&cargo);
@@ -56,6 +71,25 @@ pub fn component(dir: &Path) -> Result<Vec<u8>, String> {
                 core.display()
             )
         })
+}
+
+/// The root directory of the Cargo workspace the Plugin's crate in `dir` belongs to: `dir` itself
+/// when the crate is a workspace of its own.
+fn workspace_root(cargo: &OsString, dir: &Path) -> Result<PathBuf, String> {
+    let output = Command::new(cargo)
+        .current_dir(dir)
+        .args(["locate-project", "--workspace", "--message-format", "plain"])
+        .output()
+        .map_err(|error| format!("running cargo: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo locate-project failed in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let manifest = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    Ok(manifest.parent().unwrap_or(dir).to_path_buf())
 }
 
 /// What `cargo metadata` says of the Plugin's crate.

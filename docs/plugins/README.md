@@ -37,7 +37,7 @@ Four crates in keefast's repository deal with Plugins. As a Plugin author you us
 
 | Crate | What it is | Who uses it |
 |---|---|---|
-| `keefast-plugin-sdk` (`crates/plugin-sdk`) | The SDK: the host API's bindings, the `Plugin` trait and helpers. Built into your component. | Your Plugin's crate depends on it. |
+| `keefast-plugin-sdk` (`plugins/sdk`) | The SDK: the host API's bindings, the `Plugin` trait and helpers. Built into your component. | Your Plugin's crate depends on it. |
 | `keefast-plugin-cli` (`crates/plugin-cli`) | The `keefast-plugin` command: `keygen`, `build`, `pack`, `verify`. | You run it. |
 | `keefast-plugin-package` (`crates/plugin-package`) | The `.kfplugin` format: reading, signing and checking packages. | The command, and keefast. |
 | `keefast-plugins` (`crates/plugins`) | keefast's Plugin host: runs Plugins in wasmtime, installs and checks packages. | keefast only. |
@@ -345,7 +345,9 @@ keefast-plugin verify <package.kfplugin> [--publisher-key <base64>]
 - `build` builds the crate for `wasm32-unknown-unknown` in release mode and makes the component
   keefast runs. It is **reproducible**: paths on your machine are remapped out of the binary, so
   the same source, `Cargo.lock` and toolchain give the same bytes on any machine. Commit
-  `Cargo.lock`; `build` uses it (`--locked`) when it's there.
+  `Cargo.lock`; `build` uses it (`--locked`) when it's there. A crate you depend on by `path`
+  must be in your Cargo workspace for that: Cargo identifies one outside it by its absolute path,
+  which changes the component's bytes, and `build` warns of it.
 - `pack` signs the manifest, component and icon into a package, after checking keefast would
   install it: the manifest reads, the component loads in keefast's sandbox, and the id isn't
   keefast's. In CI, pass the key in an environment variable with `--key-env`, from a secret.

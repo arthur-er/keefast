@@ -17,7 +17,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Outside keefast's repository, depend on the SDK from git instead:
 # keefast-plugin-sdk = { git = "https://github.com/arthur-er/keefast" }
-keefast-plugin-sdk = { path = "../../crates/plugin-sdk" }
+keefast-plugin-sdk = { path = "../sdk" }
 
 # Small and deterministic: a Plugin's component should weigh tens of kilobytes.
 [profile.release]

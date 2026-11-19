@@ -165,13 +165,15 @@ pub fn problem(key: &str, value: &str, today: Option<(u16, u8)>) -> Option<(bool
         "number" if !(12..=19).contains(&digits(value).len()) || !luhn(value) => {
             warning("Doesn't look like a valid card number. Check the digits.")
         }
-        "expiry" => match month_year(value).map(|month| today.map(|today| months_until(month, today))) {
-            None => warning("Type the expiry as MM/YY, such as 08/31."),
-            Some(None) => None,
-            Some(Some(..0)) => warning("This card has expired. Type the new card's expiry."),
-            Some(Some(0..=1)) => warning("This card expires soon."),
-            Some(_) => None,
-        },
+        "expiry" => {
+            match month_year(value).map(|month| today.map(|today| months_until(month, today))) {
+                None => warning("Type the expiry as MM/YY, such as 08/31."),
+                Some(None) => None,
+                Some(Some(..0)) => warning("This card has expired. Type the new card's expiry."),
+                Some(Some(0..=1)) => warning("This card expires soon."),
+                Some(_) => None,
+            }
+        }
         "cvv" if !only_digits(|_| false) || !(3..=4).contains(&value.len()) => {
             warning("A CVV is 3 or 4 digits.")
         }

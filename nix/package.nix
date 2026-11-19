@@ -44,6 +44,7 @@ rustPlatform.buildRustPackage {
       # Plugins bundled with keefast: their manifests and built components, which build.rs signs.
       (lib.fileset.difference ../plugins (
         lib.fileset.unions [
+          (lib.fileset.maybeMissing ../plugins/target)
           (lib.fileset.maybeMissing ../plugins/card/target)
           (lib.fileset.maybeMissing ../plugins/template/target)
         ]

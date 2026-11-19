@@ -21,8 +21,9 @@ default rustfmt and clippy settings.
 - The Nix package, only when a pull request changes what Nix builds with (the flake, `nix/`,
   manifests, lockfiles, `build.rs`, `tauri.conf.json`, the UI's lockfile, `assets/`,
   `packaging/`): `nix flake check --no-build`, then `nix build .#keefast .#keefast-agent`.
-- The Plugins (`plugins/card`, `plugins/template`) in `nix develop .#plugins`, and the
-  Companion extension (`extension/`).
+- The Plugins' workspace (`plugins/`: the Card and the SDK, formatted, linted and tested), the
+  template (`plugins/template`) and `card.wasm`'s byte-for-byte check in `nix develop .#plugins`,
+  and the Companion extension (`extension/`).
 
 ## The inner loop
 

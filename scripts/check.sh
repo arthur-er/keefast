@@ -99,7 +99,8 @@ if changes '^extension/'; then
 fi
 
 if changes '^(plugins/|crates/plugin-)'; then
-  step "plugins: card" nix develop .#plugins -c bash -c 'cd plugins/card && cargo test --locked'
+  step "plugins: card and SDK" nix develop .#plugins -c bash -c 'cd plugins && cargo fmt --all --check &&
+    cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
   step "plugins: card.wasm" nix develop .#plugins -c plugins/card/build.sh --check
   step "plugins: template" nix develop .#plugins -c bash -c 'cd plugins/template && cargo test --locked'
 fi
