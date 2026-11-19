@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# A new push to a pull request cancels its run still going, which would only hold one of the
-# runner's few slots. Runs on main always finish: they save the caches pull requests start from.
+# A new push to a pull request cancels its run still going, whose result no one needs any more.
+# Runs on main always finish: they save the caches pull requests start from.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-4c, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
 
   ui:
     name: Desktop app's web UI
-    runs-on: ubuntu-4c
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: crates/app/ui
@@ -100,7 +100,7 @@ jobs:
   # manifests. A change to the code alone is compiled by "Build and test"; main builds it always.
   nix:
     name: Nix package
-    runs-on: ubuntu-4c
+    runs-on: ubuntu-latest
     # The path filter reads the pull request's changed files.
     permissions:
       contents: read
@@ -149,7 +149,7 @@ jobs:
   # no WebAssembly toolchain; this checks it with the toolchain it was built with, the dev shell's.
   plugins:
     name: Plugins
-    runs-on: ubuntu-4c
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -210,7 +210,7 @@ jobs:
 
   extension:
     name: Companion extension
-    runs-on: ubuntu-4c
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: extension
