@@ -29,7 +29,8 @@ On NixOS (or anywhere with Nix), `nix develop` gives you the Rust toolchain, Nod
 Node 24 and pnpm; on Linux also install the libraries listed in `.github/workflows/ci.yml`.
 
 ```sh
-cargo test --workspace
+nix develop            # or prefix each command: nix develop -c cargo test -p keefast-core
+cargo test -p keefast-core   # one crate at a time; --workspace builds the Tauri app too
 pnpm --dir crates/app/ui install
 # The app, with the web UI reloading as you edit (runs `pnpm dev` itself):
 cd crates/app && cargo tauri dev -- -- ../../fixtures/keepassxc-kdbx4.kdbx   # master password: fixture-password
@@ -38,6 +39,10 @@ cd crates/app && cargo tauri dev -- -- ../../fixtures/key-files/keepassxc-xml-v2
 # The web UI alone, in any browser, over a mock backend with fake Vaults:
 pnpm --dir crates/app/ui dev:mock
 ```
+
+`scripts/check.sh` runs what CI runs (formatting, clippy, the tests, the UI's checks) before you
+push, and `scripts/setup-worktree.sh` readies a new checkout or worktree, pre-commit hook
+included. More on building and testing: [docs/agents/build-test.md](docs/agents/build-test.md).
 
 The Vault files in `fixtures/` are the round-trip corpus (ADR 0002): real files written by
 KeePassXC, KeePass2, KeeWeb and pykeepass. `nix develop .#corpus` adds those clients, to
