@@ -218,8 +218,10 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
         // Wakes the accepting thread so it sees it should stop, and waits for it to let go of
-        // the socket.
-        if connect(&self.path).is_ok()
+        // the socket. The connection stays open until then: on Windows, a client that has
+        // already gone when the thread starts accepting is cleared away, and the thread waits
+        // for another that never comes (#184).
+        if let Ok(_waking) = connect(&self.path)
             && let Some(accepting) = self.accepting.take()
         {
             let _ = accepting.join();

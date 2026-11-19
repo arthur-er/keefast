@@ -2,8 +2,29 @@
 //! the same user (ADR 0004).
 
 use std::io;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use keefast_native_host::ipc::{self, Server};
+
+/// Runs `test`, failing it if it hasn't finished within ten seconds rather than letting a hung
+/// pipe or socket hold the whole run (#184).
+fn within_ten_seconds(test: impl FnOnce() + Send + 'static) {
+    let (done, finished) = mpsc::channel();
+    let running = thread::spawn(move || {
+        test();
+        let _ = done.send(());
+    });
+    match finished.recv_timeout(Duration::from_secs(10)) {
+        Ok(()) => running.join().unwrap(),
+        // The test panicked: report its panic.
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            std::panic::resume_unwind(running.join().unwrap_err())
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!("hung for over ten seconds"),
+    }
+}
 
 #[cfg(unix)]
 mod unix {
@@ -95,19 +116,49 @@ mod windows {
     // this user: both hold for an app of the user's own.
     #[test]
     fn the_host_connects_to_an_app_of_its_own_user() {
-        let path = pipe("own-user");
-        let _server = Server::start(path.clone(), |_| true).unwrap();
+        within_ten_seconds(|| {
+            let path = pipe("own-user");
+            let _server = Server::start(path.clone(), |_| true).unwrap();
 
-        assert!(ipc::connect(&path).is_ok());
+            assert!(ipc::connect(&path).is_ok());
+        });
     }
 
     #[test]
     fn a_second_app_cannot_take_over_the_pipe() {
-        let path = pipe("take-over");
-        let _first = Server::start(path.clone(), |_| true).unwrap();
+        within_ten_seconds(|| {
+            let path = pipe("take-over");
+            let _first = Server::start(path.clone(), |_| true).unwrap();
 
-        assert!(Server::start(path, |_| true).is_err());
+            assert!(Server::start(path, |_| true).is_err());
+        });
     }
+}
+
+// Dropping a server wakes its accepting thread with a connection of its own. One dropped right
+// after starting can do so before the thread accepts, which on Windows left the thread waiting
+// forever (#184).
+#[test]
+fn a_server_dropped_as_soon_as_it_starts_stops() {
+    #[cfg(unix)]
+    let (_dir, path) = {
+        let dir = tempfile::tempdir().unwrap();
+        let sockets = dir.path().join("keefast");
+        (dir, move |i: u32| sockets.join(format!("{i}.sock")))
+    };
+    #[cfg(windows)]
+    let path = |i: u32| {
+        std::path::PathBuf::from(format!(
+            r"\\.\pipe\keefast-test-{}-dropped-{i}",
+            std::process::id()
+        ))
+    };
+
+    within_ten_seconds(move || {
+        for i in 0..100 {
+            drop(Server::start(path(i), |_| true).unwrap());
+        }
+    });
 }
 
 #[test]
