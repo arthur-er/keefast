@@ -59,7 +59,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhERTQ3RUQ1ODlFQTFCMTUKUldRVkcrcUoxWDdralVvQWtoYlVLR2RzNlFJOVVNeC94aytqb0FjNUJvRXVRblZHWXRjMitZYWMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFODhDQkY2RTg3OEQ5QjcKUldTMzJYam85c3VJVG5Sb2x1T0hBdHZ5VThsa2RJMVl0b0d6bkllWkRGYThRdnFJN1dsNng1L2QK",
       "endpoints": [
         "https://github.com/arthur-er/keefast/releases/latest/download/latest.json"
       ],
