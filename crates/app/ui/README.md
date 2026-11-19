@@ -244,7 +244,9 @@ const password = await api.revealPassword(vault, entry); // only when the user a
 1. Write it in `crates/app/src/commands/<domain>.rs`: `#[tauri::command] #[specta::specta] pub
    async fn ...(core: Core<'_>, ...) -> ApiResult<T>`. DTOs derive `Serialize`/`Deserialize` and
    `specta::Type` with `#[serde(rename_all = "camelCase")]`; avoid `u64`/`i64`/`f64` in DTOs
-   (specta refuses 64-bit integers, and `f64` becomes `number | null`): use `u32`. Change the
+   (specta refuses 64-bit integers, and `f64` becomes `number | null`): use `u32`. A test
+   (`no_field_reaches_the_ui_as_null_unless_it_is_an_option`) fails on a float outside an
+   `Option`. Change the
    Workspace through `core.update` (or `core.edit`, which autosaves) so the UI hears of it.
 2. Register it in `specta_builder()` in `crates/app/src/app.rs`.
 3. `pnpm bindings`, then implement it in the mock (`pnpm typecheck` tells you it's missing).
