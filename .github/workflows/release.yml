@@ -1,31 +1,53 @@
-# Pushing a `v<version>` tag builds every package and attaches them to a draft GitHub release,
-# to be checked and published by hand. Publishing it is what offers the update to installed
-# keefasts: they read latest.json from the latest published release (ADR 0014). Packaging lives
-# in one reusable workflow per platform.
+# A push to main whose Cargo.toml version has no `v<version>` tag yet releases it: it builds every
+# package, then tags that commit and publishes the release, which offers the update to installed
+# keefasts: they read latest.json from the latest published release (ADR 0014). Other pushes to
+# main skip it, so releasing is merging a version bump. Packaging lives in one reusable workflow
+# per platform.
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+
+# One release run at a time, never cancelled: a push that lands while one runs waits, and then
+# finds its version tagged.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   version:
-    name: Tag matches the version
+    name: Is the version new?
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - id: check
+        run: |
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          tags="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||')"
+          if grep -qxF "$version" <<< "$tags"; then
+            echo "v$version is already released; nothing to do"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The updater only offers a higher version, so a lower one would reach no one.
+          highest="$(printf '%s\n%s\n' "$tags" "$version" | grep . | sort -V | tail -n1)"
+          if [ "$highest" != "$version" ]; then
+            echo "::error::version $version in Cargo.toml is below the released v$highest"
             exit 1
           fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
 
   linux:
     needs: version
+    if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/package-linux.yml
     with:
       release: true
@@ -36,6 +58,7 @@ jobs:
 
   windows:
     needs: version
+    if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/package-windows.yml
     with:
       release: true
@@ -49,6 +72,7 @@ jobs:
   extension:
     name: Companion extension
     needs: version
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -66,7 +90,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm zip
-      - run: mv .output/keefast-companion-*.zip "keefast-companion-${GITHUB_REF_NAME#v}.zip"
+      - run: mv .output/keefast-companion-*.zip "keefast-companion-$VERSION.zip"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
       - uses: actions/upload-artifact@v4
         with:
           name: extension
@@ -74,11 +100,13 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Draft the release
-    needs: [linux, windows, extension]
+    name: Publish the release
+    needs: [version, linux, windows, extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,16 +117,17 @@ jobs:
           merge-multiple: true
       - name: Update manifest
         run: |
-          scripts/update-manifest.sh "${GITHUB_REF_NAME#v}" assets \
-            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME" > latest.json
+          scripts/update-manifest.sh "$VERSION" assets \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/v$VERSION" > latest.json
           mv latest.json assets/
       - name: Checksums
         working-directory: assets
         run: sha256sum -- * > SHA256SUMS
-      - name: Create the draft release
+      # Tags the commit the packages were built from, and publishes in the same step.
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" assets/* \
-            --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes \
-            --title "keefast ${GITHUB_REF_NAME#v}"
+          gh release create "v$VERSION" assets/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest --generate-notes \
+            --title "keefast $VERSION"
