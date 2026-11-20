@@ -27,8 +27,8 @@ it shipped with. The AppImage is mounted somewhere new each run, so it copies it
 integration on. It copies `keefast-agent`, the command Agents run, to
 `~/.local/share/keefast/keefast-agent` in the same way, each time it starts.
 
-Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
-`scripts/package-linux.sh` makes the tarball and AppImage from a release build, and
+Releases are built by `.github/workflows/release.yml` when a push to main brings a new version
+(see [Updates](#updates)): `scripts/package-linux.sh` makes the tarball and AppImage from a release build, and
 `scripts/smoke-linux.sh` checks that keefast starts on X11 and Wayland.
 
 ## Windows
@@ -46,7 +46,7 @@ Uninstalling keefast (Settings > Apps) removes those registrations, and only kee
 config and Vault files stay, so a reinstalled keefast registers the host again when it starts
 if browser integration was on.
 
-Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed:
+Releases are built by `.github/workflows/release.yml` when a push to main brings a new version:
 `scripts/package-windows.ps1` makes the MSI from a release build with WiX
 (`packaging/windows/keefast.wxs`), and `scripts/smoke-windows.ps1` checks that it installs, and
 that uninstalling removes keefast and its browser registrations but leaves another program's
@@ -65,7 +65,9 @@ Vault has unsaved changes.
 Updates are signed: keefast installs only a package signed with its update key, whose public key
 is in `crates/app/tauri.conf.json` (ADR 0014). A release signs the AppImage and the MSI with it
 (`scripts/sign-update.sh`), and attaches `latest.json` (`scripts/update-manifest.sh`) to the
-draft release. Installed keefasts see it only once the draft is published. The release workflows
+release. A release is published, so offered to installed keefasts, as soon as a push to main
+brings a version in `Cargo.toml` that has no `v<version>` tag yet: releasing is merging a version
+bump, and CI tags the commit. The release workflows
 need the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
 from `cargo tauri signer generate -w ~/.tauri/keefast-updater.key`; keep a copy of the key
 offline, as without it no installed keefast can be updated again. To try an update without a
