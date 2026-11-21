@@ -565,7 +565,7 @@ impl Vault {
         if !login.username.is_empty() {
             fields.username = login.username.clone();
         }
-        self.update_entry(entry, &fields, now)
+        self.update_entry(entry, &fields, now).map(|_| ())
     }
 
     /// The Browser group, made at the top of the Vault and chosen if there is none.

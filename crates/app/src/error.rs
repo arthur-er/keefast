@@ -5,8 +5,8 @@ use keefast_core::{
     EditError, EncryptionError, GeneratorError, KeyFileError, OpenError, TotpError,
 };
 use keefast_workspace::{
-    ChangeKeyError, CopyError, CreateVaultError, DropboxError, EditVaultError, ImportIconError,
-    NewKeyError, OpenVaultError, SaveVaultError, StorageError,
+    ChangeKeyError, CopyError, CreateVaultError, DropboxError, EditEntryError, EditVaultError,
+    EntryEditError, ImportIconError, NewKeyError, OpenVaultError, SaveVaultError, StorageError,
 };
 use serde::Serialize;
 use specta::Type;
@@ -77,6 +77,19 @@ impl ApiError {
         Self::new(ErrorKind::Invalid, message)
     }
 
+    /// The Entry changed since the editor read it, so the edit wasn't saved over it.
+    pub fn entry_changed() -> Self {
+        Self::new(
+            ErrorKind::EntryChanged,
+            "This Entry changed while you were editing it: changes made elsewhere were Merged \
+             into it.",
+        )
+    }
+
+    fn bad_expiry() -> Self {
+        Self::invalid("Type the expiry date as YYYY-MM-DD, such as 2027-01-31.")
+    }
+
     pub fn picker() -> Self {
         Self::new(
             ErrorKind::Unavailable,
@@ -114,6 +127,26 @@ impl From<keefast_agent::AgentSettingsError> for ApiError {
 }
 
 const ERROR_NOT_FOUND: &str = "That Entry or Group no longer exists.";
+
+impl From<EditEntryError> for ApiError {
+    fn from(error: EditEntryError) -> Self {
+        match error {
+            EditEntryError::VaultNotOpen => Self::vault_not_found(),
+            EditEntryError::EntryChanged => Self::entry_changed(),
+            EditEntryError::NotFound
+            | EditEntryError::NoSuchField
+            | EditEntryError::NoSuchAttachment => Self::not_found(),
+            EditEntryError::BadExpiry => Self::bad_expiry(),
+            EditEntryError::Edit(error) => EditVaultError::Edit(error).into(),
+        }
+    }
+}
+
+impl From<EntryEditError> for ApiError {
+    fn from(error: EntryEditError) -> Self {
+        EditEntryError::from(error).into()
+    }
+}
 
 impl From<EditVaultError> for ApiError {
     fn from(error: EditVaultError) -> Self {

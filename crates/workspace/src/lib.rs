@@ -11,6 +11,7 @@ mod clipboard;
 mod clock;
 mod config;
 mod dropbox;
+mod entry_edit;
 mod favicons;
 mod generator;
 mod locking;
@@ -53,6 +54,10 @@ pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, PaneWidth
 pub use dropbox::{
     Authorization, CodeAuthorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig,
     DropboxError, DropboxItem,
+};
+pub use entry_edit::{
+    AttachmentEdit, CustomFieldEdit, CustomFieldValue, EditEntryError, EntryEdit, EntryEditError,
+    TagsEdit,
 };
 pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};
@@ -1387,7 +1392,8 @@ impl Workspace {
         entry: EntryId,
         fields: &EntryFields,
     ) -> Result<(), EditVaultError> {
-        self.edit(vault, |vault, now| vault.update_entry(entry, fields, now))
+        self.edit_if_changed(vault, |vault, now| vault.update_entry(entry, fields, now))?;
+        Ok(())
     }
 
     pub fn move_entry(
@@ -1596,6 +1602,22 @@ impl Workspace {
         let result = edit(&mut open.vault, now)?;
         open.edits += 1;
         Ok(result)
+    }
+
+    /// [`Self::edit`] for an edit that says whether it changed anything: one that didn't is not
+    /// counted, so it leaves the Vault saved and starts no autosave.
+    fn edit_if_changed(
+        &mut self,
+        id: VaultId,
+        edit: impl FnOnce(&mut Vault, Timestamp) -> Result<bool, EditError>,
+    ) -> Result<bool, EditVaultError> {
+        let now = self.now();
+        let open = self.vault_mut(id).ok_or(EditVaultError::VaultNotOpen)?;
+        let changed = edit(&mut open.vault, now)?;
+        if changed {
+            open.edits += 1;
+        }
+        Ok(changed)
     }
 
     /// Saves a Vault to its Vault file in one blocking call.

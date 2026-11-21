@@ -314,19 +314,19 @@ impl Vault {
 
     /// Sets an Entry's fields. The version it replaces goes to the Entry's history, which is
     /// trimmed to the Vault's `HistoryMaxItems`. Setting the fields it already has changes
-    /// nothing.
+    /// nothing, and answers `false`, so a caller doesn't count it as an edit to save.
     pub fn update_entry(
         &mut self,
         entry: EntryId,
         fields: &EntryFields,
         now: Timestamp,
-    ) -> Result<(), EditError> {
+    ) -> Result<bool, EditError> {
         let path = self.path_to(Kind::Entry, entry.0)?;
         fields.check(self)?;
         let current = self.entry(entry).expect("the path leads to it");
         let attachments_changed = current.attachments() != fields.attachments.as_slice();
         if fields.match_entry(current) && !attachments_changed {
-            return Ok(());
+            return Ok(false);
         }
         let current = EntryFields::from(current);
         if attachments_changed {
@@ -355,7 +355,7 @@ impl Vault {
         self.file.binaries = pool;
         self.drop_unused_attachments();
         self.refresh();
-        Ok(())
+        Ok(true)
     }
 
     /// Sets up TOTP on an Entry, or removes it with `None`. The settings go to the fields the
