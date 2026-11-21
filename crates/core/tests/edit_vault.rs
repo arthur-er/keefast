@@ -208,19 +208,25 @@ fn editing_an_entry_keeps_the_previous_version_in_its_history() {
 }
 
 #[test]
-fn saving_unchanged_fields_records_no_history() {
+fn saving_unchanged_fields_records_no_history_and_says_nothing_changed() {
     let mut vault = open(KEEPASSXC_KDBX4);
     let id = vault
         .create_entry(vault.root().id(), &fields("Bank", "pw"), now())
         .unwrap();
 
-    vault
+    let changed = vault
         .update_entry(id, &fields("Bank", "pw"), later())
         .unwrap();
 
+    assert!(!changed);
     let entry = vault.entry(id).unwrap();
     assert!(entry.history().is_empty());
     assert_eq!(entry.last_modified(), Some(now()));
+
+    let changed = vault
+        .update_entry(id, &fields("Bank", "pw-2"), later())
+        .unwrap();
+    assert!(changed, "a new password is a change");
 }
 
 #[test]
