@@ -11,8 +11,7 @@ use std::thread;
 
 use keefast_plugins::{PluginHost, PluginStore};
 use keefast_workspace::{
-    Clipboard, EditVaultError, FormFill, Outgoing, PendingFavicon, PendingSave, VaultId,
-    VaultLocation, Workspace,
+    Clipboard, FormFill, Outgoing, PendingFavicon, PendingSave, VaultId, VaultLocation, Workspace,
 };
 
 use crate::agent_hosts::AgentHosts;
@@ -394,10 +393,13 @@ impl AppCore {
     }
 
     /// Runs an edit, then autosaves if it went through.
-    pub fn edit<T>(
+    pub fn edit<T, E>(
         self: &Arc<Self>,
-        edit: impl FnOnce(&mut Workspace) -> Result<T, EditVaultError>,
-    ) -> ApiResult<T> {
+        edit: impl FnOnce(&mut Workspace) -> Result<T, E>,
+    ) -> ApiResult<T>
+    where
+        ApiError: From<E>,
+    {
         let result = self.update(edit);
         if result.is_ok() {
             self.autosave();

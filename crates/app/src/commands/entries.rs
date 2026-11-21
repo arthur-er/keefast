@@ -10,11 +10,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use keefast_core::{
-    self as core, AccessDecision, AttachmentPreview, CustomField, Entry, EntryFields, EntrySearch,
-    EntrySort, Group, PasswordStrength, Site, Timestamp, Totp, parse_tags,
+    self as core, AccessDecision, AttachmentPreview, CustomField, Entry, EntrySearch, EntrySort,
+    Group, PasswordStrength, Site, Timestamp, Totp,
 };
 use keefast_plugins::{Capability, EntryField, FieldKind, FoundFacet, PluginHost};
-use keefast_workspace::{self as ws, Workspace};
+use keefast_workspace::{
+    self as ws, CustomFieldEdit, CustomFieldValue, EntryEdit, TagsEdit, Workspace,
+};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -313,54 +315,71 @@ pub struct EntryInput {
 }
 
 impl EntryInput {
-    /// The Entry's fields after this edit, `current` being the Entry as it is, if it exists.
-    fn to_fields(&self, current: Option<&Entry>) -> ApiResult<EntryFields> {
-        let base = current.map(EntryFields::from).unwrap_or_default();
-        let password = match &self.password {
-            Some(password) => SecretString::from(password.as_str()),
-            None => base.password.clone(),
-        };
-        let custom_fields = self
-            .custom_fields
-            .iter()
-            .map(|field| {
-                let value = match (&field.value, field.original) {
-                    (Some(value), _) => SecretString::from(value.as_str()),
-                    (None, Some(original)) => base
-                        .custom_fields
-                        .get(original as usize)
-                        .map(|kept| kept.value.clone())
-                        .ok_or_else(ApiError::not_found)?,
-                    (None, None) => SecretString::from(String::new()),
-                };
-                Ok(CustomField {
-                    name: field.name.trim().to_owned(),
-                    value,
-                    protected: field.protected,
-                })
-            })
-            .collect::<ApiResult<Vec<_>>>()?;
-        let expires = match &self.expires {
-            None => None,
-            Some(date) => Some(
-                Timestamp::expiry_on(date, current.and_then(Entry::expires)).ok_or_else(|| {
-                    ApiError::invalid("Type the expiry date as YYYY-MM-DD, such as 2027-01-31.")
-                })?,
+    /// The edit the editor saves: every part it shows, so what it leaves as it was is only what
+    /// it never revealed.
+    fn to_edit(&self) -> ApiResult<EntryEdit> {
+        Ok(EntryEdit {
+            title: Some(self.title.clone()),
+            username: Some(self.username.clone()),
+            password: self.password.as_deref().map(SecretString::from),
+            url: Some(self.url.clone()),
+            notes: Some(self.notes.clone()),
+            custom_fields: Some(
+                self.custom_fields
+                    .iter()
+                    .map(CustomFieldInput::to_edit)
+                    .collect(),
             ),
-        };
-        Ok(EntryFields {
-            title: self.title.clone(),
-            username: self.username.clone(),
-            password,
-            url: self.url.clone(),
-            notes: self.notes.clone(),
-            custom_fields,
-            tags: self.tags.iter().flat_map(|tag| parse_tags(tag)).collect(),
-            color: self.color.map(Into::into),
-            icon: self.icon.to_core()?,
-            expires,
-            attachments: base.attachments,
+            tags: Some(TagsEdit::Replace(self.tags.clone())),
+            color: Some(self.color.map(Into::into)),
+            icon: Some(self.icon.to_core()?),
+            expires: Some(self.expires.clone()),
+            attachments: Vec::new(),
         })
+    }
+}
+
+impl CustomFieldInput {
+    fn to_edit(&self) -> CustomFieldEdit {
+        let value = match (&self.value, self.original) {
+            (Some(value), _) => CustomFieldValue::New(SecretString::from(value.as_str())),
+            (None, Some(original)) => CustomFieldValue::Kept(original as usize),
+            (None, None) => CustomFieldValue::Empty,
+        };
+        CustomFieldEdit {
+            name: self.name.clone(),
+            value,
+            protected: self.protected,
+        }
+    }
+}
+
+/// Applies `edit` to an Entry and writes it under one lock of the Workspace, so a save's Merge
+/// can't land in between and be undone; then autosaves. `seen` is the Entry's last modification
+/// time as the editor read it, if the edit must not be saved over a newer version.
+/// `Ok(false)` when the Entry was left as it was.
+pub(crate) fn edit_entry(
+    core: &Arc<AppCore>,
+    vault: VaultId,
+    entry: &EntryId,
+    seen: Option<Timestamp>,
+    edit: &EntryEdit,
+) -> ApiResult<bool> {
+    let entry = entry.resolve()?;
+    core.edit(|workspace| {
+        let vault = vault.resolve_open(workspace)?;
+        Ok::<_, ApiError>(workspace.edit_entry(vault, entry, seen, edit)?)
+    })
+}
+
+/// The Entry's `modified` as the editor had it, in the seconds [`seconds`] gives the UI. Entry
+/// times are whole seconds, so any other number matches no version of the Entry.
+fn seen_at(seen: f64) -> ApiResult<Timestamp> {
+    let whole = seen as i64;
+    if whole as f64 == seen {
+        Ok(Timestamp::from_unix_seconds(whole))
+    } else {
+        Err(ApiError::entry_changed())
     }
 }
 
@@ -845,13 +864,9 @@ pub async fn create_entry(
     group: GroupId,
     input: EntryInput,
 ) -> ApiResult<EntryId> {
-    let (vault, group, fields) = core.read(|workspace| {
-        Ok::<_, ApiError>((
-            vault.resolve_open(workspace)?,
-            group.resolve()?,
-            input.to_fields(None)?,
-        ))
-    })?;
+    let vault = core.read(|workspace| vault.resolve_open(workspace))?;
+    let group = group.resolve()?;
+    let fields = input.to_edit()?.apply(None)?;
     core.edit(|workspace| workspace.create_entry(vault, group, &fields))
         .map(Into::into)
 }
@@ -872,36 +887,19 @@ pub async fn update_entry(
     input: EntryInput,
     seen_modified: Option<f64>,
 ) -> ApiResult<()> {
-    let result =
-        core.update(|workspace| update_entry_in(workspace, vault, &entry, &input, seen_modified));
-    if result.is_ok() {
-        core.autosave();
-    }
-    result
+    update_entry_with(&core, vault, &entry, &input, seen_modified)
 }
 
-/// [`update_entry`], checked and saved in one go, so nothing changes the Entry in between.
-fn update_entry_in(
-    workspace: &mut Workspace,
+fn update_entry_with(
+    core: &Arc<AppCore>,
     vault: VaultId,
     entry: &EntryId,
     input: &EntryInput,
     seen_modified: Option<f64>,
 ) -> ApiResult<()> {
-    let (vault, entry, fields) = {
-        let (open, found) = find(workspace, vault, entry)?;
-        if let Some(seen) = seen_modified
-            && found.last_modified().map(seconds) != Some(seen)
-        {
-            return Err(ApiError::new(
-                ErrorKind::EntryChanged,
-                "This Entry changed while you were editing it: changes made elsewhere were \
-                 Merged into it.",
-            ));
-        }
-        (open.id(), found.id(), input.to_fields(Some(found))?)
-    };
-    Ok(workspace.update_entry(vault, entry, &fields)?)
+    let edit = input.to_edit()?;
+    let seen = seen_modified.map(seen_at).transpose()?;
+    edit_entry(core, vault, entry, seen, &edit).map(|_| ())
 }
 
 /// Adds tags to an Entry, as the `+` beside its tags does, keeping the version it replaces in the
@@ -919,24 +917,11 @@ pub async fn add_tags(
 }
 
 fn add_tags_to(core: &Arc<AppCore>, vault: VaultId, entry: &EntryId, text: &str) -> ApiResult<()> {
-    let edit = core.read(|workspace| {
-        let (open, found) = find(workspace, vault, entry)?;
-        let mut fields = EntryFields::from(found);
-        let before = fields.tags.len();
-        for tag in parse_tags(text) {
-            if !fields.tags.contains(&tag) {
-                fields.tags.push(tag);
-            }
-        }
-        let added = fields.tags.len() > before;
-        Ok::<_, ApiError>(added.then(|| (open.id(), found.id(), fields)))
-    })?;
-    match edit {
-        Some((vault, entry, fields)) => {
-            core.edit(|workspace| workspace.update_entry(vault, entry, &fields))
-        }
-        None => Ok(()),
-    }
+    let edit = EntryEdit {
+        tags: Some(TagsEdit::Add(text.to_owned())),
+        ..EntryEdit::default()
+    };
+    edit_entry(core, vault, entry, None, &edit).map(|_| ())
 }
 
 /// Moves an Entry into another Group of its Vault.
@@ -1049,7 +1034,7 @@ mod tests {
     use super::{
         CustomFieldInput, EntryInput, EntryQuery, OwnedFieldKind, SortOrder, add_tags_to,
         custom_field_value, custom_field_view, entry_detail, entry_list, facet_views,
-        update_entry_in, web_address,
+        update_entry_with, web_address,
     };
     use crate::core::AppCore;
     use crate::dto::{EntryId, IconChoice, VaultId};
@@ -1113,22 +1098,16 @@ mod tests {
     fn tags_added_from_the_detail_join_the_entrys_own() {
         let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
             title: "GitHub".into(),
-            password: SecretString::from("hunter2"),
             tags: vec!["dev".into()],
             ..Default::default()
         });
         add_tags_to(&core, vault, &entry, "work, dev; ops ").unwrap();
         let detail = entry_detail(&core, vault, &entry).unwrap();
         assert_eq!(detail.summary.tags, ["dev", "work", "ops"]);
-        assert_eq!(
-            detail.history_count, 1,
-            "the version before keeps the old tags"
-        );
-        assert!(detail.summary.has_password, "the rest of the Entry is kept");
 
-        // Tags it has already change nothing, not even its history.
-        add_tags_to(&core, vault, &entry, "ops,dev").unwrap();
-        assert_eq!(entry_detail(&core, vault, &entry).unwrap().history_count, 1);
+        let gone = EntryId::from(keefast_core::EntryId::from_hex(&"0".repeat(32)).unwrap());
+        let error = add_tags_to(&core, vault, &gone, "work").unwrap_err();
+        assert_eq!(error.kind, crate::error::ErrorKind::NotFound);
     }
 
     #[test]
@@ -1352,7 +1331,7 @@ mod tests {
             icon: IconChoice::Standard { number: 0 },
             expires: None,
         };
-        let edited = input.to_fields(Some(entry)).unwrap();
+        let edited = input.to_edit().unwrap().apply(Some(entry)).unwrap();
         let shown: Vec<_> = edited
             .custom_fields
             .iter()
@@ -1568,10 +1547,6 @@ mod tests {
                 .unwrap()
                 .1
         }
-
-        fn modified(&self) -> Option<f64> {
-            self.bank().last_modified().map(crate::dto::seconds)
-        }
     }
 
     fn field(name: &str, value: &str, protected: bool) -> CustomField {
@@ -1605,68 +1580,80 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_is_not_saved_over_an_entry_merged_since_the_editor_opened() {
-        let mut h = Elsewhere::new();
-        // The editor opens.
-        let seen = h.modified();
+    fn the_editor_keeps_what_it_never_revealed_and_is_refused_over_a_newer_version() {
+        let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
+            title: "Bank".into(),
+            password: SecretString::from("made-here"),
+            custom_fields: vec![field("PIN", "1111", true), field("CVV", "737", true)],
+            ..Default::default()
+        });
+        let modified = || entry_detail(&core, vault, &entry).unwrap().summary.modified;
+        let seen = modified().unwrap();
 
-        h.edit_elsewhere(|fields| fields.password = SecretString::from("changed-elsewhere"));
-        let error = update_entry_in(
-            &mut h.workspace,
-            h.vault,
-            &h.bank.clone(),
-            &retitled("Bank (edited)"),
-            seen,
+        // `seenModified` is matched to the second: anything else is a version it never saw.
+        for stale in [seen + 1.0, seen - 0.5] {
+            let error = update_entry_with(&core, vault, &entry, &retitled("Late"), Some(stale))
+                .unwrap_err();
+            assert_eq!(error.kind, crate::error::ErrorKind::EntryChanged, "{stale}");
+            assert!(
+                error
+                    .message
+                    .starts_with("This Entry changed while you were editing it")
+            );
+        }
+
+        update_entry_with(&core, vault, &entry, &retitled("Bank (edited)"), Some(seen)).unwrap();
+        let reveal = |name: &str| {
+            core.read(|workspace| custom_field_value(workspace, vault, &entry, name).unwrap())
+        };
+        assert_eq!(reveal("PIN"), "1111");
+        assert_eq!(reveal("CVV"), "737");
+        let detail = entry_detail(&core, vault, &entry).unwrap();
+        assert_eq!(detail.summary.title, "Bank (edited)");
+        assert!(
+            detail.summary.has_password,
+            "the unrevealed password is kept"
+        );
+
+        let error = update_entry_with(
+            &core,
+            vault,
+            &entry,
+            &EntryInput {
+                expires: Some("31/01/2027".into()),
+                ..retitled("Bank (edited)")
+            },
+            None,
         )
         .unwrap_err();
-
-        assert_eq!(error.kind, crate::error::ErrorKind::EntryChanged);
-        assert_eq!(h.bank().title(), "Bank", "nothing was saved");
-        assert_eq!(h.bank().password().expose_secret(), "changed-elsewhere");
-    }
-
-    #[test]
-    fn keeping_ones_edits_over_an_entry_merged_meanwhile_keeps_the_merged_version_in_history() {
-        let mut h = Elsewhere::new();
-        let seen = h.modified();
-        h.edit_elsewhere(|fields| fields.title = "Bank (renamed elsewhere)".into());
-
-        // The user keeps their edits: saved over the Entry as it is now.
-        let now = h.modified();
-        assert_ne!(now, seen);
-        update_entry_in(
-            &mut h.workspace,
-            h.vault,
-            &h.bank.clone(),
-            &retitled("Bank (edited)"),
-            now,
-        )
-        .unwrap();
-
-        let bank = h.bank();
-        assert_eq!(bank.title(), "Bank (edited)");
+        assert_eq!(error.kind, crate::error::ErrorKind::Invalid);
         assert_eq!(
-            bank.history().last().unwrap().title(),
-            "Bank (renamed elsewhere)",
-            "the merged version is in the history"
+            error.message,
+            "Type the expiry date as YYYY-MM-DD, such as 2027-01-31."
         );
     }
 
     #[test]
-    fn an_edit_of_an_entry_not_changed_meanwhile_is_saved() {
-        let mut h = Elsewhere::new();
-        let seen = h.modified();
+    fn an_attachment_is_removed_by_its_index_and_one_past_the_end_is_not_found() {
+        use super::super::attachments::remove_attachment_from;
+        use keefast_core::Attachment;
 
-        update_entry_in(
-            &mut h.workspace,
-            h.vault,
-            &h.bank.clone(),
-            &retitled("Bank (edited)"),
-            seen,
-        )
-        .unwrap();
+        let (core, vault, entry, _dir) = with_entry(keefast_core::EntryFields {
+            title: "Bank".into(),
+            attachments: vec![
+                Attachment::new("codes.txt", b"1234".to_vec()),
+                Attachment::new("key.pem", b"-----".to_vec()),
+            ],
+            ..Default::default()
+        });
 
-        assert_eq!(h.bank().title(), "Bank (edited)");
+        remove_attachment_from(&core, vault, &entry, 0).unwrap();
+        let detail = entry_detail(&core, vault, &entry).unwrap();
+        let names: Vec<_> = detail.attachments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["key.pem"]);
+
+        let error = remove_attachment_from(&core, vault, &entry, 1).unwrap_err();
+        assert_eq!(error.kind, crate::error::ErrorKind::NotFound);
     }
 
     #[test]

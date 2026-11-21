@@ -1,17 +1,19 @@
 //! An Entry's attachments: adding files, previewing, saving to disk, removing.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use keefast_core::{AttachmentPreview, EntryFields, ImageFormat};
-use keefast_workspace::{read_attachment, write_attachment};
+use keefast_core::{AttachmentPreview, ImageFormat};
+use keefast_workspace::{AttachmentEdit, EntryEdit, read_attachment, write_attachment};
 use serde::Serialize;
 use specta::Type;
 use tauri::AppHandle;
 
-use super::entries::find;
+use super::entries::{edit_entry, find};
 use super::{Core, blocking, home, pick_files, pick_new_file};
+use crate::core::AppCore;
 use crate::dto::{EntryId, VaultId};
 use crate::error::{ApiError, ApiResult, ErrorKind};
 
@@ -75,27 +77,33 @@ pub async fn add_attachments(
     })
     .await?;
     let mut errors = Vec::new();
-    let mut added = Vec::new();
-    core.edit(|workspace| {
-        let (vault, entry, mut fields) = match find(workspace, vault, &entry) {
-            Ok((open, found)) => (open.id(), found.id(), EntryFields::from(found)),
-            Err(_) => return Err(keefast_workspace::EditVaultError::VaultNotOpen),
-        };
-        for result in read {
-            match result {
-                Ok(attachment) => {
-                    attachment.add_to(&mut fields.attachments);
-                    if let Some(last) = fields.attachments.last() {
-                        added.push(last.name.clone());
-                    }
-                }
-                Err(error) => errors.push(error),
-            }
+    let mut adds = Vec::new();
+    for result in read {
+        match result {
+            Ok(attachment) => adds.push(AttachmentEdit::Add(attachment)),
+            Err(error) => errors.push(error),
         }
-        if added.is_empty() {
-            return Ok(());
-        }
-        workspace.update_entry(vault, entry, &fields)
+    }
+    let count = adds.len();
+    let edit = EntryEdit {
+        attachments: adds,
+        ..EntryEdit::default()
+    };
+    let entry = entry.resolve()?;
+    let added = core.edit(|workspace| {
+        let vault = vault.resolve_open(workspace)?;
+        workspace.edit_entry(vault, entry, None, &edit)?;
+        // The attachments added are the Entry's last, under the names they were given.
+        let attachments = workspace
+            .entry(vault, entry)
+            .map(|entry| entry.attachments())
+            .unwrap_or_default();
+        let first = attachments.len().saturating_sub(count);
+        let names = attachments[first..]
+            .iter()
+            .map(|a| a.name.clone())
+            .collect();
+        Ok::<_, ApiError>(names)
     })?;
     Ok(AddedAttachments { added, errors })
 }
@@ -109,16 +117,20 @@ pub async fn remove_attachment(
     entry: EntryId,
     index: u32,
 ) -> ApiResult<()> {
-    let (vault, entry, fields) = core.read(|workspace| {
-        let (open, found) = find(workspace, vault, &entry)?;
-        let mut fields = EntryFields::from(found);
-        if index as usize >= fields.attachments.len() {
-            return Err(ApiError::not_found());
-        }
-        fields.attachments.remove(index as usize);
-        Ok((open.id(), found.id(), fields))
-    })?;
-    core.edit(|workspace| workspace.update_entry(vault, entry, &fields))
+    remove_attachment_from(&core, vault, &entry, index)
+}
+
+pub(crate) fn remove_attachment_from(
+    core: &Arc<AppCore>,
+    vault: VaultId,
+    entry: &EntryId,
+    index: u32,
+) -> ApiResult<()> {
+    let edit = EntryEdit {
+        attachments: vec![AttachmentEdit::Remove(index as usize)],
+        ..EntryEdit::default()
+    };
+    edit_entry(core, vault, entry, None, &edit).map(|_| ())
 }
 
 /// An attachment's contents to preview: the start of a text, or an image.
