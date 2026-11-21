@@ -11,16 +11,16 @@
 
 use std::collections::BTreeMap;
 
-use keefast_core::{CustomField, EntryFields, EntryId, GroupId, PasswordRecipe, Vault};
+use keefast_core::{CustomField, EntryFields, EntryId, GroupId, PasswordRecipe};
 use keefast_workspace::{VaultId, Workspace};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{AgentError, AgentReply, AgentSession, SecretReference, VaultAccess, readable_entries};
+use super::{AgentError, AgentReply, AgentSession, SecretReference, VaultAccess};
 use crate::audit::{AuditAction, AuditEntry, AuditOutcome};
 use crate::scope::{Lookup, PairingScope};
-use crate::{AgentPairing, AgentSettings, PairingKind};
+use crate::{AgentPairing, PairingKind};
 
 /// What `create_entry` makes: an Entry with this title in the pairing's own subgroup.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -181,12 +181,9 @@ impl AgentSession {
             field: None,
         };
         let (pairing, group, path) = {
-            let vault = workspace
-                .readable_vault(id)
-                .ok_or(AgentError::Locked)?
-                .vault();
-            let settings = AgentSettings::of(vault);
-            let pairing = self.writer(workspace, &settings, &write)?;
+            let scope = PairingScope::open(workspace, id, self.pairing(), PairingKind::Agent)?;
+            self.writer(workspace, &scope, &write)?;
+            let pairing = scope.pairing();
             let title = request.title.trim();
             if title.is_empty() {
                 return Err(AgentError::BadEntry("the Entry needs a title".to_owned()));
@@ -201,17 +198,14 @@ impl AgentSession {
             for name in request.fields.keys() {
                 check_custom_field(name)?;
             }
-            let own = own_path(vault, &settings, &pairing)
+            let own = scope
+                .own_path()
                 .ok_or_else(|| AgentError::NotOwnEntry(format!("{}/{title}", pairing.name())))?;
             let path = format!("{own}{title}");
-            if readable_entries(vault, &settings, &pairing)
-                .iter()
-                .any(|(_, known)| *known == path)
-            {
+            if scope.entries().iter().any(|known| known.path == path) {
                 return Err(AgentError::EntryExists(path));
             }
-            let group = pairing.group();
-            (pairing, group, path)
+            (pairing.clone(), pairing.group(), path)
         };
         let password = match &request.password {
             Some(recipe) => recipe
@@ -272,9 +266,9 @@ impl AgentSession {
         };
         let (pairing, target) = {
             let scope = PairingScope::open(workspace, id, self.pairing(), PairingKind::Agent)?;
-            let pairing = self.writer(workspace, scope.settings(), &write)?;
+            self.writer(workspace, &scope, &write)?;
             let target = self.target(workspace, &scope, reference, name, &write)?;
-            (pairing, target)
+            (scope.pairing().clone(), target)
         };
         let field = Field::named(field_name)?;
         if request.value().is_empty() {
@@ -360,26 +354,24 @@ impl AgentSession {
         }
     }
 
-    /// The session's pairing, if it may write; a pairing without the create right is refused,
-    /// and audited.
+    /// Refuses, and audits, a write by a pairing without the create right.
     fn writer(
         &self,
         workspace: &Workspace,
-        settings: &AgentSettings,
+        scope: &PairingScope<'_>,
         write: &Write<'_>,
-    ) -> Result<AgentPairing, AgentError> {
-        let pairing = self.own_pairing(settings)?.clone();
-        if !pairing.can_create() {
+    ) -> Result<(), AgentError> {
+        if !scope.pairing().can_create() {
             self.audit_write(
                 workspace,
-                &pairing,
+                scope.pairing(),
                 write,
                 None,
                 Some("the pairing may not create Entries"),
             );
             return Err(AgentError::NoCreateRight);
         }
-        Ok(pairing)
+        Ok(())
     }
 
     /// Audits a write to `entry`: allowed without a `refusal`, denied with one.
@@ -417,32 +409,6 @@ fn check_custom_field(name: &str) -> Result<(), AgentError> {
         ))),
         Err(error) => Err(error),
     }
-}
-
-/// The path of the pairing's own subgroup below the Agent group, ending in `/`, as Secret
-/// references start with it; `None` if it is no longer in the Agent group.
-pub(crate) fn own_path(
-    vault: &Vault,
-    settings: &AgentSettings,
-    pairing: &AgentPairing,
-) -> Option<String> {
-    let agent_group = vault.group(settings.agent_group()?)?;
-    let mut stack: Vec<(&keefast_core::Group, String)> = agent_group
-        .groups()
-        .iter()
-        .map(|group| (group, String::new()))
-        .collect();
-    while let Some((group, parent)) = stack.pop() {
-        if vault.recycle_bin() == Some(group.id()) {
-            continue;
-        }
-        let path = format!("{parent}{}/", group.name());
-        if group.id() == pairing.group() {
-            return Some(path);
-        }
-        stack.extend(group.groups().iter().map(|child| (child, path.clone())));
-    }
-    None
 }
 
 /// A [`PasswordRecipe`] as JSON, for a `create_entry` the desktop app runs: `core` has no

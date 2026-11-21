@@ -7,10 +7,10 @@
 //! [`AgentReply`]s and back, so what a pairing may see and do is decided here, once.
 //!
 //! An Agent sees only Entries in the Vault's Agent group, and of those only the ones in its
-//! pairing's own subgroup and the subgroups it may read, with their subgroups. It never sees
-//! an Entry's notes: they are where prompt injection would hide, and they often hold secrets
-//! themselves. Each request reads the pairing afresh from the Vault, so revoking one takes
-//! effect at once.
+//! pairing's own subgroup and the subgroups it may read, with their subgroups: its
+//! [`PairingScope`], which a Gateway pairing's session shares. It never sees an Entry's notes:
+//! they are where prompt injection would hide, and they often hold secrets themselves. Each
+//! request reads the pairing afresh from the Vault, so revoking one takes effect at once.
 //!
 //! A use (`keefast-agent run`) names its secrets by Secret reference, and is checked against
 //! the Agent access decisions for the pairing, each Entry and the program, then the Default
@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use keefast_core::{Entry, EntryId, Group, GroupId, Vault};
+use keefast_core::{Entry, EntryId, Vault};
 use keefast_workspace::{VaultId, Workspace};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,7 @@ use crate::http::{
 };
 use crate::programs::{is_shell_or_interpreter, program_name};
 use crate::run::Redactor;
-use crate::scope::{ReferenceError, ScopeError};
-pub(crate) use writes::own_path;
+use crate::scope::{PairingScope, ReferenceError, ScopeError};
 pub use writes::{CreateEntry, StoreSecret, WrittenEntry};
 
 mod writes;
@@ -439,17 +438,6 @@ impl AgentSession {
         self
     }
 
-    /// This session's pairing in `settings`: `NotPaired` once it is gone, or if it is a
-    /// Gateway pairing.
-    pub(crate) fn own_pairing<'s>(
-        &self,
-        settings: &'s AgentSettings,
-    ) -> Result<&'s AgentPairing, AgentError> {
-        settings
-            .pairing_of_kind(&self.pairing, PairingKind::Agent)
-            .ok_or(AgentError::NotPaired)
-    }
-
     pub fn pairing(&self) -> &AgentPairingId {
         &self.pairing
     }
@@ -475,22 +463,18 @@ impl AgentSession {
     }
 
     fn list_secrets(&self, workspace: &Workspace, id: VaultId) -> Result<AgentReply, AgentError> {
-        let vault = workspace
-            .readable_vault(id)
-            .ok_or(AgentError::Locked)?
-            .vault();
-        let settings = AgentSettings::of(vault);
-        let pairing = self.own_pairing(&settings)?;
+        let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
         self.audit.record(self.record(
             workspace,
-            pairing,
+            scope.pairing(),
             AuditAction::List,
             AuditOutcome::Allowed,
         ));
         Ok(AgentReply::Secrets(
-            readable_entries(vault, &settings, pairing)
+            scope
+                .entries()
                 .iter()
-                .map(|(entry, path)| listing(entry, path))
+                .map(|readable| listing(readable.entry, &readable.path))
                 .collect(),
         ))
     }
@@ -526,16 +510,11 @@ impl AgentSession {
         request: &UseSecrets,
         program: &str,
     ) -> Result<(Vec<Asking>, i64), AgentError> {
-        let vault = workspace
-            .readable_vault(id)
-            .ok_or(AgentError::Locked)?
-            .vault();
-        let settings = AgentSettings::of(vault);
-        let pairing = self.own_pairing(&settings)?;
-        let readable = readable_entries(vault, &settings, pairing);
+        let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
+        let (settings, pairing) = (scope.settings(), scope.pairing());
         let mut resolved = Vec::with_capacity(request.references.len());
         for reference in &request.references {
-            resolved.push(resolve(&readable, reference)?.0);
+            resolved.push(scope.resolve(reference)?.0);
         }
         // Each Entry is checked, and audited, once, however many of its fields are used.
         let mut checked: Vec<EntryId> = Vec::new();
@@ -546,7 +525,7 @@ impl AgentSession {
             }
             checked.push(entry.id());
             let agent_use = AgentUse::Program(program.to_owned());
-            let refused = match decide(&settings, entry.id(), pairing.id(), &agent_use) {
+            let refused = match decide(settings, entry.id(), pairing.id(), &agent_use) {
                 Outcome::Allow => false,
                 Outcome::Deny => true,
                 Outcome::Ask => {
@@ -624,16 +603,10 @@ impl AgentSession {
         id: VaultId,
         request: UseSecrets,
     ) -> Result<AgentReply, AgentError> {
-        let vault = workspace
-            .readable_vault(id)
-            .ok_or(AgentError::Locked)?
-            .vault();
-        let settings = AgentSettings::of(vault);
-        let pairing = self.own_pairing(&settings)?;
-        let readable = readable_entries(vault, &settings, pairing);
+        let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
         let mut values = Vec::with_capacity(request.references.len());
         for reference in request.references {
-            let (_, value) = resolve(&readable, &reference)?;
+            let (_, value) = scope.resolve(&reference)?;
             values.push(SecretValue::new(reference, value));
         }
         Ok(AgentReply::Values(values))
@@ -886,17 +859,11 @@ impl AgentSession {
         template: &Template,
     ) -> Result<(Prepared, AgentPairing), AgentError> {
         let bad = |message: &str| AgentError::BadHttpRequest(message.to_owned());
-        let vault = workspace
-            .readable_vault(id)
-            .ok_or(AgentError::Locked)?
-            .vault();
-        let settings = AgentSettings::of(vault);
-        let pairing = self.own_pairing(&settings)?;
-        let readable = readable_entries(vault, &settings, pairing);
+        let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
         let mut values: HashMap<&str, Zeroizing<String>> = HashMap::new();
         let mut used: Vec<UsedEntry> = Vec::new();
         for reference in &template.references {
-            let (entry, value) = resolve(&readable, reference)?;
+            let (entry, value) = scope.resolve(reference)?;
             values.insert(reference, value);
             if !used.iter().any(|known| known.id == entry.id()) {
                 used.push(UsedEntry {
@@ -904,7 +871,7 @@ impl AgentSession {
                     uuid: entry.id().to_hex(),
                     title: entry.title().to_owned(),
                     reference: reference.clone(),
-                    allowed_hosts: settings.allowed_hosts(entry.id()).to_vec(),
+                    allowed_hosts: scope.settings().allowed_hosts(entry.id()).to_vec(),
                 });
             }
         }
@@ -967,7 +934,7 @@ impl AgentSession {
                 secrets,
                 used,
             },
-            pairing.clone(),
+            scope.pairing().clone(),
         ))
     }
 
@@ -1130,11 +1097,11 @@ impl AgentSession {
         reason: &str,
     ) {
         let Some(Some(pairing)) = vault.read(|workspace, id| {
-            let settings = workspace.agent_settings(id)?;
-            let pairing = self.own_pairing(&settings).ok()?.clone();
+            let scope =
+                PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent).ok()?;
             Some(self.record(
                 workspace,
-                &pairing,
+                scope.pairing(),
                 AuditAction::HttpRequest,
                 AuditOutcome::Denied,
             ))
@@ -1170,15 +1137,9 @@ impl AgentSession {
         // the user was asked.
         vault
             .read(|workspace, id| {
-                let vault = workspace
-                    .readable_vault(id)
-                    .ok_or(AgentError::Locked)?
-                    .vault();
-                let settings = AgentSettings::of(vault);
-                let pairing = self.own_pairing(&settings)?;
-                let readable = readable_entries(vault, &settings, pairing);
-                let (entry, value) = resolve(&readable, &reference)?;
-                if !settings.agents_may_reveal(entry.id()) {
+                let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
+                let (entry, value) = scope.resolve(&reference)?;
+                if !scope.settings().agents_may_reveal(entry.id()) {
                     return Err(AgentError::NotRevealable(reference.clone()));
                 }
                 Ok(AgentReply::Values(vec![SecretValue::new(
@@ -1197,14 +1158,9 @@ impl AgentSession {
         id: VaultId,
         reference: &str,
     ) -> Result<(Asking, i64), AgentError> {
-        let vault = workspace
-            .readable_vault(id)
-            .ok_or(AgentError::Locked)?
-            .vault();
-        let settings = AgentSettings::of(vault);
-        let pairing = self.own_pairing(&settings)?;
-        let readable = readable_entries(vault, &settings, pairing);
-        let (entry, _) = resolve(&readable, reference)?;
+        let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Agent)?;
+        let (settings, pairing) = (scope.settings(), scope.pairing());
+        let (entry, _) = scope.resolve(reference)?;
         let refusal = if !settings.agents_may_reveal(entry.id()) {
             Some((
                 "not marked Agents may reveal",
@@ -1298,105 +1254,19 @@ fn decide(
     }
 }
 
-/// The Entry and value `reference` names among the Entries the pairing reads: by UUID, or by
-/// path below the Agent group, then `#` and a field. The last `#` splits them, since titles may
-/// have one in them and field names rarely do.
-fn resolve<'a>(
-    readable: &[(&'a Entry, String)],
-    reference: &str,
-) -> Result<(&'a Entry, Zeroizing<String>), AgentError> {
-    let (name, field) = reference
-        .rsplit_once('#')
-        .ok_or_else(|| AgentError::NoField(reference.to_owned()))?;
-    let by_uuid = EntryId::from_hex(name);
-    let mut matches = readable.iter().filter(|(entry, path)| match by_uuid {
-        Some(id) => entry.id() == id,
-        None => path == name,
-    });
-    let (entry, _) = matches
-        .next()
-        .ok_or_else(|| AgentError::UnknownReference(reference.to_owned()))?;
-    if matches.next().is_some() {
-        return Err(AgentError::AmbiguousReference(reference.to_owned()));
-    }
-    let value = match field {
-        "password" => Some(entry.password().expose_secret()),
-        "username" => Some(entry.username()),
-        "url" => Some(entry.url()),
-        _ => entry
-            .custom_fields()
-            .iter()
-            .find(|custom| custom.name == field)
-            .map(|custom| custom.value.expose_secret()),
-    }
-    .filter(|value| !value.is_empty())
-    .ok_or_else(|| AgentError::UnknownField(reference.to_owned()))?;
-    Ok((entry, Zeroizing::new(value.to_owned())))
-}
-
 /// The Agent pairings that can use `entry`: those whose own subgroup, or a subgroup they read,
 /// holds it. The desktop app's Entry editor offers decisions for these; Gateway pairings take
 /// none, so they aren't among them.
 pub fn pairings_reading(vault: &Vault, entry: EntryId) -> Vec<AgentPairing> {
-    let settings = AgentSettings::of(vault);
-    settings
+    AgentSettings::of(vault)
         .pairings()
         .iter()
         .filter(|pairing| {
-            pairing.kind() == PairingKind::Agent
-                && readable_entries(vault, &settings, pairing)
-                    .iter()
-                    .any(|(readable, _)| readable.id() == entry)
+            PairingScope::of(vault, pairing.id(), PairingKind::Agent)
+                .is_some_and(|scope| scope.entry(entry).is_some())
         })
         .cloned()
         .collect()
-}
-
-/// The Entries `pairing` reads, with their paths below the Agent group: those in its own
-/// subgroup and the subgroups it may read, and in their subgroups. Agent and Gateway pairings
-/// alike see exactly these, and never a note: what they are shown of each is up to them.
-pub(crate) fn readable_entries<'a>(
-    vault: &'a Vault,
-    settings: &AgentSettings,
-    pairing: &AgentPairing,
-) -> Vec<(&'a Entry, String)> {
-    let Some(agent_group) = settings.agent_group().and_then(|id| vault.group(id)) else {
-        return Vec::new();
-    };
-    let mut reads = vec![pairing.group()];
-    reads.extend_from_slice(pairing.readable());
-    let mut readable = Vec::new();
-    // The Agent group's own Entries belong to no pairing, so the walk starts below it.
-    for subgroup in agent_group.groups() {
-        walk(vault, subgroup, "", false, &reads, &mut readable);
-    }
-    readable
-}
-
-fn walk<'a>(
-    vault: &'a Vault,
-    group: &'a Group,
-    parent_path: &str,
-    parent_read: bool,
-    reads: &[GroupId],
-    readable: &mut Vec<(&'a Entry, String)>,
-) {
-    if vault.recycle_bin() == Some(group.id()) {
-        return;
-    }
-    let path = format!("{parent_path}{}/", group.name());
-    let read = parent_read || reads.contains(&group.id());
-    if read {
-        readable.extend(
-            group
-                .entries()
-                .iter()
-                .map(|entry| (entry, format!("{path}{}", entry.title()))),
-        );
-    }
-    for subgroup in group.groups() {
-        walk(vault, subgroup, &path, read, reads, readable);
-    }
 }
 
 fn listing(entry: &Entry, path: &str) -> SecretListing {

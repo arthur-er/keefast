@@ -2,14 +2,14 @@
 //! [`AgentSession`](crate::AgentSession) handles an Agent pairing's.
 //!
 //! A Gateway sees what an Agent pairing would (the Entries in its own subgroup and the
-//! subgroups it reads, never their notes), through the same [`readable_entries`], and lists
+//! subgroups it reads, never their notes), through the same [`PairingScope`], and lists
 //! them as the Entry mapping says. Each request reads the pairing afresh from the Vault, so a
 //! revoked one stops at once, and a pairing of the other kind is refused as unknown. Every call
 //! but `whoami` goes to the audit log, never with a value.
 
 use std::sync::Arc;
 
-use keefast_core::{Entry, EntryId, Vault};
+use keefast_core::EntryId;
 use keefast_workspace::{VaultId, VaultLocation, Workspace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 use super::items::{GatewayItem, gateway_item};
 use crate::audit::{AuditAction, AuditEntry, AuditOutcome, AuditRecord, AuditSink, ClaimedFor};
-use crate::session::readable_entries;
-use crate::{AgentPairing, AgentPairingId, AgentSettings, PairingKind, VaultAccess};
+use crate::scope::{PairingScope, ScopeError};
+use crate::{AgentPairing, AgentPairingId, PairingKind, VaultAccess};
 
 /// The longest Vault name `whoami` answers with, in characters.
 const MAX_VAULT_NAME: usize = 512;
@@ -58,6 +58,15 @@ pub enum GatewayError {
          in its own subgroup"
     )]
     NotWritable,
+}
+
+impl From<ScopeError> for GatewayError {
+    fn from(error: ScopeError) -> Self {
+        match error {
+            ScopeError::Locked => Self::Locked,
+            ScopeError::NotPaired => Self::Unauthorized,
+        }
+    }
 }
 
 impl GatewayError {
@@ -138,23 +147,6 @@ impl GatewaySession {
         &self.pairing
     }
 
-    /// The Vault's Agent settings and this session's pairing in them, read afresh: `Locked`
-    /// while the Vault is, and `Unauthorized` once the pairing is gone or if it isn't a Gateway
-    /// pairing.
-    pub(super) fn pairing_in(
-        &self,
-        workspace: &Workspace,
-        id: VaultId,
-    ) -> Result<(AgentSettings, AgentPairing), GatewayError> {
-        let open = workspace.readable_vault(id).ok_or(GatewayError::Locked)?;
-        let settings = AgentSettings::of(open.vault());
-        let pairing = settings
-            .pairing_of_kind(&self.pairing, PairingKind::Gateway)
-            .ok_or(GatewayError::Unauthorized)?
-            .clone();
-        Ok((settings, pairing))
-    }
-
     /// Audits `call` on `entry`: allowed without a `refusal`, denied with one, and never with a
     /// value.
     pub(super) fn audit(
@@ -185,8 +177,9 @@ impl GatewaySession {
     }
 
     pub fn whoami(&self, vault: &impl VaultAccess) -> Result<Whoami, GatewayError> {
-        self.read(vault, |workspace, id, _, pairing| {
+        self.read(vault, |workspace, id, scope| {
             let open = workspace.readable_vault(id).ok_or(GatewayError::Locked)?;
+            let pairing = scope.pairing();
             let groups = std::iter::once(pairing.group()).chain(pairing.readable().iter().copied());
             Ok(Whoami {
                 vault: vault_name(&open.vault().name(), open.location()),
@@ -202,14 +195,12 @@ impl GatewaySession {
 
     /// The Entries the pairing reads that map to items, logged as one `list`.
     pub fn list(&self, vault: &impl VaultAccess) -> Result<Listing, GatewayError> {
-        self.read(vault, |workspace, id, settings, pairing| {
-            let vault = workspace
-                .readable_vault(id)
-                .ok_or(GatewayError::Locked)?
-                .vault();
-            let items: Vec<GatewayItem> = readable_entries(vault, settings, pairing)
-                .into_iter()
-                .filter_map(|(entry, _)| gateway_item(entry))
+        self.read(vault, |workspace, _, scope| {
+            let pairing = scope.pairing();
+            let items: Vec<GatewayItem> = scope
+                .entries()
+                .iter()
+                .filter_map(|readable| gateway_item(readable.entry))
                 .collect();
             let list = Call {
                 action: AuditAction::List,
@@ -235,16 +226,17 @@ impl GatewaySession {
         reference: &str,
         request: &Resolve,
     ) -> Result<SecretString, GatewayError> {
-        self.read(vault, |workspace, id, settings, pairing| {
-            let vault = workspace
-                .readable_vault(id)
-                .ok_or(GatewayError::Locked)?
-                .vault();
+        self.read(vault, |workspace, _, scope| {
+            let pairing = scope.pairing();
             let call = Call {
                 action: AuditAction::Resolve,
                 claimed_for: request.claimed_for.as_ref(),
             };
-            let Some((entry, _)) = find_item(vault, settings, pairing, reference) else {
+            let entry = EntryId::from_hex(reference)
+                .and_then(|id| scope.entry(id))
+                .map(|readable| readable.entry)
+                .filter(|entry| gateway_item(entry).is_some());
+            let Some(entry) = entry else {
                 self.audit(workspace, pairing, &call, None, Some("not found"));
                 return Err(GatewayError::NotFound);
             };
@@ -261,36 +253,20 @@ impl GatewaySession {
         })
     }
 
-    /// Runs `f` with the Vault and the pairing, read afresh: `Locked` while the Vault is, and
+    /// Runs `f` with the pairing's scope, read afresh: `Locked` while the Vault is, and
     /// `Unauthorized` once the pairing is gone or if it isn't a Gateway pairing.
     fn read<T>(
         &self,
         vault: &impl VaultAccess,
-        f: impl FnOnce(&Workspace, VaultId, &AgentSettings, &AgentPairing) -> Result<T, GatewayError>,
+        f: impl FnOnce(&Workspace, VaultId, &PairingScope<'_>) -> Result<T, GatewayError>,
     ) -> Result<T, GatewayError> {
         vault
             .read(|workspace, id| {
-                let (settings, pairing) = self.pairing_in(workspace, id)?;
-                f(workspace, id, &settings, &pairing)
+                let scope = PairingScope::open(workspace, id, &self.pairing, PairingKind::Gateway)?;
+                f(workspace, id, &scope)
             })
             .unwrap_or(Err(GatewayError::Locked))
     }
-}
-
-/// The Entry `reference` names among those `pairing` reads, with the item it is listed as, or
-/// `None` when it names none, or one that isn't an item.
-pub(super) fn find_item<'v>(
-    vault: &'v Vault,
-    settings: &AgentSettings,
-    pairing: &AgentPairing,
-    reference: &str,
-) -> Option<(&'v Entry, GatewayItem)> {
-    let wanted = EntryId::from_hex(reference)?;
-    let entry = readable_entries(vault, settings, pairing)
-        .into_iter()
-        .map(|(entry, _)| entry)
-        .find(|entry| entry.id() == wanted)?;
-    Some((entry, gateway_item(entry)?))
 }
 
 /// The name `whoami` gives the Vault: its own, or else its file's, never empty.
