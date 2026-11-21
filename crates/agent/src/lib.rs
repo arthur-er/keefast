@@ -10,6 +10,7 @@
 //! - `session` (`AgentSession`) and `session/writes`: one Agent pairing's requests against a
 //!   Workspace: listing, using and creating secrets.
 //! - `settings`: the Agent settings a Vault keeps: Agent group, policy, pairings, decisions.
+//! - `scope`: what one pairing, Agent or Gateway, reads and may write in a Vault.
 //! - `approver`: who is asked when a use needs the user's say; `approver_client`: the desktop's
 //!   side of a Headless host's prompt stream.
 //! - `audit`: the audit log of every list and use.
@@ -44,6 +45,7 @@ pub mod oauth;
 mod oauth_endpoint;
 pub mod programs;
 pub mod run;
+mod scope;
 #[cfg(feature = "serve")]
 pub mod serve;
 mod session;
@@ -58,6 +60,7 @@ pub use approver::{
 pub use audit::{
     AuditAction, AuditEntry, AuditLog, AuditOutcome, AuditRecord, AuditSink, ClaimedFor,
 };
+pub use scope::{Lookup, PairingScope, Readable, ReferenceError, ScopeError};
 pub use session::{
     AgentError, AgentReply, AgentRequest, AgentSession, CreateEntry, SecretListing,
     SecretReference, SecretValue, ServesAgents, StoreSecret, UseSecrets, VaultAccess, WrittenEntry,

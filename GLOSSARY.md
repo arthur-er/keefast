@@ -150,6 +150,10 @@ _Avoid_: Fetch, get secret, reveal
 The Group in a Vault whose Entries Agents may see. Each Agent pairing writes to a subgroup of its own, `Agent group/<pairing name>`, and may be given others to read. Entries outside it don't exist as far as Agents can tell.
 _Avoid_: Agent folder, shared secrets
 
+**Pairing scope**:
+What one pairing, an Agent pairing or a Gateway pairing, can reach in a Vault: the Entries in its own subgroup of the Agent group and in the subgroups it reads, and in their subgroups, never in the Recycle Bin. It writes only to Entries directly in its own subgroup, which is known by the Group itself, not by its name or path, since two subgroups may share a name.
+_Avoid_: Permissions, ACL, access list
+
 **Agent access decision**:
 The user's allow or deny answer to an Agent pairing using a specific Entry with a specific program or host, remembered on that Entry. Shells and interpreters are never remembered: they ask every time, as a reveal does.
 _Avoid_: Permission, grant, scope

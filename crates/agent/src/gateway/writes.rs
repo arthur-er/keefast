@@ -18,10 +18,10 @@ use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::items::{GatewayItem, ItemDetails, LOGIN_TAG, gateway_item, is_https};
-use super::session::{Call, GatewayError, GatewaySession, find_item};
+use super::session::{Call, GatewayError, GatewaySession};
 use crate::audit::{AuditAction, ClaimedFor};
-use crate::session::own_path;
-use crate::{AgentPairing, AgentSettings, VaultAccess};
+use crate::scope::PairingScope;
+use crate::{AgentPairing, PairingKind, VaultAccess};
 
 /// The longest title a login may have, in characters: agentes-chat drops an item with a longer
 /// one.
@@ -97,7 +97,7 @@ impl GatewaySession {
             action: AuditAction::CreateLogin,
             claimed_for: request.claimed_for.as_ref(),
         };
-        self.write(vault, &call, |workspace, id, _, pairing| {
+        self.write(vault, &call, |workspace, id, pairing| {
             let fields = fields_of(request)
                 .map_err(|reason| self.refuse_input(workspace, pairing, &call, None, reason))?;
             let entry = workspace
@@ -127,22 +127,20 @@ impl GatewaySession {
             action: AuditAction::UpdateLogin,
             claimed_for: request.claimed_for.as_ref(),
         };
-        self.write(vault, &call, |workspace, id, settings, pairing| {
+        self.write(vault, &call, |workspace, id, pairing| {
             let (entry, mut fields) = {
-                let vault = workspace
-                    .readable_vault(id)
-                    .ok_or(GatewayError::Locked)?
-                    .vault();
-                let Some((entry, item)) = find_item(vault, settings, pairing, reference) else {
+                let scope =
+                    PairingScope::open(workspace, id, self.pairing(), PairingKind::Gateway)?;
+                let found = EntryId::from_hex(reference)
+                    .and_then(|id| scope.entry(id))
+                    .and_then(|readable| Some((readable, gateway_item(readable.entry)?)));
+                let Some((readable, item)) = found else {
                     self.audit(workspace, pairing, &call, None, Some("not found"));
                     return Err(GatewayError::NotFound);
                 };
+                let entry = readable.entry;
                 let audited = Some((entry.id(), entry.title()));
-                // Directly in its own subgroup, which `write` found in the Agent group.
-                let own = vault
-                    .group(pairing.group())
-                    .is_some_and(|group| group.entries().iter().any(|e| e.id() == entry.id()));
-                if !own {
+                if !readable.own {
                     let refusal = Some("outside the pairing's own subgroup");
                     self.audit(workspace, pairing, &call, audited, refusal);
                     return Err(GatewayError::NotWritable);
@@ -202,8 +200,16 @@ impl GatewaySession {
             claimed_for: claimed_for.as_ref(),
         };
         vault.read(|workspace, id| {
-            if let Ok((_, pairing)) = self.pairing_in(workspace, id) {
-                self.audit(workspace, &pairing, &call, None, Some(UNREADABLE_BODY));
+            if let Ok(scope) =
+                PairingScope::open(workspace, id, self.pairing(), PairingKind::Gateway)
+            {
+                self.audit(
+                    workspace,
+                    scope.pairing(),
+                    &call,
+                    None,
+                    Some(UNREADABLE_BODY),
+                );
             }
         });
     }
@@ -215,32 +221,28 @@ impl GatewaySession {
         &self,
         vault: &impl VaultAccess,
         call: &Call<'_>,
-        f: impl FnOnce(
-            &mut Workspace,
-            VaultId,
-            &AgentSettings,
-            &AgentPairing,
-        ) -> Result<T, GatewayError>,
+        f: impl FnOnce(&mut Workspace, VaultId, &AgentPairing) -> Result<T, GatewayError>,
     ) -> Result<T, GatewayError> {
         vault
             .edit(|workspace, id| {
-                let (settings, pairing) = self.pairing_in(workspace, id)?;
-                let refusal = if !pairing.can_create() {
-                    Some("the pairing may not write")
-                } else if workspace
-                    .readable_vault(id)
-                    .and_then(|open| own_path(open.vault(), &settings, &pairing))
-                    .is_none()
-                {
-                    Some("the pairing's own subgroup is gone")
-                } else {
-                    None
+                let pairing = {
+                    let scope =
+                        PairingScope::open(workspace, id, self.pairing(), PairingKind::Gateway)?;
+                    let pairing = scope.pairing();
+                    let refusal = if !pairing.can_create() {
+                        Some("the pairing may not write")
+                    } else if scope.own_path().is_none() {
+                        Some("the pairing's own subgroup is gone")
+                    } else {
+                        None
+                    };
+                    if let Some(refusal) = refusal {
+                        self.audit(workspace, pairing, call, None, Some(refusal));
+                        return Err(GatewayError::ReadOnly);
+                    }
+                    pairing.clone()
                 };
-                if let Some(refusal) = refusal {
-                    self.audit(workspace, &pairing, call, None, Some(refusal));
-                    return Err(GatewayError::ReadOnly);
-                }
-                f(workspace, id, &settings, &pairing)
+                f(workspace, id, &pairing)
             })
             .unwrap_or(Err(GatewayError::Locked))
     }
