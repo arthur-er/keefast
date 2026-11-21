@@ -41,6 +41,7 @@ use crate::http::{
 };
 use crate::programs::{is_shell_or_interpreter, program_name};
 use crate::run::Redactor;
+use crate::scope::{ReferenceError, ScopeError};
 pub(crate) use writes::own_path;
 pub use writes::{CreateEntry, StoreSecret, WrittenEntry};
 
@@ -253,6 +254,26 @@ pub enum AgentError {
          both to the same version"
     )]
     Mismatch(String),
+}
+
+impl From<ScopeError> for AgentError {
+    fn from(error: ScopeError) -> Self {
+        match error {
+            ScopeError::Locked => Self::Locked,
+            ScopeError::NotPaired => Self::NotPaired,
+        }
+    }
+}
+
+impl From<ReferenceError> for AgentError {
+    fn from(error: ReferenceError) -> Self {
+        match error {
+            ReferenceError::NoField(reference) => Self::NoField(reference),
+            ReferenceError::Unknown(reference) => Self::UnknownReference(reference),
+            ReferenceError::Ambiguous(reference) => Self::AmbiguousReference(reference),
+            ReferenceError::UnknownField(reference) => Self::UnknownField(reference),
+        }
+    }
 }
 
 /// A secret as an Agent sees it in a list: what helps it pick the right one, and how to name

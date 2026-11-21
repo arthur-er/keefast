@@ -19,7 +19,8 @@ use zeroize::Zeroizing;
 
 use super::{AgentError, AgentReply, AgentSession, SecretReference, VaultAccess, readable_entries};
 use crate::audit::{AuditAction, AuditEntry, AuditOutcome};
-use crate::{AgentPairing, AgentSettings};
+use crate::scope::{Lookup, PairingScope};
+use crate::{AgentPairing, AgentSettings, PairingKind};
 
 /// What `create_entry` makes: an Entry with this title in the pairing's own subgroup.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -270,15 +271,9 @@ impl AgentSession {
             field: Some(field_name),
         };
         let (pairing, target) = {
-            let vault = workspace
-                .readable_vault(id)
-                .ok_or(AgentError::Locked)?
-                .vault();
-            let settings = AgentSettings::of(vault);
-            let pairing = self.writer(workspace, &settings, &write)?;
-            let target = self.target(
-                workspace, vault, &settings, &pairing, reference, name, &write,
-            )?;
+            let scope = PairingScope::open(workspace, id, self.pairing(), PairingKind::Agent)?;
+            let pairing = self.writer(workspace, scope.settings(), &write)?;
+            let target = self.target(workspace, &scope, reference, name, &write)?;
             (pairing, target)
         };
         let field = Field::named(field_name)?;
@@ -322,72 +317,47 @@ impl AgentSession {
     }
 
     /// The Entry a `store` writes: the one `name` matches among those the pairing reads, if it
-    /// is in its own subgroup, or else a new one there, if `name` is a path directly in it.
-    #[allow(clippy::too_many_arguments)]
+    /// is directly in its own subgroup, or else a new one there, if `name` is a path directly in
+    /// it.
     fn target(
         &self,
         workspace: &Workspace,
-        vault: &Vault,
-        settings: &AgentSettings,
-        pairing: &AgentPairing,
+        scope: &PairingScope<'_>,
         reference: &str,
         name: &str,
         write: &Write<'_>,
     ) -> Result<Target, AgentError> {
-        let readable = readable_entries(vault, settings, pairing);
-        let by_uuid = EntryId::from_hex(name);
-        let mut matches = readable.iter().filter(|(entry, path)| match by_uuid {
-            Some(id) => entry.id() == id,
-            None => path == name,
-        });
-        let found = matches.next();
-        if matches.next().is_some() {
-            return Err(AgentError::AmbiguousReference(reference.to_owned()));
-        }
-        let own = own_path(vault, settings, pairing);
-        if let Some((entry, path)) = found {
-            let in_own = own
-                .as_deref()
-                .and_then(|own| path.strip_prefix(own))
-                .is_some_and(|title| !title.contains('/'));
-            if !in_own {
-                self.audit_write(
-                    workspace,
-                    pairing,
-                    write,
-                    Some((entry.id(), entry.title())),
-                    Some("outside the pairing's own subgroup"),
-                );
-                return Err(AgentError::NotOwnEntry(reference.to_owned()));
-            }
-            return Ok(Target::Existing {
-                id: entry.id(),
-                path: path.clone(),
-                fields: EntryFields::from(*entry),
-            });
-        }
-        if by_uuid.is_some() {
-            return Err(AgentError::UnknownReference(reference.to_owned()));
-        }
-        let title = own
-            .as_deref()
-            .and_then(|own| name.strip_prefix(own))
-            .filter(|title| !title.contains('/') && !title.trim().is_empty());
-        let Some(title) = title else {
+        let pairing = scope.pairing();
+        let refused = |entry: Option<(EntryId, &str)>| {
             self.audit_write(
                 workspace,
                 pairing,
                 write,
-                None,
+                entry,
                 Some("outside the pairing's own subgroup"),
             );
-            return Err(AgentError::NotOwnEntry(reference.to_owned()));
+            AgentError::NotOwnEntry(reference.to_owned())
         };
-        Ok(Target::New {
-            group: pairing.group(),
-            title: title.to_owned(),
-            path: name.to_owned(),
-        })
+        match scope.find(name) {
+            Ok(found) if found.own => Ok(Target::Existing {
+                id: found.entry.id(),
+                path: found.path.clone(),
+                fields: EntryFields::from(found.entry),
+            }),
+            Ok(found) => Err(refused(Some((found.entry.id(), found.entry.title())))),
+            Err(Lookup::Ambiguous) => Err(AgentError::AmbiguousReference(reference.to_owned())),
+            Err(Lookup::Unknown) if EntryId::from_hex(name).is_some() => {
+                Err(AgentError::UnknownReference(reference.to_owned()))
+            }
+            Err(Lookup::Unknown) => {
+                let title = scope.new_title(name).ok_or_else(|| refused(None))?;
+                Ok(Target::New {
+                    group: pairing.group(),
+                    title: title.to_owned(),
+                    path: name.to_owned(),
+                })
+            }
+        }
     }
 
     /// The session's pairing, if it may write; a pairing without the create right is refused,

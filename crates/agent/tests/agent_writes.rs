@@ -68,6 +68,26 @@ impl Fixture {
         settings.pairing(self.claude.pairing()).unwrap().group()
     }
 
+    /// A second subgroup of the Agent group named `claude`, like the pairing's own, which
+    /// `claude` is given to read beside `shared`: its Entries' paths start as its own's do.
+    fn read_a_sibling_named_like_its_own(&self) -> GroupId {
+        let mut workspace = self.workspace();
+        let settings = workspace.agent_settings(self.vault).unwrap();
+        let agents = settings.agent_group().unwrap();
+        let sibling = workspace
+            .create_group(self.vault, agents, "claude")
+            .unwrap();
+        workspace
+            .set_agent_pairing_access(
+                self.vault,
+                self.claude.pairing(),
+                vec![self.shared_group, sibling],
+                true,
+            )
+            .unwrap();
+        sibling
+    }
+
     fn add(&self, group: GroupId, title: &str, password: &str) -> EntryId {
         let fields = EntryFields {
             title: title.to_owned(),
@@ -364,6 +384,46 @@ fn writing_an_entry_outside_the_pairings_own_subgroup_is_refused_even_one_it_rea
     let entry = fixture.entry(&shared.to_hex());
     assert_eq!(entry.password().expose_secret(), "shared-value");
     assert!(entry.history().is_empty());
+}
+
+/// Asserts that `entry` still has `password` and no history, and that the last audit record is
+/// a denied `store` of it.
+fn assert_untouched_and_denied(fixture: &Fixture, entry: EntryId, password: &str) {
+    let kept = fixture.entry(&entry.to_hex());
+    assert_eq!(kept.password().expose_secret(), password);
+    assert!(kept.history().is_empty());
+    let record = fixture.audit.records().pop().unwrap();
+    assert_eq!(record.action.to_string(), "store");
+    assert_eq!(record.outcome, AuditOutcome::Denied);
+    assert_eq!(record.entry.map(|entry| entry.uuid), Some(entry.to_hex()));
+}
+
+#[test]
+fn store_by_uuid_wont_write_an_entry_in_a_read_subgroup_named_like_the_pairings_own() {
+    let fixture = Fixture::new();
+    let sibling = fixture.read_a_sibling_named_like_its_own();
+    let read_only = fixture.add(sibling, "token", "sibling-value");
+    let reference = format!("{}#password", read_only.to_hex());
+
+    let refused = fixture.store(&fixture.claude, &reference, "overwritten");
+
+    assert_eq!(refused, Err(AgentError::NotOwnEntry(reference)));
+    assert_untouched_and_denied(&fixture, read_only, "sibling-value");
+}
+
+#[test]
+fn store_by_path_wont_write_an_entry_in_a_read_subgroup_named_like_the_pairings_own() {
+    let fixture = Fixture::new();
+    let sibling = fixture.read_a_sibling_named_like_its_own();
+    let read_only = fixture.add(sibling, "token", "sibling-value");
+
+    let refused = fixture.store(&fixture.claude, "claude/token#password", "overwritten");
+
+    assert_eq!(
+        refused,
+        Err(AgentError::NotOwnEntry("claude/token#password".to_owned()))
+    );
+    assert_untouched_and_denied(&fixture, read_only, "sibling-value");
 }
 
 #[test]

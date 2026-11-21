@@ -680,6 +680,48 @@ fn update_login_refuses_logins_outside_the_own_subgroup_as_not_writable_and_unse
 }
 
 #[test]
+fn update_login_refuses_a_login_in_a_read_subgroup_named_like_the_own_as_not_writable() {
+    let fixture = Fixture::new();
+    let sibling = {
+        let mut workspace = fixture.workspace();
+        let agents = workspace
+            .agent_settings(fixture.vault)
+            .unwrap()
+            .agent_group()
+            .unwrap();
+        let sibling = workspace
+            .create_group(fixture.vault, agents, "agentes")
+            .unwrap();
+        workspace
+            .set_agent_pairing_access(
+                fixture.vault,
+                fixture.session.pairing(),
+                vec![fixture.shared_group, sibling],
+                true,
+            )
+            .unwrap();
+        sibling
+    };
+    let read_only = fixture.add_login(sibling, "github");
+
+    let refused = fixture
+        .session
+        .update_login(
+            &*fixture.shared,
+            &reference(read_only),
+            &change(serde_json::json!({ "password": "new-secret-value" })),
+        )
+        .unwrap_err();
+
+    assert_eq!(refused, GatewayError::NotWritable);
+    let workspace = fixture.workspace();
+    let vault = workspace.readable_vault(fixture.vault).unwrap().vault();
+    let entry = vault.entry(read_only).unwrap();
+    assert_eq!(entry.password().expose_secret(), "github-secret-value");
+    assert!(entry.history().is_empty());
+}
+
+#[test]
 fn update_login_refuses_an_empty_password_and_a_key() {
     let fixture = Fixture::new();
     let github = fixture.add_login(fixture.own, "github");
