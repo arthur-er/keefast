@@ -11,6 +11,7 @@ mod clipboard;
 mod clock;
 mod config;
 mod dropbox;
+mod entry_edit;
 mod favicons;
 mod generator;
 mod locking;
@@ -53,6 +54,10 @@ pub use config::{AppConfig, ConfigError, ConfigStore, FileConfigStore, PaneWidth
 pub use dropbox::{
     Authorization, CodeAuthorization, ConnectCanceller, Dropbox, DropboxAccount, DropboxConfig,
     DropboxError, DropboxItem,
+};
+pub use entry_edit::{
+    AttachmentEdit, CustomFieldEdit, CustomFieldValue, EditEntryError, EntryEdit, EntryEditError,
+    TagsEdit,
 };
 pub use favicons::{DownloadedFavicon, Favicon, FaviconSource, HttpFavicons, PendingFavicon};
 pub use generator::{GeneratorMode, GeneratorSettings};
